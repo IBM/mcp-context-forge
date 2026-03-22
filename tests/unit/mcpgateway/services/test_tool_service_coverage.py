@@ -119,6 +119,19 @@ def mock_gateway():
     gw.owner_email = None
     gw.visibility = "public"
     gw.tags = []
+    gw.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    gw.updated_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    gw.created_by = None
+    gw.created_from_ip = None
+    gw.created_via = None
+    gw.created_user_agent = None
+    gw.modified_by = None
+    gw.modified_from_ip = None
+    gw.modified_via = None
+    gw.modified_user_agent = None
+    gw.import_batch_id = None
+    gw.federation_source = None
+    gw.version = None
     return gw
 
 
@@ -816,7 +829,7 @@ class TestAggregateMetrics:
 
         cached_data = {"total_executions": 100, "successful_executions": 90, "failed_executions": 10, "failure_rate": 0.1}
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=cached_data)
+        monkeypatch.setattr(cache_module.metrics_cache, "get", MagicMock(return_value=cached_data))
 
         db = MagicMock()
         result = await tool_service.aggregate_metrics(db)
@@ -833,8 +846,8 @@ class TestAggregateMetrics:
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=None)
-        cache_module.metrics_cache.set = MagicMock()
+        monkeypatch.setattr(cache_module.metrics_cache, "get", MagicMock(return_value=None))
+        monkeypatch.setattr(cache_module.metrics_cache, "set", MagicMock())
 
         mock_result = AggregatedMetrics(
             total_executions=50,
@@ -1415,8 +1428,8 @@ class TestGetTopTools:
         from mcpgateway.cache import metrics_cache as cache_module
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=None)
-        cache_module.metrics_cache.set = MagicMock()
+        monkeypatch.setattr(cache_module.metrics_cache, "get", MagicMock(return_value=None))
+        monkeypatch.setattr(cache_module.metrics_cache, "set", MagicMock())
 
         mock_results = []
         monkeypatch.setattr("mcpgateway.services.tool_service.get_top_performers_combined", MagicMock(return_value=mock_results))

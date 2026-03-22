@@ -112,9 +112,8 @@
 ???+ info "🗄️ What databases are supported for persistence?"
 
     - SQLite (default) - used for development / small deployments.
-    - PostgreSQL / MySQL / MariaDB via `DATABASE_URL`.
+    - PostgreSQL (recommended for production) via `DATABASE_URL`.
     - Redis (optional) for caching and federation.
-    - Other databases supported by SQLAlchemy.
 
 ???+ info "📦 How do I persist SQLite across container restarts?"
     Include a persistent volume with your container or Kubernetes deployment. Ex:

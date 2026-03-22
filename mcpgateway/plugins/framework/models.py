@@ -485,6 +485,8 @@ class MCPClientConfig(BaseModel):
         cwd (Optional[str]): Working directory for STDIO server process.
         uds (Optional[str]): Unix domain socket path for streamable HTTP.
         tls (Optional[MCPClientTLSConfig]): Client-side TLS configuration for mTLS.
+        reconnect_attempts (int): Number of reconnection attempts on failure.
+        reconnect_delay (float): Base delay between reconnection attempts (seconds).
     """
 
     proto: TransportType
@@ -495,6 +497,8 @@ class MCPClientConfig(BaseModel):
     cwd: Optional[str] = None
     uds: Optional[str] = None
     tls: Optional[MCPClientTLSConfig] = None
+    reconnect_attempts: int = Field(default=3, description="Number of reconnection attempts on failure")
+    reconnect_delay: float = Field(default=0.1, description="Base delay between reconnection attempts (seconds)")
 
     @field_validator(URL, mode="after")
     @classmethod
@@ -1231,6 +1235,8 @@ class PluginViolation(BaseModel):
         details: (dict[str, Any]): additional violation details.
         _plugin_name (str): the plugin name, private attribute set by the plugin manager.
         mcp_error_code(Optional[int]): A valid mcp error code which will be sent back to the client if plugin enabled.
+        http_status_code (Optional[int]): HTTP status code to return (e.g., 429 for rate limiting).
+        http_headers (Optional[dict[str, str]]): HTTP headers to include in the response.
 
     Examples:
         >>> violation = PluginViolation(
@@ -1254,6 +1260,8 @@ class PluginViolation(BaseModel):
     details: Optional[dict[str, Any]] = Field(default_factory=dict)
     _plugin_name: str = PrivateAttr(default="")
     mcp_error_code: Optional[int] = None
+    http_status_code: Optional[int] = None
+    http_headers: Optional[dict[str, str]] = None
 
     @property
     def plugin_name(self) -> str:
@@ -1327,6 +1335,7 @@ class PluginResult(BaseModel, Generic[T]):
             modified_payload (Optional[Any]): The modified payload if the plugin is a transformer.
             violation (Optional[PluginViolation]): violation object.
             metadata (Optional[dict[str, Any]]): additional metadata.
+            http_headers (Optional[dict[str, str]]): HTTP headers to include in successful responses.
 
      Examples:
         >>> result = PluginResult()
@@ -1355,6 +1364,7 @@ class PluginResult(BaseModel, Generic[T]):
     modified_payload: Optional[T] = None
     violation: Optional[PluginViolation] = None
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
+    http_headers: Optional[dict[str, str]] = None
 
 
 class GlobalContext(BaseModel):

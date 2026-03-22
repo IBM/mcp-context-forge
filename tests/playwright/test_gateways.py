@@ -88,7 +88,6 @@ class TestGatewaysPage:
         # Test toggle
         initial_state = gateways_page.show_inactive_checkbox.is_checked()
         gateways_page.toggle_show_inactive(not initial_state)
-        gateways_page.page.wait_for_timeout(500)
         assert gateways_page.show_inactive_checkbox.is_checked() == (not initial_state)
 
     def test_transport_type_options(self, gateways_page: GatewaysPage):
@@ -531,8 +530,8 @@ class TestGatewayActions:
         expect(first_row.locator('button:has-text("Edit")')).to_be_visible()
 
         # Either Activate or Deactivate should be visible
-        activate_btn = first_row.locator('button:has-text("Activate")')
-        deactivate_btn = first_row.locator('button:has-text("Deactivate")')
+        activate_btn = first_row.locator('button:text-is("Activate")')
+        deactivate_btn = first_row.locator('button:text-is("Deactivate")')
         assert activate_btn.is_visible() or deactivate_btn.is_visible()
 
         # Delete button should be visible
@@ -601,13 +600,13 @@ class TestGatewayActions:
 
         # Find a gateway with Deactivate button
         first_row = gateways_page.get_gateway_row(0)
-        deactivate_btn = first_row.locator('button:has-text("Deactivate")')
+        deactivate_btn = first_row.locator('button:text-is("Deactivate")')
 
         if not deactivate_btn.is_visible():
             pytest.skip("No active gateways available to deactivate")
 
         # Get gateway name before deactivation
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         # Click Deactivate button and wait for HTMX to settle
         gateways_page.click_deactivate_button(0)
@@ -626,7 +625,7 @@ class TestGatewayActions:
         # Verify Activate button is now visible (gateway was deactivated)
         if gateways_page.gateway_exists(gateway_name):
             gateway_row = gateways_page.get_gateway_row_by_name(gateway_name)
-            activate_btn = gateway_row.locator('button:has-text("Activate")')
+            activate_btn = gateway_row.locator('button:text-is("Activate")')
             expect(activate_btn).to_be_visible()
             logger.info("Gateway '%s' deactivated successfully", gateway_name)
 
@@ -639,9 +638,8 @@ class TestGatewayActions:
         gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
 
-        # Enable showing inactive gateways
+        # Enable showing inactive gateways (waits for HTMX table swap)
         gateways_page.toggle_show_inactive(True)
-        gateways_page.page.wait_for_timeout(1000)
 
         # Skip if no gateways exist
         if gateways_page.get_gateway_count() == 0:
@@ -649,13 +647,13 @@ class TestGatewayActions:
 
         # Find a gateway with Activate button
         first_row = gateways_page.get_gateway_row(0)
-        activate_btn = first_row.locator('button:has-text("Activate")')
+        activate_btn = first_row.locator('button:text-is("Activate")')
 
         if not activate_btn.is_visible():
             pytest.skip("No inactive gateways available to activate")
 
         # Get gateway name before activation
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         # Click Activate button
         gateways_page.click_activate_button(0)
@@ -673,7 +671,7 @@ class TestGatewayActions:
         # Verify Deactivate button is now visible (gateway was activated)
         if gateways_page.gateway_exists(gateway_name):
             gateway_row = gateways_page.get_gateway_row_by_name(gateway_name)
-            deactivate_btn = gateway_row.locator('button:has-text("Deactivate")')
+            deactivate_btn = gateway_row.locator('button:text-is("Deactivate")')
             expect(deactivate_btn).to_be_visible()
             logger.info("Gateway '%s' activated successfully", gateway_name)
 
@@ -815,7 +813,7 @@ class TestGatewaySearch:
 
         # Get first gateway name
         first_row = gateways_page.get_gateway_row(0)
-        gateway_name = first_row.locator("td").nth(2).text_content().strip()
+        gateway_name = first_row.locator("td").nth(3).text_content().strip()
 
         # Search for it (search_gateways dispatches events and waits internally)
         gateways_page.search_gateways(gateway_name)

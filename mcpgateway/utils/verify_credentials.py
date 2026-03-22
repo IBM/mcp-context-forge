@@ -30,6 +30,7 @@ Examples:
     ...     docs_allow_basic_auth = False
     >>> vc.settings = DummySettings()
     >>> jch.settings = DummySettings()
+    >>> jch.clear_jwt_caches()
     >>> import jwt
     >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
     >>> import asyncio
@@ -300,6 +301,7 @@ async def verify_credentials(token: str) -> dict:
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
+        >>> jch.clear_jwt_caches()
         >>> import jwt
         >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
         >>> import asyncio
@@ -437,6 +439,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
+        >>> jch.clear_jwt_caches()
         >>> import jwt
         >>> from fastapi.security import HTTPAuthorizationCredentials
         >>> from fastapi import Request
@@ -811,6 +814,7 @@ async def require_docs_auth_override(
         ...     validate_token_environment = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
+        >>> jch.clear_jwt_caches()
         >>> import jwt
         >>> import asyncio
 
@@ -908,6 +912,7 @@ async def require_auth_override(
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
+        >>> jch.clear_jwt_caches()
         >>> import jwt
         >>> import asyncio
 
@@ -1005,6 +1010,7 @@ async def require_auth_header_first(
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
+        >>> jch.clear_jwt_caches()
         >>> import jwt
         >>> import asyncio
 

@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.llm_schemas import (
     GatewayModelsResponse,
@@ -115,7 +116,7 @@ async def create_provider(
 async def list_providers(
     enabled_only: bool = Query(False, description="Only return enabled providers"),
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    page_size: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> LLMProviderListResponse:
@@ -391,7 +392,7 @@ async def list_models(
     provider_id: Optional[str] = Query(None, description="Filter by provider ID"),
     enabled_only: bool = Query(False, description="Only return enabled models"),
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    page_size: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> LLMModelListResponse:

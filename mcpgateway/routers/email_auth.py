@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -280,7 +281,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                         logger.info("User %s is using default password but enforcement is disabled", login_request.email)
 
         if needs_password_change:
-            logger.info(f"Login blocked for {login_request.email}: password change required")
+            logger.info(f"Login blocked for {SecurityValidator.sanitize_log_message(login_request.email)}: password change required")
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": "Password change required. Please change your password before continuing."},
@@ -298,7 +299,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
     except Exception as e:
-        logger.error(f"Login error for {login_request.email}: {e}")
+        logger.error(f"Login error for {SecurityValidator.sanitize_log_message(login_request.email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
 
 
@@ -331,7 +332,7 @@ async def register(registration_request: PublicRegistrationRequest, request: Req
     """
     # Check if public registration is allowed
     if not settings.public_registration_enabled:
-        logger.warning(f"Registration attempt rejected - public registration disabled: {registration_request.email}")
+        logger.warning(f"Registration attempt rejected - public registration disabled: {SecurityValidator.sanitize_log_message(registration_request.email)}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Public registration is disabled. Please contact an administrator to create an account.",
@@ -357,7 +358,7 @@ async def register(registration_request: PublicRegistrationRequest, request: Req
         # Create access token
         access_token, expires_in = await create_access_token(user)
 
-        logger.info(f"New user registered: {user.email}")
+        logger.info(f"New user registered: {SecurityValidator.sanitize_log_message(user.email)}")
 
         return AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
@@ -370,7 +371,7 @@ async def register(registration_request: PublicRegistrationRequest, request: Req
     except UserExistsError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
-        logger.error(f"Registration error for {registration_request.email}: {e}")
+        logger.error(f"Registration error for {SecurityValidator.sanitize_log_message(registration_request.email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Registration service error")
 
 
@@ -417,7 +418,7 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
     except PasswordValidationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Password change error for {current_user.email}: {e}")
+        logger.error(f"Password change error for {SecurityValidator.sanitize_log_message(current_user.email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password change service error")
 
 
@@ -565,7 +566,7 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
         return [AuthEventResponse.model_validate(event) for event in events]
 
     except Exception as e:
-        logger.error(f"Error getting auth events for {current_user.email}: {e}")
+        logger.error(f"Error getting auth events for {SecurityValidator.sanitize_log_message(current_user.email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve authentication events")
 
 
@@ -706,7 +707,7 @@ async def create_user(user_request: AdminCreateUserRequest, current_user_ctx: di
             user.password_change_required = True
             db.commit()
 
-        logger.info(f"Admin {current_user_ctx['email']} created user: {user.email}")
+        logger.info(f"Admin {SecurityValidator.sanitize_log_message(current_user_ctx['email'])} created user: {SecurityValidator.sanitize_log_message(user.email)}")
 
         db.commit()
         db.close()
@@ -751,7 +752,7 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
-        logger.error(f"Error retrieving user {user_email}: {e}")
+        logger.error(f"Error retrieving user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user")
 
 
@@ -786,7 +787,7 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
             admin_origin_source="api",
         )
 
-        logger.info(f"Admin {current_user_ctx['email']} updated user: {user.email}")
+        logger.info(f"Admin {SecurityValidator.sanitize_log_message(current_user_ctx['email'])} updated user: {SecurityValidator.sanitize_log_message(user.email)}")
 
         result = EmailUserResponse.from_email_user(user)
         return result
@@ -799,7 +800,7 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
     except PasswordValidationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error(f"Error updating user {user_email}: {e}")
+        logger.error(f"Error updating user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
 
 
@@ -833,7 +834,7 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
         # Hard delete using auth service
         await auth_service.delete_user(user_email)
 
-        logger.info(f"Admin {current_user_ctx['email']} deleted user: {user_email}")
+        logger.info(f"Admin {SecurityValidator.sanitize_log_message(current_user_ctx['email'])} deleted user: {SecurityValidator.sanitize_log_message(user_email)}")
 
         db.commit()
         db.close()
@@ -842,7 +843,7 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except Exception as e:
-        logger.error(f"Error deleting user {user_email}: {e}")
+        logger.error(f"Error deleting user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")
 
 

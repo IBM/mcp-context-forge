@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
@@ -207,10 +208,21 @@ class TestToolServiceMetricsException:
         mock_response.json.return_value = {"result": "success"}
         mock_response.text = '{"result": "success"}'
 
+        # Build valid Pydantic Tool so plugin path does not validate the MagicMock ORM.
+        # Stub PydanticGateway.model_validate to avoid validating a MagicMock gateway.
+        valid_tool = PydanticTool(
+            name="test_tool",
+            url="http://test.example.com/tool",
+            integration_type="REST",
+            request_type="GET",
+        )
+
         with (
             patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.logger") as mock_logger,
             patch("mcpgateway.services.http_client_service.get_http_client") as mock_http_client,
+            patch("mcpgateway.services.tool_service.PydanticTool.model_validate", return_value=valid_tool),
+            patch("mcpgateway.services.tool_service.PydanticGateway.model_validate", return_value=MagicMock()),
         ):
 
             mock_client = AsyncMock()

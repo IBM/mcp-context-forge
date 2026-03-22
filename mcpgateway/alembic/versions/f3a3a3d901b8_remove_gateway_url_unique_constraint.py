@@ -75,7 +75,7 @@ def upgrade():
         with op.batch_alter_table("gateways", schema=None) as batch_op:
             batch_op.drop_constraint("uq_team_owner_url_gateway", type_="unique")
     else:
-        # PostgreSQL, MySQL, etc.: Direct constraint drop
+        # PostgreSQL and other backends: Direct constraint drop
         op.drop_constraint("uq_team_owner_url_gateway", "gateways", type_="unique")
 
     print("Successfully removed constraint 'uq_team_owner_url_gateway' from gateway table.")
@@ -101,7 +101,7 @@ def downgrade():
         with op.batch_alter_table("gateways", schema=None) as batch_op:
             batch_op.create_unique_constraint("uq_team_owner_url_gateway", ["team_id", "owner_email", "url"])
     else:
-        # PostgreSQL, MySQL, etc.: Direct constraint creation
+        # PostgreSQL and other backends: Direct constraint creation
         op.create_unique_constraint("uq_team_owner_url_gateway", "gateways", ["team_id", "owner_email", "url"])
 
     print("Successfully re-added constraint 'uq_team_owner_url_gateway' to gateways table.")

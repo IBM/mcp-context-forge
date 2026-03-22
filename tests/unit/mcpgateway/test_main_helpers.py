@@ -184,6 +184,128 @@ async def test_invalidate_resource_cache_clears_entries():
     assert main.resource_cache.get("/resource2") is None
 
 
+def test_validate_http_headers_valid():
+    """Test _validate_http_headers with valid headers."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer token123",
+        "X-Custom-Header": "value with spaces",
+    }
+    result = main._validate_http_headers(headers)
+    assert result == headers
+
+
+def test_validate_http_headers_invalid_name():
+    """Test _validate_http_headers rejects invalid header names (line 1435-1436)."""
+    # Invalid header name with space
+    headers = {"Invalid Name": "value"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Invalid header name with special characters not in RFC 9110 token
+    headers = {"Invalid@Header": "value"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Mix of valid and invalid headers
+    headers = {
+        "Valid-Header": "value1",
+        "Invalid Name": "value2",
+        "Another-Valid": "value3",
+    }
+    result = main._validate_http_headers(headers)
+    assert result == {"Valid-Header": "value1", "Another-Valid": "value3"}
+
+
+def test_validate_http_headers_crlf_in_value():
+    """Test _validate_http_headers rejects CRLF in header values (line 1439-1440)."""
+    # Header value with carriage return
+    headers = {"Content-Type": "application/json\rinjection"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Header value with newline
+    headers = {"Authorization": "Bearer token\ninjection"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Header value with both CRLF
+    headers = {"X-Custom": "value\r\ninjection"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Mix of valid and invalid headers
+    headers = {
+        "Valid-Header": "clean value",
+        "Invalid-Header": "value\r\ninjection",
+        "Another-Valid": "another clean value",
+    }
+    result = main._validate_http_headers(headers)
+    assert result == {"Valid-Header": "clean value", "Another-Valid": "another clean value"}
+
+
+def test_validate_http_headers_ctl_characters():
+    """Test _validate_http_headers rejects CTL characters in values (line 1447-1448, 1450)."""
+    # Header value with null byte (0x00)
+    headers = {"Content-Type": "application/json\x00"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Header value with control character (0x01)
+    headers = {"Authorization": "Bearer\x01token"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Header value with DEL character (0x7F)
+    headers = {"X-Custom": "value\x7f"}
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+    # Header value with various CTL characters (0x00-0x1F except tab and space)
+    for code in range(0, 32):
+        if code in (9, 32):  # Skip tab and space (allowed)
+            continue
+        headers = {"Test-Header": f"value{chr(code)}end"}
+        result = main._validate_http_headers(headers)
+        assert result is None, f"Should reject CTL character 0x{code:02x}"
+
+    # Header value with tab (0x09) - should be allowed
+    headers = {"Content-Type": "application/json\tcharset=utf-8"}
+    result = main._validate_http_headers(headers)
+    assert result == headers
+
+    # Header value with space (0x20) - should be allowed
+    headers = {"Authorization": "Bearer token with spaces"}
+    result = main._validate_http_headers(headers)
+    assert result == headers
+
+    # Mix of valid and invalid headers
+    headers = {
+        "Valid-Header": "clean value",
+        "Invalid-Header": "value\x01injection",
+        "Another-Valid": "another clean value",
+    }
+    result = main._validate_http_headers(headers)
+    assert result == {"Valid-Header": "clean value", "Another-Valid": "another clean value"}
+
+
+def test_validate_http_headers_empty_dict():
+    """Test _validate_http_headers with empty dictionary."""
+    result = main._validate_http_headers({})
+    assert result is None
+
+
+def test_validate_http_headers_all_invalid():
+    """Test _validate_http_headers when all headers are invalid."""
+    headers = {
+        "Invalid Name": "value1",
+        "Valid-But-Bad-Value": "value\r\ninjection",
+        "Another-Invalid": "value\x00",
+    }
+    result = main._validate_http_headers(headers)
+    assert result is None
+
+
 # ---------------------------------------------------------------------------
 # tojson_attr filter tests
 # ---------------------------------------------------------------------------

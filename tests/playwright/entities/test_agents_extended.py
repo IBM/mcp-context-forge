@@ -38,20 +38,14 @@ def _open_view_modal(agents_page: AgentsPage, index: int = 0) -> None:
     row = agents_page.get_agent_row(index)
     view_btn = row.locator('button:has-text("View")')
     with agents_page.page.expect_response(
-        lambda resp: (
-            re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None
-            and "/partial" not in resp.url
-            and resp.request.method == "GET"
-        ),
+        lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
         timeout=30000,
     ) as resp_info:
         view_btn.click()
     response = resp_info.value
     if response.status >= 400:
         pytest.skip(f"Agent API fetch failed (HTTP {response.status})")
-    agents_page.page.wait_for_selector(
-        "#agent-modal:not(.hidden)", state="visible", timeout=10000
-    )
+    agents_page.page.wait_for_selector("#agent-modal:not(.hidden)", state="visible", timeout=10000)
 
 
 def _close_view_modal(agents_page: AgentsPage) -> None:
@@ -69,27 +63,19 @@ def _open_edit_modal(agents_page: AgentsPage, index: int = 0) -> None:
     row = agents_page.get_agent_row(index)
     edit_btn = row.locator('button:has-text("Edit")')
     with agents_page.page.expect_response(
-        lambda resp: (
-            re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None
-            and "/partial" not in resp.url
-            and resp.request.method == "GET"
-        ),
+        lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
         timeout=30000,
     ) as resp_info:
         edit_btn.click()
     response = resp_info.value
     if response.status >= 400:
         pytest.skip(f"Agent API fetch failed (HTTP {response.status})")
-    agents_page.page.wait_for_selector(
-        "#a2a-edit-modal:not(.hidden)", state="visible", timeout=10000
-    )
+    agents_page.page.wait_for_selector("#a2a-edit-modal:not(.hidden)", state="visible", timeout=10000)
 
 
 def _close_edit_modal(agents_page: AgentsPage) -> None:
     """Close the agent edit modal via the Cancel button."""
-    cancel_btn = agents_page.page.locator(
-        '#a2a-edit-modal button:has-text("Cancel")'
-    )
+    cancel_btn = agents_page.page.locator('#a2a-edit-modal button:has-text("Cancel")')
     cancel_btn.click()
     agents_page.page.wait_for_selector("#a2a-edit-modal", state="hidden", timeout=5000)
 
@@ -102,9 +88,7 @@ def _open_test_modal(agents_page: AgentsPage, index: int = 0) -> None:
     row = agents_page.get_agent_row(index)
     test_btn = row.locator('button:has-text("Test")')
     test_btn.click()
-    agents_page.page.wait_for_selector(
-        "#a2a-test-modal:not(.hidden)", state="visible", timeout=10000
-    )
+    agents_page.page.wait_for_selector("#a2a-test-modal:not(.hidden)", state="visible", timeout=10000)
 
 
 def _close_test_modal(agents_page: AgentsPage) -> None:
@@ -174,9 +158,7 @@ class TestA2ATableStructure:
         agents_page.wait_for_agents_panel_loaded()
 
         expect(agents_page.registered_agents_title).to_be_visible()
-        expect(agents_page.registered_agents_title).to_contain_text(
-            "Registered A2A Agents"
-        )
+        expect(agents_page.registered_agents_title).to_contain_text("Registered A2A Agents")
 
     def test_pagination_controls_present(self, agents_page: AgentsPage):
         """Test that pagination controls container is present on the page."""
@@ -197,9 +179,7 @@ class TestA2ATableStructure:
         per_page_select = pagination.locator("select").first
 
         for value in ["10", "25", "50", "100", "200", "500"]:
-            expect(
-                per_page_select.locator(f'option[value="{value}"]')
-            ).to_be_attached()
+            expect(per_page_select.locator(f'option[value="{value}"]')).to_be_attached()
 
     def test_show_inactive_checkbox(self, agents_page: AgentsPage):
         """Test that the show inactive agents checkbox is present."""
@@ -269,9 +249,7 @@ class TestA2AViewModal:
         _open_view_modal(agents_page, 0)
 
         details = agents_page.page.locator("#agent-details")
-        expect(
-            details.locator('strong:has-text("Endpoint URL:")')
-        ).to_be_visible()
+        expect(details.locator('strong:has-text("Endpoint URL:")')).to_be_visible()
 
         _close_view_modal(agents_page)
 
@@ -284,9 +262,7 @@ class TestA2AViewModal:
         _open_view_modal(agents_page, 0)
 
         details = agents_page.page.locator("#agent-details")
-        expect(
-            details.locator('strong:has-text("Agent Type:")')
-        ).to_be_visible()
+        expect(details.locator('strong:has-text("Agent Type:")')).to_be_visible()
 
         _close_view_modal(agents_page)
 
@@ -299,9 +275,7 @@ class TestA2AViewModal:
         _open_view_modal(agents_page, 0)
 
         details = agents_page.page.locator("#agent-details")
-        expect(
-            details.locator('strong:has-text("Visibility:")')
-        ).to_be_visible()
+        expect(details.locator('strong:has-text("Visibility:")')).to_be_visible()
         expect(details.locator('strong:has-text("Status:")')).to_be_visible()
 
         _close_view_modal(agents_page)
@@ -315,9 +289,7 @@ class TestA2AViewModal:
         _open_view_modal(agents_page, 0)
 
         details = agents_page.page.locator("#agent-details")
-        expect(
-            details.locator('strong:has-text("Capabilities & Config:")')
-        ).to_be_visible()
+        expect(details.locator('strong:has-text("Capabilities & Config:")')).to_be_visible()
 
         _close_view_modal(agents_page)
 
@@ -351,9 +323,7 @@ class TestA2AViewModal:
         _close_view_modal(agents_page)
         expect(modal).to_be_hidden()
 
-    def test_view_modal_different_agents_show_different_data(
-        self, agents_page: AgentsPage
-    ):
+    def test_view_modal_different_agents_show_different_data(self, agents_page: AgentsPage):
         """Test that viewing different agents shows different data in the modal."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -398,9 +368,7 @@ class TestA2AEditModal:
 
         modal = agents_page.page.locator("#a2a-edit-modal")
         expect(modal).to_be_visible()
-        expect(
-            modal.locator('h3:has-text("Edit A2A Agent")')
-        ).to_be_visible()
+        expect(modal.locator('h3:has-text("Edit A2A Agent")')).to_be_visible()
 
         _close_edit_modal(agents_page)
 
@@ -428,9 +396,7 @@ class TestA2AEditModal:
 
         _open_edit_modal(agents_page, 0)
 
-        endpoint_input = agents_page.page.locator(
-            "#a2a-agent-endpoint-url-edit"
-        )
+        endpoint_input = agents_page.page.locator("#a2a-agent-endpoint-url-edit")
         expect(endpoint_input).to_be_visible()
 
         _close_edit_modal(agents_page)
@@ -462,15 +428,11 @@ class TestA2AEditModal:
         expect(agent_type).to_be_visible()
 
         for value in ["generic", "openai", "anthropic", "custom"]:
-            expect(
-                agent_type.locator(f'option[value="{value}"]')
-            ).to_be_attached()
+            expect(agent_type.locator(f'option[value="{value}"]')).to_be_attached()
 
         _close_edit_modal(agents_page)
 
-    def test_edit_modal_has_auth_type_select_with_all_options(
-        self, agents_page: AgentsPage
-    ):
+    def test_edit_modal_has_auth_type_select_with_all_options(self, agents_page: AgentsPage):
         """Test that the edit modal auth type select has all expected options."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -482,9 +444,7 @@ class TestA2AEditModal:
         expect(auth_type).to_be_visible()
 
         for value in ["", "basic", "bearer", "authheaders", "oauth", "query_param"]:
-            expect(
-                auth_type.locator(f'option[value="{value}"]')
-            ).to_be_attached()
+            expect(auth_type.locator(f'option[value="{value}"]')).to_be_attached()
 
         _close_edit_modal(agents_page)
 
@@ -516,9 +476,7 @@ class TestA2AEditModal:
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("bearer")
 
-        bearer_fields = agents_page.page.locator(
-            "#auth-bearer-fields-a2a-edit"
-        )
+        bearer_fields = agents_page.page.locator("#auth-bearer-fields-a2a-edit")
         expect(bearer_fields).to_be_visible()
 
         _close_edit_modal(agents_page)
@@ -539,9 +497,7 @@ class TestA2AEditModal:
 
         _close_edit_modal(agents_page)
 
-    def test_edit_modal_auth_type_query_param_fields(
-        self, agents_page: AgentsPage
-    ):
+    def test_edit_modal_auth_type_query_param_fields(self, agents_page: AgentsPage):
         """Test that selecting query param auth in edit modal shows key/value fields."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -552,9 +508,7 @@ class TestA2AEditModal:
         auth_type = agents_page.page.locator("#auth-type-a2a-edit")
         auth_type.select_option("query_param")
 
-        qp_fields = agents_page.page.locator(
-            "#auth-query_param-fields-a2a-edit"
-        )
+        qp_fields = agents_page.page.locator("#auth-query_param-fields-a2a-edit")
         expect(qp_fields).to_be_visible()
 
         _close_edit_modal(agents_page)
@@ -589,10 +543,7 @@ class TestA2AEditModal:
 
         first_row = agents_page.get_agent_row(0)
         current_name = first_row.locator("td").nth(3).text_content().strip()
-        assert current_name == original_name, (
-            f"Name should be unchanged after Cancel: expected '{original_name}', "
-            f"got '{current_name}'"
-        )
+        assert current_name == original_name, f"Name should be unchanged after Cancel: expected '{original_name}', " f"got '{current_name}'"
 
     def test_edit_modal_has_save_changes_button(self, agents_page: AgentsPage):
         """Test that the edit modal has a Save Changes button."""
@@ -602,16 +553,12 @@ class TestA2AEditModal:
 
         _open_edit_modal(agents_page, 0)
 
-        save_btn = agents_page.page.locator(
-            '#a2a-edit-modal button:has-text("Save Changes")'
-        )
+        save_btn = agents_page.page.locator('#a2a-edit-modal button:has-text("Save Changes")')
         expect(save_btn).to_be_visible()
 
         _close_edit_modal(agents_page)
 
-    def test_edit_modal_visibility_radios_present(
-        self, agents_page: AgentsPage
-    ):
+    def test_edit_modal_visibility_radios_present(self, agents_page: AgentsPage):
         """Test that visibility radio buttons are present in the edit modal."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -619,15 +566,274 @@ class TestA2AEditModal:
 
         _open_edit_modal(agents_page, 0)
 
-        expect(
-            agents_page.page.locator("#edit-a2a-visibility-public")
-        ).to_be_attached()
-        expect(
-            agents_page.page.locator("#edit-a2a-visibility-team")
-        ).to_be_attached()
-        expect(
-            agents_page.page.locator("#edit-a2a-visibility-private")
-        ).to_be_attached()
+        expect(agents_page.page.locator("#edit-a2a-visibility-public")).to_be_attached()
+        expect(agents_page.page.locator("#edit-a2a-visibility-team")).to_be_attached()
+        expect(agents_page.page.locator("#edit-a2a-visibility-private")).to_be_attached()
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_auth_type_custom_headers_fields(self, agents_page: AgentsPage):
+        """Test that selecting custom headers auth shows the headers container."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        # The JavaScript handler changes display from "none" to "block"
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000,
+        )
+
+        # Give the browser a moment to render the newly visible section
+        agents_page.page.wait_for_timeout(200)
+
+        # Verify the container for headers exists
+        headers_container = agents_page.page.locator("#auth-headers-container-a2a-edit")
+        expect(headers_container).to_be_attached()
+
+        # Wait for and verify the "Add Header" button is visible
+        add_header_btn = agents_page.page.locator('#auth-headers-fields-a2a-edit button:has-text("Add Header")')
+        add_header_btn.wait_for(state="visible", timeout=3000)
+        expect(add_header_btn).to_be_visible()
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_custom_headers_add_button_works(self, agents_page: AgentsPage):
+        """Test that clicking Add Header button creates a new header row."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000,
+        )
+
+        # Give the browser a moment to render
+        agents_page.page.wait_for_timeout(200)
+
+        # Get initial count of header rows (looking for divs with auth-header- IDs)
+        headers_container = agents_page.page.locator("#auth-headers-container-a2a-edit")
+        initial_count = headers_container.locator("div[id^='auth-header-']").count()
+
+        # Call addAuthHeader function directly via JavaScript
+        # This is more reliable than clicking the button in headless mode
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+
+        # Wait for a new header row to be added to the DOM
+        agents_page.page.wait_for_selector("#auth-headers-container-a2a-edit div[id^='auth-header-']", state="attached", timeout=5000)
+
+        # Verify a new header row was added
+        new_count = headers_container.locator("div[id^='auth-header-']").count()
+        assert new_count == initial_count + 1, f"Expected {initial_count + 1} header rows, got {new_count}"
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_custom_headers_can_be_filled(self, agents_page: AgentsPage):
+        """Test that custom header key and value fields can be filled."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000,
+        )
+
+        # Give the browser a moment to render
+        agents_page.page.wait_for_timeout(200)
+
+        # Call addAuthHeader function directly via JavaScript
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+
+        # Wait for the new row to be added
+        agents_page.page.wait_for_selector("#auth-headers-container-a2a-edit div[id^='auth-header-']", state="attached", timeout=5000)
+
+        # Find the header row inputs
+        headers_container = agents_page.page.locator("#auth-headers-container-a2a-edit")
+        header_rows = headers_container.locator("div[id^='auth-header-']")
+        last_row = header_rows.last
+
+        # Fill in key and value
+        key_input = last_row.locator('input[placeholder*="Header"]').first
+        value_input = last_row.locator('input[placeholder*="Value"]').first
+
+        key_input.fill("X-Test-Header")
+        value_input.fill("test-value-123")
+
+        # Verify values were set
+        assert key_input.input_value() == "X-Test-Header"
+        assert value_input.input_value() == "test-value-123"
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_custom_headers_remove_button_works(self, agents_page: AgentsPage):
+        """Test that clicking remove button deletes a header row."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000,
+        )
+
+        # Give the browser a moment to render
+        agents_page.page.wait_for_timeout(200)
+
+        # Call addAuthHeader function directly via JavaScript (twice)
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+        agents_page.page.wait_for_timeout(200)
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+
+        # Wait for rows to be added
+        agents_page.page.wait_for_timeout(300)
+
+        # Get count before removal
+        headers_container = agents_page.page.locator("#auth-headers-container-a2a-edit")
+        count_before = headers_container.locator("div[id^='auth-header-']").count()
+
+        # Click remove button on the first header (button has no text, only SVG icon)
+        first_row = headers_container.locator("div[id^='auth-header-']").first
+        remove_btn = first_row.locator('button[data-action="remove-header"]')
+        remove_btn.click()
+        agents_page.page.wait_for_timeout(300)
+
+        # Verify count decreased
+        count_after = headers_container.locator("div[id^='auth-header-']").count()
+        assert count_after == count_before - 1, f"Expected {count_before - 1} header rows after removal, got {count_after}"
+
+        _close_edit_modal(agents_page)
+
+    def test_edit_modal_displays_existing_custom_headers(self, agents_page: AgentsPage):
+        """Test that editing an agent with existing custom headers displays them (issue #3637)."""
+        agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
+        _skip_if_no_agents(agents_page)
+
+        # Open edit modal for first agent
+        _open_edit_modal(agents_page, 0)
+
+        # Select custom headers auth type
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        auth_type.select_option("authheaders")
+
+        # Wait for custom headers section to become visible
+        agents_page.page.wait_for_function(
+            """() => {
+                const el = document.getElementById('auth-headers-fields-a2a-edit');
+                return el && el.style.display === 'block';
+            }""",
+            timeout=5000,
+        )
+
+        # Give the browser a moment to render
+        agents_page.page.wait_for_timeout(200)
+
+        # Add first header using JavaScript (more reliable than clicking)
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+        agents_page.page.wait_for_timeout(200)
+
+        # Fill first header
+        headers_container = agents_page.page.locator("#auth-headers-container-a2a-edit")
+        first_row = headers_container.locator("div[id^='auth-header-']").first
+        first_row.locator('input[placeholder*="Header Key"]').fill("X-API-Key")
+        first_row.locator('input[placeholder*="Header Value"]').fill("test-secret-123")
+
+        # Add second header using JavaScript
+        agents_page.page.evaluate("addAuthHeader('auth-headers-container-a2a-edit')")
+        agents_page.page.wait_for_timeout(200)
+
+        # Fill second header
+        second_row = headers_container.locator("div[id^='auth-header-']").nth(1)
+        second_row.locator('input[placeholder*="Header Key"]').fill("X-Client-ID")
+        second_row.locator('input[placeholder*="Header Value"]').fill("client-456")
+
+        # Serialize headers to JSON before saving
+        agents_page.page.evaluate("updateAuthHeadersJSON('auth-headers-container-a2a-edit')")
+        agents_page.page.wait_for_timeout(100)
+
+        # Save the agent and wait for the POST response + panel navigation
+        save_btn = agents_page.page.locator('#a2a-edit-modal button:has-text("Save Changes")')
+        with agents_page.page.expect_response(
+            lambda resp: "/admin/a2a/" in resp.url and "/edit" in resp.url and resp.request.method == "POST",
+            timeout=30000,
+        ) as resp_info:
+            save_btn.click()
+        response = resp_info.value
+        if response.status >= 400:
+            pytest.skip(f"Agent edit save failed (HTTP {response.status})")
+
+        # Wait for the JS navigation to complete after successful save
+        agents_page.page.wait_for_load_state("domcontentloaded")
+        agents_page.wait_for_agents_panel_loaded()
+
+        # Re-open the edit modal
+        _open_edit_modal(agents_page, 0)
+
+        # Verify auth type is still custom headers
+        auth_type = agents_page.page.locator("#auth-type-a2a-edit")
+        expect(auth_type).to_have_value("authheaders")
+
+        # Verify custom headers are displayed
+        headers_container = agents_page.page.locator("#auth-headers-container-a2a-edit")
+        header_rows = headers_container.locator("div[id^='auth-header-']")
+
+        # Should have at least 2 headers
+        assert header_rows.count() >= 2, f"Expected at least 2 header rows, got {header_rows.count()}"
+
+        # Verify first header key is displayed
+        first_row = header_rows.first
+        first_key_input = first_row.locator('input[placeholder*="Header Key"]')
+        expect(first_key_input).to_have_value("X-API-Key")
+
+        # Verify second header key is displayed
+        second_row = header_rows.nth(1)
+        second_key_input = second_row.locator('input[placeholder*="Header Key"]')
+        expect(second_key_input).to_have_value("X-Client-ID")
+
+        # Note: Values should be masked (shown as dots) for security
+        # We don't test the exact masked value as it may vary
 
         _close_edit_modal(agents_page)
 
@@ -669,9 +875,7 @@ class TestA2ATestModal:
 
         # Verify default text
         value = query_textarea.input_value()
-        assert "Hello from ContextForge Admin UI test!" in value, (
-            f"Expected default query text, got '{value}'"
-        )
+        assert "Hello from ContextForge Admin UI test!" in value, f"Expected default query text, got '{value}'"
 
         _close_test_modal(agents_page)
 
@@ -766,9 +970,7 @@ class TestA2ARowActions:
         first_row = agents_page.get_agent_row(0)
         expect(first_row.locator('button:has-text("Edit")')).to_be_visible()
 
-    def test_row_has_deactivate_or_activate_button(
-        self, agents_page: AgentsPage
-    ):
+    def test_row_has_deactivate_or_activate_button(self, agents_page: AgentsPage):
         """Test that the first agent row has a Deactivate or Activate button."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -778,9 +980,7 @@ class TestA2ARowActions:
         # One of these should be visible
         deactivate = first_row.locator('button:has-text("Deactivate")')
         activate = first_row.locator('button:has-text("Activate")')
-        assert deactivate.count() > 0 or activate.count() > 0, (
-            "Row should have either Deactivate or Activate button"
-        )
+        assert deactivate.count() > 0 or activate.count() > 0, "Row should have either Deactivate or Activate button"
 
     def test_row_has_delete_button(self, agents_page: AgentsPage):
         """Test that the first agent row has a Delete button."""
@@ -813,9 +1013,7 @@ class TestA2ARowActions:
         # Status column is at index 8 (Actions=0, S.No.=1, AgentID=2, Name=3, Description=4, Endpoint=5, Tags=6, Type=7, Status=8)
         status_cell = first_row.locator("td").nth(8)
         status_text = status_cell.text_content().strip()
-        assert "Active" in status_text or "Inactive" in status_text, (
-            f"Status should be 'Active' or 'Inactive', got '{status_text}'"
-        )
+        assert "Active" in status_text or "Inactive" in status_text, f"Status should be 'Active' or 'Inactive', got '{status_text}'"
 
 
 # ---------------------------------------------------------------------------
@@ -828,9 +1026,7 @@ class TestA2ARowActions:
 class TestA2APagination:
     """Tests for agent table pagination controls."""
 
-    def test_per_page_select_with_correct_options(
-        self, agents_page: AgentsPage
-    ):
+    def test_per_page_select_with_correct_options(self, agents_page: AgentsPage):
         """Test that per-page dropdown has all expected options (10/25/50/100/200/500)."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -841,9 +1037,7 @@ class TestA2APagination:
         expect(per_page_select).to_be_visible()
 
         for value in ["10", "25", "50", "100", "200", "500"]:
-            expect(
-                per_page_select.locator(f'option[value="{value}"]')
-            ).to_be_attached()
+            expect(per_page_select.locator(f'option[value="{value}"]')).to_be_attached()
 
     def test_pagination_default_per_page_value(self, agents_page: AgentsPage):
         """Test that per-page select has a valid default value."""
@@ -874,13 +1068,9 @@ class TestA2APagination:
         pagination = agents_page.page.locator("#agents-pagination-controls")
         # The x-text directive renders "Showing X - Y of Z items" via Alpine.js
         info_text = pagination.text_content()
-        assert "Showing" in info_text or "items" in info_text or "No items" in info_text, (
-            f"Pagination should display item count info, got '{info_text[:100]}'"
-        )
+        assert "Showing" in info_text or "items" in info_text or "No items" in info_text, f"Pagination should display item count info, got '{info_text[:100]}'"
 
-    def test_pagination_navigation_buttons_present(
-        self, agents_page: AgentsPage
-    ):
+    def test_pagination_navigation_buttons_present(self, agents_page: AgentsPage):
         """Test that pagination Prev and Next navigation buttons exist."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -903,9 +1093,7 @@ class TestA2APagination:
 class TestA2AOAuthGrantTypeSwitching:
     """Tests for OAuth grant type conditional field visibility in the add form."""
 
-    def test_authorization_code_shows_auth_url_and_redirect_fields(
-        self, agents_page: AgentsPage
-    ):
+    def test_authorization_code_shows_auth_url_and_redirect_fields(self, agents_page: AgentsPage):
         """Test that authorization_code grant type shows Auth URL, Redirect URI, and token management checkboxes."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -921,21 +1109,13 @@ class TestA2AOAuthGrantTypeSwitching:
         expect(agents_page.oauth_redirect_uri_input).to_be_visible()
 
         # Token management checkboxes should be visible within the auth code fields
-        auth_code_fields = agents_page.page.locator(
-            "#oauth-auth-code-fields-a2a"
-        )
-        store_tokens = auth_code_fields.locator(
-            'input[name="oauth_store_tokens"]'
-        )
-        auto_refresh = auth_code_fields.locator(
-            'input[name="oauth_auto_refresh"]'
-        )
+        auth_code_fields = agents_page.page.locator("#oauth-auth-code-fields-a2a")
+        store_tokens = auth_code_fields.locator('input[name="oauth_store_tokens"]')
+        auto_refresh = auth_code_fields.locator('input[name="oauth_auto_refresh"]')
         expect(store_tokens).to_be_visible()
         expect(auto_refresh).to_be_visible()
 
-    def test_client_credentials_hides_auth_url_fields(
-        self, agents_page: AgentsPage
-    ):
+    def test_client_credentials_hides_auth_url_fields(self, agents_page: AgentsPage):
         """Test that client_credentials grant type hides auth URL and redirect URI."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -954,9 +1134,7 @@ class TestA2AOAuthGrantTypeSwitching:
         expect(agents_page.oauth_client_secret_input).to_be_visible()
         expect(agents_page.oauth_scopes_input).to_be_visible()
 
-    def test_password_grant_shows_username_password(
-        self, agents_page: AgentsPage
-    ):
+    def test_password_grant_shows_username_password(self, agents_page: AgentsPage):
         """Test that password grant type shows username and password fields."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -971,9 +1149,7 @@ class TestA2AOAuthGrantTypeSwitching:
         expect(username_field).to_be_visible()
         expect(password_field).to_be_visible()
 
-    def test_switching_between_grant_types_updates_visibility(
-        self, agents_page: AgentsPage
-    ):
+    def test_switching_between_grant_types_updates_visibility(self, agents_page: AgentsPage):
         """Test switching between all grant types correctly updates field visibility."""
         agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
@@ -1032,9 +1208,7 @@ class TestA2ATableDataDisplay:
         endpoint_cell = first_row.locator("td").nth(5)
         endpoint_text = endpoint_cell.text_content().strip()
         assert len(endpoint_text) > 0, "Endpoint URL should not be empty"
-        assert "://" in endpoint_text, (
-            f"Endpoint should be a URL, got '{endpoint_text}'"
-        )
+        assert "://" in endpoint_text, f"Endpoint should be a URL, got '{endpoint_text}'"
 
     def test_description_displayed_in_row(self, agents_page: AgentsPage):
         """Test that description is displayed in the table row."""

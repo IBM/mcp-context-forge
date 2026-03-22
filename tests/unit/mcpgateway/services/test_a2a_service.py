@@ -348,6 +348,57 @@ class TestA2AAgentService:
 
         assert sample_db_agent.oauth_config["client_secret"] == existing_secret
 
+    async def test_update_agent_masked_auth_headers_preserves_existing_values(self, service, mock_db, sample_db_agent):
+        """Masked auth_headers placeholders preserve existing encrypted header values (issue #3637)."""
+        sample_db_agent.version = 1
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "real-secret-123", "X-Client-ID": "real-client-456"})
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                # Simulate what the UI sends: masked values for unchanged headers
+                update_data = A2AAgentUpdate(
+                    auth_type="authheaders",
+                    auth_headers=[
+                        {"key": "X-API-Key", "value": settings.masked_auth_value},
+                        {"key": "X-Client-ID", "value": settings.masked_auth_value},
+                    ],
+                )
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        from mcpgateway.utils.services_auth import decode_auth
+
+        persisted = decode_auth(sample_db_agent.auth_value)
+        assert persisted["X-API-Key"] == "real-secret-123", "Masked placeholder must not overwrite real credential"
+        assert persisted["X-Client-ID"] == "real-client-456", "Masked placeholder must not overwrite real credential"
+
+    async def test_update_agent_mixed_masked_and_new_auth_headers(self, service, mock_db, sample_db_agent):
+        """When some headers are masked and one is changed, only the changed header is updated."""
+        sample_db_agent.version = 1
+        sample_db_agent.auth_type = "authheaders"
+        sample_db_agent.auth_value = encode_auth({"X-API-Key": "original-secret", "X-Client-ID": "original-client"})
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(
+                    auth_type="authheaders",
+                    auth_headers=[
+                        {"key": "X-API-Key", "value": settings.masked_auth_value},  # unchanged
+                        {"key": "X-Client-ID", "value": "new-client-value"},  # user changed this
+                    ],
+                )
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+        from mcpgateway.utils.services_auth import decode_auth
+
+        persisted = decode_auth(sample_db_agent.auth_value)
+        assert persisted["X-API-Key"] == "original-secret", "Unchanged masked header must be preserved"
+        assert persisted["X-Client-ID"] == "new-client-value", "Changed header must be updated"
+
     async def test_update_agent_not_found(self, service, mock_db):
         """Test updating non-existent agent."""
         # Mock get_for_update to return None (agent not found)
@@ -2589,4 +2640,38 @@ class TestAggregateMetricsEdgeCases:
         assert result.total_agents == 3
         assert result.active_agents == 2
         assert result.total_interactions == 10
+        mock_cache.set.assert_called_once()
+
+    async def test_cache_non_dict_falls_through(self, service, mock_db, monkeypatch):
+        """Non-dict cached value (e.g. list from leaked mock) is ignored and metrics are recomputed."""
+        # First-Party
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
+        mock_metrics = AggregatedMetrics(
+            total_executions=7,
+            successful_executions=6,
+            failed_executions=1,
+            failure_rate=round(1 / 7, 4),
+            min_response_time=0.2,
+            max_response_time=1.5,
+            avg_response_time=0.8,
+            last_execution_time=None,
+            raw_count=7,
+            rollup_count=0,
+        )
+
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = [1, 2, 3]  # Non-dict: should be skipped
+        mock_cache.set = MagicMock()
+
+        monkeypatch.setattr("mcpgateway.cache.metrics_cache.is_cache_enabled", lambda: True)
+        monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", mock_cache)
+        monkeypatch.setattr("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", lambda db, t: mock_metrics)
+        monkeypatch.setattr("mcpgateway.cache.a2a_stats_cache.a2a_stats_cache.get_counts", lambda db: {"total": 4, "active": 3})
+
+        result = await service.aggregate_metrics(mock_db)
+        assert isinstance(result, A2AAgentAggregateMetrics)
+        assert result.total_agents == 4
+        assert result.total_interactions == 7
         mock_cache.set.assert_called_once()

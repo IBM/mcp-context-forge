@@ -91,12 +91,17 @@ except ImportError:
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+class ChatProcessingError(RuntimeError):
+    """Recoverable error wrapping tool, parsing, or model failures during chat streaming."""
 
 
 class MCPServerConfig(BaseModel):
@@ -1581,14 +1586,19 @@ class GatewayProvider:
                 if not _BEDROCK_AVAILABLE:
                     raise ImportError("AWS Bedrock provider requires langchain-aws. Install with: pip install langchain-aws boto3")
 
-                region_name = config.get("region_name", "us-east-1")
+                # Map DB schema keys to boto3 kwargs.
+                # DB stores: region, access_key_id, secret_access_key, session_token, profile_name
+                # (see llm_provider_configs.AWSBedrockConfig)
+                region_name = config.get("region", "us-east-1")
                 credentials_kwargs = {}
-                if config.get("aws_access_key_id"):
-                    credentials_kwargs["aws_access_key_id"] = config["aws_access_key_id"]
-                if config.get("aws_secret_access_key"):
-                    credentials_kwargs["aws_secret_access_key"] = config["aws_secret_access_key"]
-                if config.get("aws_session_token"):
-                    credentials_kwargs["aws_session_token"] = config["aws_session_token"]
+                if config.get("access_key_id"):
+                    credentials_kwargs["aws_access_key_id"] = config["access_key_id"]
+                if config.get("secret_access_key"):
+                    credentials_kwargs["aws_secret_access_key"] = config["secret_access_key"]
+                if config.get("session_token"):
+                    credentials_kwargs["aws_session_token"] = config["session_token"]
+                if config.get("profile_name"):
+                    credentials_kwargs["credentials_profile_name"] = config["profile_name"]
 
                 model_kwargs = {
                     "temperature": temperature,
@@ -1902,10 +1912,10 @@ class ChatHistoryManager:
                     return []
                 return orjson.loads(data)
             except orjson.JSONDecodeError:
-                logger.warning(f"Failed to decode chat history for user {user_id}")
+                logger.warning(f"Failed to decode chat history for user {SecurityValidator.sanitize_log_message(user_id)}")
                 return []
             except Exception as e:
-                logger.error(f"Error retrieving chat history from Redis for user {user_id}: {e}")
+                logger.error(f"Error retrieving chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
                 return []
         else:
             return self._memory_store.get(user_id, [])
@@ -1937,7 +1947,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.set(self._history_key(user_id), orjson.dumps(trimmed), ex=self.ttl)
             except Exception as e:
-                logger.error(f"Error saving chat history to Redis for user {user_id}: {e}")
+                logger.error(f"Error saving chat history to Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
         else:
             self._memory_store[user_id] = trimmed
 
@@ -1987,7 +1997,7 @@ class ChatHistoryManager:
             try:
                 await self.redis_client.delete(self._history_key(user_id))
             except Exception as e:
-                logger.error(f"Error clearing chat history from Redis for user {user_id}: {e}")
+                logger.error(f"Error clearing chat history from Redis for user {SecurityValidator.sanitize_log_message(user_id)}: {e}")
         else:
             self._memory_store.pop(user_id, None)
 
@@ -2631,6 +2641,9 @@ class MCPChatService:
         Raises:
             RuntimeError: If service not initialized.
             ValueError: If message is empty or whitespace only.
+            ConnectionError: If the underlying MCP connection is lost.
+            TimeoutError: If the LLM request times out.
+            ChatProcessingError: If a tool, parsing, or model error occurs during streaming.
 
         Examples:
             >>> import asyncio
@@ -2892,9 +2905,12 @@ class MCPChatService:
                 await self.history_manager.append_message(self.user_id, "user", message)
                 await self.history_manager.append_message(self.user_id, "assistant", full_response)
 
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"Error in chat_events: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error in chat_events: {e}")
-            raise RuntimeError(f"Chat processing error: {e}") from e
+            raise ChatProcessingError(f"Chat processing error: {e}") from e
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
         """

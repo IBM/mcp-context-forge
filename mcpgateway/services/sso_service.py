@@ -32,6 +32,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_now
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -865,14 +866,25 @@ class SSOService:
     def _is_email_verified_claim(user_info: Dict[str, Any]) -> bool:
         """Evaluate email verification claim when provided by the IdP.
 
+        When the ``email_verified`` claim is **absent** from ``user_info`` (e.g.
+        Microsoft Entra ID and GitHub do not include it for work / school
+        accounts) the function returns ``True`` so that those providers are not
+        incorrectly blocked.  The check is only enforced when the IdP
+        *explicitly* supplies the claim — a ``False``/``0``/``"false"`` value
+        means the provider has flagged the address as unverified and the user
+        should be rejected.
+
         Args:
             user_info: Normalized user-info payload from provider.
 
         Returns:
-            ``True`` only when email verification claim is explicitly verified.
+            ``True`` when the claim is absent (provider does not restrict) or
+            when it is explicitly set to a truthy value; ``False`` only when the
+            provider explicitly indicates the address is *not* verified.
         """
         if "email_verified" not in user_info:
-            return False
+            # Claim not provided by IdP — treat as no restriction (pass through).
+            return True
 
         claim_value = user_info.get("email_verified")
         if isinstance(claim_value, bool):
@@ -1296,39 +1308,45 @@ class SSOService:
 
         # Handle Google provider
         if provider.id == "google":
-            return {
+            google_normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
                 "username": user_data.get("email", "").split("@")[0],
                 "provider": "google",
             }
+            if "email_verified" in user_data:
+                google_normalized["email_verified"] = user_data["email_verified"]
+            return google_normalized
 
         # Handle IBM Verify provider
         if provider.id == "ibm_verify":
-            return {
+            ibm_normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
                 "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
                 "provider": "ibm_verify",
             }
+            if "email_verified" in user_data:
+                ibm_normalized["email_verified"] = user_data["email_verified"]
+            return ibm_normalized
 
         # Handle Okta provider
         if provider.id == "okta":
-            return {
+            okta_normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
                 "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
                 "provider": "okta",
             }
+            if "email_verified" in user_data:
+                okta_normalized["email_verified"] = user_data["email_verified"]
+            return okta_normalized
 
         # Handle Keycloak provider with role mapping
         if provider.id == "keycloak":
@@ -1359,9 +1377,8 @@ class SSOService:
                 if isinstance(custom_groups, list):
                     groups.extend(custom_groups)
 
-            return {
+            keycloak_normalized: Dict[str, Any] = {
                 "email": user_data.get(email_claim),
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name"),
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub"),
@@ -1369,6 +1386,9 @@ class SSOService:
                 "provider": "keycloak",
                 "groups": list(set(groups)),  # Deduplicate
             }
+            if "email_verified" in user_data:
+                keycloak_normalized["email_verified"] = user_data["email_verified"]
+            return keycloak_normalized
 
         # Handle Microsoft Entra ID provider with role mapping
         if provider.id == "entra":
@@ -1401,9 +1421,13 @@ class SSOService:
                 if isinstance(roles_value, list):
                     groups.extend(roles_value)
 
-            return {
+            # Microsoft Entra ID work/school accounts do not include an
+            # ``email_verified`` claim in their userinfo/ID-token response.
+            # Only propagate the claim when it is explicitly present so that
+            # ``_is_email_verified_claim`` can apply its absent-means-pass-through
+            # logic and not block legitimate Entra logins.
+            entra_normalized: Dict[str, Any] = {
                 "email": email,
-                "email_verified": user_data.get("email_verified"),
                 "full_name": user_data.get("name") or email,  # Fallback to email if name missing
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub") or user_data.get("oid"),
@@ -1411,17 +1435,26 @@ class SSOService:
                 "provider": "entra",
                 "groups": list(set(groups)),  # Deduplicate
             }
+            if "email_verified" in user_data:
+                entra_normalized["email_verified"] = user_data["email_verified"]
+            return entra_normalized
 
-        # Generic OIDC format for all other providers
-        return {
+        # Generic OIDC format for all other providers.
+        # Only propagate email_verified when the IdP explicitly includes it so that
+        # _is_email_verified_claim's absent-means-pass-through logic applies correctly.
+        # Injecting None (via .get()) when the key is missing would cause the key to
+        # be present in the dict with a falsy value, silently blocking login.
+        generic_normalized: Dict[str, Any] = {
             "email": user_data.get("email"),
-            "email_verified": user_data.get("email_verified"),
             "full_name": user_data.get("name"),
             "avatar_url": user_data.get("picture"),
             "provider_id": user_data.get("sub"),
             "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
             "provider": provider.id,
         }
+        if "email_verified" in user_data:
+            generic_normalized["email_verified"] = user_data["email_verified"]
+        return generic_normalized
 
     async def authenticate_or_create_user(self, user_info: Dict[str, Any]) -> Optional[str]:
         """Authenticate existing user or create new user from SSO info.
@@ -1522,7 +1555,7 @@ class SSOService:
                 if should_be_admin:
                     # Grant admin access
                     if not current_is_admin:
-                        logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
+                        logger.info(f"Upgrading is_admin to True for {SecurityValidator.sanitize_log_message(email)} based on SSO admin groups")
                         user.is_admin = True
                         # Track that admin was granted via SSO (only set on initial grant)
                         user.admin_origin = "sso"
@@ -1530,7 +1563,7 @@ class SSOService:
                     # Do NOT change admin_origin if already admin - preserve manual/API grants
                 elif current_is_admin and current_admin_origin == "sso":
                     # User was SSO admin but no longer in admin groups - revoke access
-                    logger.info(f"Revoking is_admin for {email} - removed from SSO admin groups")
+                    logger.info(f"Revoking is_admin for {SecurityValidator.sanitize_log_message(email)} - removed from SSO admin groups")
                     user.is_admin = False
                     user.admin_origin = None
                     current_is_admin = False
@@ -1589,7 +1622,7 @@ class SSOService:
                             pending.rejection_reason = None
                             pending.admin_notes = None
                             self.db.commit()
-                            logger.info(f"Refreshed expired pending approval request for SSO user: {email}")
+                            logger.info(f"Refreshed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
                             return None
                         return None  # Still waiting for approval
                     if pending.status == "rejected":
@@ -1610,12 +1643,12 @@ class SSOService:
                         pending.rejection_reason = None
                         pending.admin_notes = None
                         self.db.commit()
-                        logger.info(f"Renewed expired pending approval request for SSO user: {email}")
+                        logger.info(f"Renewed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
                         return None
                     elif pending.status in {"completed"}:
                         return None
                     elif pending.status != "approved":
-                        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {email}. Denying by default.")
+                        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {SecurityValidator.sanitize_log_message(email)}. Denying by default.")
                         return None
                 else:
                     # Create pending approval request
@@ -1628,7 +1661,7 @@ class SSOService:
                     )
                     self.db.add(pending)
                     self.db.commit()
-                    logger.info(f"Created pending approval request for SSO user: {email}")
+                    logger.info(f"Created pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
                     return None  # No token until approved
 
             # Create new user (either no approval required, or approval already granted)
@@ -1805,9 +1838,9 @@ class SSOService:
                 personal_team = await PersonalTeamService(self.db).get_personal_team(user_email)
                 personal_team_id = personal_team.id if personal_team else None
                 if not personal_team_id:
-                    logger.warning(f"Could not resolve personal team for {user_email}; skipping team-scoped SSO role mapping")
+                    logger.warning(f"Could not resolve personal team for {SecurityValidator.sanitize_log_message(user_email)}; skipping team-scoped SSO role mapping")
             except Exception as e:
-                logger.error(f"Failed to resolve personal team for {user_email}: {e}. All team-scoped SSO role assignments will be skipped for this login.")
+                logger.error(f"Failed to resolve personal team for {SecurityValidator.sanitize_log_message(user_email)}: {e}. All team-scoped SSO role assignments will be skipped for this login.")
                 personal_team_id = None
 
             return personal_team_id
@@ -1818,7 +1851,7 @@ class SSOService:
             for group in user_groups:
                 if group.lower() in admin_groups_lower:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {user_email}")
+                    logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
                     break  # Only need one admin assignment
 
         # Batch role lookups: collect all role names that need to be looked up
@@ -1851,7 +1884,7 @@ class SSOService:
                 # Special case for "admin" shorthand or configured admin role name
                 if role_name in ["admin", settings.default_admin_role]:
                     role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped group to {settings.default_admin_role} role for {user_email}")
+                    logger.debug(f"Mapped group to {settings.default_admin_role} role for {SecurityValidator.sanitize_log_message(user_email)}")
                     continue
 
                 # Use pre-fetched role from cache
@@ -1863,7 +1896,7 @@ class SSOService:
                     # Avoid duplicate assignments
                     if not any(r["role_name"] == role.name and r["scope"] == role.scope and r.get("scope_id") == scope_id for r in role_assignments):
                         role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": scope_id})
-                        logger.debug(f"Mapped group to role '{role.name}' for {user_email}")
+                        logger.debug(f"Mapped group to role '{role.name}' for {SecurityValidator.sanitize_log_message(user_email)}")
                 else:
                     logger.warning(f"Role '{role_name}' not found for group mapping")
 
@@ -1875,7 +1908,7 @@ class SSOService:
                 if default_role.scope == "team" and resolve_team_scope_to_personal_team and not scope_id:
                     return role_assignments
                 role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": scope_id})
-                logger.info(f"Assigned default role '{default_role.name}' to {user_email}")
+                logger.info(f"Assigned default role '{default_role.name}' to {SecurityValidator.sanitize_log_message(user_email)}")
 
         return role_assignments
 
@@ -1905,7 +1938,7 @@ class SSOService:
             role_tuple = (user_role.role.name, user_role.scope, user_role.scope_id)
             if role_tuple not in desired_roles:
                 await role_service.revoke_role_from_user(user_email=user_email, role_id=user_role.role_id, scope=user_role.scope, scope_id=user_role.scope_id)
-                logger.info(f"Revoked SSO role '{user_role.role.name}' from {user_email} (no longer in groups)")
+                logger.info(f"Revoked SSO role '{user_role.role.name}' from {SecurityValidator.sanitize_log_message(user_email)} (no longer in groups)")
 
         # Assign new roles
         for assignment in role_assignments:
@@ -1913,7 +1946,7 @@ class SSOService:
                 # Get role by name
                 role = await role_service.get_role_by_name(assignment["role_name"], scope=assignment["scope"])
                 if not role:
-                    logger.warning(f"Role '{assignment['role_name']}' not found, skipping assignment for {user_email}")
+                    logger.warning(f"Role '{assignment['role_name']}' not found, skipping assignment for {SecurityValidator.sanitize_log_message(user_email)}")
                     continue
 
                 # Check if assignment already exists
@@ -1924,12 +1957,14 @@ class SSOService:
                     await role_service.assign_role_to_user(
                         user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by=user_email, grant_source="sso"
                     )
-                    logger.info(f"Assigned SSO role '{role.name}' to {user_email}")
+                    logger.info(f"Assigned SSO role '{role.name}' to {SecurityValidator.sanitize_log_message(user_email)}")
 
             except Exception as e:
-                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {user_email}: {e}", exc_info=True)
+                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {SecurityValidator.sanitize_log_message(user_email)}: {e}", exc_info=True)
                 try:
                     self.db.rollback()
                 except Exception as rollback_error:
-                    logger.error(f"Database rollback failed after role assignment error for {user_email}: {rollback_error}. Aborting remaining role assignments.")
+                    logger.error(
+                        f"Database rollback failed after role assignment error for {SecurityValidator.sanitize_log_message(user_email)}: {rollback_error}. Aborting remaining role assignments."
+                    )
                     break

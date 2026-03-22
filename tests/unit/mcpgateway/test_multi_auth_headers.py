@@ -330,8 +330,6 @@ class TestMultiAuthHeaders:
         monkeypatch.setattr(service, "_update_or_create_prompts", MagicMock(return_value=[]))
         monkeypatch.setattr(service, "_notify_gateway_updated", AsyncMock())
 
-        monkeypatch.setattr(service, "_prepare_gateway_for_read", lambda value: value)
-
         # Mock model_validate to return a mock that returns itself when masked() is called
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read

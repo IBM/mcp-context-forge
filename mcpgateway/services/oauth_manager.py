@@ -27,6 +27,7 @@ import orjson
 from requests_oauthlib import OAuth2Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import get_settings
 from mcpgateway.services.encryption_service import decrypt_oauth_config_for_runtime, get_encryption_service
 from mcpgateway.services.http_client_service import get_http_client
@@ -519,7 +520,7 @@ class OAuthManager:
         # Generate authorization URL with PKCE
         auth_url = self._create_authorization_url_with_pkce(credentials, state, pkce_params["code_challenge"], pkce_params["code_challenge_method"])
 
-        logger.info(f"Generated authorization URL with PKCE for gateway {gateway_id}")
+        logger.info(f"Generated authorization URL with PKCE for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
@@ -546,14 +547,23 @@ class OAuthManager:
         code_verifier = state_data.get("code_verifier")
         app_user_email = state_data.get("app_user_email")
 
-        # Backward compatibility for in-flight legacy states that embedded user context.
+        # Defence-in-depth: if app_user_email is absent from server-side
+        # state (e.g. state stored by an older code path), attempt a
+        # gateway-mismatch check via the legacy state parser but NEVER
+        # extract identity fields from unsigned payloads (CWE-345).
+        # Note: the /oauth/callback router rejects pure legacy states
+        # before reaching here (allow_legacy_fallback=False), so this
+        # block only fires for server-stored states that lack the email.
         if not app_user_email:
             legacy_state_payload = self._extract_legacy_state_payload(state)
             if legacy_state_payload:
                 legacy_gateway_id = legacy_state_payload.get("gateway_id")
                 if legacy_gateway_id and legacy_gateway_id != gateway_id:
                     raise OAuthError("State parameter gateway mismatch")
-                app_user_email = legacy_state_payload.get("app_user_email")
+            if self.token_storage:
+                logger.error("User context (app_user_email) missing from OAuth state; refusing to bind tokens (CWE-287). gateway_id=%s", gateway_id)
+                raise OAuthError("User context required for OAuth token storage")
+            logger.warning("User context (app_user_email) missing from OAuth state; no token_storage configured — proceeding without binding. gateway_id=%s", gateway_id)
 
         # Exchange code for tokens with PKCE code_verifier
         token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
@@ -563,9 +573,6 @@ class OAuthManager:
 
         # Store tokens if storage service is available
         if self.token_storage:
-            if not app_user_email:
-                raise OAuthError("User context required for OAuth token storage")
-
             token_record = await self.token_storage.store_tokens(
                 gateway_id=gateway_id,
                 user_id=user_id,
@@ -615,12 +622,19 @@ class OAuthManager:
         - base64url(payload || signature) where payload is JSON
         - gateway_id_random suffix format
 
+        Security: Legacy payloads lack signature verification, so only
+        ``gateway_id`` is returned — never identity-sensitive fields like
+        ``app_user_email`` which could be forged (CWE-345).
+
         Args:
             state: Callback state token to decode.
 
         Returns:
-            Decoded legacy payload when format is recognized; otherwise ``None``.
+            Dict containing only ``gateway_id`` when format is recognized;
+            otherwise ``None``.
         """
+        safe_legacy_fields = {"gateway_id"}
+
         try:
             state_raw = base64.urlsafe_b64decode(state.encode())
             if len(state_raw) <= 32:
@@ -629,7 +643,10 @@ class OAuthManager:
             payload_bytes = state_raw[:-32]
             payload = orjson.loads(payload_bytes)
             if isinstance(payload, dict):
-                return payload
+                # Only return gateway_id — unsigned payloads must not
+                # carry identity claims.
+                safe = {k: v for k, v in payload.items() if k in safe_legacy_fields}
+                return safe if safe else None
         except Exception:
             # Fall back to legacy gateway_id_random format
             if "_" in state:
@@ -733,7 +750,7 @@ class OAuthManager:
                     # Store in Redis with TTL
                     await redis.setex(state_key, STATE_TTL_SECONDS, orjson.dumps(state_data))
                     await redis.setex(lookup_key, STATE_TTL_SECONDS, gateway_id)
-                    logger.debug(f"Stored OAuth state in Redis for gateway {gateway_id}")
+                    logger.debug(f"Stored OAuth state in Redis for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                     return
                 except Exception as e:
                     logger.warning(f"Failed to store state in Redis: {e}, falling back")
@@ -764,7 +781,7 @@ class OAuthManager:
                     oauth_state = OAuthState(**oauth_state_kwargs)
                     db.add(oauth_state)
                     db.commit()
-                    logger.debug(f"Stored OAuth state in database for gateway {gateway_id}")
+                    logger.debug(f"Stored OAuth state in database for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                     return
                 finally:
                     db_gen.close()
@@ -795,7 +812,7 @@ class OAuthManager:
             # Store the new state with expiration
             _oauth_states[state_key] = state_data
             _oauth_state_lookup[state] = gateway_id
-            logger.debug(f"Stored OAuth state in memory for gateway {gateway_id}")
+            logger.debug(f"Stored OAuth state in memory for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
 
     async def _validate_authorization_state(self, gateway_id: str, state: str) -> bool:
         """Validate authorization state parameter and mark as used.
@@ -820,7 +837,7 @@ class OAuthManager:
                     state_json = await redis.getdel(state_key)
                     await redis.delete(lookup_key)
                     if not state_json:
-                        logger.warning(f"State not found in Redis for gateway {gateway_id}")
+                        logger.warning(f"State not found in Redis for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                         return False
 
                     state_data = orjson.loads(state_json)
@@ -839,15 +856,15 @@ class OAuthManager:
 
                     # Check if state has expired
                     if expires_at < datetime.now(timezone.utc):
-                        logger.warning(f"State has expired for gateway {gateway_id}")
+                        logger.warning(f"State has expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                         return False
 
                     # Check if state was already used (should not happen with getdel)
                     if state_data.get("used", False):
-                        logger.warning(f"State was already used for gateway {gateway_id} - possible replay attack")
+                        logger.warning(f"State was already used for gateway {SecurityValidator.sanitize_log_message(gateway_id)} - possible replay attack")
                         return False
 
-                    logger.debug(f"Successfully validated OAuth state from Redis for gateway {gateway_id}")
+                    logger.debug(f"Successfully validated OAuth state from Redis for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                     return True
                 except Exception as e:
                     logger.warning(f"Failed to validate state in Redis: {e}, falling back")
@@ -865,7 +882,7 @@ class OAuthManager:
                     oauth_state = db.query(OAuthState).filter(OAuthState.gateway_id == gateway_id, OAuthState.state == state).first()
 
                     if not oauth_state:
-                        logger.warning(f"State not found in database for gateway {gateway_id}")
+                        logger.warning(f"State not found in database for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                         return False
 
                     # Check if state has expired
@@ -875,20 +892,20 @@ class OAuthManager:
                         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
                     if expires_at < datetime.now(timezone.utc):
-                        logger.warning(f"State has expired for gateway {gateway_id}")
+                        logger.warning(f"State has expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                         db.delete(oauth_state)
                         db.commit()
                         return False
 
                     # Check if state was already used
                     if oauth_state.used:
-                        logger.warning(f"State has already been used for gateway {gateway_id} - possible replay attack")
+                        logger.warning(f"State has already been used for gateway {SecurityValidator.sanitize_log_message(gateway_id)} - possible replay attack")
                         return False
 
                     # Mark as used and delete (single-use)
                     db.delete(oauth_state)
                     db.commit()
-                    logger.debug(f"Successfully validated OAuth state from database for gateway {gateway_id}")
+                    logger.debug(f"Successfully validated OAuth state from database for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                     return True
                 finally:
                     db_gen.close()
@@ -902,7 +919,7 @@ class OAuthManager:
 
             # Check if state exists
             if not state_data:
-                logger.warning(f"State not found in memory for gateway {gateway_id}")
+                logger.warning(f"State not found in memory for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                 return False
 
             # Parse and normalize expires_at to timezone-aware datetime
@@ -911,20 +928,20 @@ class OAuthManager:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
 
             if expires_at < datetime.now(timezone.utc):
-                logger.warning(f"State has expired for gateway {gateway_id}")
+                logger.warning(f"State has expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
                 del _oauth_states[state_key]  # Clean up expired state
                 _oauth_state_lookup.pop(state, None)
                 return False
 
             # Check if state has already been used (prevent replay)
             if state_data.get("used", False):
-                logger.warning(f"State has already been used for gateway {gateway_id} - possible replay attack")
+                logger.warning(f"State has already been used for gateway {SecurityValidator.sanitize_log_message(gateway_id)} - possible replay attack")
                 return False
 
             # Mark state as used and remove it (single-use)
             del _oauth_states[state_key]
             _oauth_state_lookup.pop(state, None)
-            logger.debug(f"Successfully validated OAuth state from memory for gateway {gateway_id}")
+            logger.debug(f"Successfully validated OAuth state from memory for gateway {SecurityValidator.sanitize_log_message(gateway_id)}")
             return True
 
     async def _validate_and_retrieve_state(self, gateway_id: str, state: str) -> Optional[Dict[str, Any]]:

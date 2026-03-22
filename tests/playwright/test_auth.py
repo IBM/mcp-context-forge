@@ -20,7 +20,7 @@ import pytest
 from mcpgateway.config import Settings
 
 # Local
-from .conftest import ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, BASE_URL, _attempt_admin_login_with_password, _candidate_admin_passwords
+from .conftest import _attempt_admin_login_with_password, _candidate_admin_passwords, ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, BASE_URL
 from .pages.admin_page import AdminPage
 from .pages.login_page import LoginPage
 
@@ -185,3 +185,38 @@ class TestAuthentication:
             pytest.fail("Login succeeded but JWT token cookie was not set. Authentication may be incomplete.")
 
         assert jwt_cookie["httpOnly"] is True, "JWT cookie should be httpOnly for security"
+
+    def test_logged_in_user_redirected_from_login_page(self, context):
+        """Test that already logged-in users are redirected to dashboard when accessing login page.
+
+        This test verifies the fix for the issue where logged-in users could still
+        access the login page instead of being redirected to the dashboard.
+        """
+        page = context.new_page()
+
+        # First, log in successfully
+        page.goto("/admin")
+        if re.search(r"/admin/login", page.url):
+            if not self._login(page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0], allow_password_change=True):
+                pytest.skip("Admin credentials invalid. Set PLATFORM_ADMIN_PASSWORD/PLATFORM_ADMIN_NEW_PASSWORD to match the running gateway.")
+
+        # Verify we're logged in and on the admin page
+        expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+
+        # Verify JWT cookie is set (user is authenticated)
+        cookies = page.context.cookies()
+        jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
+        if not jwt_cookie:
+            pytest.skip("JWT cookie not set after login. Cannot test redirect behavior.")
+
+        # Now try to access the login page while already logged in
+        page.goto("/admin/login")
+
+        # Verify that we were redirected to the admin dashboard, not the login page
+        expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+        login_page = LoginPage(page, BASE_URL)
+        assert not login_page.is_on_login_page(), "Should have been redirected away from login page"
+
+        # Verify we can see admin interface elements instead
+        admin_ui = AdminPage(page, BASE_URL)
+        expect(admin_ui.servers_tab).to_be_visible()

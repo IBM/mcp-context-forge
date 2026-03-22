@@ -464,6 +464,41 @@ class TestEmailAuthServiceUserManagement:
                 # Verify password was hashed (async version is called via asyncio.to_thread)
                 mock_password_service.hash_password_async.assert_called_once_with("SecurePass123")
 
+    @pytest.mark.asyncio
+    async def test_create_user_hashes_password_before_first_db_lookup(self, service, mock_db):
+        """Password hashing happens before the first DB lookup to avoid idle transactions."""
+        call_order = []
+
+        async def _hash_password(password):
+            call_order.append("hash")
+            return "hashed-password"
+
+        async def _get_user_by_email(_email):
+            call_order.append("lookup")
+            return None
+
+        service.password_service.hash_password_async = AsyncMock(side_effect=_hash_password)
+        service.get_user_by_email = AsyncMock(side_effect=_get_user_by_email)
+
+        mock_role_svc = MagicMock()
+        mock_role_svc.get_role_by_name = AsyncMock(return_value=None)
+        mock_role_svc.assign_role_to_user = AsyncMock()
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.auto_create_personal_teams = False
+                mock_settings.password_min_length = 8
+                mock_settings.password_require_uppercase = False
+                mock_settings.password_require_lowercase = False
+                mock_settings.password_require_numbers = False
+                mock_settings.password_require_special = False
+
+                await service.create_user(email="ordered@example.com", password="SecurePass123")
+
+        assert call_order[:2] == ["hash", "lookup"]
+        assert isinstance(mock_db.add.call_args_list[0][0][0], EmailUser)
+        assert mock_db.commit.call_count >= 1
+
     @pytest.mark.skip(reason="PersonalTeamService import happens inside method, complex to mock")
     @pytest.mark.asyncio
     async def test_create_user_with_personal_team(self, service, mock_db, mock_password_service):
@@ -2467,11 +2502,13 @@ class TestEmailAuthServiceUserDeletion:
         mock_result.scalars.return_value.all.return_value = []  # No teams owned
         mock_db.execute.return_value = mock_result
 
-        def _raise_after_close(coro):
-            coro.close()
-            raise Exception("task-failure")
+        from mcpgateway.cache.auth_cache import auth_cache
 
-        with patch("asyncio.create_task", side_effect=_raise_after_close):
+        with (
+            patch.object(auth_cache, "invalidate_user", new=AsyncMock(side_effect=RuntimeError("cache-down"))),
+            patch.object(auth_cache, "invalidate_user_teams", new=AsyncMock(return_value=None)),
+            patch.object(auth_cache, "invalidate_team_membership", new=AsyncMock(return_value=None)),
+        ):
             result = await service.delete_user("test@example.com")
 
         assert result is True

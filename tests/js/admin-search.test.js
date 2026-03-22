@@ -2,7 +2,15 @@
  * Unit tests for unified admin search (panel search + global search).
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import {
+    describe,
+    test,
+    expect,
+    beforeAll,
+    beforeEach,
+    afterAll,
+    vi,
+} from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
@@ -66,24 +74,25 @@ describe("clearSearch", () => {
         expect(win.performTokenSearch).toHaveBeenCalledWith("");
     });
 
-    test("calls legacy filter function to immediately clear rows for panel entities", () => {
-        // clearSearch invokes the entity-specific filter as a fallback to keep
-        // rows visible even when the HTMX reload is delayed or missed.
-        const original = win.filterToolsTable;
-        win.filterToolsTable = vi.fn();
-
+    test("clears search input and triggers server-side reload for panel entities", () => {
+        // clearSearch clears the search input and triggers loadSearchablePanel
+        // to fetch filtered results from the server (fixes #3128)
         const searchInput = doc.createElement("input");
         searchInput.id = "tools-search-input";
+        searchInput.value = "test query";
         doc.body.appendChild(searchInput);
 
-        const table = doc.createElement("div");
-        table.id = "tools-table";
-        doc.body.appendChild(table);
+        const tagInput = doc.createElement("input");
+        tagInput.id = "tools-tag-filter";
+        tagInput.value = "tag1";
+        doc.body.appendChild(tagInput);
 
         f()("tools");
 
-        expect(win.filterToolsTable).toHaveBeenCalledWith("");
-        win.filterToolsTable = original;
+        // Verify inputs are cleared
+        expect(searchInput.value).toBe("");
+        expect(tagInput.value).toBe("");
+        // Note: loadSearchablePanel is called but we don't test HTMX behavior here
     });
 });
 
@@ -345,5 +354,121 @@ describe("filterServerTable", () => {
 describe("filterToolsTable", () => {
     test("is exposed on window", () => {
         expect(typeof win.filterToolsTable).toBe("function");
+    });
+});
+
+describe("team member modal split search regressions", () => {
+    function userItemHtml(
+        email,
+        { checked = false, role = "member", autoCheck = false } = {},
+    ) {
+        const autoCheckAttr = autoCheck ? ' data-auto-check="true"' : "";
+        const checkedAttr = checked ? " checked" : "";
+        return `
+            <div class="user-item" data-user-email="${email}">
+                <input type="checkbox" name="associatedUsers" value="${email}"${autoCheckAttr}${checkedAttr} />
+                <select class="role-select" name="role_${encodeURIComponent(email)}">
+                    <option value="member"${role === "member" ? " selected" : ""}>Member</option>
+                    <option value="owner"${role === "owner" ? " selected" : ""}>Owner</option>
+                </select>
+            </div>
+        `;
+    }
+
+    test("serverSideNonMemberSearch enforces 2-char minimum without fetch", async () => {
+        const teamId = "team-short-search";
+        const container = doc.createElement("div");
+        container.id = `team-non-members-container-${teamId}`;
+        doc.body.appendChild(container);
+
+        const originalFetchWithAuth = win.fetchWithAuth;
+        win.fetchWithAuth = vi.fn();
+
+        await win.serverSideNonMemberSearch(teamId, "a");
+
+        expect(win.fetchWithAuth).not.toHaveBeenCalled();
+        expect(container.textContent.toLowerCase()).toContain(
+            "at least 2 characters",
+        );
+        win.fetchWithAuth = originalFetchWithAuth;
+    });
+
+    test("serverSideNonMemberSearch preserves selected users across different search results", async () => {
+        const teamId = "team-nonmember-cache";
+        const container = doc.createElement("div");
+        container.id = `team-non-members-container-${teamId}`;
+        container.innerHTML = userItemHtml("alice@example.com", {
+            checked: true,
+            role: "owner",
+        });
+        doc.body.appendChild(container);
+
+        const originalFetchWithAuth = win.fetchWithAuth;
+        win.fetchWithAuth = vi.fn().mockResolvedValue({
+            ok: true,
+            text: async () =>
+                userItemHtml("bob@example.com", {
+                    checked: false,
+                    role: "member",
+                }),
+        });
+
+        await win.serverSideNonMemberSearch(teamId, "bo");
+
+        expect(win.fetchWithAuth).toHaveBeenCalledTimes(1);
+        expect(
+            Array.from(
+                container.querySelectorAll('input[name="associatedUsers"]'),
+            ).some(
+                (input) => input.value === "alice@example.com" && input.checked,
+            ),
+        ).toBe(true);
+        const aliceRoleInput = Array.from(
+            container.querySelectorAll('input[type="hidden"]'),
+        ).find((input) => input.name === "role_alice%40example.com");
+        expect(aliceRoleInput).toBeDefined();
+        expect(aliceRoleInput.value).toBe("owner");
+        win.fetchWithAuth = originalFetchWithAuth;
+    });
+
+    test("serverSideMemberSearch restores member checkbox/role overrides after rerender", async () => {
+        const teamId = "team-member-overrides";
+        const container = doc.createElement("div");
+        container.id = `team-members-container-${teamId}`;
+        container.dataset.perPage = "50";
+        container.innerHTML = userItemHtml("member@example.com", {
+            checked: true,
+            role: "member",
+            autoCheck: true,
+        });
+        doc.body.appendChild(container);
+
+        const existingCheckbox = container.querySelector(
+            'input[name="associatedUsers"]',
+        );
+        const existingRoleSelect = container.querySelector(".role-select");
+        existingCheckbox.checked = false;
+        existingRoleSelect.value = "owner";
+
+        const originalFetchWithAuth = win.fetchWithAuth;
+        win.fetchWithAuth = vi.fn().mockResolvedValue({
+            ok: true,
+            text: async () =>
+                userItemHtml("member@example.com", {
+                    checked: true,
+                    role: "member",
+                    autoCheck: true,
+                }),
+        });
+
+        await win.serverSideMemberSearch(teamId, "mem");
+
+        const rerenderedCheckbox = container.querySelector(
+            'input[name="associatedUsers"]',
+        );
+        const rerenderedRoleSelect = container.querySelector(".role-select");
+        expect(rerenderedCheckbox.checked).toBe(false);
+        expect(rerenderedRoleSelect.value).toBe("owner");
+        win.fetchWithAuth = originalFetchWithAuth;
     });
 });

@@ -687,7 +687,7 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "public"
         mock_gateway.tools = [existing_tool]
 
-        # Mock updated tool from MCP server
+        # Mock updated tool from MCP server (no per-tool visibility override)
         mock_tool = MagicMock()
         mock_tool.name = "test_tool"  # Same name as existing
         mock_tool.description = "Updated description"
@@ -696,17 +696,18 @@ class TestGatewayServiceExtended:
         mock_tool.input_schema = {"type": "object"}
         mock_tool.annotations = {"updated": True}
         mock_tool.jsonpath_filter = "$.result"
+        mock_tool.visibility = None  # no override; pre-propagation handles inherited changes
 
         tools = [mock_tool]
         context = "update"
 
-        # Call the helper method
-        result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
+        # Call the helper method (with explicit visibility change)
+        result = service._update_or_create_tools(mock_db, tools, mock_gateway, context, update_visibility=True)
 
         # Should return empty list (no new tools, existing one updated)
         assert len(result) == 0
 
-        # Existing tool should be updated (description not customized, so it gets updated)
+        # Existing tool should be updated; visibility preserved (upstream has no override)
         assert existing_tool.description == "Updated description"
         assert existing_tool.original_description == "Updated description"
         assert existing_tool.request_type == "POST"
@@ -716,7 +717,7 @@ class TestGatewayServiceExtended:
         assert existing_tool.url == "http://new-url.com"
         assert existing_tool.auth_type == "bearer"
         assert existing_tool.auth_value == "new-token"
-        assert existing_tool.visibility == "public"
+        assert existing_tool.visibility == "private"
 
     @pytest.mark.asyncio
     async def test_update_or_create_tools_preserves_custom_description(self):
@@ -789,13 +790,14 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "team"
         mock_gateway.resources = []  # Empty resources list
 
-        # Mock resource from MCP server
+        # Mock resource from MCP server (no per-resource visibility override)
         mock_resource = MagicMock()
         mock_resource.uri = "file:///test.txt"
         mock_resource.name = "test.txt"
         mock_resource.description = "A test resource"
         mock_resource.mime_type = "text/plain"
         mock_resource.uri_template = None
+        mock_resource.visibility = None  # no override; gateway visibility ("team") should win
 
         resources = [mock_resource]
         context = "test"
@@ -840,28 +842,295 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "public"
         mock_gateway.resources = [existing_resource]
 
-        # Mock updated resource from MCP server
+        # Mock updated resource from MCP server (no per-resource visibility override)
         mock_resource = MagicMock()
         mock_resource.uri = "file:///test.txt"
         mock_resource.name = "test.txt"
         mock_resource.description = "Updated description"
         mock_resource.mime_type = "application/json"
         mock_resource.uri_template = "template_content"
+        mock_resource.visibility = None  # no override — gateway visibility should win
 
         resources = [mock_resource]
         context = "update"
 
-        # Call method
-        result = service._update_or_create_resources(mock_db, resources, mock_gateway, context)
+        # Call method (with explicit visibility change)
+        result = service._update_or_create_resources(mock_db, resources, mock_gateway, context, update_visibility=True)
 
         # Should return empty list (no new resources)
         assert len(result) == 0
 
-        # Existing resource should be updated
+        # Existing resource fields should be updated, but visibility preserved
+        # (upstream has no explicit visibility; pre-propagation handles inherited changes)
         assert existing_resource.description == "Updated description"
         assert existing_resource.mime_type == "application/json"
         assert existing_resource.uri_template == "template_content"
-        assert existing_resource.visibility == "public"
+        assert existing_resource.visibility == "private"
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_resources_preserves_resource_visibility_on_update(self):
+        """Resource-specific visibility must not be overwritten by gateway visibility on refresh."""
+        service = GatewayService()
+
+        mock_db = MagicMock()
+
+        existing_resource = MagicMock()
+        existing_resource.uri = "file:///test.txt"
+        existing_resource.name = "test.txt"
+        existing_resource.description = "Old description"
+        existing_resource.mime_type = "text/plain"
+        existing_resource.uri_template = None
+        existing_resource.visibility = "team"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_resource]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "test-gateway-id"
+        mock_gateway.visibility = "public"
+        mock_gateway.resources = [existing_resource]
+
+        # Resource advertises its own visibility override
+        mock_resource = MagicMock()
+        mock_resource.uri = "file:///test.txt"
+        mock_resource.name = "test.txt"
+        mock_resource.description = "Updated description"
+        mock_resource.mime_type = "text/plain"
+        mock_resource.uri_template = None
+        mock_resource.visibility = "team"
+
+        result = service._update_or_create_resources(mock_db, [mock_resource], mock_gateway, "update", update_visibility=True)
+
+        assert len(result) == 0
+        # Resource-specific visibility must be preserved, not overwritten by gateway visibility
+        assert existing_resource.visibility == "team"
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_resources_preserves_resource_visibility_on_create(self):
+        """New resources created via _update_or_create_resources must use per-resource visibility when set."""
+        service = GatewayService()
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []  # no existing resources
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "test-gateway-id"
+        mock_gateway.visibility = "public"
+        mock_gateway.resources = []
+
+        mock_resource = MagicMock()
+        mock_resource.uri = "file:///private.txt"
+        mock_resource.name = "private.txt"
+        mock_resource.description = "A team-scoped resource"
+        mock_resource.mime_type = "text/plain"
+        mock_resource.uri_template = None
+        mock_resource.visibility = "team"
+
+        result = service._update_or_create_resources(mock_db, [mock_resource], mock_gateway, "update")
+
+        assert len(result) == 1
+        assert result[0].visibility == "team"
+
+    def test_update_or_create_resources_mcp_discovered_inherits_gateway_visibility(self):
+        """Resources from MCP server discovery (ResourceCreate with no explicit visibility) must inherit gateway visibility."""
+        from mcpgateway.schemas import ResourceCreate
+
+        service = GatewayService()
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "test-gateway-id"
+        mock_gateway.visibility = "team"
+        mock_gateway.resources = []
+
+        # Simulate MCP server discovery: ResourceCreate without explicit visibility
+        resource = ResourceCreate(
+            uri="file:///discovered.txt",
+            name="discovered.txt",
+            description="Discovered from MCP server",
+            mime_type="text/plain",
+            content="",
+        )
+
+        result = service._update_or_create_resources(mock_db, [resource], mock_gateway, "update")
+
+        assert len(result) == 1
+        assert result[0].visibility == "team", "MCP-discovered resource must inherit gateway visibility, not default to public"
+
+    def test_build_prompt_argument_schema_empty(self):
+        """Test _build_prompt_argument_schema returns base schema when no arguments."""
+        from types import SimpleNamespace
+
+        prompt = SimpleNamespace(arguments=[])
+        schema = GatewayService._build_prompt_argument_schema(prompt)
+        assert schema == {"type": "object", "properties": {}, "required": []}
+
+    def test_build_prompt_argument_schema_with_arguments(self):
+        """Test _build_prompt_argument_schema correctly maps MCP argument metadata."""
+        from types import SimpleNamespace
+
+        arg1 = SimpleNamespace(name="name", description="User name", required=True)
+        arg2 = SimpleNamespace(name="style", description="Greeting style", required=False)
+        arg3 = SimpleNamespace(name="lang", description=None, required=False)
+        prompt = SimpleNamespace(arguments=[arg1, arg2, arg3])
+
+        schema = GatewayService._build_prompt_argument_schema(prompt)
+
+        assert schema["type"] == "object"
+        assert schema["required"] == ["name"]
+        assert schema["properties"]["name"] == {"type": "string", "description": "User name"}
+        assert schema["properties"]["style"] == {"type": "string", "description": "Greeting style"}
+        # None description should be omitted
+        assert schema["properties"]["lang"] == {"type": "string"}
+        assert "lang" not in schema["required"]
+
+    def test_build_prompt_argument_schema_no_arguments_attr(self):
+        """Test _build_prompt_argument_schema handles missing arguments attribute gracefully."""
+        from types import SimpleNamespace
+
+        prompt = SimpleNamespace()  # no 'arguments' attribute
+        schema = GatewayService._build_prompt_argument_schema(prompt)
+        assert schema == {"type": "object", "properties": {}, "required": []}
+
+    def test_build_prompt_argument_schema_arguments_none(self):
+        """Test _build_prompt_argument_schema handles arguments=None gracefully."""
+        from types import SimpleNamespace
+
+        prompt = SimpleNamespace(arguments=None)
+        schema = GatewayService._build_prompt_argument_schema(prompt)
+        assert schema == {"type": "object", "properties": {}, "required": []}
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_prompts_new_prompt_with_arguments(self):
+        """Test _update_or_create_prompts populates argument_schema from real arguments."""
+        from types import SimpleNamespace
+
+        service = GatewayService()
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-1"
+        mock_gateway.name = "test-gw"
+        mock_gateway.visibility = "public"
+        mock_gateway.prompts = []
+
+        prompt = SimpleNamespace(
+            name="greet_user",
+            description="Greet a user",
+            template="Hello {name}!",
+            arguments=[
+                SimpleNamespace(name="name", description="User name", required=True),
+                SimpleNamespace(name="style", description="Greeting style", required=False),
+            ],
+        )
+
+        result = service._update_or_create_prompts(mock_db, [prompt], mock_gateway, "test")
+
+        assert len(result) == 1
+        schema = result[0].argument_schema
+        assert schema["type"] == "object"
+        assert schema["required"] == ["name"]
+        assert schema["properties"]["name"] == {"type": "string", "description": "User name"}
+        assert schema["properties"]["style"] == {"type": "string", "description": "Greeting style"}
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_prompts_argument_schema_change_triggers_update(self):
+        """Test that a change in argument_schema alone triggers a prompt update."""
+        from types import SimpleNamespace
+
+        service = GatewayService()
+        mock_db = MagicMock()
+
+        existing_prompt = MagicMock()
+        existing_prompt.original_name = "greet_user"
+        existing_prompt.description = "Greet a user"
+        existing_prompt.template = "Hello {name}!"
+        existing_prompt.visibility = "public"
+        existing_prompt.argument_schema = {"type": "object", "properties": {}, "required": []}
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_prompt]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-1"
+        mock_gateway.visibility = "public"
+        mock_gateway.prompts = [existing_prompt]
+
+        # Same description and template, but different arguments
+        updated_prompt = SimpleNamespace(
+            name="greet_user",
+            description="Greet a user",
+            template="Hello {name}!",
+            arguments=[
+                SimpleNamespace(name="name", description="User name", required=True),
+            ],
+        )
+
+        result = service._update_or_create_prompts(mock_db, [updated_prompt], mock_gateway, "update")
+
+        assert len(result) == 0  # No new prompts
+        expected_schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "User name"}},
+            "required": ["name"],
+        }
+        assert existing_prompt.argument_schema == expected_schema
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_prompts_no_update_when_schema_unchanged(self):
+        """Test that no update is triggered when argument_schema hasn't changed."""
+        from types import SimpleNamespace
+
+        service = GatewayService()
+        mock_db = MagicMock()
+
+        existing_schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "User name"}},
+            "required": ["name"],
+        }
+        existing_prompt = MagicMock()
+        existing_prompt.original_name = "greet_user"
+        existing_prompt.description = "Greet a user"
+        existing_prompt.template = "Hello {name}!"
+        existing_prompt.visibility = "public"
+        existing_prompt.argument_schema = existing_schema
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_prompt]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-1"
+        mock_gateway.visibility = "public"
+        mock_gateway.prompts = [existing_prompt]
+
+        # Identical description, template, and arguments
+        same_prompt = SimpleNamespace(
+            name="greet_user",
+            description="Greet a user",
+            template="Hello {name}!",
+            arguments=[
+                SimpleNamespace(name="name", description="User name", required=True),
+            ],
+        )
+
+        result = service._update_or_create_prompts(mock_db, [same_prompt], mock_gateway, "update")
+
+        assert len(result) == 0
+        # argument_schema should remain the original object (no assignment happened)
+        assert existing_prompt.argument_schema is existing_schema
 
     @pytest.mark.asyncio
     async def test_update_or_create_prompts_new_prompts(self):
@@ -885,11 +1154,12 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "private"
         mock_gateway.prompts = []  # Empty prompts list
 
-        # Mock prompt from MCP server
+        # Mock prompt from MCP server (no per-prompt visibility override)
         mock_prompt = MagicMock()
         mock_prompt.name = "test_prompt"
         mock_prompt.description = "A test prompt"
         mock_prompt.template = "Hello {name}!"
+        mock_prompt.visibility = None  # no override; gateway visibility should win
 
         prompts = [mock_prompt]
         context = "test"
@@ -905,7 +1175,7 @@ class TestGatewayServiceExtended:
         assert new_prompt.template == "Hello {name}!"
         assert new_prompt.created_via == "test"
         assert new_prompt.visibility == "private"
-        assert new_prompt.argument_schema == {}
+        assert new_prompt.argument_schema == {"type": "object", "properties": {}, "required": []}
 
     @pytest.mark.asyncio
     async def test_update_or_create_prompts_existing_prompts(self):
@@ -934,25 +1204,27 @@ class TestGatewayServiceExtended:
         mock_gateway.visibility = "public"
         mock_gateway.prompts = [existing_prompt]
 
-        # Mock updated prompt from MCP server
+        # Mock updated prompt from MCP server (no per-prompt visibility override)
         mock_prompt = MagicMock()
         mock_prompt.name = "test_prompt"  # Same name as existing
         mock_prompt.description = "Updated description"
         mock_prompt.template = "Updated template {var}"
+        mock_prompt.visibility = None  # no override; pre-propagation handles inherited changes
 
         prompts = [mock_prompt]
         context = "update"
 
-        # Call the helper method
-        result = service._update_or_create_prompts(mock_db, prompts, mock_gateway, context)
+        # Call the helper method (with explicit visibility change)
+        result = service._update_or_create_prompts(mock_db, prompts, mock_gateway, context, update_visibility=True)
 
         # Should return empty list (no new prompts, existing one updated)
         assert len(result) == 0
 
-        # Existing prompt should be updated
+        # Existing prompt should be updated; visibility preserved (upstream has no override)
         assert existing_prompt.description == "Updated description"
         assert existing_prompt.template == "Updated template {var}"
-        assert existing_prompt.visibility == "public"
+        assert existing_prompt.visibility == "private"
+        assert existing_prompt.argument_schema == {"type": "object", "properties": {}, "required": []}
 
     @pytest.mark.asyncio
     async def test_helper_methods_mixed_operations(self):
@@ -1048,7 +1320,7 @@ class TestGatewayServiceExtended:
         assert existing_tool2.original_description == "Updated description"
         assert existing_tool2.url == "http://new.com"  # Updated from gateway
         assert existing_tool2.auth_type == "bearer"  # Updated from gateway
-        assert existing_tool2.visibility == "public"  # Updated from gateway
+        assert existing_tool2.visibility == "private"  # Visibility NOT updated from gateway because context is NOT update
 
     @pytest.mark.asyncio
     async def test_helper_methods_empty_input_lists(self):
@@ -1110,6 +1382,7 @@ class TestGatewayServiceExtended:
         mock_tool.input_schema = {}
         mock_tool.annotations = {}
         mock_tool.jsonpath_filter = None
+        mock_tool.visibility = None  # no override; gateway visibility ("team") should win
 
         mock_resource = MagicMock()
         mock_resource.uri = "file:///metadata_test.json"
@@ -1117,11 +1390,13 @@ class TestGatewayServiceExtended:
         mock_resource.description = "Resource for testing metadata"
         mock_resource.mime_type = "application/json"
         mock_resource.uri_template = None
+        mock_resource.visibility = None  # no override; gateway visibility ("team") should win
 
         mock_prompt = MagicMock()
         mock_prompt.name = "metadata_prompt"
         mock_prompt.description = "Prompt for testing metadata"
         mock_prompt.template = "Test prompt template"
+        mock_prompt.visibility = None  # no override; gateway visibility ("team") should win
 
         # Call helper methods
         tools_result = service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "metadata_test")
@@ -1149,7 +1424,7 @@ class TestGatewayServiceExtended:
         prompt = prompts_result[0]
         assert prompt.created_via == "metadata_test"
         assert prompt.visibility == "team"
-        assert prompt.argument_schema == {}
+        assert prompt.argument_schema == {"type": "object", "properties": {}, "required": []}
 
     @pytest.mark.asyncio
     async def test_helper_methods_context_propagation(self):
@@ -1277,7 +1552,7 @@ class TestGatewayServiceExtended:
         # existing_tool1 should be updated with gateway values (even if description stays the same)
         assert existing_tool1.url == "http://new.com"  # Updated from gateway
         assert existing_tool1.auth_type == "bearer"  # Updated from gateway
-        assert existing_tool1.visibility == "public"  # Updated from gateway
+        assert existing_tool1.visibility == "private"  # Visibility NOT updated from gateway because context is NOT update
 
         # existing_tool3 should be updated (description not customized, so upstream value applies)
         assert existing_tool3.description == "Updated description"
@@ -1350,13 +1625,13 @@ class TestGatewayServiceExtended:
 
         # existing_resource1 should be updated with gateway values
         assert existing_resource1.description == "Keep this resource"
-        assert existing_resource1.visibility == "public"  # Updated from gateway
+        assert existing_resource1.visibility == "private"  # Visibility NOT updated from gateway because context is NOT update
 
         # existing_resource3 should be updated
         assert existing_resource3.description == "Updated description"
         assert existing_resource3.mime_type == "application/json"
         assert existing_resource3.uri_template == "new template"
-        assert existing_resource3.visibility == "public"  # Updated from gateway
+        assert existing_resource3.visibility == "private"  # Visibility NOT updated from gateway because context is NOT update
 
     @pytest.mark.asyncio
     async def test_helper_methods_prompt_removal_scenario(self):
@@ -1416,12 +1691,12 @@ class TestGatewayServiceExtended:
         # existing_prompt1 should be updated with gateway values
         assert existing_prompt1.description == "Keep this prompt"
         assert existing_prompt1.template == "Keep template"
-        assert existing_prompt1.visibility == "public"  # Updated from gateway
+        assert existing_prompt1.visibility == "private"  # Visibility NOT updated from gateway because context is NOT update
 
         # existing_prompt3 should be updated
         assert existing_prompt3.description == "Updated description"
         assert existing_prompt3.template == "Updated template"
-        assert existing_prompt3.visibility == "public"  # Updated from gateway
+        assert existing_prompt3.visibility == "private"  # Visibility NOT updated from gateway because context is NOT update
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_prompt_stale_removal_uses_original_name(self):
@@ -1536,3 +1811,246 @@ class TestGatewayServiceExtended:
         assert tools_to_remove[0].original_name == "old_tool"
         assert resources_to_remove[0].uri == "file:///old.txt"
         assert prompts_to_remove[0].name == "old_prompt"
+
+    @pytest.mark.asyncio
+    async def test_update_visibility_logic(self):
+        """Test that existing items retain visibility on auto-refresh, but inherit on manual update."""
+        service = GatewayService()
+        mock_db = MagicMock()
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw"
+        mock_gateway.url = "http://gw.com"
+        mock_gateway.auth_type = "none"
+        mock_gateway.visibility = "public"
+
+        # Mock tools
+        existing_tool = MagicMock()
+        existing_tool.original_name = "test_tool"
+        existing_tool.description = "Test Tool"
+        existing_tool.original_description = "Test Tool"
+        existing_tool.visibility = "private"
+
+        tool_from_server = MagicMock()
+        tool_from_server.name = "test_tool"
+        tool_from_server.description = "Test Tool"
+        tool_from_server.visibility = None  # no per-tool override; pre-propagation handles inherited changes
+
+        # Mock resources
+        existing_res = MagicMock()
+        existing_res.uri = "file:///test"
+        existing_res.name = "test"
+        existing_res.description = "Test Res"
+        existing_res.visibility = "team"
+
+        res_from_server = MagicMock()
+        res_from_server.uri = "file:///test"
+        res_from_server.name = "test"
+        res_from_server.description = "Test Res"
+        res_from_server.visibility = None  # no per-resource override; pre-propagation handles inherited changes
+
+        # Mock prompts
+        existing_prompt = MagicMock()
+        existing_prompt.original_name = "test_prompt"
+        existing_prompt.name = "test_prompt"
+        existing_prompt.description = "Test Prompt"
+        existing_prompt.visibility = "private"
+
+        prompt_from_server = MagicMock()
+        prompt_from_server.name = "test_prompt"
+        prompt_from_server.description = "Test Prompt"
+        prompt_from_server.visibility = None  # no per-prompt override; pre-propagation handles inherited changes
+
+        # --- Test 1: AUTO REFRESH Context ---
+        def create_mock_result(item):
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = [item]
+            return mock_result
+
+        # Reset visibilities
+        existing_tool.visibility = "private"
+        existing_res.visibility = "team"
+        existing_prompt.visibility = "private"
+
+        mock_db.execute.side_effect = [
+            create_mock_result(existing_tool),
+        ]
+        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "auto_refresh")
+        assert existing_tool.visibility == "private"
+
+        mock_db.execute.side_effect = [
+            create_mock_result(existing_res),
+        ]
+        service._update_or_create_resources(mock_db, [res_from_server], mock_gateway, "health_check")
+        assert existing_res.visibility == "team"
+
+        mock_db.execute.side_effect = [
+            create_mock_result(existing_prompt),
+        ]
+        service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "rediscovery")
+        assert existing_prompt.visibility == "private"
+
+        # --- Test 2: MANUAL UPDATE with explicit visibility change ---
+        # All helpers: upstream has no explicit visibility (None for MCP-discovered
+        # items), so the helpers preserve existing visibility. Pre-propagation
+        # (in update_gateway) handles updating inherited items before helpers run.
+        mock_db.execute.side_effect = [
+            create_mock_result(existing_tool),
+        ]
+        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
+        assert existing_tool.visibility == "private"
+
+        mock_db.execute.side_effect = [
+            create_mock_result(existing_res),
+        ]
+        service._update_or_create_resources(mock_db, [res_from_server], mock_gateway, "update", update_visibility=True)
+        assert existing_res.visibility == "team"
+
+        mock_db.execute.side_effect = [
+            create_mock_result(existing_prompt),
+        ]
+        service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update", update_visibility=True)
+        assert existing_prompt.visibility == "private"
+
+        # --- Test 3: UPDATE without visibility change (e.g. description-only edit) ---
+        # Visibility must NOT be overwritten even though created_via is "update"
+        existing_tool.visibility = "private"
+        existing_res.visibility = "team"
+        existing_prompt.visibility = "private"
+
+        mock_db.execute.side_effect = [create_mock_result(existing_tool)]
+        service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=False)
+        assert existing_tool.visibility == "private"
+
+        mock_db.execute.side_effect = [create_mock_result(existing_res)]
+        service._update_or_create_resources(mock_db, [res_from_server], mock_gateway, "update", update_visibility=False)
+        assert existing_res.visibility == "team"
+
+        mock_db.execute.side_effect = [create_mock_result(existing_prompt)]
+        service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update", update_visibility=False)
+        assert existing_prompt.visibility == "private"
+
+    def test_create_db_tool_inherits_gateway_visibility(self):
+        """New tools without explicit visibility inherit from the gateway."""
+        service = GatewayService()
+        tool = MagicMock()
+        tool.name = "new_tool"
+        tool.description = "A tool"
+        tool.request_type = "POST"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = None
+        tool.visibility = None  # MCP-discovered tool has no visibility
+
+        for vis in ("private", "team", "public"):
+            gateway = MagicMock()
+            gateway.url = "http://gw.com"
+            gateway.name = "gw"
+            gateway.auth_type = "none"
+            gateway.auth_value = None
+            gateway.team_id = "t1"
+            gateway.owner_email = "owner@example.com"
+            gateway.visibility = vis
+
+            db_tool = service._create_db_tool(tool=tool, gateway=gateway)
+            assert db_tool.visibility == vis, f"Expected {vis}, got {db_tool.visibility}"
+
+    def test_create_db_tool_respects_explicit_tool_visibility(self):
+        """New tools with explicit visibility use that instead of gateway visibility."""
+        service = GatewayService()
+        tool = MagicMock()
+        tool.name = "restricted_tool"
+        tool.description = "A restricted tool"
+        tool.request_type = "POST"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.annotations = {}
+        tool.jsonpath_filter = None
+        tool.visibility = "private"
+
+        gateway = MagicMock()
+        gateway.url = "http://gw.com"
+        gateway.name = "gw"
+        gateway.auth_type = "none"
+        gateway.auth_value = None
+        gateway.team_id = "t1"
+        gateway.owner_email = "owner@example.com"
+        gateway.visibility = "public"
+
+        db_tool = service._create_db_tool(tool=tool, gateway=gateway)
+        assert db_tool.visibility == "private", "Explicit tool visibility must override gateway visibility"
+
+    def test_update_or_create_tools_applies_explicit_upstream_visibility_on_update(self):
+        """Explicit upstream tool visibility must be written to existing tools when update_visibility=True."""
+        service = GatewayService()
+        mock_db = MagicMock()
+
+        existing_tool = MagicMock()
+        existing_tool.original_name = "vis_tool"
+        existing_tool.description = "Same"
+        existing_tool.original_description = "Same"
+        existing_tool.request_type = "GET"
+        existing_tool.input_schema = {}
+        existing_tool.url = "http://gw.com"
+        existing_tool.headers = {}
+        existing_tool.auth_type = "none"
+        existing_tool.auth_value = ""
+        existing_tool.visibility = "public"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_tool]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw"
+        mock_gateway.url = "http://gw.com"
+        mock_gateway.auth_type = "none"
+        mock_gateway.auth_value = ""
+        mock_gateway.visibility = "public"
+        mock_gateway.tools = [existing_tool]
+
+        tool_from_server = MagicMock()
+        tool_from_server.name = "vis_tool"
+        tool_from_server.description = "Same"
+        tool_from_server.request_type = "GET"
+        tool_from_server.headers = {}
+        tool_from_server.input_schema = {}
+        tool_from_server.annotations = {}
+        tool_from_server.jsonpath_filter = None
+        tool_from_server.visibility = "team"  # explicit upstream override
+
+        result = service._update_or_create_tools(mock_db, [tool_from_server], mock_gateway, "update", update_visibility=True)
+        assert len(result) == 0
+        assert existing_tool.visibility == "team", "Explicit upstream tool visibility must be applied"
+
+    def test_update_or_create_prompts_applies_explicit_upstream_visibility_on_update(self):
+        """Explicit upstream prompt visibility must be written to existing prompts when update_visibility=True."""
+        service = GatewayService()
+        mock_db = MagicMock()
+
+        existing_prompt = MagicMock()
+        existing_prompt.original_name = "vis_prompt"
+        existing_prompt.name = "vis_prompt"
+        existing_prompt.description = "Same"
+        existing_prompt.template = "Same"
+        existing_prompt.visibility = "public"
+        existing_prompt.argument_schema = {"type": "object", "properties": {}, "required": []}
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_prompt]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw"
+        mock_gateway.visibility = "public"
+        mock_gateway.prompts = [existing_prompt]
+
+        prompt_from_server = MagicMock()
+        prompt_from_server.name = "vis_prompt"
+        prompt_from_server.description = "Same"
+        prompt_from_server.template = "Same"
+        prompt_from_server.visibility = "private"  # explicit upstream override
+
+        result = service._update_or_create_prompts(mock_db, [prompt_from_server], mock_gateway, "update", update_visibility=True)
+        assert len(result) == 0
+        assert existing_prompt.visibility == "private", "Explicit upstream prompt visibility must be applied"
