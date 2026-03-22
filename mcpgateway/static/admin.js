@@ -17003,6 +17003,42 @@ async function handleEditResFormSubmit(e) {
     }
 }
 
+function isUiResourceUri(uri) {
+    return (
+        typeof uri === "string" && uri.trim().toLowerCase().startsWith("ui://")
+    );
+}
+
+function bindMcpAppMimeHelper(uriInputId, mimeInputId, helperId) {
+    const uriField = safeGetElement(uriInputId, true);
+    const mimeField = safeGetElement(mimeInputId, true);
+    const helperText = safeGetElement(helperId, true);
+
+    if (!uriField || !mimeField || !helperText) {
+        return;
+    }
+
+    if (mimeField.dataset.mcpAppMimeHelperBound === "true") {
+        return;
+    }
+    mimeField.dataset.mcpAppMimeHelperBound = "true";
+
+    const updateHelperVisibility = () => {
+        const shouldShow =
+            document.activeElement === mimeField &&
+            isUiResourceUri(uriField.value);
+        helperText.classList.toggle("hidden", !shouldShow);
+    };
+
+    uriField.addEventListener("input", updateHelperVisibility);
+    mimeField.addEventListener("focus", updateHelperVisibility);
+    mimeField.addEventListener("blur", () => {
+        helperText.classList.add("hidden");
+    });
+
+    updateHelperVisibility();
+}
+
 async function handleGrpcServiceFormSubmit(e) {
     e.preventDefault();
 
@@ -17890,6 +17926,11 @@ function setupFormHandlers() {
     const resourceForm = safeGetElement("add-resource-form");
     if (resourceForm) {
         resourceForm.addEventListener("submit", handleResourceFormSubmit);
+        bindMcpAppMimeHelper(
+            "resource-uri",
+            "resource-mime-type",
+            "resource-mime-helper",
+        );
     }
 
     const promptForm = safeGetElement("add-prompt-form");
@@ -17967,6 +18008,11 @@ function setupFormHandlers() {
     const editResourceForm = safeGetElement("edit-resource-form");
     if (editResourceForm) {
         editResourceForm.addEventListener("submit", handleEditResFormSubmit);
+        bindMcpAppMimeHelper(
+            "edit-resource-uri",
+            "edit-resource-mime-type",
+            "edit-resource-mime-helper",
+        );
         editResourceForm.addEventListener("click", () => {
             if (getComputedStyle(editResourceForm).display !== "none") {
                 refreshEditors();

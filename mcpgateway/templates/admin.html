@@ -4530,6 +4530,7 @@
                 <input
                   type="text"
                   name="uri"
+                  id="resource-uri"
                   required
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
@@ -4567,9 +4568,14 @@
                 <input
                   type="text"
                   name="mimeType"
+                  id="resource-mime-type"
+                  aria-describedby="resource-mime-helper"
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="text/plain"
                 />
+                <p id="resource-mime-helper" class="mt-1 text-xs text-gray-500 dark:text-gray-400 hidden">
+                  For interactive MCP Apps use: text/html;profile=mcp-app
+                </p>
               </div>
               <div>
                 <label
@@ -9092,8 +9098,12 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         type="text"
                         name="mimeType"
                         id="edit-resource-mime-type"
+                        aria-describedby="edit-resource-mime-helper"
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p id="edit-resource-mime-helper" class="mt-1 text-xs text-gray-500 dark:text-gray-400 hidden">
+                        For interactive MCP Apps use: text/html;profile=mcp-app
+                      </p>
                     </div>
                     <!-- Removing Content form Edit Form -->
                     <!-- Remove required attribute to avoid browser validation issues -->

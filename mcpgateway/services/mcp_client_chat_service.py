@@ -2379,6 +2379,7 @@ class MCPChatService:
         conversational agent. Must be called before using chat functionality.
 
         Raises:
+            ImportError: If LLM chat dependencies are missing.
             ConnectionError: If MCP server connection fails.
             Exception: If initialization fails.
 
@@ -3051,6 +3052,7 @@ class MCPChatService:
 
         Raises:
             RuntimeError: If service not initialized.
+            ImportError: If LLM chat dependencies are missing.
             Exception: If tool reloading or agent recreation fails.
 
         Examples:
