@@ -5578,6 +5578,11 @@ class TestOAuthFunctionality:
             assert result.status_code == 200
 
             gateway_update = mock_update_gateway.call_args.args[2]
+            assert gateway_update.oauth_config["issuer"] == "https://issuer.example.com"
+            assert gateway_update.oauth_config["token_url"] == "https://issuer.example.com/token"
+            assert gateway_update.oauth_config["authorization_url"] == "https://issuer.example.com/auth"
+            assert gateway_update.oauth_config["redirect_uri"] == "https://client.example.com/callback"
+            assert gateway_update.oauth_config["client_id"] == "client-id"
             assert gateway_update.oauth_config["client_secret"] == "enc-secret"
             assert gateway_update.oauth_config["scopes"] == ["a", "b", "c"]
 
@@ -14902,6 +14907,11 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
     assert agent_data.passthrough_headers is None
+    assert agent_data.oauth_config["issuer"] == "https://issuer.example.com"
+    assert agent_data.oauth_config["token_url"] == "https://issuer.example.com/token"
+    assert agent_data.oauth_config["authorization_url"] == "https://issuer.example.com/auth"
+    assert agent_data.oauth_config["redirect_uri"] == "https://client.example.com/callback"
+    assert agent_data.oauth_config["client_id"] == "cid"
     assert agent_data.oauth_config["client_secret"] == "enc"
     assert agent_data.oauth_config["scopes"] == ["a", "b", "c"]
 

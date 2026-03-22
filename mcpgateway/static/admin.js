@@ -4407,6 +4407,7 @@ async function editA2AAgent(agentId) {
         const oauthRedirectUriField = safeGetElement(
             "oauth-redirect-uri-a2a-edit",
         );
+        const oauthIssuerField = safeGetElement("oauth-issuer-a2a-edit");
         const oauthScopesField = safeGetElement("oauth-scopes-a2a-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-a2a-edit",
@@ -4483,6 +4484,9 @@ async function editA2AAgent(agentId) {
                 // Populate OAuth fields if available
                 if (agent.oauthConfig) {
                     const config = agent.oauthConfig;
+                    if (oauthIssuerField && config.issuer) {
+                        oauthIssuerField.value = config.issuer;
+                    }
                     if (oauthGrantTypeField && config.grant_type) {
                         oauthGrantTypeField.value = config.grant_type;
                         // Show/hide authorization code fields based on grant type
