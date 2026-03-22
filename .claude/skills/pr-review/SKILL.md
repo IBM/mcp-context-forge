@@ -72,9 +72,7 @@ Attribute findings to their source (Claude/Codex/Bob) and resolve contradictions
 [Issues needing human decision or outside scope]
 
 ## Recommendation
-- [ ] Ready to merge
-- [ ] Ready after fixing remaining issues
-- [ ] Needs significant rework
+Pick exactly ONE: Ready to merge | Ready after fixing remaining issues | Needs significant rework
 ```
 
 ## Rules

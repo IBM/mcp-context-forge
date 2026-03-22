@@ -100,6 +100,10 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+class ChatProcessingError(RuntimeError):
+    """Recoverable error wrapping tool, parsing, or model failures during chat streaming."""
+
+
 class MCPServerConfig(BaseModel):
     """
     Configuration for MCP server connection.
@@ -1582,14 +1586,19 @@ class GatewayProvider:
                 if not _BEDROCK_AVAILABLE:
                     raise ImportError("AWS Bedrock provider requires langchain-aws. Install with: pip install langchain-aws boto3")
 
-                region_name = config.get("region_name", "us-east-1")
+                # Map DB schema keys to boto3 kwargs.
+                # DB stores: region, access_key_id, secret_access_key, session_token, profile_name
+                # (see llm_provider_configs.AWSBedrockConfig)
+                region_name = config.get("region", "us-east-1")
                 credentials_kwargs = {}
-                if config.get("aws_access_key_id"):
-                    credentials_kwargs["aws_access_key_id"] = config["aws_access_key_id"]
-                if config.get("aws_secret_access_key"):
-                    credentials_kwargs["aws_secret_access_key"] = config["aws_secret_access_key"]
-                if config.get("aws_session_token"):
-                    credentials_kwargs["aws_session_token"] = config["aws_session_token"]
+                if config.get("access_key_id"):
+                    credentials_kwargs["aws_access_key_id"] = config["access_key_id"]
+                if config.get("secret_access_key"):
+                    credentials_kwargs["aws_secret_access_key"] = config["secret_access_key"]
+                if config.get("session_token"):
+                    credentials_kwargs["aws_session_token"] = config["session_token"]
+                if config.get("profile_name"):
+                    credentials_kwargs["credentials_profile_name"] = config["profile_name"]
 
                 model_kwargs = {
                     "temperature": temperature,
@@ -2396,6 +2405,9 @@ class MCPChatService:
             logger.warning("Chat service already initialized")
             return
 
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
+
         try:
             logger.info("Initializing chat service...")
 
@@ -2632,6 +2644,9 @@ class MCPChatService:
         Raises:
             RuntimeError: If service not initialized.
             ValueError: If message is empty or whitespace only.
+            ConnectionError: If the underlying MCP connection is lost.
+            TimeoutError: If the LLM request times out.
+            ChatProcessingError: If a tool, parsing, or model error occurs during streaming.
 
         Examples:
             >>> import asyncio
@@ -2893,9 +2908,12 @@ class MCPChatService:
                 await self.history_manager.append_message(self.user_id, "user", message)
                 await self.history_manager.append_message(self.user_id, "assistant", full_response)
 
+        except (ConnectionError, TimeoutError) as e:
+            logger.error(f"Error in chat_events: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error in chat_events: {e}")
-            raise RuntimeError(f"Chat processing error: {e}") from e
+            raise ChatProcessingError(f"Chat processing error: {e}") from e
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
         """
@@ -3047,6 +3065,9 @@ class MCPChatService:
         """
         if not self._initialized:
             raise RuntimeError("Chat service not initialized")
+
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
 
         try:
             logger.info("Reloading tools from MCP server...")

@@ -257,9 +257,11 @@ class A2AAgentService(BaseService):
             return True
 
         # Team agents: check team membership
-        # At this point token_teams is guaranteed to be a non-empty list
-        # (None handled by admin bypass, [] by public-only check)
+        # token_teams=None means admin bypass — allow all team agents
+        # ([] already handled by public-only check above)
         if agent.visibility == "team":
+            if token_teams is None:
+                return True
             return agent.team_id in token_teams
 
         return False
@@ -1568,7 +1570,7 @@ class A2AAgentService(BaseService):
 
         if is_cache_enabled():
             cached = metrics_cache.get("a2a")
-            if cached is not None:
+            if cached is not None and isinstance(cached, dict):
                 return A2AAgentAggregateMetrics(**cached)
 
         # Get total/active agent counts from cache (avoids 2 COUNT queries per call)

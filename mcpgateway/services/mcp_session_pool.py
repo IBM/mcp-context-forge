@@ -1669,12 +1669,27 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
-                # Treat non-2xx HTTP responses as errors
+                # Gate on HTTP status first: non-2xx responses are errors
+                # even if the body parses as JSON.
                 if not response.is_success:
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
-                    return {"error": {"code": -32603, "message": f"Internal request failed with HTTP {response.status_code}"}}
+                    try:
+                        response_data = response.json()
+                    except ValueError:
+                        response_data = {}
+                    if not isinstance(response_data, dict):
+                        response_data = {}
 
-                # Parse response
+                    # If body is a JSON-RPC error ({"error": {...}}), propagate it
+                    if "error" in response_data and isinstance(response_data["error"], dict):
+                        logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error (HTTP {response.status_code})")
+                        return {"error": response_data["error"]}
+
+                    # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
+                    detail = response_data.get("detail", response.text[:200] or "Unknown error")
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    return {"error": {"code": -32603, "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}"}}
+
+                # Parse successful response
                 response_data = response.json()
 
                 # Extract result or error from JSON-RPC response

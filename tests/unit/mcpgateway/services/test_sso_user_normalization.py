@@ -862,6 +862,119 @@ class TestGenericOIDCNormalization:
 
         assert normalized["email_verified"] is False
 
+    def test_generic_oidc_groups_default_claim(self, sso_service):
+        """Groups are extracted from the default 'groups' claim."""
+        provider = SSOProvider(id="jumpcloud", name="jumpcloud", display_name="JumpCloud", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "groups": ["Engineering", "Platform"],
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == ["Engineering", "Platform"]
+
+    def test_generic_oidc_groups_custom_claim(self, sso_service):
+        """Groups are extracted from a custom claim specified in provider_metadata."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc", provider_metadata={"groups_claim": "roles"})
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "roles": ["admin", "editor"],
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == ["admin", "editor"]
+
+    def test_generic_oidc_groups_string_value(self, sso_service):
+        """A single string group value is wrapped in a list."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "groups": "Engineering",
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == ["Engineering"]
+
+    def test_generic_oidc_groups_absent_claim(self, sso_service):
+        """When no groups claim is present, groups defaults to empty list."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == []
+
+    def test_generic_oidc_groups_empty_metadata(self, sso_service):
+        """When provider_metadata is None, groups_claim defaults to 'groups'."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc", provider_metadata=None)
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "groups": ["DevOps"],
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == ["DevOps"]
+
+    def test_generic_oidc_groups_non_list_non_string_ignored(self, sso_service):
+        """Non-list, non-string group values (e.g. int, dict) result in empty groups."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "groups": 42,
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == []
+
+    def test_generic_oidc_groups_nested_structures_filtered(self, sso_service):
+        """Nested structures (dicts, lists) in the groups list are filtered to strings only."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "groups": ["Engineering", {"nested": "value"}, 42, "Platform", None],
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == ["Engineering", "Platform"]
+
+    def test_generic_oidc_groups_with_email_verified(self, sso_service):
+        """Groups extraction works alongside email_verified handling."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc", provider_metadata={"groups_claim": "team_memberships"})
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "email_verified": True,
+            "team_memberships": ["backend", "sre"],
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == ["backend", "sre"]
+        assert normalized["email_verified"] is True
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

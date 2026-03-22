@@ -952,8 +952,12 @@ class TestA2AAgentService:
         assert service._check_agent_access(agent, user_email=None, token_teams=["x"]) is True
 
         agent.visibility = "team"
+        # Full admin bypass (both None) grants access to team agents
+        assert service._check_agent_access(agent, user_email=None, token_teams=None) is True
         # No user context (user_email=None) denies access to non-public agents
         assert service._check_agent_access(agent, user_email=None, token_teams=["team-1"]) is False
+        # Admin bypass: token_teams=None grants access regardless of user_email
+        assert service._check_agent_access(agent, user_email="admin@example.com", token_teams=None) is True
         # With user context, team membership grants access
         assert service._check_agent_access(agent, user_email="someone@example.com", token_teams=["team-1"]) is True
         assert service._check_agent_access(agent, user_email="someone@example.com", token_teams=["other"]) is False
@@ -2640,4 +2644,38 @@ class TestAggregateMetricsEdgeCases:
         assert result.total_agents == 3
         assert result.active_agents == 2
         assert result.total_interactions == 10
+        mock_cache.set.assert_called_once()
+
+    async def test_cache_non_dict_falls_through(self, service, mock_db, monkeypatch):
+        """Non-dict cached value (e.g. list from leaked mock) is ignored and metrics are recomputed."""
+        # First-Party
+        from mcpgateway.schemas import A2AAgentAggregateMetrics
+        from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
+        mock_metrics = AggregatedMetrics(
+            total_executions=7,
+            successful_executions=6,
+            failed_executions=1,
+            failure_rate=round(1 / 7, 4),
+            min_response_time=0.2,
+            max_response_time=1.5,
+            avg_response_time=0.8,
+            last_execution_time=None,
+            raw_count=7,
+            rollup_count=0,
+        )
+
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = [1, 2, 3]  # Non-dict: should be skipped
+        mock_cache.set = MagicMock()
+
+        monkeypatch.setattr("mcpgateway.cache.metrics_cache.is_cache_enabled", lambda: True)
+        monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", mock_cache)
+        monkeypatch.setattr("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", lambda db, t: mock_metrics)
+        monkeypatch.setattr("mcpgateway.cache.a2a_stats_cache.a2a_stats_cache.get_counts", lambda db: {"total": 4, "active": 3})
+
+        result = await service.aggregate_metrics(mock_db)
+        assert isinstance(result, A2AAgentAggregateMetrics)
+        assert result.total_agents == 4
+        assert result.total_interactions == 7
         mock_cache.set.assert_called_once()

@@ -125,7 +125,7 @@ function handleAddPassthrough() {
             queryDiv.className = "mb-4";
             queryDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Query Mapping (JSON)</label>
-                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-3 py-2 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
             `;
             passthroughContainer.appendChild(queryDiv);
         }
@@ -134,7 +134,7 @@ function handleAddPassthrough() {
             headerDiv.className = "mb-4";
             headerDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Header Mapping (JSON)</label>
-                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-3 py-2 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
             `;
             passthroughContainer.appendChild(headerDiv);
         }
@@ -143,7 +143,7 @@ function handleAddPassthrough() {
             timeoutDiv.className = "mb-4";
             timeoutDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">timeout_ms (number)</label>
-                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
+                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
             `;
             passthroughContainer.appendChild(timeoutDiv);
         }
@@ -152,7 +152,7 @@ function handleAddPassthrough() {
             exposeDiv.className = "mb-4";
             exposeDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Expose Passthrough</label>
-                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
                     <option value="true" selected>True</option>
                     <option value="false">False</option>
                 </select>
@@ -164,7 +164,7 @@ function handleAddPassthrough() {
             allowlistDiv.className = "mb-4";
             allowlistDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Allowlist (comma-separated hosts/schemes)</label>
-                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
+                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
             `;
             passthroughContainer.appendChild(allowlistDiv);
         }
@@ -173,7 +173,7 @@ function handleAddPassthrough() {
             pluginPreDiv.className = "mb-4";
             pluginPreDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Pre</label>
-                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
             `;
             passthroughContainer.appendChild(pluginPreDiv);
         }
@@ -182,7 +182,7 @@ function handleAddPassthrough() {
             pluginPostDiv.className = "mb-4";
             pluginPostDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Post (optional, override defaults)</label>
-                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
             `;
             passthroughContainer.appendChild(pluginPostDiv);
         }
@@ -493,31 +493,33 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    const tableToEntityType = {
+        "servers-table": "catalog",
+        "tools-table": "tools",
+        "resources-table": "resources",
+        "prompts-table": "prompts",
+        "gateways-table": "gateways",
+        "agents-table": "a2a-agents",
+    };
+
     // Re-initialize search inputs when HTMX content loads
     // Only re-initialize if the swap affects search-related content
     document.body.addEventListener("htmx:afterSwap", function (event) {
-        const target = event.detail.target;
-        const relevantPanels = [
-            "catalog-panel",
-            "gateways-panel",
-            "tools-panel",
-            "resources-panel",
-            "prompts-panel",
-            "a2a-agents-panel",
-        ];
-
-        if (
-            target &&
-            relevantPanels.some(
-                (panelId) =>
-                    target.id === panelId || target.closest(`#${panelId}`),
-            )
-        ) {
+        const targetId = event.detail.target && event.detail.target.id;
+        if (targetId && tableToEntityType[targetId]) {
             console.log(
-                `📝 HTMX swap detected in ${target.id}, resetting search state`,
+                `📝 HTMX swap detected in ${targetId}, resetting search state`,
             );
             resetSearchInputsState();
             initializeSearchInputsDebounced();
+        }
+    });
+
+    document.body.addEventListener("htmx:afterSettle", function (event) {
+        const targetId = event.detail.target && event.detail.target.id;
+        const entityType = targetId && tableToEntityType[targetId];
+        if (entityType) {
+            updateAvailableTags(entityType);
         }
     });
 
@@ -4405,6 +4407,7 @@ async function editA2AAgent(agentId) {
         const oauthRedirectUriField = safeGetElement(
             "oauth-redirect-uri-a2a-edit",
         );
+        const oauthIssuerField = safeGetElement("oauth-issuer-a2a-edit");
         const oauthScopesField = safeGetElement("oauth-scopes-a2a-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-a2a-edit",
@@ -4481,8 +4484,11 @@ async function editA2AAgent(agentId) {
                 // Populate OAuth fields if available
                 if (agent.oauthConfig) {
                     const config = agent.oauthConfig;
-                    if (oauthGrantTypeField && config.grant_type) {
-                        oauthGrantTypeField.value = config.grant_type;
+                    if (oauthIssuerField) {
+                        oauthIssuerField.value = config.issuer || "";
+                    }
+                    if (oauthGrantTypeField) {
+                        oauthGrantTypeField.value = config.grant_type || "";
                         // Show/hide authorization code fields based on grant type
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
@@ -4491,27 +4497,26 @@ async function editA2AAgent(agentId) {
                                     : "none";
                         }
                     }
-                    if (oauthClientIdField && config.client_id) {
-                        oauthClientIdField.value = config.client_id;
+                    if (oauthClientIdField) {
+                        oauthClientIdField.value = config.client_id || "";
                     }
                     if (oauthClientSecretField) {
                         oauthClientSecretField.value = ""; // Don't populate secret for security
                     }
-                    if (oauthTokenUrlField && config.token_url) {
-                        oauthTokenUrlField.value = config.token_url;
+                    if (oauthTokenUrlField) {
+                        oauthTokenUrlField.value = config.token_url || "";
                     }
-                    if (oauthAuthUrlField && config.authorization_url) {
-                        oauthAuthUrlField.value = config.authorization_url;
+                    if (oauthAuthUrlField) {
+                        oauthAuthUrlField.value =
+                            config.authorization_url || "";
                     }
-                    if (oauthRedirectUriField && config.redirect_uri) {
-                        oauthRedirectUriField.value = config.redirect_uri;
+                    if (oauthRedirectUriField) {
+                        oauthRedirectUriField.value = config.redirect_uri || "";
                     }
-                    if (
-                        oauthScopesField &&
-                        config.scopes &&
-                        Array.isArray(config.scopes)
-                    ) {
-                        oauthScopesField.value = config.scopes.join(" ");
+                    if (oauthScopesField) {
+                        oauthScopesField.value = Array.isArray(config.scopes)
+                            ? config.scopes.join(" ")
+                            : "";
                     }
                 }
                 break;
@@ -4842,7 +4847,7 @@ async function runResourceTest() {
             e.stopPropagation();
         };
         overlay.className =
-            "fixed inset-0 bg-black bg-opacity-70 z-[9999] flex items-center justify-center p-4";
+            "fixed inset-0 bg-black bg-opacity-70 z-40 flex items-center justify-center p-4";
 
         const box = document.createElement("div");
         box.onclick = (e) => {
@@ -6300,6 +6305,7 @@ async function editGateway(gatewayId) {
         const oauthRedirectUriField = safeGetElement(
             "oauth-redirect-uri-gw-edit",
         );
+        const oauthIssuerField = safeGetElement("oauth-issuer-gw-edit");
         const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-gw-edit",
@@ -6397,8 +6403,11 @@ async function editGateway(gatewayId) {
                 // Populate OAuth fields if available
                 if (gateway.oauthConfig) {
                     const config = gateway.oauthConfig;
-                    if (oauthGrantTypeField && config.grant_type) {
-                        oauthGrantTypeField.value = config.grant_type;
+                    if (oauthIssuerField) {
+                        oauthIssuerField.value = config.issuer || "";
+                    }
+                    if (oauthGrantTypeField) {
+                        oauthGrantTypeField.value = config.grant_type || "";
                         // Show/hide authorization code fields based on grant type
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
@@ -6407,27 +6416,26 @@ async function editGateway(gatewayId) {
                                     : "none";
                         }
                     }
-                    if (oauthClientIdField && config.client_id) {
-                        oauthClientIdField.value = config.client_id;
+                    if (oauthClientIdField) {
+                        oauthClientIdField.value = config.client_id || "";
                     }
                     if (oauthClientSecretField) {
                         oauthClientSecretField.value = ""; // Don't populate secret for security
                     }
-                    if (oauthTokenUrlField && config.token_url) {
-                        oauthTokenUrlField.value = config.token_url;
+                    if (oauthTokenUrlField) {
+                        oauthTokenUrlField.value = config.token_url || "";
                     }
-                    if (oauthAuthUrlField && config.authorization_url) {
-                        oauthAuthUrlField.value = config.authorization_url;
+                    if (oauthAuthUrlField) {
+                        oauthAuthUrlField.value =
+                            config.authorization_url || "";
                     }
-                    if (oauthRedirectUriField && config.redirect_uri) {
-                        oauthRedirectUriField.value = config.redirect_uri;
+                    if (oauthRedirectUriField) {
+                        oauthRedirectUriField.value = config.redirect_uri || "";
                     }
-                    if (
-                        oauthScopesField &&
-                        config.scopes &&
-                        Array.isArray(config.scopes)
-                    ) {
-                        oauthScopesField.value = config.scopes.join(" ");
+                    if (oauthScopesField) {
+                        oauthScopesField.value = Array.isArray(config.scopes)
+                            ? config.scopes.join(" ")
+                            : "";
                     }
                 }
                 break;
@@ -8913,7 +8921,6 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "catalog") {
-                    // Load servers list if not already loaded
                     const serversList = safeGetElement("servers-table");
                     if (serversList) {
                         const hasLoadingMessage =
@@ -8921,9 +8928,31 @@ function showTab(tabName) {
                                 "Loading servers...",
                             );
                         if (hasLoadingMessage) {
-                            // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
                                 window.htmx.trigger(serversList, "load");
+                            }
+                        } else {
+                            const catalogConfig =
+                                getPanelSearchConfig("catalog");
+                            if (catalogConfig) {
+                                const searchState = getPanelSearchStateFromUrl(
+                                    catalogConfig.tableName,
+                                );
+                                const tagInput = document.getElementById(
+                                    catalogConfig.tagInputId,
+                                );
+                                const searchInput = document.getElementById(
+                                    catalogConfig.searchInputId,
+                                );
+                                if (tagInput && searchState.tags) {
+                                    tagInput.value = searchState.tags;
+                                }
+                                if (searchInput && searchState.query) {
+                                    searchInput.value = searchState.query;
+                                }
+                                if (searchState.tags || searchState.query) {
+                                    queueSearchablePanelReload("catalog", 0);
+                                }
                             }
                         }
                     }
@@ -9502,7 +9531,7 @@ function createParameterForm(parameterCount) {
     nameInput.name = `param_name_${parameterCount}`;
     nameInput.required = true;
     nameInput.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
 
     // Add validation to name input
     nameInput.addEventListener("blur", function () {
@@ -9529,7 +9558,7 @@ function createParameterForm(parameterCount) {
     const typeSelect = document.createElement("select");
     typeSelect.name = `param_type_${parameterCount}`;
     typeSelect.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
 
     const typeOptions = [
         { value: "string", text: "String" },
@@ -9565,7 +9594,7 @@ function createParameterForm(parameterCount) {
     const descTextarea = document.createElement("textarea");
     descTextarea.name = `param_description_${parameterCount}`;
     descTextarea.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
     descTextarea.rows = 2;
 
     descGroup.appendChild(descLabel);
@@ -12206,7 +12235,7 @@ async function testTool(toolId) {
                         input.required =
                             schema.required && schema.required.includes(key);
                         input.className =
-                            "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                            "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                         const itemTypes = Array.isArray(prop.items?.anyOf)
                             ? prop.items.anyOf.map((t) => t.type)
@@ -12312,7 +12341,7 @@ async function testTool(toolId) {
                     fieldInput.className =
                         prop.type === "boolean"
                             ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
-                            : "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                            : "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                     // Set default values here
                     if (prop.default !== undefined) {
@@ -14750,7 +14779,7 @@ function buildPromptTestForm(prompt) {
         input.id = `prompt-arg-${index}`;
         input.name = `arg-${arg.name}`;
         input.className =
-            "mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
+            "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
 
         if (arg.description) {
             input.placeholder = arg.description;
@@ -17374,7 +17403,7 @@ function setupTooltipsWithAlpine() {
                 tooltipEl.textContent = text;
                 tooltipEl.setAttribute("role", "tooltip");
                 tooltipEl.className =
-                    "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
+                    "fixed z-30 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
 
                 document.body.appendChild(tooltipEl);
 
@@ -18634,8 +18663,8 @@ const PANEL_SEARCH_CONFIG = {
         partialPath: "servers/partial",
         targetSelector: "#servers-table",
         indicatorSelector: "#servers-loading",
-        searchInputId: "catalog-search-input",
-        tagInputId: "catalog-tag-filter",
+        searchInputId: "servers-search-input",
+        tagInputId: "servers-tag-filter",
         inactiveCheckboxId: "show-inactive-servers",
         defaultPerPage: 50,
     },
@@ -20040,14 +20069,20 @@ window.goBackToSelection = goBackToSelection;
  */
 function extractAvailableTags(entityType) {
     const tags = new Set();
+
+    if (entityType === "catalog") {
+        document
+            .querySelectorAll("#servers-table-body [data-tag]")
+            .forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
+            });
+        return Array.from(tags).sort();
+    }
+
     const tableSelector = `#${entityType}-panel tbody tr:not(.inactive-row)`;
     const rows = document.querySelectorAll(tableSelector);
 
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Found ${rows.length} rows`,
-    );
-
-    // Find the Tags column index by examining the table header
     const tableHeaderSelector = `#${entityType}-panel thead tr th`;
     const headerCells = document.querySelectorAll(tableHeaderSelector);
     let tagsColumnIndex = -1;
@@ -20056,67 +20091,25 @@ function extractAvailableTags(entityType) {
         const headerText = header.textContent.trim().toLowerCase();
         if (headerText === "tags") {
             tagsColumnIndex = index;
-            console.log(
-                `[DEBUG] Found Tags column at index ${index} for ${entityType}`,
-            );
         }
     });
 
     if (tagsColumnIndex === -1) {
-        console.log(`[DEBUG] Could not find Tags column for ${entityType}`);
         return [];
     }
 
-    rows.forEach((row, index) => {
+    rows.forEach((row) => {
         const cells = row.querySelectorAll("td");
-
         if (tagsColumnIndex < cells.length) {
             const tagsCell = cells[tagsColumnIndex];
-
-            // Look for tag badges ONLY within the Tags column
-            const tagElements = tagsCell.querySelectorAll(`
-                span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-                span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
-            `);
-
-            console.log(
-                `[DEBUG] Row ${index}: Found ${tagElements.length} tag elements in Tags column`,
-            );
-
-            tagElements.forEach((tagEl) => {
-                const tagText = tagEl.textContent.trim();
-                console.log(
-                    `[DEBUG] Row ${index}: Tag element text: "${tagText}"`,
-                );
-
-                // Basic validation for tag content
-                if (
-                    tagText &&
-                    tagText !== "No tags" &&
-                    tagText !== "None" &&
-                    tagText !== "N/A" &&
-                    tagText.length >= 2 &&
-                    tagText.length <= 50
-                ) {
-                    tags.add(tagText);
-                    console.log(
-                        `[DEBUG] Row ${index}: Added tag: "${tagText}"`,
-                    );
-                } else {
-                    console.log(
-                        `[DEBUG] Row ${index}: Filtered out: "${tagText}"`,
-                    );
-                }
+            tagsCell.querySelectorAll("[data-tag]").forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
             });
         }
     });
 
-    const result = Array.from(tags).sort();
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Final result:`,
-        result,
-    );
-    return result;
+    return Array.from(tags).sort();
 }
 
 /**
@@ -20158,7 +20151,11 @@ function updateAvailableTags(entityType) {
  * @param {string} tag - The tag to add
  */
 function addTagToFilter(entityType, tag) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (!filterInput) {
         return;
     }
@@ -20170,7 +20167,15 @@ function addTagToFilter(entityType, tag) {
     if (!currentTags.includes(tag)) {
         currentTags.push(tag);
         filterInput.value = currentTags.join(", ");
-        if (getPanelSearchConfig(entityType)) {
+        if (panelConfig) {
+            const searchInput = document.getElementById(
+                panelConfig.searchInputId,
+            );
+            updatePanelSearchStateInUrl(
+                panelConfig.tableName,
+                searchInput?.value || "",
+                filterInput.value,
+            );
             queueSearchablePanelReload(entityType, 0);
         } else {
             filterEntitiesByTags(entityType, filterInput.value);
@@ -20202,34 +20207,11 @@ function filterEntitiesByTags(entityType, tagsInput) {
             return;
         }
 
-        // Extract tags from this row using specific tag selectors (not status badges)
+        // Extract tags from this row using data-tag attributes
         const rowTags = new Set();
-
-        const tagElements = row.querySelectorAll(`
-            /* Gateways */
-            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full,
-            /* A2A Agents */
-            span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700,
-            /* Prompts & Resources */
-            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-            /* Gray tags for A2A agent metadata */
-            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700
-        `);
-
-        tagElements.forEach((tagEl) => {
-            const tagText = tagEl.textContent.trim().toLowerCase();
-            // Filter out any remaining non-tag content
-            if (
-                tagText &&
-                tagText !== "no tags" &&
-                tagText !== "none" &&
-                tagText !== "active" &&
-                tagText !== "inactive" &&
-                tagText !== "online" &&
-                tagText !== "offline"
-            ) {
-                rowTags.add(tagText);
-            }
+        row.querySelectorAll("[data-tag]").forEach((el) => {
+            const t = el.getAttribute("data-tag").trim().toLowerCase();
+            if (t) rowTags.add(t);
         });
 
         // Check if any of the filter tags match any of the row tags (OR logic)
@@ -20305,12 +20287,16 @@ function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
  * @param {string} entityType - The entity type
  */
 function clearTagFilter(entityType) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (filterInput) {
         filterInput.value = "";
         // Apply immediate local reset for responsive UX and test compatibility.
         filterEntitiesByTags(entityType, "");
-        if (getPanelSearchConfig(entityType)) {
+        if (panelConfig) {
             loadSearchablePanel(entityType);
         }
     }
@@ -20456,7 +20442,7 @@ function addAuthHeader(containerId, options = {}) {
             <input
                 type="text"
                 placeholder="Header Key (e.g., X-API-Key)"
-                class="auth-header-key block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+                class="auth-header-key block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
             />
         </div>
         <div class="flex-1">
@@ -20466,7 +20452,7 @@ function addAuthHeader(containerId, options = {}) {
                     id="${valueInputId}"
                     placeholder="Header Value"
                     data-sensitive-label="header value"
-                    class="auth-header-value block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
+                    class="auth-header-value block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
                 />
                 <button
                     type="button"
@@ -21749,7 +21735,7 @@ function showCopyableModal(title, message, type = "info") {
     const overlay = document.createElement("div");
     overlay.id = "copyable-modal-overlay";
     overlay.className =
-        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40";
     overlay.onclick = (e) => {
         if (e.target === overlay) {
             overlay.remove();
@@ -21772,13 +21758,13 @@ function showCopyableModal(title, message, type = "info") {
                         <pre id="copyable-modal-content" class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-600 max-h-64 overflow-auto select-all cursor-text">${escapeHtml(message)}</pre>
                     </div>
                     <div class="mt-4 flex justify-end space-x-3">
-                        <button id="copyable-modal-copy" class="inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        <button id="copyable-modal-copy" class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                             <svg class="h-4 w-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
                             </svg>
                             Copy
                         </button>
-                        <button id="copyable-modal-close" class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        <button id="copyable-modal-close" class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                             Close
                         </button>
                     </div>
@@ -22719,7 +22705,7 @@ async function createToken(form) {
 function showTokenCreatedModal(tokenData) {
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-lg shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="mt-3">
@@ -22961,7 +22947,7 @@ async function viewTokenUsage(tokenId) {
 function showUsageStatsModal(stats) {
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="flex items-center justify-between mb-4">
@@ -23114,7 +23100,7 @@ function showTokenDetailsModal(token) {
 
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-10 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800 mb-10">
             <div class="flex items-center justify-between mb-4">
@@ -25901,7 +25887,8 @@ function initializePluginFunctions() {
                             <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
                             <p class="mt-1">
                                 <span class="px-2 py-1 text-xs rounded-full ${
-                                    plugin.mode === "enforce"
+                                    plugin.mode === "enforce" ||
+                                    plugin.mode === "enforce_ignore_error"
                                         ? "bg-red-100 text-red-800"
                                         : plugin.mode === "permissive"
                                           ? "bg-yellow-100 text-yellow-800"
@@ -26366,16 +26353,11 @@ async function loadVirtualServersForChat() {
                     ${
                         requiresToken
                             ? `
-                        <div class="tooltip"
-                        style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px;
-                                background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px;
-                                padding: 4px 20px; /* More horizontal width */
-                                opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in;
-                                z-index: 1000;"> <!-- Added higher z-index to ensure it's above other elements -->
+                        <div data-role="tooltip"
+                             class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 bg-gray-500 text-white text-[10px] rounded py-1 px-5 z-30 transition-opacity duration-200 ease-in pointer-events-none"
+                             style="opacity: 0; visibility: hidden;">
                         ${tooltipMessage}
-                        <div style="position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%);
-                                    width: 0; height: 0; border-left: 5px solid transparent;
-                                    border-right: 5px solid transparent; border-top: 5px solid #6B7280;"></div>
+                        <div class="absolute left-1/2 -translate-x-1/2 -bottom-[5px] w-0 h-0 border-l-[5px] border-r-[5px] border-t-[5px] border-l-transparent border-r-transparent border-t-gray-500"></div>
                         </div>`
                             : ""
                     }
@@ -26399,7 +26381,7 @@ async function loadVirtualServersForChat() {
         // Add hover event to show tooltip immediately on hover
         const serverItems = document.querySelectorAll(".server-item");
         serverItems.forEach((item) => {
-            const tooltip = item.querySelector(".tooltip");
+            const tooltip = item.querySelector('[data-role="tooltip"]');
             item.addEventListener("mouseenter", () => {
                 if (tooltip) {
                     tooltip.style.opacity = "1"; // Make tooltip visible
@@ -27169,7 +27151,7 @@ function showConnectionSuccess() {
             tools.forEach((toolName, index) => {
                 const pill = document.createElement("span");
                 pill.className =
-                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105";
+                    "inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105";
 
                 // Tool icon
                 const icon = document.createElementNS(
@@ -31060,7 +31042,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Inactive
                 <svg class="ml-1 h-4 w-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
         </div>`;
     } else if (!reachable) {
         // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
@@ -31070,7 +31052,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Offline
                 <svg class="ml-1 h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
         </div>`;
     } else {
         // CASE 3: Active (Enabled and Reachable) -> GREEN
@@ -31080,7 +31062,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Active
                 <svg class="ml-1 h-4 w-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Active</div>
         </div>`;
     }
 }

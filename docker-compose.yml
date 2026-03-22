@@ -125,6 +125,8 @@ services:
     # ports:
     #   - "4444:4444"               # Disabled for multi-replica mode
     networks: [mcpnet]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
     # ──────────────────────────────────────────────────────────────────────
     # Environment - pick ONE database URL line, comment the rest
