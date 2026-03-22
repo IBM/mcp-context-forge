@@ -249,12 +249,10 @@ plugin_dirs: []
             watson_response = MagicMock()
             watson_response.raise_for_status.side_effect = Exception("Watson API unavailable")
 
-            # Second call (Granite) succeeds
+            # Second call (Granite) succeeds with Yes/No format
             granite_response = MagicMock()
             granite_response.status_code = 200
-            granite_response.json.return_value = {
-                "response": '{"hate": 0.1, "violence": 0.3, "sexual": 0.0, "self_harm": 0.0, "harassment": 0.2, "toxic": 0.4}'
-            }
+            granite_response.json.return_value = {"response": "No"}
 
             # Configure mock to return different responses for different calls
             # We might get multiple calls due to retries or multiple text extractions
@@ -424,9 +422,7 @@ plugin_dirs: []
 
             granite_response = MagicMock()
             granite_response.status_code = 200
-            granite_response.json.return_value = {
-                "response": '{"hate": 0.2, "violence": 0.1, "sexual": 0.0, "self_harm": 0.0, "harassment": 0.1, "toxic": 0.2}'
-            }
+            granite_response.json.return_value = {"response": "No"}
 
             # We might get multiple calls due to retries or multiple text extractions
             mock_client.post.side_effect = [watson_response, granite_response, watson_response, granite_response]

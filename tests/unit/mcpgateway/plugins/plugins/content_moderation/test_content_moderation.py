@@ -169,15 +169,12 @@ class TestContentModerationPlugin:
 
     @pytest.mark.asyncio
     @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
-    async def test_ibm_granite_moderation_success(self, mock_client_class):
-        """Test successful IBM Granite Guardian moderation."""
-        # Setup mock response
+    async def test_ibm_granite_moderation_harmful(self, mock_client_class):
+        """Test IBM Granite Guardian flags harmful content (Yes response)."""
         mock_client = AsyncMock()
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "response": '{"hate": 0.9, "violence": 0.2, "sexual": 0.1, "self_harm": 0.0, "harassment": 0.3, "toxic": 0.7}'
-        }
+        mock_response.json.return_value = {"response": "Yes"}
         mock_client.post.return_value = mock_response
         mock_client_class.return_value = mock_client
 
@@ -187,10 +184,32 @@ class TestContentModerationPlugin:
         result = await plugin._moderate_with_ibm_granite("This is hateful violent content")
 
         assert result.provider == ModerationProvider.IBM_GRANITE
-        assert result.flagged is True  # Should be flagged due to high hate score
-        assert result.categories["hate"] == 0.9
-        assert result.categories["violence"] == 0.2
-        assert result.action == ModerationAction.BLOCK  # Hate threshold is 0.7
+        assert result.flagged is True
+        # All categories get 1.0 when Granite says "Yes"
+        assert all(score == 1.0 for score in result.categories.values())
+        assert result.action == ModerationAction.BLOCK
+        mock_client.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch('plugins.content_moderation.content_moderation.httpx.AsyncClient')
+    async def test_ibm_granite_moderation_safe(self, mock_client_class):
+        """Test IBM Granite Guardian passes safe content (No response)."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "No"}
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        plugin = _create_plugin()
+        plugin._client = mock_client
+
+        result = await plugin._moderate_with_ibm_granite("This is a nice sunny day")
+
+        assert result.provider == ModerationProvider.IBM_GRANITE
+        assert result.flagged is False
+        assert all(score == 0.0 for score in result.categories.values())
+        assert result.confidence == 0.0
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
