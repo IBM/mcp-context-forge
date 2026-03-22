@@ -35,6 +35,15 @@ base64 = "0.22.1"
 arc-swap = "1.8.1"
 mimalloc = "0.1.48"
 time = "0.3.47"
+rmcp = { version = "1.2.0", features = ["client", "transport-child-process"], optional = true }
+
+[features]
+integration-test = ["rmcp"]
+
+[[bin]]
+name = "wrapper_integration"
+path = "src/bin/wrapper_integration.rs"
+required-features = ["integration-test"]
 
 [dev-dependencies]
 mockito = "1.7.1"
