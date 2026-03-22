@@ -2156,8 +2156,12 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
 async def content_size_exception_handler(_request: Request, exc: ContentSizeError):
     """Handle content size limit violations globally.
 
-    Returns 413 Payload Too Large with structured error details including
-    actual size, maximum allowed size, and a human-readable message.
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The ContentSizeError with actual_size, max_size, and content_type.
+
+    Returns:
+        ORJSONResponse: A 413 Payload Too Large response with structured error details.
     """
     return ORJSONResponse(status_code=413, content={"error": f"{exc.content_type} size limit exceeded", "message": str(exc), "actual_size": exc.actual_size, "max_size": exc.max_size})
 
