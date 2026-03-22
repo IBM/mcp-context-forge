@@ -8,7 +8,7 @@
 #
 # ➤ Lint trigger:    push / pull_request on chart changes
 # ➤ Publish trigger: release published (non-draft, non-prerelease, v* tag)
-# ➤ Manual trigger:  workflow_dispatch (always lints and publishes)
+# ➤ Manual trigger:  workflow_dispatch (lint + publish, or lint-only with dry_run)
 # ➤ OCI target:      oci://ghcr.io/ibm/mcp-context-forge/mcp-stack
 #
 # ======================================================================
@@ -30,6 +30,12 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Lint only — skip publish"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -54,18 +60,12 @@ jobs:
 
       - name: 🛠️  Install Helm
         uses: azure/setup-helm@v4
-        with:
-          version: "latest"
 
       - name: 🔍  Lint chart (strict)
         run: helm lint charts/mcp-stack --strict
 
       - name: 📄  Render default templates
-        run: |
-          helm template mcp-stack charts/mcp-stack \
-            --debug \
-            --dry-run \
-            > /dev/null
+        run: helm template mcp-stack charts/mcp-stack --debug > /dev/null
 
   # -----------------------------------------------------------------------
   # Publish – runs only on GitHub Release or manual dispatch
@@ -82,7 +82,10 @@ jobs:
         github.event.release.prerelease == false &&
         startsWith(github.event.release.tag_name, 'v')
       ) ||
-      github.event_name == 'workflow_dispatch'
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.dry_run != 'true'
+      )
 
     permissions:
       contents: read
@@ -94,8 +97,6 @@ jobs:
 
       - name: 🛠️  Install Helm
         uses: azure/setup-helm@v4
-        with:
-          version: "latest"
 
       # ----------------------------------------------------------------
       # Read the canonical chart version from Chart.yaml so the packaged
@@ -106,7 +107,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION=$(grep '^version:' charts/mcp-stack/Chart.yaml | awk '{print $2}')
+          VERSION=$(grep '^version:' charts/mcp-stack/Chart.yaml | awk '{print $2}' | tr -d '"'"'")
+          if [[ -z "${VERSION}" ]]; then
+            echo "::error::Could not read chart version from charts/mcp-stack/Chart.yaml"
+            exit 1
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Chart version: ${VERSION}"
 
@@ -116,8 +121,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           helm package charts/mcp-stack \
-            --destination dist \
-            --dependency-update
+            --destination dist
           ls -lh dist/
 
       - name: 🔐  Log in to GHCR
