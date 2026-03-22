@@ -1568,7 +1568,7 @@ class A2AAgentService(BaseService):
 
         if is_cache_enabled():
             cached = metrics_cache.get("a2a")
-            if cached is not None:
+            if cached is not None and isinstance(cached, dict):
                 return A2AAgentAggregateMetrics(**cached)
 
         # Get total/active agent counts from cache (avoids 2 COUNT queries per call)
