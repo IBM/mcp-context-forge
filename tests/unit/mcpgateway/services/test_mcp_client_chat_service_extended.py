@@ -696,6 +696,7 @@ async def test_chat_service_initialize_error(monkeypatch):
         llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
     )
     service = svc.MCPChatService(cfg)
+    monkeypatch.setattr(svc, "_LLMCHAT_AVAILABLE", True)
     monkeypatch.setattr(service.mcp_client, "connect", AsyncMock(side_effect=RuntimeError("boom")))
 
     with pytest.raises(RuntimeError):
