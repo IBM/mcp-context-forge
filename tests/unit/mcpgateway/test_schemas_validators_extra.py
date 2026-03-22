@@ -128,6 +128,99 @@ def test_tool_update_validators():
         ToolUpdate.prevent_manual_mcp_update({"integration_type": "A2A"})
 
 
+class TestToolUpdateDescriptionValidationStrict:
+    """Tests for ToolUpdate.validate_description forbidden-pattern check.
+
+    Mirrors TestToolCreateDescriptionValidationStrict to ensure ToolUpdate
+    respects VALIDATION_STRICT the same way ToolCreate does.
+    """
+
+    def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
+        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolUpdate.validate_description(f"Valid prefix {pat} suffix")
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "run cmd1 && cmd2",
+            "end statement;",
+            "try this || that",
+            "expand $(cmd)",
+            "pipe | grep",
+            "Search docs > results",
+            "read < file",
+        ],
+        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+    )
+    def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
+        """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolUpdate.validate_description(description)
+        assert result is not None
+        assert any("potentially unsafe" in rec.message for rec in caplog.records)
+
+    def test_non_strict_logs_single_warning_for_multiple_patterns(self, monkeypatch, caplog):
+        """Only one warning is logged even when a description matches multiple forbidden patterns."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolUpdate.validate_description("foo && bar | baz > qux")
+        assert result is not None
+        unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
+        assert len(unsafe_warnings) == 1
+
+    def test_safe_description_always_accepted(self, monkeypatch):
+        """Safe descriptions pass in both strict and non-strict modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            result = ToolUpdate.validate_description("A perfectly safe description.")
+            assert result == "A perfectly safe description."
+
+    def test_none_description_always_accepted(self, monkeypatch):
+        """None descriptions pass through unchanged in both modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            assert ToolUpdate.validate_description(None) is None
+
+    def test_forbidden_patterns_match_tool_create(self, monkeypatch):
+        """Ensure ToolCreate and ToolUpdate reject the exact same set of forbidden patterns in strict mode."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
+        for pat in forbidden_patterns:
+            payload = f"test {pat} injection"
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolCreate.validate_description(payload)
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolUpdate.validate_description(payload)
+
+    def test_empty_string_accepted(self):
+        """Empty string is a valid description (not None, not forbidden)."""
+        assert ToolUpdate.validate_description("") == ""
+
+    def test_forbidden_pattern_at_start(self, monkeypatch):
+        """Forbidden pattern at the very start of a description is still caught."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolUpdate.validate_description("&&rest of description")
+
+    def test_forbidden_pattern_at_end(self, monkeypatch):
+        """Forbidden pattern at the very end of a description is still caught."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolUpdate.validate_description("description ends with ||")
+
+    def test_exact_max_length_not_truncated(self):
+        """Description exactly at MAX_DESCRIPTION_LENGTH is accepted without truncation."""
+        exact = "x" * SecurityValidator.MAX_DESCRIPTION_LENGTH
+        result = ToolUpdate.validate_description(exact)
+        assert len(result) == SecurityValidator.MAX_DESCRIPTION_LENGTH
+
+
 def test_resource_update_content_and_description():
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
     truncated = ResourceUpdate.validate_description(long_desc)
