@@ -4,12 +4,12 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
-ContextForge AI Gateway Configuration.
-This module defines configuration settings for ContextForge AI Gateway using Pydantic.
+MCP Gateway Configuration.
+This module defines configuration settings for the MCP Gateway using Pydantic.
 It loads configuration from environment variables with sensible defaults.
 
 Environment variables:
-- APP_NAME: Gateway name (default: "ContextForge")
+- APP_NAME: Gateway name (default: "MCP_Gateway")
 - HOST: Host to bind to (default: "127.0.0.1")
 - PORT: Port to listen on (default: 4444)
 - DATABASE_URL: SQLite database URL (default: "sqlite:///./mcp.db")
@@ -117,45 +117,10 @@ _normalize_env_list_vars()
 # Default content type for outgoing requests to Forge
 FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
 
-# UI embedding / visibility controls
-UI_HIDABLE_SECTIONS = frozenset(
-    {
-        "overview",
-        "servers",
-        "gateways",
-        "tools",
-        "prompts",
-        "resources",
-        "roots",
-        "mcp-registry",
-        "metrics",
-        "plugins",
-        "export-import",
-        "logs",
-        "version-info",
-        "maintenance",
-        "teams",
-        "users",
-        "agents",
-        "tokens",
-        "settings",
-    }
-)
-UI_HIDABLE_HEADER_ITEMS = frozenset({"logout", "team_selector", "user_identity", "theme_toggle"})
-UI_HIDE_SECTION_ALIASES = {
-    "catalog": "servers",
-    "virtual_servers": "servers",
-    "a2a-agents": "agents",
-    "a2a": "agents",
-    "grpc-services": "agents",
-    "api_tokens": "tokens",
-    "llm-settings": "settings",
-}
-
 
 class Settings(BaseSettings):
     """
-    ContextForge AI Gateway configuration settings.
+    MCP Gateway configuration settings.
 
     Examples:
         >>> from mcpgateway.config import Settings
@@ -175,7 +140,7 @@ class Settings(BaseSettings):
         True
         >>> s5 = Settings()
         >>> s5.app_name
-        'ContextForge'
+        'MCP_Gateway'
         >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either
         True
         >>> s5.port
@@ -203,7 +168,7 @@ class Settings(BaseSettings):
     """
 
     # Basic Settings
-    app_name: str = "ContextForge"
+    app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
     port: PositiveInt = Field(default=4444, ge=1, le=65535)
     client_mode: bool = False
@@ -215,7 +180,7 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="sqlite:///./mcp.db",
         description=(
-            "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
+            "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. "
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
             "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
             "(See Issue #1535 for details)"
@@ -235,48 +200,6 @@ class Settings(BaseSettings):
 
     # Protocol
     protocol_version: str = "2025-11-25"
-    experimental_rust_mcp_runtime_enabled: bool = Field(
-        default=False,
-        description="Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
-    )
-    experimental_rust_mcp_runtime_url: str = Field(
-        default="http://127.0.0.1:8787",
-        description="Base URL for the experimental Rust MCP runtime sidecar.",
-    )
-    experimental_rust_mcp_runtime_uds: Optional[str] = Field(
-        default=None,
-        description="Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
-    )
-    experimental_rust_mcp_runtime_timeout_seconds: int = Field(
-        default=30,
-        ge=1,
-        le=300,
-        description="Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
-    )
-    experimental_rust_mcp_session_core_enabled: bool = Field(
-        default=False,
-        description="Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
-    )
-    experimental_rust_mcp_event_store_enabled: bool = Field(
-        default=False,
-        description="Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
-    )
-    experimental_rust_mcp_resume_core_enabled: bool = Field(
-        default=False,
-        description="Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
-    )
-    experimental_rust_mcp_live_stream_core_enabled: bool = Field(
-        default=False,
-        description="Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
-    )
-    experimental_rust_mcp_affinity_core_enabled: bool = Field(
-        default=False,
-        description="Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
-    )
-    experimental_rust_mcp_session_auth_reuse_enabled: bool = Field(
-        default=False,
-        description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
-    )
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -290,10 +213,6 @@ class Settings(BaseSettings):
     jwt_audience_verification: bool = True
     jwt_issuer_verification: bool = True
     auth_required: bool = True
-    allow_unauthenticated_admin: bool = Field(
-        default=False,
-        description="Allow unauthenticated requests to receive platform-admin context when AUTH_REQUIRED=false (dangerous; development-only override).",
-    )
     token_expiry: int = 10080  # minutes
 
     require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
@@ -339,8 +258,8 @@ class Settings(BaseSettings):
     sso_keycloak_client_secret: Optional[SecretStr] = Field(default=None, description="Keycloak client secret")
     sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
     sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
-    sso_keycloak_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map Keycloak groups/roles to ContextForge roles (JSON: {group_or_role: role_name})")
-    sso_keycloak_default_role: Optional[str] = Field(default=None, description="Default ContextForge role for Keycloak users without role mapping")
+    sso_keycloak_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map Keycloak groups/roles to Context Forge roles (JSON: {group_or_role: role_name})")
+    sso_keycloak_default_role: Optional[str] = Field(default=None, description="Default Context Forge role for Keycloak users without role mapping")
     sso_keycloak_resolve_team_scope_to_personal_team: bool = Field(default=False, description="Resolve team-scoped Keycloak role mappings to the user's personal team")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
 
@@ -369,13 +288,10 @@ class Settings(BaseSettings):
     sso_entra_client_secret: Optional[SecretStr] = Field(default=None, description="Microsoft Entra ID client secret")
     sso_entra_tenant_id: Optional[str] = Field(default=None, description="Microsoft Entra ID tenant ID")
     sso_entra_groups_claim: str = Field(default="groups", description="JWT claim for EntraID groups (groups/roles)")
-    sso_entra_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="EntraID groups granting platform_admin role (CSV/JSON)")
-    sso_entra_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map EntraID groups to ContextForge roles (JSON: {group_id: role_name})")
+    sso_entra_admin_groups: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="EntraID groups granting platform_admin role (CSV/JSON)")
+    sso_entra_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map EntraID groups to Context Forge roles (JSON: {group_id: role_name})")
     sso_entra_default_role: Optional[str] = Field(default=None, description="Default role for EntraID users without group mapping (None = no role assigned)")
     sso_entra_sync_roles_on_login: bool = Field(default=True, description="Synchronize role assignments on each login")
-    sso_entra_graph_api_enabled: bool = Field(default=True, description="Enable Microsoft Graph fallback for EntraID groups overage claims")
-    sso_entra_graph_api_timeout: int = Field(default=10, ge=1, le=120, description="Timeout in seconds for Microsoft Graph group fallback requests")
-    sso_entra_graph_api_max_groups: int = Field(default=0, ge=0, description="Maximum groups to keep from Graph fallback (0 = no limit)")
 
     sso_generic_enabled: bool = Field(default=False, description="Enable generic OIDC provider (Keycloak, Auth0, etc.)")
     sso_generic_provider_id: Optional[str] = Field(default=None, description="Provider ID (e.g., 'keycloak', 'auth0', 'authentik')")
@@ -386,30 +302,24 @@ class Settings(BaseSettings):
     sso_generic_token_url: Optional[str] = Field(default=None, description="Token endpoint URL")
     sso_generic_userinfo_url: Optional[str] = Field(default=None, description="Userinfo endpoint URL")
     sso_generic_issuer: Optional[str] = Field(default=None, description="OIDC issuer URL")
-    sso_generic_jwks_uri: Optional[str] = Field(default=None, description="OIDC JWKS endpoint URL for token signature verification")
     sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
 
     # SSO Settings
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
-    sso_trusted_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
+    sso_trusted_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
     sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
 
     # SSO Admin Assignment Settings
-    sso_auto_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
-    sso_github_admin_orgs: Annotated[list[str], NoDecode] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
-    sso_google_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
+    sso_auto_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
+    sso_github_admin_orgs: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
+    sso_google_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
     sso_require_admin_approval: bool = Field(default=False, description="Require admin approval for new SSO registrations")
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
-    mcp_require_auth: Optional[bool] = Field(
-        default=None,
-        description=(
-            "Require authentication for /mcp endpoints. "
-            "When unset, inherits AUTH_REQUIRED. "
-            "Set false explicitly to allow unauthenticated access to public items only; "
-            "set true to require a valid Bearer token for all /mcp requests."
-        ),
+    mcp_require_auth: bool = Field(
+        default=False,
+        description="Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. " "If true, all /mcp requests must include a valid Bearer token.",
     )
     trust_proxy_auth: bool = Field(
         default=False,
@@ -417,7 +327,7 @@ class Settings(BaseSettings):
     )
     trust_proxy_auth_dangerously: bool = Field(
         default=False,
-        description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
+        description="Explicitly allow proxy auth trust in unsafe environments (tests/dev only).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
@@ -469,28 +379,25 @@ class Settings(BaseSettings):
     )
 
     ssrf_allow_localhost: bool = Field(
-        default=False,
-        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Default false for safer production behavior."),
+        default=True,
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Set to false to block localhost access for stricter security. " "Default true for development compatibility."),
     )
 
     ssrf_allow_private_networks: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). " "When false, private destinations are blocked unless explicitly listed in SSRF_ALLOWED_NETWORKS."
+            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). "
+            "Set to false if the gateway should only access public internet endpoints. "
+            "Default true for internal deployment compatibility."
         ),
     )
 
-    ssrf_allowed_networks: List[str] = Field(
-        default_factory=list,
-        description=("Optional CIDR allowlist for internal/private destinations. " "Used when SSRF_ALLOW_PRIVATE_NETWORKS=false to allow specific internal ranges."),
-    )
-
     ssrf_dns_fail_closed: bool = Field(
-        default=True,
+        default=False,
         description=(
             "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
-            "are rejected. When false, unresolvable hostnames are allowed through "
-            "(hostname blocklist still applies)."
+            "are rejected. When false (default), unresolvable hostnames are allowed through "
+            "(hostname blocklist still applies). Set to true for stricter security."
         ),
     )
 
@@ -522,7 +429,7 @@ class Settings(BaseSettings):
     dcr_metadata_cache_ttl: int = Field(default=3600, description="AS metadata cache TTL in seconds (RFC 8414 discovery)")
 
     # Client name template
-    dcr_client_name_template: str = Field(default="ContextForge ({gateway_name})", description="Template for client_name in DCR requests")
+    dcr_client_name_template: str = Field(default="MCP Gateway ({gateway_name})", description="Template for client_name in DCR requests")
 
     # Refresh token behavior
     dcr_request_refresh_token_when_unsupported: bool = Field(
@@ -543,10 +450,6 @@ class Settings(BaseSettings):
     public_registration_enabled: bool = Field(
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
-    )
-    allow_public_visibility: bool = Field(
-        default=True,
-        description="When false, creating or updating any entity with public visibility is blocked in team scope.",
     )
     protect_all_admins: bool = Field(
         default=True,
@@ -580,31 +483,6 @@ class Settings(BaseSettings):
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=10, description="Maximum failed login attempts before account lockout")
     account_lockout_duration_minutes: int = Field(default=1, description="Account lockout duration in minutes")
-    account_lockout_notification_enabled: bool = Field(default=True, description="Send lockout notification emails when accounts are locked")
-    failed_login_min_response_ms: int = Field(default=250, description="Minimum response duration for failed login attempts to reduce timing side channels")
-
-    # Self-service password reset
-    password_reset_enabled: bool = Field(default=True, description="Enable self-service password reset workflow (set false to disable public forgot/reset endpoints)")
-    password_reset_token_expiry_minutes: int = Field(default=60, description="Password reset token expiration time in minutes")
-    password_reset_rate_limit: int = Field(default=5, description="Maximum password reset requests allowed per email in each rate-limit window")
-    password_reset_rate_window_minutes: int = Field(default=15, description="Password reset request rate-limit window in minutes")
-    password_reset_invalidate_sessions: bool = Field(default=True, description="Invalidate active sessions after password reset")
-    password_reset_min_response_ms: int = Field(default=250, description="Minimum response duration for forgot-password requests to reduce timing side channels")
-
-    # Email delivery for auth notifications
-    smtp_enabled: bool = Field(
-        default=False,
-        description="Enable SMTP email delivery for password reset and account lockout notifications (when false, reset requests are accepted but no email is sent)",
-    )
-    smtp_host: Optional[str] = Field(default=None, description="SMTP server host")
-    smtp_port: int = Field(default=587, description="SMTP server port")
-    smtp_user: Optional[str] = Field(default=None, description="SMTP username")
-    smtp_password: Optional[SecretStr] = Field(default=None, description="SMTP password")
-    smtp_from_email: Optional[str] = Field(default=None, description="From email address used for auth notifications")
-    smtp_from_name: str = Field(default="ContextForge", description="From display name used for auth notifications")
-    smtp_use_tls: bool = Field(default=True, description="Use STARTTLS for SMTP connections")
-    smtp_use_ssl: bool = Field(default=False, description="Use implicit SSL/TLS for SMTP connections")
-    smtp_timeout_seconds: int = Field(default=15, description="SMTP connection timeout in seconds")
 
     # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
@@ -618,6 +496,7 @@ class Settings(BaseSettings):
     allow_team_creation: bool = Field(default=True, description="Allow users to create organizational teams. Admins can always create teams.")
     allow_team_join_requests: bool = Field(default=True, description="Allow users to request to join public teams")
     allow_team_invitations: bool = Field(default=True, description="Allow team owners to send invitations")
+    allow_public_visibility: bool = Field(default=True, description="Allow team-scoped entities to be created or edited with public visibility")
 
     # Default Role Configuration
     default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
@@ -629,19 +508,7 @@ class Settings(BaseSettings):
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
-    mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
-    mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
-        default_factory=list,
-        description=(
-            "CSV/JSON list of UI sections to hide. "
-            "Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, "
-            "metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
-        ),
-    )
-    mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
-        default_factory=list,
-        description="CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
-    )
+    plugins_can_override_rbac: bool = Field(default=True, description="Allow plugin HTTP auth hook grant decisions to override RBAC checks")
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
@@ -658,6 +525,20 @@ class Settings(BaseSettings):
     mcpgateway_a2a_default_timeout: int = 30
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
+
+    # A2A Discovery & Orchestration
+    a2a_discovery_enabled: bool = Field(default=True, description="Enable A2A agent semantic discovery")
+    a2a_discovery_embed_capabilities: bool = Field(default=True, description="Embed agent capabilities for semantic search")
+    a2a_discovery_description_weight: float = Field(default=0.6, ge=0.0, le=1.0, description="Weight for description embedding in composite search")
+    a2a_discovery_capability_weight: float = Field(default=0.4, ge=0.0, le=1.0, description="Weight for capability embedding in composite search")
+    a2a_discovery_default_limit: int = Field(default=10, ge=1, le=100, description="Default max results for agent discovery")
+    a2a_discovery_default_threshold: float = Field(default=0.3, ge=0.0, le=1.0, description="Default similarity threshold for agent search")
+    a2a_delegation_timeout: int = Field(default=60, ge=1, le=600, description="Default timeout in seconds for agent delegation")
+    a2a_delegation_retry_attempts: int = Field(default=2, ge=0, le=5, description="Number of retry attempts for failed delegation")
+    a2a_orchestration_enabled: bool = Field(default=True, description="Enable multi-agent orchestration workflows")
+    a2a_orchestration_max_steps: int = Field(default=10, ge=1, le=50, description="Maximum steps in an orchestration plan")
+    a2a_orchestration_parallel_execution: bool = Field(default=True, description="Allow parallel execution in orchestration workflows")
+    a2a_agent_reindex_on_startup: bool = Field(default=False, description="Re-index all agent embeddings on startup")
 
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
@@ -689,8 +570,8 @@ class Settings(BaseSettings):
     mcpgateway_catalog_cache_ttl: int = Field(default=3600, description="Catalog cache TTL in seconds")
     mcpgateway_catalog_page_size: int = Field(default=100, description="Number of catalog servers per page")
 
-    # ContextForge Bootstrap Roles In DB Configuration
-    mcpgateway_bootstrap_roles_in_db_enabled: bool = Field(default=False, description="Enable ContextForge add additional roles in db")
+    # MCP Gateway Bootstrap Roles In DB Configuration
+    mcpgateway_bootstrap_roles_in_db_enabled: bool = Field(default=False, description="Enable MCP Gateway add additional roles in db")
     mcpgateway_bootstrap_roles_in_db_file: str = Field(default="additional_roles_in_db.json", description="Path to add additional roles in db")
 
     # Elicitation support (MCP 2025-06-18)
@@ -727,21 +608,17 @@ class Settings(BaseSettings):
     @field_validator("x_frame_options")
     @classmethod
     def normalize_x_frame_options(cls, v: Optional[str]) -> Optional[str]:
-        """Convert string 'null', 'none', or empty/whitespace-only string to Python None to disable iframe restrictions.
+        """Convert string 'null' or 'none' to Python None to disable iframe restrictions.
 
         Args:
-            v: The X-Frame-Options value to normalize.
+            v: The x_frame_options value from environment/config
 
         Returns:
-            None if v is None, an empty/whitespace-only string, or case-insensitive 'null'/'none';
-            otherwise returns the stripped string value.
+            None if v is "null" or "none" (case-insensitive), otherwise returns v unchanged
         """
-        if v is None:
+        if isinstance(v, str) and v.lower() in ("null", "none"):
             return None
-        val = v.strip()
-        if val == "" or val.lower() in ("null", "none"):
-            return None
-        return val
+        return v
 
     x_content_type_options_enabled: bool = Field(default=True)
     x_xss_protection_enabled: bool = Field(default=True)
@@ -770,26 +647,35 @@ class Settings(BaseSettings):
     min_password_length: int = 12
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
-    llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
-    mcpgateway_stdio_transport_enabled: bool = Field(
-        default=False,
-        description=("Enable stdio transport for MCP chat client configuration. Disabled by default; " "set true only in trusted environments that intentionally need stdio process execution."),
-    )
+    llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
-    plugins_can_override_rbac: bool = Field(
-        default=False,
-        description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. " "Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
+
+    # Natural language tool execution settings
+    nl_execution_enabled: bool = Field(default=False, description="Enable natural language tool execution endpoints")
+    nl_execution_model: str = Field(default="", description="LLM model ID for NL execution")
+    nl_execution_temperature: float = Field(default=0.3, ge=0.0, le=2.0, description="Default temperature for NL execution")
+    nl_execution_max_tokens: int = Field(default=1000, ge=1, description="Maximum tokens for NL execution prompts")
+    nl_execution_min_confidence: float = Field(default=0.6, ge=0.0, le=1.0, description="Minimum tool match confidence threshold")
+    nl_execution_max_tool_candidates: int = Field(default=5, ge=1, le=50, description="Maximum tool candidates for NL matching")
+    nl_execution_semantic_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Optional semantic similarity threshold")
+    nl_execution_allow_inference: bool = Field(default=True, description="Allow inferred parameters during slot filling")
+    nl_execution_max_clarification_rounds: int = Field(default=3, ge=1, description="Maximum clarification turns per session")
+    nl_execution_confirm_high_risk: bool = Field(default=True, description="Require confirmation for high-risk tools")
+    nl_execution_confirm_destructive: bool = Field(default=True, description="Require confirmation for destructive tools")
+    nl_execution_sensitive_param_patterns: List[str] = Field(
+        default_factory=lambda: ["password", "secret", "token", "production"],
+        description="Regex patterns for sensitive parameters",
     )
-    plugins_can_override_auth_headers: bool = Field(
+    nl_execution_followups_enabled: bool = Field(default=True, description="Include follow-up suggestions in NL responses")
+    nl_execution_max_followups: int = Field(default=3, ge=1, description="Maximum follow-up suggestions")
+    nl_execution_context_ttl: int = Field(default=3600, description="TTL in seconds for NL conversation context")
+    nl_execution_rate_limit: int = Field(default=30, ge=0, description="Requests per minute limit for NL endpoints")
+    nl_execution_max_context_messages: int = Field(default=20, ge=1, description="Maximum messages retained in NL context")
+
+    # Embedding auto-indexing settings
+    embedding_auto_index_enabled: bool = Field(
         default=False,
-        description=(
-            "DANGEROUS: Allow pre-request plugin hooks to override auth-sensitive headers "
-            "(authorization, cookie, x-api-key, proxy-authorization) that the client already sent. "
-            "Disabled by default because a malicious or misconfigured plugin could impersonate any "
-            "user by rewriting the Authorization header. Only enable when all loaded plugins are "
-            "fully trusted and the deployment requires token exchange (e.g. WXO auth). "
-            "Requires a server restart to take effect."
-        ),
+        description="Automatically index tools for semantic search when created/updated",
     )
 
     # database-backed polling settings for session message delivery
@@ -804,12 +690,42 @@ class Settings(BaseSettings):
     llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
+    llmchat_auto_tool_filter_enabled: bool = Field(
+        default=False,
+        description="Enable semantic auto-filtering of tools for LLM Chat requests",
+    )
+    llmchat_auto_tool_filter_k: int = Field(
+        default=10,
+        ge=1,
+        le=200,
+        description="Top-K tools to include when semantic auto-filtering is enabled",
+    )
+    llmchat_auto_tool_filter_threshold: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Optional similarity threshold for semantic auto-filtering (0-1)",
+    )
 
     # LLM Settings (Internal API for LLM Chat)
     llm_api_prefix: str = Field(default="/v1", description="API prefix for internal LLM endpoints")
     llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")
     llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
     llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
+
+    # Embedding Service Settings
+    embedding_provider: str = Field(default="openai", description="Embedding provider")
+    embedding_model: str = Field(default="text-embedding-3-small", description="Embedding model name")
+    embedding_api_key: SecretStr = Field(default="", description="API key for embedding provider")
+    embedding_dim: int = Field(
+        default=1536,
+        gt=0,
+        description=(
+            "Expected embedding vector dimension. Must match the model output exactly. "
+            "text-embedding-3-small=1536, text-embedding-3-large=3072. "
+            "The service validates this at initialization and raises a descriptive error on mismatch."
+        ),
+    )
 
     @field_validator("allowed_roots", mode="before")
     @classmethod
@@ -877,7 +793,7 @@ class Settings(BaseSettings):
 
         # Check for default/weak secrets
         if not info.data.get("client_mode"):
-            weak_secrets = ["my-test-key", "my-test-key-but-now-longer-than-32-bytes", "my-test-salt", "changeme", "secret", "password"]
+            weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
             if value.lower() in weak_secrets:
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
@@ -985,7 +901,7 @@ class Settings(BaseSettings):
 
             # Warn about SQLite in production
             if v.startswith("sqlite"):
-                logger.info("Using SQLite database. Consider PostgreSQL for production.")
+                logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
 
         return v
 
@@ -1045,7 +961,7 @@ class Settings(BaseSettings):
 
         # Database warnings
         if self.database_url.startswith("sqlite") and not self.dev_mode:
-            warnings.append("💾 SQLite database in use - consider PostgreSQL for production")
+            warnings.append("💾 SQLite database in use - consider PostgreSQL/MySQL for production")
 
         # Rate limiting warnings
         if self.tool_rate_limit > 1000:
@@ -1076,8 +992,7 @@ class Settings(BaseSettings):
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
 
         return {
-            "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
-            != "my-test-key",  # nosec B105 - checking for default value
+            "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -1343,11 +1258,6 @@ class Settings(BaseSettings):
     security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
     security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
 
-    # API Token Tracking Configuration
-    # Controls how token usage and last_used timestamps are tracked
-    token_usage_logging_enabled: bool = Field(default=True, description="Enable API token usage logging middleware")
-    token_last_used_update_interval_minutes: int = Field(default=5, ge=1, le=1440, description="Minimum minutes between last_used timestamp updates (rate-limits DB writes)")
-
     # Metrics Aggregation Configuration
     metrics_aggregation_enabled: bool = Field(default=True, description="Enable automatic log aggregation into performance metrics")
     metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
@@ -1396,6 +1306,13 @@ class Settings(BaseSettings):
     metrics_delete_raw_after_rollup: bool = Field(default=True, description="Delete raw metrics after hourly rollup exists (recommended for production)")
     metrics_delete_raw_after_rollup_hours: int = Field(default=1, ge=1, le=8760, description="Hours to retain raw metrics when hourly rollup exists")
 
+    # Trending Analytics Configuration
+    trending_enabled: bool = Field(default=True, description="Enable trending tools analytics engine")
+    trending_cache_ttl_seconds: int = Field(default=300, ge=60, le=600, description="TTL for cached trending results in seconds")
+    trending_background_interval_seconds: int = Field(default=300, ge=60, le=3600, description="Seconds between background trending recalculations")
+    trending_new_tools_days: int = Field(default=7, ge=1, le=30, description="Days to surface newly added tools")
+    trending_default_limit: int = Field(default=5, ge=1, le=50, description="Default number of trending tools to return")
+
     # Auth Cache Configuration (reduces DB queries during authentication)
     auth_cache_enabled: bool = Field(default=True, description="Enable Redis/in-memory caching for authentication data (user, team, revocation)")
     auth_cache_user_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for cached user data")
@@ -1405,6 +1322,39 @@ class Settings(BaseSettings):
     auth_cache_teams_enabled: bool = Field(default=True, description="Enable caching for get_user_teams() (default: true)")
     auth_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for user teams list cache")
     auth_cache_batch_queries: bool = Field(default=True, description="Batch auth DB queries into single call (reduces 3 queries to 1)")
+
+    # ===================================
+    # Analytics & Collaborative Filtering Configuration
+    # ===================================
+    
+    # Usage Analytics Configuration
+    analytics_enabled: bool = Field(default=True, description="Enable tool usage analytics and event tracking")
+    analytics_retention_days: int = Field(default=90, ge=30, le=730, description="Days to retain tool usage events (30-730 days)")
+    analytics_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of old usage events")
+    analytics_cleanup_interval_hours: int = Field(default=24, ge=1, le=168, description="Hours between usage event cleanup runs")
+    analytics_cleanup_batch_size: int = Field(default=10000, ge=100, le=100000, description="Batch size for usage event deletion")
+    
+    # Collaborative Filtering Configuration
+    collaborative_filtering_enabled: bool = Field(default=True, description="Enable collaborative filtering recommendations")
+    cf_min_common_tools: int = Field(default=2, ge=1, le=20, description="Minimum common tools for user similarity (1-20)")
+    cf_similarity_algorithm: Literal["cosine", "jaccard", "dice", "overlap"] = Field(default="cosine", description="Algorithm for computing user similarity")
+    cf_recommendation_limit: int = Field(default=10, ge=1, le=50, description="Maximum tools to recommend per request")
+    cf_min_user_interactions: int = Field(default=3, ge=1, le=20, description="Minimum tool interactions before user is included in recommendations")
+    cf_boost_weight: float = Field(default=0.25, ge=0.0, le=1.0, description="Weight for collaborative filtering boost (0.0-1.0, 0=disabled)")
+    cf_min_similar_users: int = Field(default=5, ge=1, le=50, description="Minimum similar users required before using collaborative recommendations; below this threshold falls back to org-wide popular tools")
+    cf_min_relevance_score: float = Field(default=0.6, ge=0.0, le=1.0, description="Minimum normalised relevance score (0-1) to include a tool in recommendations")
+    cf_team_similarity_boost: float = Field(default=0.1, ge=0.0, le=0.5, description="Additive similarity bonus for users in the same team (0=disabled)")
+    
+    # Similarity Cache Configuration
+    similarity_cache_enabled: bool = Field(default=True, description="Enable caching for user similarity computations")
+    similarity_cache_ttl: int = Field(default=3600, ge=300, le=86400, description="TTL in seconds for similarity cache (5 min - 24 hrs)")
+    similarity_precompute_enabled: bool = Field(default=False, description="Enable background precomputation of user similarities")
+    similarity_precompute_interval_hours: int = Field(default=6, ge=1, le=168, description="Hours between similarity precomputation runs")
+    
+    # Privacy Configuration
+    analytics_allow_opt_out: bool = Field(default=True, description="Allow users to opt out of usage analytics")
+    analytics_export_enabled: bool = Field(default=True, description="Allow users to export their analytics data")
+    analytics_delete_enabled: bool = Field(default=True, description="Allow users to request deletion of their analytics data")
 
     # Registry Cache Configuration (reduces DB queries for list endpoints)
     registry_cache_enabled: bool = Field(default=True, description="Enable caching for registry list endpoints (tools, prompts, resources, etc.)")
@@ -1476,8 +1426,6 @@ class Settings(BaseSettings):
         return v_up
 
     # Transport
-    mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
-    mcpgateway_reverse_proxy_enabled: bool = Field(default=False, description="Enable reverse-proxy transport endpoints under /reverse-proxy/*")
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
     sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect
@@ -1556,6 +1504,19 @@ class Settings(BaseSettings):
     max_tool_retries: int = 3
     tool_rate_limit: int = 100  # requests per minute
     tool_concurrent_limit: int = 10
+
+    # Semantic Search Rate Limiting (expensive operations: embedding generation + vector search)
+    semantic_search_rate_limit: int = Field(default=10, description="Rate limit for semantic search endpoint (requests per minute per IP)")
+
+    # Context-aware recommender
+    recommendation_conversation_weight: float = Field(default=0.10, description="Weight for conversation context signal in unified recommender")
+    recommendation_workflow_weight: float = Field(default=0.20, description="Weight for workflow co-occurrence signal in unified recommender")
+    recommendation_time_weight: float = Field(default=0.05, description="Weight for time-based usage signal in unified recommender")
+    recommendation_workflow_window_minutes: int = Field(default=5, description="Time window in minutes for tool co-occurrence detection")
+    recommendation_min_history_days: int = Field(default=30, description="Minimum days of history required before time patterns are used")
+    recommendation_context_cache_ttl: int = Field(default=300, description="TTL in seconds for conversation context cache (5 min)")
+    recommendation_pattern_cache_ttl: int = Field(default=86400, description="TTL in seconds for workflow pattern cache (24 hr)")
+    recommendation_min_cooccurrence: int = Field(default=3, description="Minimum co-occurrence count for a workflow pair to be considered")
 
     # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
     # Disabled by default for safety. Enable explicitly in production after testing.
@@ -1667,7 +1628,7 @@ class Settings(BaseSettings):
     default_roots: List[str] = []
 
     # Database
-    db_driver: str = "postgresql+psycopg"
+    db_driver: str = "mariadb+mariadbconnector"
     db_pool_size: int = 200
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
@@ -1710,6 +1671,15 @@ class Settings(BaseSettings):
 
     # SQLite busy timeout: Maximum time (ms) SQLite will wait to acquire a database lock before returning SQLITE_BUSY.
     db_sqlite_busy_timeout: int = Field(default=5000, ge=1000, le=60000, description="SQLite busy timeout in milliseconds (default: 5000ms)")
+
+    # HNSW vector index parameters (pgvector)
+    hnsw_m: int = Field(default=16, ge=2, le=100, description="HNSW max connections per node (higher = better recall, more memory)")
+    hnsw_ef_construction: int = Field(default=64, ge=16, le=512, description="HNSW construction search depth (higher = better index quality, slower build)")
+
+    # CRT Router parameters
+    router_crt_k: int = Field(default=10, ge=1, le=200, description="Default top-K tools returned by the CRT router when k param is not specified")
+    router_crt_threshold: float = Field(default=0.0, ge=0.0, le=1.0, description="Default minimum relevance threshold for CRT router (0.0 = return all top-K)")
+    router_crt_calibration_path: str = Field(default="data/calibration/crt_calibration.json", description="Path to the CRT calibration JSON file (relative to project root or absolute)")
 
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
@@ -1765,6 +1735,14 @@ class Settings(BaseSettings):
     streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
     streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
 
+    # Core plugin settings
+    plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
+    plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")
+
+    # Plugin CLI settings
+    plugins_cli_completion: bool = Field(default=False, description="Enable auto-completion for plugins CLI")
+    plugins_cli_markup_mode: Literal["markdown", "rich", "disabled"] | None = Field(default=None, description="Set markup mode for plugins CLI")
+
     # Development
     dev_mode: bool = False
     reload: bool = False
@@ -1796,7 +1774,7 @@ class Settings(BaseSettings):
     well_known_robots_txt: str = """User-agent: *
 Disallow: /
 
-# ContextForge is a private API gateway
+# MCP Gateway is a private API gateway
 # Public crawling is disabled by default"""
 
     # security.txt content (optional, user-defined)
@@ -1883,30 +1861,6 @@ Disallow: /
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
 
-    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
-    @classmethod
-    def _validate_experimental_rust_mcp_runtime_uds(cls, value: Optional[str]) -> Optional[str]:
-        """Validate the optional UDS path used for the Rust MCP runtime sidecar.
-
-        Args:
-            value: Candidate UDS path from configuration.
-
-        Returns:
-            The normalized absolute UDS path, or ``None`` when unset.
-
-        Raises:
-            ValueError: If the path is not absolute or its parent directory is missing.
-        """
-        if value in (None, ""):
-            return None
-
-        uds_path = Path(value).expanduser()
-        if not uds_path.is_absolute():
-            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
-        if not uds_path.parent.exists():
-            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
-        return str(uds_path)
-
     # -------------------------------
     # Flexible list parsing for envs
     # -------------------------------
@@ -1917,8 +1871,6 @@ Disallow: /
         "sso_github_admin_orgs",
         "sso_google_admin_domains",
         "insecure_queryparam_auth_allowed_hosts",
-        "mcpgateway_ui_hide_sections",
-        "mcpgateway_ui_hide_header_items",
         mode="before",
     )
     @classmethod
@@ -1954,61 +1906,6 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
-
-    @field_validator("mcpgateway_ui_hide_sections", mode="after")
-    @classmethod
-    def _validate_ui_hide_sections(cls, value: list[str]) -> list[str]:
-        """Normalize and filter hidable UI sections.
-
-        Args:
-            value: Candidate section identifiers from environment/config.
-
-        Returns:
-            list[str]: Normalized unique section identifiers.
-        """
-        normalized: list[str] = []
-        seen: set[str] = set()
-
-        for item in value:
-            candidate = str(item).strip().lower()
-            if not candidate:
-                continue
-            candidate = UI_HIDE_SECTION_ALIASES.get(candidate, candidate)
-            if candidate not in UI_HIDABLE_SECTIONS:
-                logger.warning("Ignoring invalid MCPGATEWAY_UI_HIDE_SECTIONS item: %s", item)
-                continue
-            if candidate not in seen:
-                seen.add(candidate)
-                normalized.append(candidate)
-
-        return normalized
-
-    @field_validator("mcpgateway_ui_hide_header_items", mode="after")
-    @classmethod
-    def _validate_ui_hide_header_items(cls, value: list[str]) -> list[str]:
-        """Normalize and filter hidable header items.
-
-        Args:
-            value: Candidate header identifiers from environment/config.
-
-        Returns:
-            list[str]: Normalized unique header identifiers.
-        """
-        normalized: list[str] = []
-        seen: set[str] = set()
-
-        for item in value:
-            candidate = str(item).strip().lower()
-            if not candidate:
-                continue
-            if candidate not in UI_HIDABLE_HEADER_ITEMS:
-                logger.warning("Ignoring invalid MCPGATEWAY_UI_HIDE_HEADER_ITEMS item: %s", item)
-                continue
-            if candidate not in seen:
-                seen.add(candidate)
-                normalized.append(candidate)
-
-        return normalized
 
     @property
     def api_key(self) -> str:
@@ -2414,38 +2311,13 @@ Disallow: /
                 app_domain_host = urlparse(str(self.app_domain)).hostname or "localhost"
                 self.allowed_origins = {f"https://{app_domain_host}", f"https://app.{app_domain_host}", f"https://admin.{app_domain_host}"}
 
-        # MCP transport auth policy:
-        # - If MCP_REQUIRE_AUTH is unset, derive it from AUTH_REQUIRED
-        # - If AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false is explicit, emit a warning
-        if self.mcp_require_auth is None:
-            self.mcp_require_auth = bool(self.auth_required)
-            logger.info(
-                "MCP_REQUIRE_AUTH not set; defaulting to %s to match AUTH_REQUIRED=%s.",
-                self.mcp_require_auth,
-                self.auth_required,
-            )
-        elif self.auth_required and self.mcp_require_auth is False:
-            logger.warning("AUTH_REQUIRED=true but MCP_REQUIRE_AUTH=false. MCP endpoints (/servers/*/mcp) allow unauthenticated access to public items.")
-
         # Validate proxy auth configuration
-        if not self.mcp_client_auth_enabled and self.trust_proxy_auth and not self.trust_proxy_auth_dangerously:
-            logger.warning(
-                "TRUST_PROXY_AUTH=true ignored because TRUST_PROXY_AUTH_DANGEROUSLY is false "
-                "while MCP_CLIENT_AUTH_ENABLED=false. Set TRUST_PROXY_AUTH_DANGEROUSLY=true "
-                "only behind a strictly trusted authentication proxy."
-            )
-            self.trust_proxy_auth = False
-        elif not self.mcp_client_auth_enabled and self.trust_proxy_auth and self.trust_proxy_auth_dangerously:
-            logger.warning("TRUST_PROXY_AUTH_DANGEROUSLY=true acknowledged. Requests may trust identity headers from the upstream proxy.")
-        elif not self.mcp_client_auth_enabled and not self.trust_proxy_auth:
+        if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:
             logger.warning(
                 "MCP client authentication is disabled but trust_proxy_auth is not set. "
-                "This is a security risk! Set TRUST_PROXY_AUTH=true only if ContextForge "
+                "This is a security risk! Set TRUST_PROXY_AUTH=true only if MCP Gateway "
                 "is behind a trusted authentication proxy."
             )
-
-        if not self.auth_required and self.allow_unauthenticated_admin:
-            logger.warning("ALLOW_UNAUTHENTICATED_ADMIN=true acknowledged while AUTH_REQUIRED=false. Unauthenticated requests may receive admin context.")
 
     # Masking value for all sensitive data
     masked_auth_value: str = "*****"
@@ -2470,6 +2342,19 @@ Disallow: /
     METRICS_SUBSYSTEM: str = Field("", description="Prometheus metrics subsystem")
     METRICS_CUSTOM_LABELS: str = Field("", description='Comma-separated "key=value" pairs for static custom labels')
 
+    # CRT Router settings (Chinese Remainder Theorem based routing)
+    mcpgateway_crt_router_enabled: bool = Field(
+        default=False,
+        description="Enable CRT (Chinese Remainder Theorem) based semantic tool routing"
+    )
+    mcpgateway_router_mode: str = Field(
+        default="standard",
+        description="Routing mode: standard (no CRT), crt (CRT + semantic), or hybrid"
+    )
+    mcpgateway_crt_calibration_path: str = Field(
+        default="data/calibration/crt_model.json",
+        description="Path to CRT calibration artifacts (primes, bins, success tables, embeddings)"
+    )
 
 @lru_cache()
 def get_settings(**kwargs: Any) -> Settings:
@@ -2517,22 +2402,6 @@ def generate_settings_schema() -> dict[str, Any]:
 # Lazy "instance" of settings
 class LazySettingsWrapper:
     """Lazily initialize settings singleton on getattr"""
-
-    @property
-    def plugins(self) -> Any:
-        """Access plugin framework settings via ``settings.plugins``.
-
-        Returns a ``LazySettingsWrapper`` from the plugin framework that
-        provides lightweight ``@property`` accessors for startup-critical
-        fields and a ``__getattr__`` fallback to the full ``PluginsSettings``.
-
-        Returns:
-            The plugin framework settings wrapper.
-        """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
-
-        return _plugin_settings
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it
