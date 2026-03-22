@@ -1252,6 +1252,15 @@ class SSOService:
                     if claim in keycloak_id_token_claims and claim not in user_data:
                         user_data[claim] = keycloak_id_token_claims[claim]
 
+            # For generic OIDC providers, merge the configured groups claim from the
+            # verified id_token when the userinfo response did not include it.  Some
+            # providers (e.g. JumpCloud) only emit groups in the id_token.
+            if provider.id not in ("github", "google", "ibm_verify", "okta", "keycloak", "entra") and verified_id_token_claims:
+                metadata = provider.provider_metadata or {}
+                groups_claim = metadata.get("groups_claim", "groups")
+                if groups_claim in verified_id_token_claims and groups_claim not in user_data:
+                    user_data[groups_claim] = verified_id_token_claims[groups_claim]
+
             # Normalize user info across providers
             return self._normalize_user_info(provider, user_data)
 
@@ -1444,6 +1453,15 @@ class SSOService:
         # _is_email_verified_claim's absent-means-pass-through logic applies correctly.
         # Injecting None (via .get()) when the key is missing would cause the key to
         # be present in the dict with a falsy value, silently blocking login.
+        metadata = provider.provider_metadata or {}
+        groups_claim = metadata.get("groups_claim", "groups")
+        groups = []
+        if groups_claim in user_data:
+            gc = user_data.get(groups_claim, [])
+            if isinstance(gc, list):
+                groups = [g for g in gc if isinstance(g, str)]
+            elif isinstance(gc, str):
+                groups = [gc]
         generic_normalized: Dict[str, Any] = {
             "email": user_data.get("email"),
             "full_name": user_data.get("name"),
@@ -1451,6 +1469,7 @@ class SSOService:
             "provider_id": user_data.get("sub"),
             "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
             "provider": provider.id,
+            "groups": groups,
         }
         if "email_verified" in user_data:
             generic_normalized["email_verified"] = user_data["email_verified"]

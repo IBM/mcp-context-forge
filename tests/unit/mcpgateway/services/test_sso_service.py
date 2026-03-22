@@ -1275,6 +1275,75 @@ class TestGetUserInfo:
         assert "admin" in result["groups"]
         assert "/team" in result["groups"]
 
+    @pytest.mark.asyncio
+    async def test_get_user_info_generic_oidc_merges_groups_from_id_token(self, sso_service):
+        """Generic OIDC provider merges configured groups claim from id_token when userinfo omits it."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@jumpcloud.com", "name": "JC User", "sub": "jc-123"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="jumpcloud", name="jumpcloud", provider_type="oidc", provider_metadata={"groups_claim": "groups"})
+
+        id_token_claims = {"sub": "jc-123", "groups": ["Engineering", "Platform"]}
+        token_data = {"access_token": "at", "_verified_id_token_claims": id_token_claims}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["groups"] == ["Engineering", "Platform"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_generic_oidc_prefers_userinfo_groups_over_id_token(self, sso_service):
+        """When userinfo already contains the groups claim, id_token groups are not merged."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@provider.com", "name": "Test", "sub": "u-1", "groups": ["FromUserinfo"]}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="custom_oidc", name="custom_oidc", provider_type="oidc", provider_metadata={})
+
+        id_token_claims = {"sub": "u-1", "groups": ["FromIdToken"]}
+        token_data = {"access_token": "at", "_verified_id_token_claims": id_token_claims}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["groups"] == ["FromUserinfo"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_generic_oidc_custom_groups_claim_from_id_token(self, sso_service):
+        """Generic OIDC provider merges custom-named groups claim from id_token."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@auth0.com", "name": "A0 User", "sub": "a0-1"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="auth0", name="auth0", provider_type="oidc", provider_metadata={"groups_claim": "https://myapp/roles"})
+
+        id_token_claims = {"sub": "a0-1", "https://myapp/roles": ["admin", "editor"]}
+        token_data = {"access_token": "at", "_verified_id_token_claims": id_token_claims}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["groups"] == ["admin", "editor"]
+
 
 # ---------------------------------------------------------------------------
 # Normalization tests
