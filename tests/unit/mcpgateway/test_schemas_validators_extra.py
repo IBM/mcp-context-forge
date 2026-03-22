@@ -198,6 +198,28 @@ class TestToolUpdateDescriptionValidationStrict:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolUpdate.validate_description(payload)
 
+    def test_empty_string_accepted(self):
+        """Empty string is a valid description (not None, not forbidden)."""
+        assert ToolUpdate.validate_description("") == ""
+
+    def test_forbidden_pattern_at_start(self, monkeypatch):
+        """Forbidden pattern at the very start of a description is still caught."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolUpdate.validate_description("&&rest of description")
+
+    def test_forbidden_pattern_at_end(self, monkeypatch):
+        """Forbidden pattern at the very end of a description is still caught."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolUpdate.validate_description("description ends with ||")
+
+    def test_exact_max_length_not_truncated(self):
+        """Description exactly at MAX_DESCRIPTION_LENGTH is accepted without truncation."""
+        exact = "x" * SecurityValidator.MAX_DESCRIPTION_LENGTH
+        result = ToolUpdate.validate_description(exact)
+        assert len(result) == SecurityValidator.MAX_DESCRIPTION_LENGTH
+
 
 def test_resource_update_content_and_description():
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
