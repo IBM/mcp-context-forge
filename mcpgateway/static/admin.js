@@ -4484,11 +4484,11 @@ async function editA2AAgent(agentId) {
                 // Populate OAuth fields if available
                 if (agent.oauthConfig) {
                     const config = agent.oauthConfig;
-                    if (oauthIssuerField && config.issuer) {
-                        oauthIssuerField.value = config.issuer;
+                    if (oauthIssuerField) {
+                        oauthIssuerField.value = config.issuer || "";
                     }
-                    if (oauthGrantTypeField && config.grant_type) {
-                        oauthGrantTypeField.value = config.grant_type;
+                    if (oauthGrantTypeField) {
+                        oauthGrantTypeField.value = config.grant_type || "";
                         // Show/hide authorization code fields based on grant type
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
@@ -4497,27 +4497,26 @@ async function editA2AAgent(agentId) {
                                     : "none";
                         }
                     }
-                    if (oauthClientIdField && config.client_id) {
-                        oauthClientIdField.value = config.client_id;
+                    if (oauthClientIdField) {
+                        oauthClientIdField.value = config.client_id || "";
                     }
                     if (oauthClientSecretField) {
                         oauthClientSecretField.value = ""; // Don't populate secret for security
                     }
-                    if (oauthTokenUrlField && config.token_url) {
-                        oauthTokenUrlField.value = config.token_url;
+                    if (oauthTokenUrlField) {
+                        oauthTokenUrlField.value = config.token_url || "";
                     }
-                    if (oauthAuthUrlField && config.authorization_url) {
-                        oauthAuthUrlField.value = config.authorization_url;
+                    if (oauthAuthUrlField) {
+                        oauthAuthUrlField.value =
+                            config.authorization_url || "";
                     }
-                    if (oauthRedirectUriField && config.redirect_uri) {
-                        oauthRedirectUriField.value = config.redirect_uri;
+                    if (oauthRedirectUriField) {
+                        oauthRedirectUriField.value = config.redirect_uri || "";
                     }
-                    if (
-                        oauthScopesField &&
-                        config.scopes &&
-                        Array.isArray(config.scopes)
-                    ) {
-                        oauthScopesField.value = config.scopes.join(" ");
+                    if (oauthScopesField) {
+                        oauthScopesField.value = Array.isArray(config.scopes)
+                            ? config.scopes.join(" ")
+                            : "";
                     }
                 }
                 break;
@@ -6404,11 +6403,11 @@ async function editGateway(gatewayId) {
                 // Populate OAuth fields if available
                 if (gateway.oauthConfig) {
                     const config = gateway.oauthConfig;
-                    if (oauthIssuerField && config.issuer) {
-                        oauthIssuerField.value = config.issuer;
+                    if (oauthIssuerField) {
+                        oauthIssuerField.value = config.issuer || "";
                     }
-                    if (oauthGrantTypeField && config.grant_type) {
-                        oauthGrantTypeField.value = config.grant_type;
+                    if (oauthGrantTypeField) {
+                        oauthGrantTypeField.value = config.grant_type || "";
                         // Show/hide authorization code fields based on grant type
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
@@ -6417,27 +6416,26 @@ async function editGateway(gatewayId) {
                                     : "none";
                         }
                     }
-                    if (oauthClientIdField && config.client_id) {
-                        oauthClientIdField.value = config.client_id;
+                    if (oauthClientIdField) {
+                        oauthClientIdField.value = config.client_id || "";
                     }
                     if (oauthClientSecretField) {
                         oauthClientSecretField.value = ""; // Don't populate secret for security
                     }
-                    if (oauthTokenUrlField && config.token_url) {
-                        oauthTokenUrlField.value = config.token_url;
+                    if (oauthTokenUrlField) {
+                        oauthTokenUrlField.value = config.token_url || "";
                     }
-                    if (oauthAuthUrlField && config.authorization_url) {
-                        oauthAuthUrlField.value = config.authorization_url;
+                    if (oauthAuthUrlField) {
+                        oauthAuthUrlField.value =
+                            config.authorization_url || "";
                     }
-                    if (oauthRedirectUriField && config.redirect_uri) {
-                        oauthRedirectUriField.value = config.redirect_uri;
+                    if (oauthRedirectUriField) {
+                        oauthRedirectUriField.value = config.redirect_uri || "";
                     }
-                    if (
-                        oauthScopesField &&
-                        config.scopes &&
-                        Array.isArray(config.scopes)
-                    ) {
-                        oauthScopesField.value = config.scopes.join(" ");
+                    if (oauthScopesField) {
+                        oauthScopesField.value = Array.isArray(config.scopes)
+                            ? config.scopes.join(" ")
+                            : "";
                     }
                 }
                 break;
