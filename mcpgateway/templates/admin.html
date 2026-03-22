@@ -427,7 +427,7 @@
       <div
         x-show="sidebarOpen"
         @click="sidebarOpen = false"
-        class="fixed inset-0 bg-gray-900/50 z-40 lg:hidden"
+        class="fixed inset-0 bg-gray-900/50 z-10 lg:hidden"
         x-transition:enter="transition-opacity ease-linear duration-300"
         x-transition:enter-start="opacity-0"
         x-transition:enter-end="opacity-100"
@@ -440,7 +440,7 @@
       <!-- Sidebar -->
       <aside
         id="sidebar"
-        class="sidebar-nav flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 transition-all duration-300"
+        class="relative z-20 shrink-0 max-lg:fixed max-lg:top-0 max-lg:left-0 max-lg:h-screen max-lg:shadow-[4px_0_6px_-1px_rgb(0_0_0/10%)] flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 transition-all duration-300"
         :class="{
           'w-64': !sidebarCollapsed,
           'w-16': sidebarCollapsed,
@@ -888,7 +888,7 @@
                   x-transition:leave="transition ease-in duration-75"
                   x-transition:leave-start="transform opacity-100 scale-100"
                   x-transition:leave-end="transform opacity-0 scale-95"
-                  class="origin-top-right absolute right-0 mt-2 w-72 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 z-50"
+                  class="origin-top-right absolute right-0 mt-2 w-72 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 z-30"
                   role="menu"
                   aria-orientation="vertical"
                   aria-labelledby="team-selector-button"
@@ -980,7 +980,7 @@
         </div>
 
         <!-- Global Search Modal -->
-        <div id="global-search-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+        <div id="global-search-modal" class="fixed inset-0 z-40 hidden" aria-hidden="true">
           <div class="absolute inset-0 bg-black/40" onclick="closeGlobalSearchModal()"></div>
           <div class="relative max-w-3xl mx-auto mt-24 px-4">
             <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden">
@@ -1740,7 +1740,7 @@
                       x-transition:leave="transition ease-in duration-75"
                       x-transition:leave-start="transform opacity-100 scale-100"
                       x-transition:leave-end="transform opacity-0 scale-95"
-                      class="absolute left-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 max-h-96 overflow-hidden flex flex-col"
+                      class="absolute left-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-30 max-h-96 overflow-hidden flex flex-col"
                       style="display: none">
                       <!-- Dropdown Header -->
                       <div
@@ -1803,7 +1803,7 @@
                       x-transition:leave="transition ease-in duration-75"
                       x-transition:leave-start="transform opacity-100 scale-100"
                       x-transition:leave-end="transform opacity-0 scale-95" id="llm-config-form"
-                      class="absolute left-0 mt-2 w-[600px] bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 p-4"
+                      class="absolute left-0 mt-2 w-[600px] bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-30 p-4"
                       style="display: none">
                       <form id="llm-chat-config-form" class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <!-- Model Selection -->
@@ -1868,7 +1868,7 @@
 
                       <!-- Enhanced tooltip card -->
                       <div
-                        class="absolute left-1/2 -translate-x-1/2 top-full mt-3 hidden group-hover:block w-80 z-50 animate-fade-in">
+                        class="absolute left-1/2 -translate-x-1/2 top-full mt-3 hidden group-hover:block w-80 z-30 animate-fade-in">
                         <div
                           class="bg-white dark:bg-gray-800 rounded-lg shadow-2xl border-2 border-blue-200 dark:border-blue-700 p-4">
                           <!-- Header -->
@@ -2100,7 +2100,7 @@
         </div>
 
         <!-- Add/Edit Provider Modal -->
-        <div id="llm-provider-modal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div id="llm-provider-modal" class="fixed inset-0 z-40 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMProviderModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
@@ -2198,7 +2198,7 @@
         </div>
 
         <!-- Add/Edit Model Modal -->
-        <div id="llm-model-modal" class="fixed inset-0 z-50 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div id="llm-model-modal" class="fixed inset-0 z-40 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMModelModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
@@ -2327,7 +2327,7 @@
         <!-- API Key Modal -->
         <div
           id="api-key-modal"
-          class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
+          class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40"
         >
           <div
             class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white"
@@ -3586,7 +3586,7 @@
               <!-- Dropdown Menu -->
               <div
                 id="bulk-import-dropdown"
-                class="hidden absolute right-0 mt-2 w-96 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50"
+                class="hidden absolute right-0 mt-2 w-96 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-30"
               >
                 <div class="p-4">
                   <!-- Information Section -->
@@ -4299,7 +4299,7 @@
       </div>
 
       <!-- Bulk Import Modal -->
-      <div id="bulk-import-modal" class="fixed inset-0 z-[60] hidden">
+      <div id="bulk-import-modal" class="fixed inset-0 z-40 hidden">
         <div
           id="bulk-import-backdrop"
           class="absolute inset-0 bg-black/50"
@@ -5234,7 +5234,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         {% endif %}
                       </span>
                       <div
-                        class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow"
+                        class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow"
                       >
                         {% if not enabled %} 💡Gateway is Manually Deactivated
                         {% elif not reachable %} 💡Gateway is Not Reachable {%
@@ -8143,7 +8143,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
       <!-- Modals -->
       <!-- Tool Detail Modal -->
-      <div id="tool-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
+      <div id="tool-modal" class="fixed z-40 inset-0 overflow-y-auto hidden">
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
@@ -8181,7 +8181,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       <!-- New Modal: Test Case Generation -->
 <div
 id="testcase-gen-modal"
-class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
+class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
 >
 <div
   class="bg-white dark:bg-gray-900 w-full max-w-md rounded-lg shadow-lg p-6"
@@ -8259,7 +8259,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
 <div
 id="bulk-testcase-gen-modal"
-class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
+class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
 >
 <div
   class="bg-white dark:bg-gray-900 w-full max-w-md rounded-lg shadow-lg p-6"
@@ -8339,7 +8339,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 <!-- View Description Modal -->
 <div
   id="description-view-modal"
-  class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
+  class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
 >
   <div
     class="bg-white dark:bg-gray-900 w-full max-w-3xl rounded-lg shadow-lg p-6"
@@ -8400,7 +8400,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
   </div>
 </div>
 
-      <div id="tool-validation-modal" class="fixed inset-0 hidden z-50 overflow-y-auto bg-black bg-opacity-50">
+      <div id="tool-validation-modal" class="fixed inset-0 hidden z-40 overflow-y-auto bg-black bg-opacity-50">
     <div
       class="relative bg-white dark:bg-gray-900 w-full max-w-3xl mx-auto my-10 rounded-lg shadow-lg p-6"
     >
@@ -8442,7 +8442,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Tool Test Modal -->
       <div
         id="tool-test-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -8534,7 +8534,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Tool Edit Modal -->
       <div
         id="tool-edit-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -8894,7 +8894,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Resource Detail Modal -->
       <div
         id="resource-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -8936,7 +8936,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Resource Test Modal -->
       <div
         id="resource-test-modal"
-        class="fixed z-50 inset-0 hidden overflow-y-auto"
+        class="fixed z-40 inset-0 hidden overflow-y-auto"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -9025,7 +9025,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Resource Edit Modal -->
       <div
         id="resource-edit-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -9209,7 +9209,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
 
       <!-- Prompt Detail Modal -->
-      <div id="prompt-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
+      <div id="prompt-modal" class="fixed z-40 inset-0 overflow-y-auto hidden">
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
@@ -9248,7 +9248,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Prompt Edit Modal -->
       <div
         id="prompt-edit-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -9436,7 +9436,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Prompt Test Modal -->
       <div
         id="prompt-test-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -9540,7 +9540,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
 
       <!-- Gateway Detail Modal -->
-      <div id="gateway-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
+      <div id="gateway-modal" class="fixed z-40 inset-0 overflow-y-auto hidden">
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
@@ -9579,7 +9579,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Test Gateway Modal -->
       <div
         id="gateway-test-modal"
-        class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
+        class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
       >
         <div
           class="bg-white dark:bg-gray-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6"
@@ -9732,7 +9732,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Gateway Edit Modal -->
       <div
         id="gateway-edit-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden">
+        class="fixed z-40 inset-0 overflow-y-auto hidden">
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
@@ -10289,7 +10289,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
 
       <!-- A2A Agent Edit Modal -->
-       <div id="a2a-edit-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
+       <div id="a2a-edit-modal" class="fixed z-40 inset-0 overflow-y-auto hidden">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div class="fixed inset-0 transition-opacity pointer-events-none" aria-hidden="true">
               <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
@@ -10820,7 +10820,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
 
       <!-- Server Detail Modal -->
-      <div id="server-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
+      <div id="server-modal" class="fixed z-40 inset-0 overflow-y-auto hidden">
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
@@ -10859,7 +10859,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Server Edit Modal -->
       <div
         id="server-edit-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -11413,7 +11413,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </div>
 
       <!-- Agent Detail Modal -->
-      <div id="agent-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
+      <div id="agent-modal" class="fixed z-40 inset-0 overflow-y-auto hidden">
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
@@ -11452,7 +11452,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- A2A Agent Test Modal -->
       <div
         id="a2a-test-modal"
-        class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
+        class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
       >
         <div
           class="bg-white dark:bg-gray-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-lg p-6"
@@ -11527,7 +11527,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Config Selection Modal -->
       <div
         id="config-selection-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -11618,7 +11618,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Config Display Modal -->
       <div
         id="config-display-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -11703,7 +11703,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Root Details Modal -->
       <div
         id="root-details-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -11743,7 +11743,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Root Edit Modal -->
       <div
         id="root-edit-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
+        class="fixed z-40 inset-0 overflow-y-auto hidden"
       >
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
@@ -13001,7 +13001,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             // Create a modal to show available files
             const modal = document.createElement("div");
             modal.className =
-              "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+              "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40";
             modal.innerHTML = `
               <div class="bg-white rounded-lg p-6 max-w-md w-full max-h-96 overflow-y-auto">
                 <h3 class="text-lg font-bold mb-4">Available Log Files</h3>
@@ -14050,7 +14050,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     <!-- Bulk Import Modal -->
     <div
       id="bulk-import-modal-2"
-      class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50"
+      class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-40"
     >
       <div
         class="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white dark:bg-gray-800"
@@ -14442,7 +14442,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- User Edit Modal -->
-    <div id="user-edit-modal" class="fixed inset-0 z-50 hidden">
+    <div id="user-edit-modal" class="fixed inset-0 z-40 hidden">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -14466,7 +14466,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- Create Team Modal -->
-    <div id="create-team-modal" class="fixed inset-0 z-50 hidden">
+    <div id="create-team-modal" class="fixed inset-0 z-40 hidden">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -14646,7 +14646,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- Team Edit Modal -->
-    <div id="team-edit-modal" class="fixed inset-0 z-50 hidden">
+    <div id="team-edit-modal" class="fixed inset-0 z-40 hidden">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -14672,7 +14672,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- Team Join Requests Modal -->
-    <div id="team-join-requests-modal" class="fixed inset-0 z-50 hidden">
+    <div id="team-join-requests-modal" class="fixed inset-0 z-40 hidden">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -14721,7 +14721,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
     {% if is_admin %}
     <!-- User Invitation Modal -->
-    <div id="invite-user-modal" class="fixed inset-0 z-50 hidden">
+    <div id="invite-user-modal" class="fixed inset-0 z-40 hidden">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >
@@ -14838,7 +14838,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     </div>
 
     <!-- Role Assignment Modal -->
-    <div id="role-assignment-modal" class="fixed inset-0 z-50 hidden">
+    <div id="role-assignment-modal" class="fixed inset-0 z-40 hidden">
       <div
         class="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
       >

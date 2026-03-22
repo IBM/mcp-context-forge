@@ -4847,7 +4847,7 @@ async function runResourceTest() {
             e.stopPropagation();
         };
         overlay.className =
-            "fixed inset-0 bg-black bg-opacity-70 z-[9999] flex items-center justify-center p-4";
+            "fixed inset-0 bg-black bg-opacity-70 z-40 flex items-center justify-center p-4";
 
         const box = document.createElement("div");
         box.onclick = (e) => {
@@ -17403,7 +17403,7 @@ function setupTooltipsWithAlpine() {
                 tooltipEl.textContent = text;
                 tooltipEl.setAttribute("role", "tooltip");
                 tooltipEl.className =
-                    "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
+                    "fixed z-30 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
 
                 document.body.appendChild(tooltipEl);
 
@@ -21735,7 +21735,7 @@ function showCopyableModal(title, message, type = "info") {
     const overlay = document.createElement("div");
     overlay.id = "copyable-modal-overlay";
     overlay.className =
-        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40";
     overlay.onclick = (e) => {
         if (e.target === overlay) {
             overlay.remove();
@@ -22705,7 +22705,7 @@ async function createToken(form) {
 function showTokenCreatedModal(tokenData) {
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-lg shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="mt-3">
@@ -22947,7 +22947,7 @@ async function viewTokenUsage(tokenId) {
 function showUsageStatsModal(stats) {
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="flex items-center justify-between mb-4">
@@ -23100,7 +23100,7 @@ function showTokenDetailsModal(token) {
 
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-10 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800 mb-10">
             <div class="flex items-center justify-between mb-4">
@@ -26353,16 +26353,11 @@ async function loadVirtualServersForChat() {
                     ${
                         requiresToken
                             ? `
-                        <div class="tooltip"
-                        style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px;
-                                background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px;
-                                padding: 4px 20px; /* More horizontal width */
-                                opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in;
-                                z-index: 1000;"> <!-- Added higher z-index to ensure it's above other elements -->
+                        <div data-role="tooltip"
+                             class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 bg-gray-500 text-white text-[10px] rounded py-1 px-5 z-30 transition-opacity duration-200 ease-in pointer-events-none"
+                             style="opacity: 0; visibility: hidden;">
                         ${tooltipMessage}
-                        <div style="position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%);
-                                    width: 0; height: 0; border-left: 5px solid transparent;
-                                    border-right: 5px solid transparent; border-top: 5px solid #6B7280;"></div>
+                        <div class="absolute left-1/2 -translate-x-1/2 -bottom-[5px] w-0 h-0 border-l-[5px] border-r-[5px] border-t-[5px] border-l-transparent border-r-transparent border-t-gray-500"></div>
                         </div>`
                             : ""
                     }
@@ -26386,7 +26381,7 @@ async function loadVirtualServersForChat() {
         // Add hover event to show tooltip immediately on hover
         const serverItems = document.querySelectorAll(".server-item");
         serverItems.forEach((item) => {
-            const tooltip = item.querySelector(".tooltip");
+            const tooltip = item.querySelector('[data-role="tooltip"]');
             item.addEventListener("mouseenter", () => {
                 if (tooltip) {
                     tooltip.style.opacity = "1"; // Make tooltip visible
@@ -31047,7 +31042,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Inactive
                 <svg class="ml-1 h-4 w-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
         </div>`;
     } else if (!reachable) {
         // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
@@ -31057,7 +31052,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Offline
                 <svg class="ml-1 h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
         </div>`;
     } else {
         // CASE 3: Active (Enabled and Reachable) -> GREEN
@@ -31067,7 +31062,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Active
                 <svg class="ml-1 h-4 w-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Active</div>
         </div>`;
     }
 }
