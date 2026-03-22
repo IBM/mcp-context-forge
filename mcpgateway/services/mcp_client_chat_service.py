@@ -2405,6 +2405,9 @@ class MCPChatService:
             logger.warning("Chat service already initialized")
             return
 
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
+
         try:
             logger.info("Initializing chat service...")
 
@@ -3062,6 +3065,9 @@ class MCPChatService:
         """
         if not self._initialized:
             raise RuntimeError("Chat service not initialized")
+
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
 
         try:
             logger.info("Reloading tools from MCP server...")
