@@ -223,7 +223,7 @@
       <div class="space-y-2">
         {% set is_all_auth_selected = not filter_params.auth_type %}
         <div
-          class="flex justify-between items-center p-2 {% if is_all_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
+          class="flex justify-between items-center px-3 py-2 {% if is_all_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
           data-filter-type="auth"
           data-filter-value=""
           onclick="filterByAuthType('')" onkeydown="handleKeydown(event, () => filterByAuthType(''))" role="button" tabindex="0"
@@ -242,7 +242,7 @@
         {% if count > 0 %}
         {% set is_auth_selected = (filter_params.auth_type == auth_type) %}
         <div
-          class="flex justify-between items-center p-2 {% if is_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-gray-600 transition-colors"
+          class="flex justify-between items-center px-3 py-2 {% if is_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="auth"
           data-filter-value="{{ auth_type }}"
           onclick="filterByAuthType({{ auth_type|tojson_attr }})" onkeydown="handleKeydown(event, () => filterByAuthType({{ auth_type|tojson_attr }}))" role="button" tabindex="0"
@@ -281,7 +281,7 @@
       </h3>
       <div class="flex flex-wrap gap-2">
         <span
-          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
+          class="inline-flex items-center px-3 py-2 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
           data-filter-type="provider"
           data-filter-value=""
           onclick="filterByProvider('')" onkeydown="handleKeydown(event, () => filterByProvider(''))" role="button" tabindex="0"
@@ -294,7 +294,7 @@
         {% for provider, count in stats.servers_by_provider.items() %}
         {% if count > 0 %}
         <span
-          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          class="inline-flex items-center px-3 py-2 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="provider"
           data-filter-value="{{ provider | lower }}"
           onclick="filterByProvider({{ provider | lower|tojson_attr }})" onkeydown="handleKeydown(event, () => filterByProvider({{ provider | lower|tojson_attr }}))" role="button" tabindex="0"
