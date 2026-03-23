@@ -76,6 +76,7 @@ recursive-include infra *.sh
 recursive-include infra *.yaml
 recursive-include infra *.yml
 include infra/nginx/Dockerfile
+include infra/s390x/Containerfile
 
 # Export/Import functionality (explicitly include new files)
 include mcpgateway/cli_export_import.py
