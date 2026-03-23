@@ -3933,6 +3933,7 @@ class ToolService(BaseService):
                     # Decrypt client_key if stored encrypted
                     if gateway_client_key:
                         try:
+                            # First-Party
                             from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
 
                             _enc = get_encryption_service(settings.auth_encryption_secret)

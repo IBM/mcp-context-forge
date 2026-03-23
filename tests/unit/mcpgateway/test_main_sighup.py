@@ -18,7 +18,7 @@ async def test_sighup_reload_clears_ssl_cache_and_session_pool():
     """sighup_reload() clears SSL context cache and closes MCP session pool."""
     with (
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache") as mock_clear,
-        patch("mcpgateway.services.mcp_session_pool.close_mcp_session_pool", new_callable=AsyncMock) as mock_pool_close,
+        patch("mcpgateway.services.mcp_session_pool.drain_mcp_session_pool", new_callable=AsyncMock) as mock_pool_close,
         patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
     ):
         await sighup_reload()
@@ -26,7 +26,7 @@ async def test_sighup_reload_clears_ssl_cache_and_session_pool():
     mock_pool_close.assert_awaited_once()
     info_messages = [call.args[0] for call in mock_logger.info.call_args_list]
     assert any("SSL context cache cleared" in m for m in info_messages)
-    assert any("session pool closed" in m for m in info_messages)
+    assert any("session pool drained" in m for m in info_messages)
 
 
 @pytest.mark.asyncio
@@ -34,7 +34,7 @@ async def test_sighup_reload_logs_error_on_ssl_cache_exception():
     """sighup_reload() catches and logs exceptions from clear_ssl_context_cache."""
     with (
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache", side_effect=RuntimeError("boom")),
-        patch("mcpgateway.services.mcp_session_pool.close_mcp_session_pool", new_callable=AsyncMock),
+        patch("mcpgateway.services.mcp_session_pool.drain_mcp_session_pool", new_callable=AsyncMock),
         patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
     ):
         await sighup_reload()
@@ -47,7 +47,7 @@ async def test_sighup_reload_handles_session_pool_error():
     """sighup_reload() continues if session pool close fails."""
     with (
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache") as mock_clear,
-        patch("mcpgateway.services.mcp_session_pool.close_mcp_session_pool", new_callable=AsyncMock, side_effect=RuntimeError("pool error")),
+        patch("mcpgateway.services.mcp_session_pool.drain_mcp_session_pool", new_callable=AsyncMock, side_effect=RuntimeError("pool error")),
         patch("mcpgateway.handlers.signal_handlers.logger") as mock_logger,
     ):
         await sighup_reload()
@@ -73,7 +73,7 @@ async def test_sighup_handler_schedules_task():
     with (
         patch.object(loop, "create_task", side_effect=tracking_create_task),
         patch("mcpgateway.utils.ssl_context_cache.clear_ssl_context_cache"),
-        patch("mcpgateway.services.mcp_session_pool.close_mcp_session_pool", new_callable=AsyncMock),
+        patch("mcpgateway.services.mcp_session_pool.drain_mcp_session_pool", new_callable=AsyncMock),
     ):
         sighup_handler(signal.SIGHUP, None)
         await asyncio.sleep(0.05)

@@ -13,10 +13,10 @@ logger = logging.getLogger(__name__)
 
 
 async def sighup_reload() -> None:
-    """Clear SSL context cache and MCP session pool on SIGHUP for certificate rotation.
+    """Clear SSL context cache and drain MCP session pool on SIGHUP for certificate rotation.
 
     Clears the SSL context cache to force recreation of SSL contexts
-    with potentially updated certificates, and closes the MCP session
+    with potentially updated certificates, and drains the MCP session
     pool so pooled connections reconnect with new TLS state.
     """
     try:
@@ -30,12 +30,12 @@ async def sighup_reload() -> None:
 
     try:
         # First-Party
-        from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.mcp_session_pool import drain_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
-        await close_mcp_session_pool()
-        logger.info("SIGHUP: MCP session pool closed for TLS rotation")
+        await drain_mcp_session_pool()
+        logger.info("SIGHUP: MCP session pool drained for TLS rotation")
     except Exception as exc:
-        logger.debug(f"SIGHUP: MCP session pool close skipped: {exc}")
+        logger.debug(f"SIGHUP: MCP session pool drain skipped: {exc}")
 
 
 def sighup_handler(_signum: int, _frame: Any) -> None:

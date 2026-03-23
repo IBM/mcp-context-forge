@@ -2630,7 +2630,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             except Exception:
                                 logger.debug("client_key decryption skipped during gateway activation")
                         capabilities, tools, resources, prompts = await self._initialize_gateway(
-                            init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, auth_query_params=auth_query_params_decrypted, oauth_auto_fetch_tool_flag=True, client_cert=act_client_cert, client_key=act_client_key
+                            init_url,
+                            gateway.auth_value,
+                            gateway.transport,
+                            gateway.auth_type,
+                            gateway.oauth_config,
+                            auth_query_params=auth_query_params_decrypted,
+                            oauth_auto_fetch_tool_flag=True,
+                            client_cert=act_client_cert,
+                            client_key=act_client_key,
                         )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
@@ -3285,6 +3293,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_oauth_config = gateway.oauth_config
         gateway_auth_value = gateway.auth_value
         gateway_auth_query_params = gateway.auth_query_params
+        health_client_cert = getattr(gateway, "client_cert", None)
+        health_client_key = getattr(gateway, "client_key", None)
 
         # Handle query_param auth - decrypt and apply to URL for health check
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -3323,8 +3333,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     valid = validate_signature(gateway_ca_certificate.encode(), gateway_ca_certificate_sig, public_key_pem)
                 else:
                     valid = True
-            if valid:
-                ssl_context = self.create_ssl_context(gateway_ca_certificate)
+
+            # Decrypt client_key for health check mTLS
+            _hc_client_key = health_client_key
+            if _hc_client_key:
+                try:
+                    _enc = get_encryption_service(settings.auth_encryption_secret)
+                    _hc_client_key = _enc.decrypt_secret_or_plaintext(_hc_client_key)
+                except Exception:
+                    logger.debug("client_key decryption skipped during health check")
+
+            if gateway_url and gateway_url.lower().startswith("http://"):
+                ssl_context = None
+            elif valid and gateway_ca_certificate:
+                ssl_context = get_cached_ssl_context(gateway_ca_certificate, client_cert=health_client_cert, client_key=_hc_client_key)
             else:
                 ssl_context = None
 
@@ -3772,9 +3794,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key)
+                capabilities, tools, resources, prompts = await self.connect_to_sse_server(
+                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
+                )
             elif transport.lower() == "streamablehttp":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key)
+                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(
+                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
+                )
 
             return capabilities, tools, resources, prompts
         except Exception as e:
