@@ -7062,6 +7062,73 @@ class TestInvokeToolMcpSse:
         assert call_args[1].get("client_key") == "decrypted-client-key"
 
     @pytest.mark.asyncio
+    async def test_mcp_https_url_decryption_failure_uses_key_as_is(self, tool_service):
+        """When client_key decryption fails, the raw value is passed through."""
+        tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")
+        gp = _make_gateway_payload(
+            url="https://localhost:9000/sse",
+            auth_type="basic",
+            ca_certificate="dummy-ca",
+            client_cert="client-cert-data",
+            client_key="not-encrypted-raw-key",
+        )
+        db = MagicMock()
+
+        def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
+            class _CM:
+                async def __aenter__(self):
+                    if httpx_client_factory is not None:
+                        httpx_client_factory(headers=headers)
+                    return (MagicMock(), MagicMock(), AsyncMock())
+
+                async def __aexit__(self, *exc):
+                    return False
+
+            return _CM()
+
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+
+        class _SessionCM:
+            async def __aenter__(self):
+                return mock_session
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with (
+            _setup_cache_for_invoke(tp, gp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
+            patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
+            patch("mcpgateway.services.tool_service.get_cached_ssl_context") as mock_get_ssl,
+            patch("mcpgateway.services.encryption_service.get_encryption_service", side_effect=RuntimeError("no encryption")),
+            patch.object(settings, "enable_ed25519_signing", False),
+            patch.object(settings, "mcp_session_pool_enabled", False),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+            mock_get_ssl.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {}, request_headers=None)
+
+        assert result is not None
+        assert mock_get_ssl.call_count == 1
+        # Key should be passed as-is since decryption failed
+        call_args = mock_get_ssl.call_args
+        assert call_args[1].get("client_key") == "not-encrypted-raw-key"
+
+    @pytest.mark.asyncio
     async def test_mcp_sse_httpx_factory_validates_ed25519_signature(self, tool_service):
         """Enable ed25519 signing to cover validate_signature path inside httpx client factory."""
         tp = _make_tool_payload(integration_type="MCP", request_type="SSE", gateway_id="gw-uuid-1", jsonpath_filter="")

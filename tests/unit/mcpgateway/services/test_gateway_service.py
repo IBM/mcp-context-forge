@@ -708,6 +708,68 @@ class TestGatewayService:
         assert encryption.is_encrypted(stored_gateway.client_key)
 
     @pytest.mark.asyncio
+    async def test_update_gateway_persists_ca_and_mtls_fields(self, gateway_service, mock_gateway, test_db):
+        """update_gateway persists ca_certificate, ca_certificate_sig, signing_algorithm, client_cert, and client_key."""
+        mock_gateway.team_id = 1
+        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
+        test_db.execute = Mock(side_effect=execute_results)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._initialize_gateway = AsyncMock(
+            return_value=({"tools": {"subscribe": True}}, [], [], [])
+        )
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(
+            ca_certificate="-----BEGIN CERTIFICATE-----\nNEWCA\n-----END CERTIFICATE-----",
+            ca_certificate_sig="newsig123",
+            signing_algorithm="sha256",
+            client_cert="/path/to/new-cert.pem",
+            client_key="-----BEGIN PRIVATE KEY-----\nNEWKEY\n-----END PRIVATE KEY-----",
+        )
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert mock_gateway.ca_certificate == "-----BEGIN CERTIFICATE-----\nNEWCA\n-----END CERTIFICATE-----"
+        assert mock_gateway.ca_certificate_sig == "newsig123"
+        assert mock_gateway.signing_algorithm == "sha256"
+        assert mock_gateway.client_cert == "/path/to/new-cert.pem"
+        # client_key should be encrypted
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert encryption.is_encrypted(mock_gateway.client_key)
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_preserves_masked_client_key(self, gateway_service, mock_gateway, test_db):
+        """update_gateway skips re-encryption when client_key is the masked placeholder."""
+        mock_gateway.team_id = 1
+        mock_gateway.client_key = "existing-encrypted-value"
+        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=None)]
+        test_db.execute = Mock(side_effect=execute_results)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._initialize_gateway = AsyncMock(
+            return_value=({"tools": {"subscribe": True}}, [], [], [])
+        )
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(client_key=settings.masked_auth_value)
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        # Should NOT have changed — masked value preserves existing
+        assert mock_gateway.client_key == "existing-encrypted-value"
+
+    @pytest.mark.asyncio
     async def test_register_gateway_exception_rollback(self, gateway_service, test_db):
         """Test rollback on exception during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
