@@ -662,7 +662,7 @@ plugins:
         private_key_block: true
         jwt_like: true
         hex_secret_32: true
-        base64_24: true
+        base64_24: true  # Broad intrinsic-shape heuristic; can still catch assignment-style values by matching the value itself
       redact: false
       redaction_text: "***REDACTED***"
       block_on_detection: true

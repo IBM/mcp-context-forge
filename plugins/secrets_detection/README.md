@@ -38,11 +38,13 @@ Notes
 - Uses conservative regexes; combine with PII filter for broader coverage.
 - High-confidence, label-independent detectors include `aws_access_key_id`, `google_api_key`, `github_token`, `stripe_secret_key`, and `slack_token`.
 - `generic_api_key_assignment`, `jwt_like`, `hex_secret_32`, and `base64_24` are broader heuristics and can increase false positives.
+- Findings are selected on the strongest surviving match for a secret-like substring, so a longer heuristic match such as `base64_24` may still catch an assignment-style value even when `generic_api_key_assignment` stays disabled.
 - When broad heuristics are enabled, the plugin logs a warning at initialization so operators know blocking behavior may become noisier.
 
 What it can do
 - Reliably catch supported vendor formats that have strong intrinsic prefixes or structure, even when pasted without labels.
 - Catch generic key/value assignments such as `X-API-Key: ...` or `api_key=...` when `generic_api_key_assignment` is enabled.
+- Still catch some assignment-style values through broader intrinsic-shape heuristics when the value itself looks like a secret.
 - Redact or block when matches are found.
 
 What it cannot do
