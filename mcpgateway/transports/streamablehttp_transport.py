@@ -75,6 +75,7 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
@@ -1516,7 +1517,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
             elif isinstance(raw_payload, dict):
                 # Normalize raw JWT payload to canonical user context shape
                 # (matches streamable_http_auth normalization at lines 2155-2259)
-                user_ctx = _normalize_jwt_payload(raw_payload)
+                user_ctx = await _normalize_jwt_payload(raw_payload)
             else:
                 user_ctx = {}
         except Exception as e:
@@ -1533,7 +1534,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         return s_id, request_headers_var.get(), user_context_var.get()
 
 
-def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
     Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
@@ -1556,16 +1557,11 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     token_use = payload.get("token_use")
     if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-        # Session token: resolve teams from DB/cache
-        if is_admin:
-            final_teams = None  # Admin bypass
-        elif email:
-            # First-Party
-            from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+        # Session token: resolve teams from DB/cache via single policy point
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
-            final_teams = _resolve_teams_from_db_sync(email, is_admin=False)
-        else:
-            final_teams = []  # No email — public-only
+        final_teams = await resolve_session_teams(payload, email, {"is_admin": is_admin})
     else:
         # API token or legacy: use embedded teams from JWT
         # First-Party
@@ -2609,7 +2605,7 @@ class SessionManagerWrapper:
                     body = orjson.dumps(json_body)
                     logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
 
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                     rpc_headers = {
                         "content-type": "application/json",
                         "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
@@ -2620,7 +2616,7 @@ class SessionManagerWrapper:
                         rpc_headers["authorization"] = headers["authorization"]
 
                     response = await client.post(
-                        f"http://127.0.0.1:{settings.port}/rpc",
+                        f"{internal_loopback_base_url()}/rpc",
                         content=body,
                         headers=rpc_headers,
                         timeout=30.0,
@@ -2771,7 +2767,7 @@ class SessionManagerWrapper:
                             body = orjson.dumps(json_body)
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
-                        async with httpx.AsyncClient() as client:
+                        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                             rpc_headers = {
                                 "content-type": "application/json",
                                 "x-mcp-session-id": mcp_session_id,
@@ -2781,7 +2777,7 @@ class SessionManagerWrapper:
                                 rpc_headers["authorization"] = headers["authorization"]
 
                             response = await client.post(
-                                f"http://127.0.0.1:{settings.port}/rpc",
+                                f"{internal_loopback_base_url()}/rpc",
                                 content=body,
                                 headers=rpc_headers,
                                 timeout=30.0,
@@ -3279,28 +3275,18 @@ class _StreamableHttpAuthHandler:
                             logger.debug("Failed to cache MCP auth context for %s: %s", user_email, cache_set_error)
 
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-                # Session token: resolve teams from DB/cache
-                if is_admin:
-                    final_teams = None  # Admin bypass
-                elif user_email:
-                    if cached_team_ids is not None:
-                        final_teams = cached_team_ids
-                    elif batched_auth_ctx is not None:
-                        final_teams = list(batched_auth_ctx.get("team_ids") or [])
-                    else:
-                        _record_mcp_auth_cache_event("teams_db_resolve")
-                        # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
-                        # First-Party
-                        from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+                # Session token: resolve teams via single policy point (DB-first intersection)
+                # First-Party
+                from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
-                        final_teams = _resolve_teams_from_db_sync(user_email, is_admin=False)
-                        if auth_cache is not None and final_teams is not None:
-                            try:
-                                await auth_cache.set_user_teams(f"{user_email}:True", final_teams)
-                            except Exception as cache_set_error:
-                                logger.debug("Failed to cache MCP teams list for %s: %s", user_email, cache_set_error)
+                if cached_team_ids is not None:
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=cached_team_ids)
+                elif batched_auth_ctx is not None:
+                    preresolved = None if is_admin else list(batched_auth_ctx.get("team_ids") or [])
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=preresolved)
                 else:
-                    final_teams = []  # No email — public-only
+                    _record_mcp_auth_cache_event("teams_db_resolve")
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin})
             else:
                 # API token or legacy: use embedded teams from JWT
                 # First-Party
@@ -3312,9 +3298,11 @@ class _StreamableHttpAuthHandler:
             # SECURITY: Validate team membership for team-scoped tokens
             # Users removed from a team should lose MCP access immediately, not at token expiry
             # ═══════════════════════════════════════════════════════════════════════════
-            # Only validate membership for team-scoped tokens (non-empty teams list)
-            # Skip for: public-only tokens ([]), admin unrestricted tokens (None)
-            if final_teams and len(final_teams) > 0 and user_email:
+            # Validate membership for API/legacy tokens whose teams come from
+            # the JWT and have never been checked against the DB.  Session tokens
+            # are skipped: resolve_session_teams() already resolved teams from
+            # DB/cache, so a second membership query would be redundant.
+            if token_use != "session" and final_teams and len(final_teams) > 0 and user_email:  # nosec B105
                 # Import lazily to avoid circular imports
                 # Third-Party
                 from sqlalchemy import select  # pylint: disable=import-outside-toplevel

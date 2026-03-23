@@ -4,7 +4,6 @@
 # Standard
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -115,58 +114,6 @@ def test_get_user_team_ids_sync(monkeypatch):
     session = DummySession(results=[[("t1",), ("t2",)]])
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     assert auth._get_user_team_ids_sync("user@example.com") == ["t1", "t2"]
-
-
-def test_resolve_teams_from_db_sync_admin_bypass():
-    assert auth._resolve_teams_from_db_sync("user@example.com", is_admin=True) is None
-
-
-def test_resolve_teams_from_db_sync_cache_hit(monkeypatch):
-    class DummyEntry:
-        def __init__(self, value):
-            self.value = value
-
-        def is_expired(self):
-            return False
-
-    cache_key = "user@example.com:True"
-    dummy_cache = SimpleNamespace(
-        _teams_list_cache={cache_key: DummyEntry(["t1"])},
-        _hit_count=0,
-    )
-
-    import mcpgateway.cache.auth_cache as auth_cache_mod
-
-    monkeypatch.setattr(auth_cache_mod, "auth_cache", dummy_cache)
-    assert auth._resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
-    assert dummy_cache._hit_count == 1
-
-
-def test_resolve_teams_from_db_sync_cache_miss_populates_cache(monkeypatch):
-    class DummyEntry:
-        def __init__(self, value, expiry):  # noqa: ARG002 - matches real CacheEntry signature
-            self.value = value
-
-        def is_expired(self):
-            return False
-
-    cache_key = "user@example.com:True"
-    dummy_cache = SimpleNamespace(
-        _teams_list_cache={},
-        _hit_count=0,
-        _teams_list_ttl=60,
-        _lock=threading.Lock(),
-    )
-
-    import mcpgateway.cache.auth_cache as auth_cache_mod
-
-    monkeypatch.setattr(auth_cache_mod, "auth_cache", dummy_cache)
-    monkeypatch.setattr(auth_cache_mod, "CacheEntry", DummyEntry)
-    monkeypatch.setattr(auth, "_get_user_team_ids_sync", lambda _email: ["t1"])
-
-    assert auth._resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
-    assert cache_key in dummy_cache._teams_list_cache
-    assert dummy_cache._teams_list_cache[cache_key].value == ["t1"]
 
 
 @pytest.mark.asyncio

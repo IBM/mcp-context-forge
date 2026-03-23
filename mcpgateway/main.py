@@ -72,7 +72,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from mcpgateway import __version__
 from mcpgateway import version as version_module
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, _resolve_teams_from_db, get_current_user, get_user_team_roles, normalize_token_teams
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -162,6 +162,7 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
@@ -2588,7 +2589,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                     token_use = payload.get("token_use")
                     if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                         is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                        token_teams = await _resolve_teams_from_db(username, {"is_admin": is_admin})
+                        token_teams = await resolve_session_teams(payload, username, {"is_admin": is_admin})
                     else:
                         # API token or legacy path: embedded teams claim semantics
                         token_teams = normalize_token_teams(payload)
@@ -9805,7 +9806,7 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             try:
                 data = await websocket.receive_text()
-                client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
+                client_args = {"timeout": settings.federation_timeout, "verify": internal_loopback_verify()}
 
                 # Build headers for /rpc request - forward auth credentials
                 rpc_headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -9816,7 +9817,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
-                        f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
+                        f"{internal_loopback_base_url()}{settings.app_root_path}/rpc",
                         json=orjson.loads(data),
                         headers=rpc_headers,
                     )
