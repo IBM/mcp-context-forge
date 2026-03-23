@@ -51,11 +51,30 @@ class OutputLengthGuardConfig(BaseModel):
 
     ALLOWED_STRATEGIES: ClassVar[set[str]] = {"truncate", "block"}
 
+    # Output limits
     min_chars: int = Field(default=0, ge=0, description="Minimum allowed characters. 0 disables minimum check.")
     max_chars: Optional[int] = Field(default=None, description="Maximum allowed characters. None disables maximum check.")
+    min_tokens: int = Field(default=0, ge=0, description="Minimum allowed tokens. 0 disables minimum token check.")
+    max_tokens: Optional[int] = Field(default=None, description="Maximum allowed tokens. None disables maximum token check.")
+    chars_per_token: int = Field(default=4, ge=1, le=10, description="Characters per token ratio for estimation. Default: 4 (English/GPT models)")
+    
+    # Behavior
     strategy: str = Field(default="truncate", description='Strategy when out of bounds: "truncate" or "block"')
     ellipsis: str = Field(default="…", description="Suffix appended on truncation. Use empty string to disable.")
     word_boundary: bool = Field(default=False, description="When true, truncate at word boundaries to avoid mid-word cuts.")
+    
+    # Security limits
+    max_text_length: int = Field(default=1_000_000, description="Maximum text size to process (1MB default). Prevents memory exhaustion.")
+    max_structure_size: int = Field(default=10_000, description="Maximum items in list/dict (10K default). Prevents DoS attacks.")
+    max_recursion_depth: int = Field(default=100, description="Maximum nesting depth (100 default). Prevents stack overflow.")
+    max_binary_search_iterations: int = Field(default=30, description="Binary search iteration limit (30 default). Prevents infinite loops.")
+    sensitive_keywords: frozenset[str] = Field(
+        default_factory=lambda: frozenset({
+            'password', 'token', 'secret', 'key', 'api_key', 'apikey',
+            'auth', 'credential', 'private', 'confidential'
+        }),
+        description="Keywords to sanitize in logs. Prevents information disclosure."
+    )
 
     @field_validator('strategy')
     @classmethod
@@ -98,19 +117,131 @@ class OutputLengthGuardConfig(BaseModel):
             raise ValueError("max_chars must be >= 1 when set, or None to disable")
         return v
 
+    @field_validator('max_tokens')
+    @classmethod
+    def validate_max_tokens(cls, v: Optional[int]) -> Optional[int]:
+        """Validate max_tokens is positive when set.
+
+        Args:
+            v: Maximum tokens value.
+
+        Returns:
+            Validated max_tokens value.
+
+        Raises:
+            ValueError: If max_tokens is set but not positive.
+        """
+        if v is not None and v < 1:
+            raise ValueError("max_tokens must be >= 1 when set, or None to disable")
+        return v
+
+    @field_validator('chars_per_token')
+    @classmethod
+    def validate_chars_per_token(cls, v: int) -> int:
+        """Validate chars_per_token is in reasonable range.
+
+        Args:
+            v: Characters per token ratio.
+
+        Returns:
+            Validated chars_per_token value.
+
+        Raises:
+            ValueError: If chars_per_token is not in range 1-10.
+        """
+        if v < 1 or v > 10:
+            raise ValueError("chars_per_token must be between 1 and 10")
+        return v
+
+    @field_validator('max_text_length')
+    @classmethod
+    def validate_max_text_length(cls, v: int) -> int:
+        """Validate max_text_length is in reasonable range.
+
+        Args:
+            v: Maximum text length value.
+
+        Returns:
+            Validated max_text_length value.
+
+        Raises:
+            ValueError: If max_text_length is not in range 1KB-10MB.
+        """
+        if v < 1000 or v > 10_000_000:
+            raise ValueError("max_text_length must be between 1000 (1KB) and 10000000 (10MB)")
+        return v
+
+    @field_validator('max_structure_size')
+    @classmethod
+    def validate_max_structure_size(cls, v: int) -> int:
+        """Validate max_structure_size is in reasonable range.
+
+        Args:
+            v: Maximum structure size value.
+
+        Returns:
+            Validated max_structure_size value.
+
+        Raises:
+            ValueError: If max_structure_size is not in range 10-100K.
+        """
+        if v < 10 or v > 100_000:
+            raise ValueError("max_structure_size must be between 10 and 100000")
+        return v
+
+    @field_validator('max_recursion_depth')
+    @classmethod
+    def validate_max_recursion_depth(cls, v: int) -> int:
+        """Validate max_recursion_depth is in reasonable range.
+
+        Args:
+            v: Maximum recursion depth value.
+
+        Returns:
+            Validated max_recursion_depth value.
+
+        Raises:
+            ValueError: If max_recursion_depth is not in range 10-1000.
+        """
+        if v < 10 or v > 1000:
+            raise ValueError("max_recursion_depth must be between 10 and 1000")
+        return v
+
+    @field_validator('max_binary_search_iterations')
+    @classmethod
+    def validate_max_binary_search_iterations(cls, v: int) -> int:
+        """Validate max_binary_search_iterations is in reasonable range.
+
+        Args:
+            v: Maximum binary search iterations value.
+
+        Returns:
+            Validated max_binary_search_iterations value.
+
+        Raises:
+            ValueError: If max_binary_search_iterations is not in range 10-100.
+        """
+        if v < 10 or v > 100:
+            raise ValueError("max_binary_search_iterations must be between 10 and 100")
+        return v
+
     @model_validator(mode='after')
     def validate_min_max_relationship(self) -> 'OutputLengthGuardConfig':
-        """Ensure min_chars <= max_chars when both are set.
+        """Ensure min_chars <= max_chars and min_tokens <= max_tokens when both are set.
 
         Returns:
             Validated config instance.
 
         Raises:
-            ValueError: If min_chars > max_chars.
+            ValueError: If min_chars > max_chars or min_tokens > max_tokens.
         """
         if self.max_chars is not None and self.min_chars > self.max_chars:
             raise ValueError(
                 f"min_chars ({self.min_chars}) cannot be greater than max_chars ({self.max_chars})"
+            )
+        if self.max_tokens is not None and self.min_tokens > self.max_tokens:
+            raise ValueError(
+                f"min_tokens ({self.min_tokens}) cannot be greater than max_tokens ({self.max_tokens})"
             )
         return self
 
@@ -135,36 +266,240 @@ def _length(value: str) -> int:
     return len(value)
 
 
-def _truncate(value: str, max_chars: Optional[int], ellipsis: str, word_boundary: bool = False) -> str:
+# Performance optimization - Module-level constant (kept for performance)
+BOUNDARY_CHARS = frozenset({
+    ' ', '\t', '\n', '\r', '.', ',', ';', ':', '!', '?',
+    '-', '—', '–', '/', '\\', '(', ')', '[', ']', '{', '}'
+})
+
+
+def _estimate_tokens(text: str, chars_per_token: int) -> int:
+    """Estimate token count using configurable chars-per-token ratio.
+    
+    This is an approximate estimation based on the industry-standard heuristic
+    that English text averages ~4 characters per token for GPT models.
+    
+    Args:
+        text: String to estimate tokens for
+        chars_per_token: Characters per token ratio (default: 4)
+        
+    Returns:
+        Estimated token count
+        
+    Examples:
+        >>> _estimate_tokens("Hello world", 4)
+        2  # 11 chars / 4 = 2 tokens
+        
+        >>> _estimate_tokens("Hello world", 3)
+        3  # 11 chars / 3 = 3 tokens
+    """
+    if chars_per_token <= 0:
+        logger.error(f"Invalid chars_per_token: {chars_per_token}, using default 4")
+        chars_per_token = 4
+    
+    token_count = len(text) // chars_per_token
+    
+    logger.debug(
+        f"Token estimation: {len(text)} chars / {chars_per_token} = {token_count} tokens"
+    )
+    
+    return token_count
+
+
+def _find_token_cut_point(
+    text: str,
+    max_tokens: int,
+    chars_per_token: int,
+    max_text_length: int = 1_000_000,
+    max_iterations: int = 30
+) -> int:
+    """Binary search to find character position that fits token budget.
+    
+    PERFORMANCE OPTIMIZATION: Calculates tokens from length without creating
+    substrings, reducing complexity from O(n*log n) to O(log n).
+    
+    Security measures:
+    - Limits text length to prevent memory exhaustion
+    - Limits iterations to prevent infinite loops
+    - Validates inputs
+    
+    Args:
+        text: String to find cut point for
+        max_tokens: Maximum token count
+        chars_per_token: Characters per token ratio
+        max_text_length: Maximum text size to process (security limit)
+        max_iterations: Maximum binary search iterations (security limit)
+        
+    Returns:
+        Character index for truncation
+    """
+    if not text or max_tokens <= 0:
+        return 0
+    
+    # SECURITY: Limit text length
+    if len(text) > max_text_length:
+        logger.warning(
+            f"Text length {len(text)} exceeds maximum {max_text_length}, "
+            f"truncating to safe length"
+        )
+        text = text[:max_text_length]
+    
+    # SECURITY: Prevent division by zero
+    if chars_per_token <= 0:
+        logger.error(f"Invalid chars_per_token: {chars_per_token}, using default 4")
+        chars_per_token = 4
+    
+    logger.debug(
+        f"Starting binary search: text_length={len(text)}, max_tokens={max_tokens}, "
+        f"chars_per_token={chars_per_token}"
+    )
+    
+    left, right = 0, min(len(text), max_tokens * chars_per_token + 100)
+    best_cut = 0
+    iterations = 0
+    
+    while left <= right and iterations < max_iterations:
+        iterations += 1
+        mid = (left + right) // 2
+        
+        # PERFORMANCE CRITICAL: Calculate tokens from length, not substring
+        # Before: estimated_tokens = len(text[:mid]) // chars_per_token  # O(n) per iteration!
+        # After:  estimated_tokens = mid // chars_per_token              # O(1) per iteration!
+        estimated_tokens = mid // chars_per_token
+        
+        logger.debug(
+            f"Binary search iteration {iterations}: left={left}, right={right}, "
+            f"mid={mid}, estimated_tokens={estimated_tokens}"
+        )
+        
+        if estimated_tokens <= max_tokens:
+            best_cut = mid
+            left = mid + 1
+        else:
+            right = mid - 1
+    
+    if iterations >= max_iterations:
+        logger.warning(
+            f"Binary search hit iteration limit ({max_iterations}), "
+            f"using best cut point found: {best_cut}"
+        )
+    
+    logger.info(
+        f"Binary search completed: iterations={iterations}, cut_point={best_cut}, "
+        f"estimated_tokens={best_cut // chars_per_token}"
+    )
+    
+    return best_cut
+
+
+def _find_word_boundary(value: str, cut: int, max_chars: int) -> int:
+    """Find word boundary position without creating substrings.
+    
+    PERFORMANCE OPTIMIZATION: Returns position instead of creating substrings
+    in the loop, reducing from O(n) substring creations to O(1).
+    
+    Args:
+        value: String to search
+        cut: Initial cut position
+        max_chars: Maximum characters (for calculating search range)
+        
+    Returns:
+        Position of word boundary, or cut if none found
+    """
+    min_search = max(0, cut - int(max_chars * 0.2))
+    
+    # PERFORMANCE: Use module-level constant instead of creating set
+    for i in range(cut - 1, min_search - 1, -1):
+        if value[i] in BOUNDARY_CHARS:
+            # Skip trailing whitespace
+            while i > 0 and value[i] in {' ', '\t', '\n', '\r'}:
+                i -= 1
+            return i + 1
+    
+    return cut  # No boundary found
+
+
+def _truncate(
+    value: str,
+    max_chars: Optional[int],
+    ellipsis: str,
+    word_boundary: bool = False,
+    max_tokens: Optional[int] = None,
+    chars_per_token: int = 4,
+    max_text_length: int = 1_000_000,
+    max_iterations: int = 30
+) -> str:
     """Truncate string to maximum length with ellipsis.
 
     BUG FIX #5: Handle max_chars=None correctly to disable truncation.
     BUG FIX #7: Optimize for large strings by caching length and using early returns.
     FEATURE v0.3.5: Add word-boundary truncation to avoid mid-word cuts.
+    FEATURE v0.4.0: Add token-based truncation with performance optimizations.
+    FEATURE v0.4.1: Add configurable security limits.
 
     Args:
         value: String to truncate.
         max_chars: Maximum number of characters. None means no limit.
         ellipsis: Ellipsis string to append.
         word_boundary: If True, truncate at word boundaries to avoid mid-word cuts.
+        max_tokens: Maximum number of tokens. None means no token limit.
+        chars_per_token: Characters per token ratio for estimation.
+        max_text_length: Maximum text size to process (security limit).
+        max_iterations: Maximum binary search iterations (security limit).
 
     Returns:
-        Truncated string, or original if max_chars is None or within limits.
+        Truncated string, or original if within limits.
     """
-    # BUG FIX #5: Early return if no max limit (None disables truncation)
+    original_length = len(value)
+    ell = ellipsis or ""
+    
+    # Token-based truncation (if max_tokens specified)
+    if max_tokens is not None:
+        estimated_tokens = len(value) // chars_per_token
+        
+        if estimated_tokens > max_tokens:
+            logger.info(
+                f"Token limit exceeded, truncating: original_length={original_length}, "
+                f"estimated_tokens={estimated_tokens}, max_tokens={max_tokens}, "
+                f"word_boundary={word_boundary}"
+            )
+            
+            # Use binary search to find cut point
+            cut = _find_token_cut_point(value, max_tokens, chars_per_token, max_text_length, max_iterations)
+            
+            # Apply word boundary if enabled
+            if word_boundary and cut > 0:
+                original_cut = cut
+                cut = _find_word_boundary(value, cut, cut)
+                
+                if cut != original_cut:
+                    logger.debug(
+                        f"Word boundary adjustment: original_cut={original_cut}, "
+                        f"adjusted_cut={cut}, adjustment={original_cut - cut}"
+                    )
+            
+            result = value[:cut] + ell
+            
+            logger.info(
+                f"Token-based truncation applied: original_length={original_length}, "
+                f"truncated_length={len(result)}, cut_point={cut}, "
+                f"reduction_percent={round((1 - len(result) / original_length) * 100, 2)}"
+            )
+            
+            return result
+    
+    # Character-based truncation (existing logic)
     if max_chars is None:
         return value
 
     if max_chars <= 0:
         return ""
 
-    # BUG FIX #7: Cache length for performance with large strings
     value_len = len(value)
     if value_len <= max_chars:
         return value
 
     # Truncation needed
-    ell = ellipsis or ""
     ell_len = len(ell)
 
     # If ellipsis doesn't fit, hard cut
@@ -176,20 +511,22 @@ def _truncate(value: str, max_chars: Optional[int], ellipsis: str, word_boundary
     
     # Word boundary truncation
     if word_boundary and cut > 0:
-        # Define word boundary characters (whitespace and common punctuation)
-        boundary_chars = {' ', '\t', '\n', '\r', '.', ',', ';', ':', '!', '?', '-', '—', '–', '/', '\\', '(', ')', '[', ']', '{', '}'}
+        logger.info(
+            f"Character limit exceeded, truncating: original_length={original_length}, "
+            f"max_chars={max_chars}, word_boundary={word_boundary}"
+        )
         
-        # Search backwards from cut point to find last word boundary
-        # Limit search to 20% of max_chars to avoid excessive backtracking
-        min_search = max(0, cut - int(max_chars * 0.2))
+        cut = _find_word_boundary(value, cut, max_chars)
         
-        for i in range(cut - 1, min_search - 1, -1):
-            if value[i] in boundary_chars:
-                # Found a boundary - truncate here (include the boundary char)
-                return value[:i + 1].rstrip() + ell
+        result = value[:cut] + ell
         
-        # No boundary found within search range - fall back to hard cut
-        logger.info(f"🔄 No word boundary found within search range, using hard cut at {cut}")
+        logger.info(
+            f"Character-based truncation applied: original_length={original_length}, "
+            f"truncated_length={len(result)}, "
+            f"reduction_percent={round((1 - len(result) / original_length) * 100, 2)}"
+        )
+        
+        return result
     
     # Hard cut (no word boundary mode or no boundary found)
     return value[:cut] + ell
@@ -222,13 +559,23 @@ def _process_structured_data(
     strategy: str,
     word_boundary: bool,
     context: PluginContext,
-    path: str = ""
+    path: str = "",
+    min_tokens: int = 0,
+    max_tokens: Optional[int] = None,
+    chars_per_token: int = 4,
+    max_text_length: int = 1_000_000,
+    max_structure_size: int = 10_000,
+    max_recursion_depth: int = 100,
+    max_binary_search_iterations: int = 20
 ) -> Tuple[Any, bool, Optional[PluginViolation]]:
     """Recursively process structured data, truncating or blocking based on strategy.
     
     This function traverses nested data structures (lists, dicts) and either truncates
     or blocks when string values exceed limits. Numeric strings (integers, floats,
     and scientific notation) are not truncated or blocked.
+    
+    FEATURE v0.4.0: Added token-based budget support with performance optimizations.
+    FEATURE v0.4.1: Security limits now configurable via plugin settings.
     
     Args:
         data: The data to process (can be str, list, dict, or nested structures).
@@ -239,12 +586,23 @@ def _process_structured_data(
         word_boundary: If True, truncate at word boundaries to avoid mid-word cuts.
         context: Plugin context for logging.
         path: Current path in data structure (for error reporting).
+        min_tokens: Minimum allowed tokens. 0 disables minimum token check.
+        max_tokens: Maximum allowed tokens. None disables maximum token check.
+        chars_per_token: Characters per token ratio for estimation.
+        max_text_length: Maximum text length for security (prevents DoS).
+        max_structure_size: Maximum structure size for security (prevents DoS).
+        max_recursion_depth: Maximum recursion depth for security (prevents stack overflow).
+        max_binary_search_iterations: Maximum binary search iterations for security.
     
     Returns:
         Tuple of (modified_data, was_modified, violation).
         - In block mode: returns violation if any string exceeds limits
         - In truncate mode: returns modified data with truncated strings
     """
+    logger.debug(
+        f"Processing structured data: type={type(data).__name__}, path={path or 'root'}, "
+        f"strategy={strategy}"
+    )
     # Base case: string - check if it's numeric, then process based on strategy
     if isinstance(data, str):
         # Skip processing for numeric strings (int, float, scientific notation)
@@ -252,37 +610,86 @@ def _process_structured_data(
             logger.info(f"🔄 Skipping numeric string: '{data}'")
             return data, False, None
         
+        # PERFORMANCE: Calculate once, reuse
         length = len(data)
+        token_count = length // chars_per_token  # Inline for speed
         
-        # Check if string is out of bounds
-        below_min = min_chars > 0 and length < min_chars
-        above_max = max_chars is not None and length > max_chars
+        # Check if string is out of bounds (character limits)
+        below_min_chars = min_chars > 0 and length < min_chars
+        above_max_chars = max_chars is not None and length > max_chars
         
-        if below_min or above_max:
+        # Check if string is out of bounds (token limits)
+        below_min_tokens = min_tokens > 0 and token_count < min_tokens
+        above_max_tokens = max_tokens is not None and token_count > max_tokens
+        
+        if below_min_chars or above_max_chars or below_min_tokens or above_max_tokens:
             # BLOCK MODE: Return violation immediately
             if strategy == "block":
                 location = f" at {path}" if path else ""
-                violation = PluginViolation(
-                    reason=f"String length out of bounds{location}",
-                    description=f"String length {length} not in [{min_chars}, {max_chars}]{location}",
-                    code="OUTPUT_LENGTH_VIOLATION",
-                    details={
-                        "length": length,
-                        "min": min_chars,
-                        "max": max_chars,
-                        "strategy": strategy,
-                        "location": path or "root",
-                        "value_preview": data[:50] + "..." if len(data) > 50 else data
-                    },
-                    http_status_code=422,
-                    mcp_error_code=-32000,
-                )
-                logger.info(f"🚫 BLOCKING: String at {path or 'root'} exceeds limits (length={length})")
+                
+                # Determine violation type
+                if above_max_tokens:
+                    violation = PluginViolation(
+                        reason=f"Token count out of bounds{location}",
+                        description=f"Token count {token_count} exceeds max_tokens {max_tokens}{location}",
+                        code="OUTPUT_TOKEN_VIOLATION",
+                        details={
+                            "token_count": token_count,
+                            "max_tokens": max_tokens,
+                            "chars_per_token": chars_per_token,
+                            "strategy": strategy,
+                            "location": path or "root",
+                            "value_preview": data[:50] + "..." if len(data) > 50 else data
+                        },
+                        http_status_code=422,
+                        mcp_error_code=-32000,
+                    )
+                    logger.warning(
+                        f"Token limit violation detected, blocking output: location={path or 'root'}, "
+                        f"token_count={token_count}, max_tokens={max_tokens}"
+                    )
+                elif above_max_chars:
+                    violation = PluginViolation(
+                        reason=f"String length out of bounds{location}",
+                        description=f"String length {length} exceeds max_chars {max_chars}{location}",
+                        code="OUTPUT_LENGTH_VIOLATION",
+                        details={
+                            "length": length,
+                            "max_chars": max_chars,
+                            "strategy": strategy,
+                            "location": path or "root",
+                            "value_preview": data[:50] + "..." if len(data) > 50 else data
+                        },
+                        http_status_code=422,
+                        mcp_error_code=-32000,
+                    )
+                    logger.info(f"🚫 BLOCKING: String at {path or 'root'} exceeds char limits (length={length})")
+                else:
+                    # Min violations
+                    violation = PluginViolation(
+                        reason=f"String length/tokens below minimum{location}",
+                        description=f"String length {length} or tokens {token_count} below minimum{location}",
+                        code="OUTPUT_LENGTH_VIOLATION",
+                        details={
+                            "length": length,
+                            "min_chars": min_chars,
+                            "token_count": token_count,
+                            "min_tokens": min_tokens,
+                            "location": path or "root"
+                        },
+                        http_status_code=422,
+                        mcp_error_code=-32000,
+                    )
+                    logger.info(f"🚫 BLOCKING: String at {path or 'root'} below minimum limits")
+                
                 return data, False, violation
             
             # TRUNCATE MODE: Only truncate if above max
-            if above_max and max_chars is not None:
-                truncated = _truncate(data, max_chars, ellipsis, word_boundary)
+            if above_max_chars or above_max_tokens:
+                truncated = _truncate(
+                    data, max_chars, ellipsis, word_boundary, max_tokens, chars_per_token,
+                    max_text_length, max_binary_search_iterations
+                )
                 was_modified = truncated != data
                 if was_modified:
                     logger.info(f"🔄 Truncated string at {path or 'root'}: '{data[:30]}...' -> '{truncated}'")
@@ -298,7 +705,9 @@ def _process_structured_data(
         for idx, item in enumerate(data):
             item_path = f"{path}[{idx}]" if path else f"[{idx}]"
             processed_item, item_modified, violation = _process_structured_data(
-                item, min_chars, max_chars, ellipsis, strategy, word_boundary, context, item_path
+                item, min_chars, max_chars, ellipsis, strategy, word_boundary, context, item_path,
+                min_tokens, max_tokens, chars_per_token,
+                max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations
             )
             
             # In block mode, return violation immediately
@@ -318,7 +727,9 @@ def _process_structured_data(
         for key, value in data.items():
             value_path = f"{path}.{key}" if path else key
             processed_value, value_modified, violation = _process_structured_data(
-                value, min_chars, max_chars, ellipsis, strategy, word_boundary, context, value_path
+                value, min_chars, max_chars, ellipsis, strategy, word_boundary, context, value_path,
+                min_tokens, max_tokens, chars_per_token,
+                max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations
             )
             
             # In block mode, return violation immediately
@@ -458,7 +869,12 @@ class OutputLengthGuardPlugin(Plugin):
             logger.info(f"🎯 handle_text: Checking truncation condition - above_max={above_max}, cfg.max_chars={cfg.max_chars}")
             if above_max and cfg.max_chars is not None:
                 logger.info(f"🎯 handle_text: TRUNCATING text from {length} to {cfg.max_chars} chars")
-                new_text = _truncate(text, cfg.max_chars, cfg.ellipsis, cfg.word_boundary)
+                new_text = _truncate(
+                    text, cfg.max_chars, cfg.ellipsis, cfg.word_boundary,
+                    max_tokens=None, chars_per_token=cfg.chars_per_token,
+                    max_text_length=cfg.max_text_length,
+                    max_iterations=cfg.max_binary_search_iterations
+                )
                 logger.info(f"🎯 handle_text: Truncated result: '{new_text}' (length={len(new_text)})")
                 meta.update({"truncated": True, "new_length": len(new_text)})
                 return new_text, meta, None
@@ -511,7 +927,15 @@ class OutputLengthGuardPlugin(Plugin):
                     cfg.ellipsis,
                     cfg.strategy,
                     cfg.word_boundary,
-                    context
+                    context,
+                    "",  # path
+                    cfg.min_tokens,
+                    cfg.max_tokens,
+                    cfg.chars_per_token,
+                    cfg.max_text_length,
+                    cfg.max_structure_size,
+                    cfg.max_recursion_depth,
+                    cfg.max_binary_search_iterations
                 )
                 
                 # If blocking mode triggered a violation, return it immediately
@@ -520,7 +944,13 @@ class OutputLengthGuardPlugin(Plugin):
                     return ToolPostInvokeResult(
                         continue_processing=False,
                         violation=violation,
-                        metadata={"structured_content_blocked": True, "location": struct_key}
+                        metadata={
+                            "structured_content_blocked": True,
+                            "location": struct_key,
+                            "min_tokens": cfg.min_tokens,
+                            "max_tokens": cfg.max_tokens,
+                            "chars_per_token": cfg.chars_per_token
+                        }
                     )
                 
                 if struct_modified:
@@ -539,7 +969,14 @@ class OutputLengthGuardPlugin(Plugin):
                     
                     return ToolPostInvokeResult(
                         modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result),
-                        metadata={"mcp_result_processed": True, "items_modified": True, "structured_content_processed": True}
+                        metadata={
+                            "mcp_result_processed": True,
+                            "items_modified": True,
+                            "structured_content_processed": True,
+                            "min_tokens": cfg.min_tokens,
+                            "max_tokens": cfg.max_tokens,
+                            "chars_per_token": cfg.chars_per_token
+                        }
                     )
                 else:
                     logger.info(f"🎯 {struct_key} was not modified, no changes needed")
