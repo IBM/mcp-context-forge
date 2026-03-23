@@ -21,6 +21,9 @@ def internal_loopback_base_url() -> str:
     """Return loopback base URL for gateway self-calls.
 
     Uses HTTPS when runtime is started with SSL=true, otherwise HTTP.
+
+    Returns:
+        str: The base URL string (e.g. ``http://127.0.0.1:4444``).
     """
     ssl_env = os.getenv("SSL", "false").strip().lower()
     scheme = "https" if ssl_env in _SSL_TRUE_VALUES else "http"
@@ -32,5 +35,8 @@ def internal_loopback_verify() -> bool:
 
     Loopback HTTPS frequently uses a self-signed local cert, so verification
     is disabled for HTTPS loopback self-calls and enabled otherwise.
+
+    Returns:
+        bool: ``False`` when the loopback URL is HTTPS, ``True`` otherwise.
     """
     return not internal_loopback_base_url().startswith("https://")
