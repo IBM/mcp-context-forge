@@ -1400,6 +1400,33 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         logger.info("All sessions closed")
 
+    async def drain_all(self) -> None:
+        """Close all pooled and active sessions without marking the pool as closed.
+
+        Unlike ``close_all()``, the pool remains operational after draining.
+        New sessions will be created on demand with fresh TLS state.
+        Use this for certificate rotation (SIGHUP).
+        """
+        logger.info("Draining all pooled sessions for TLS rotation...")
+
+        async with self._global_lock:
+            for _pool_key, pool in list(self._pools.items()):
+                while not pool.empty():
+                    try:
+                        pooled = pool.get_nowait()
+                        await self._close_session(pooled)
+                    except asyncio.QueueEmpty:
+                        break
+
+            for _pool_key, active_set in list(self._active.items()):
+                for pooled in list(active_set):
+                    await self._close_session(pooled)
+
+            self._pools.clear()
+            self._active.clear()
+
+        logger.info("All pooled sessions drained; pool remains operational")
+
     async def register_pool_session_owner(self, mcp_session_id: str) -> None:
         """Register this worker as owner of a pool session in Redis.
 
@@ -2112,6 +2139,17 @@ async def close_mcp_session_pool() -> None:
         await close_notification_service()
     except (ImportError, RuntimeError):
         pass  # Notification service not initialized
+
+
+async def drain_mcp_session_pool() -> None:
+    """Drain all sessions from the global pool without destroying the pool.
+
+    Sessions are closed so new ones reconnect with fresh TLS state.
+    The pool remains operational — unlike ``close_mcp_session_pool()``,
+    which shuts it down permanently.
+    """
+    if _mcp_session_pool is not None:
+        await _mcp_session_pool.drain_all()
 
 
 async def start_pool_notification_service(gateway_service: Any = None) -> None:

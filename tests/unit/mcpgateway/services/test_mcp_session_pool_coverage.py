@@ -23,6 +23,7 @@ from mcpgateway.services.mcp_session_pool import (
     TransportType,
     _get_cleanup_timeout,
     close_mcp_session_pool,
+    drain_mcp_session_pool,
     get_mcp_session_pool,
     init_mcp_session_pool,
     register_gateway_capabilities_for_notifications,
@@ -1238,6 +1239,97 @@ class TestCloseAllRpcListener:
 
         assert task.cancelled()
         assert pool._rpc_listener_task is None
+
+
+# ---------------------------------------------------------------------------
+# drain_all: close sessions without marking pool as closed
+# ---------------------------------------------------------------------------
+class TestDrainAll:
+    """Cover MCPSessionPool.drain_all() and module-level drain_mcp_session_pool()."""
+
+    @pytest.mark.asyncio
+    async def test_drain_all_closes_pooled_sessions(self):
+        """drain_all should close pooled sessions but keep pool operational."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        pool._pools[pool_key] = asyncio.Queue(maxsize=2)
+        pool._active[pool_key] = set()
+
+        s1 = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url=url, identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+        pool._pools[pool_key].put_nowait(s1)
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock):
+            await pool.drain_all()
+
+        # Pool should be operational (not closed)
+        assert pool._closed is False
+        assert len(pool._pools) == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_all_closes_active_sessions(self):
+        """drain_all should close active sessions."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        pool._pools[pool_key] = asyncio.Queue(maxsize=2)
+        pool._active[pool_key] = set()
+
+        active_s = MagicMock()
+        pool._active[pool_key].add(active_s)
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
+            await pool.drain_all()
+
+        mock_close.assert_awaited()
+        assert pool._closed is False
+
+    @pytest.mark.asyncio
+    async def test_drain_all_handles_queue_empty_race(self):
+        """drain_all handles QueueEmpty if queue empties between empty() and get_nowait()."""
+        pool = MCPSessionPool()
+        pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
+
+        fake_queue = MagicMock()
+        fake_queue.empty = MagicMock(side_effect=[False, True])
+        fake_queue.get_nowait = MagicMock(side_effect=asyncio.QueueEmpty())
+
+        pool._pools[pool_key] = fake_queue
+        pool._active[pool_key] = set()
+
+        await pool.drain_all()
+        assert pool._closed is False
+
+    @pytest.mark.asyncio
+    async def test_drain_mcp_session_pool_calls_drain_all(self):
+        """Module-level drain_mcp_session_pool() calls drain_all on the singleton."""
+        import mcpgateway.services.mcp_session_pool as pool_mod
+
+        mock_pool = MagicMock()
+        mock_pool.drain_all = AsyncMock()
+        original = pool_mod._mcp_session_pool
+        try:
+            pool_mod._mcp_session_pool = mock_pool
+            await drain_mcp_session_pool()
+            mock_pool.drain_all.assert_awaited_once()
+        finally:
+            pool_mod._mcp_session_pool = original
+
+    @pytest.mark.asyncio
+    async def test_drain_mcp_session_pool_noop_when_no_pool(self):
+        """Module-level drain_mcp_session_pool() is a no-op when pool is None."""
+        import mcpgateway.services.mcp_session_pool as pool_mod
+
+        original = pool_mod._mcp_session_pool
+        try:
+            pool_mod._mcp_session_pool = None
+            await drain_mcp_session_pool()  # Should not raise
+        finally:
+            pool_mod._mcp_session_pool = original
 
 
 # ---------------------------------------------------------------------------
