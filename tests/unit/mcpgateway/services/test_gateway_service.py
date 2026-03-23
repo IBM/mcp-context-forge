@@ -1671,6 +1671,53 @@ class TestGatewayService:
         assert len(mock_gateway.tools) == 0
 
     @pytest.mark.asyncio
+    async def test_set_gateway_state_authcode_partial_result_still_cleans(self, gateway_service, mock_gateway, test_db):
+        """Auth_code gateway with partial results (one tool returned) must still clean stale items."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        mock_gateway.auth_type = "oauth"
+
+        stale_tool = MagicMock(spec=DbTool, id=200, name="stale-tool", original_name="stale-tool")
+        kept_tool = MagicMock(spec=DbTool, id=201, name="kept-tool", original_name="kept-tool")
+        mock_gateway.tools = [stale_tool, kept_tool]
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        # _initialize_gateway returns one tool — partial, so skip_stale_cleanup = False
+        new_tool = MagicMock()
+        new_tool.name = "kept-tool"
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # SELECT
+                Mock(),  # DELETE ToolMetric (stale-tool)
+                Mock(),  # DELETE server_tool_association
+                Mock(),  # DELETE DbTool
+                _make_execute_result(rowcount=1),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.expire = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [new_tool], [], []))
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        # Stale cleanup ran — stale-tool removed, kept-tool preserved
+        assert len(mock_gateway.tools) == 1
+        assert mock_gateway.tools[0].original_name == "kept-tool"
+
+    @pytest.mark.asyncio
     async def test_set_gateway_state_authcode_empty_result_preserves_resources_prompts(self, gateway_service, mock_gateway, test_db):
         """Auth_code guard must also preserve existing resources and prompts."""
         mock_gateway.enabled = True
