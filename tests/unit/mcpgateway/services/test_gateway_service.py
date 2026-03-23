@@ -1631,6 +1631,83 @@ class TestGatewayService:
         assert len(mock_gateway.tools) == len(tool_names)
         assert {t.id for t in mock_gateway.tools} == {100, 101, 102, 103, 104}
 
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_non_authcode_empty_result_still_cleans(self, gateway_service, mock_gateway, test_db):
+        """Non-auth_code gateway with empty results must still run stale cleanup (tools list filtered)."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = None  # NOT authorization_code
+        mock_gateway.auth_type = "bearer"
+
+        tool = MagicMock(spec=DbTool, id=200, name="tool-1", original_name="tool-1")
+        mock_gateway.tools = [tool]
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # SELECT
+                Mock(),  # DELETE ToolMetric
+                Mock(),  # DELETE server_tool_association
+                Mock(),  # DELETE DbTool
+                _make_execute_result(rowcount=1),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.expire = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        # Empty return — but NOT auth_code, so cleanup should proceed
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        # For non-auth_code, in-memory list gets filtered to empty (stale tool removed)
+        assert len(mock_gateway.tools) == 0
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_authcode_empty_result_preserves_resources_prompts(self, gateway_service, mock_gateway, test_db):
+        """Auth_code guard must also preserve existing resources and prompts."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        mock_gateway.auth_type = "oauth"
+
+        mock_gateway.tools = []
+        resource = MagicMock(spec=DbResource, id=300, uri="res://data")
+        mock_gateway.resources = [resource]
+        prompt = MagicMock(spec=DbPrompt, id=400, name="my-prompt", original_name="my-prompt")
+        mock_gateway.prompts = [prompt]
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # SELECT
+                _make_execute_result(rowcount=0),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        assert test_db.execute.call_count == 2  # SELECT + UPDATE only (no DELETE)
+        assert len(mock_gateway.resources) == 1
+        assert mock_gateway.resources[0].id == 300
+        assert len(mock_gateway.prompts) == 1
+        assert mock_gateway.prompts[0].id == 400
+
     # ────────────────────────────────────────────────────────────────────
     # DELETE
     # ────────────────────────────────────────────────────────────────────
