@@ -141,18 +141,18 @@ def test_ssl_context_cache_ttl_invalid_value_raises_error():
     import importlib
     import os
     import sys
-    
+
     # Save original module if loaded
     original_module = sys.modules.get("mcpgateway.utils.ssl_context_cache")
-    
+
     try:
         # Remove module from cache to force reload
         if "mcpgateway.utils.ssl_context_cache" in sys.modules:
             del sys.modules["mcpgateway.utils.ssl_context_cache"]
-        
+
         # Set invalid TTL value
         os.environ["SSL_CONTEXT_CACHE_TTL"] = "not-a-number"
-        
+
         # Import should raise ValueError
         with patch.dict(os.environ, {"SSL_CONTEXT_CACHE_TTL": "not-a-number"}):
             try:
@@ -178,9 +178,9 @@ def test_ssl_context_cache_ttl_invalid_value_raises_error():
 def test_ttl_env_var_parsing_with_invalid_value(monkeypatch):
     """Test that invalid SSL_CONTEXT_CACHE_TTL raises ValueError."""
     import importlib
-    
+
     monkeypatch.setenv("SSL_CONTEXT_CACHE_TTL", "invalid")
-    
+
     with patch.object(importlib, "reload") as mock_reload:
         try:
             # Simulate module reload with invalid TTL
@@ -196,20 +196,20 @@ def test_ttl_env_var_parsing_with_invalid_value(monkeypatch):
 def test_expired_entry_gets_refreshed(monkeypatch):
     """Test that expired cache entries are removed and recreated."""
     monkeypatch.setattr(ssl_context_cache, "_SSL_CONTEXT_CACHE_TTL", 1)
-    
+
     with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
         ctx1 = Mock()
         ctx2 = Mock()
         mock_create.side_effect = [ctx1, ctx2]
-        
+
         # Create initial entry
         result1 = ssl_context_cache.get_cached_ssl_context("CERT")
         assert result1 is ctx1
-        
+
         # Manually expire the entry
         cache_key = list(ssl_context_cache._ssl_context_cache.keys())[0]
         ssl_context_cache._ssl_context_cache_timestamps[cache_key] = datetime.now() - timedelta(seconds=2)
-        
+
         # Request again - should create new context
         result2 = ssl_context_cache.get_cached_ssl_context("CERT")
         assert result2 is ctx2
@@ -219,23 +219,23 @@ def test_expired_entry_gets_refreshed(monkeypatch):
 def test_cache_eviction_preserves_current_entry_timestamp(monkeypatch):
     """Test that cache eviction preserves the timestamp of the newly added entry."""
     monkeypatch.setattr(ssl_context_cache, "_SSL_CONTEXT_CACHE_TTL", 3600)
-    
+
     # Pre-fill cache to trigger eviction
     ssl_context_cache._ssl_context_cache.update({f"key{i}": Mock() for i in range(101)})
     ssl_context_cache._ssl_context_cache_timestamps.update({f"key{i}": datetime.now() for i in range(101)})
-    
+
     with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
         ctx = Mock()
         mock_create.return_value = ctx
-        
+
         before_time = datetime.now()
         _ = ssl_context_cache.get_cached_ssl_context("NEWCERT")
         after_time = datetime.now()
-        
+
         # Verify only one entry remains
         assert len(ssl_context_cache._ssl_context_cache) == 1
         assert len(ssl_context_cache._ssl_context_cache_timestamps) == 1
-        
+
         # Verify timestamp was preserved
         cache_key = list(ssl_context_cache._ssl_context_cache.keys())[0]
         timestamp = ssl_context_cache._ssl_context_cache_timestamps[cache_key]

@@ -643,6 +643,71 @@ class TestGatewayService:
         assert stored_gateway.oauth_config["client_id"] == "cid"
 
     @pytest.mark.asyncio
+    async def test_encrypt_client_key_encrypts_plaintext(self, gateway_service):
+        """_encrypt_client_key encrypts a plaintext private key."""
+        from mcpgateway.services.gateway_service import GatewayService
+
+        result = await GatewayService._encrypt_client_key("-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----")
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert encryption.is_encrypted(result)
+
+    @pytest.mark.asyncio
+    async def test_encrypt_client_key_returns_none_for_empty(self, gateway_service):
+        """_encrypt_client_key returns None for None or empty input."""
+        from mcpgateway.services.gateway_service import GatewayService
+
+        assert await GatewayService._encrypt_client_key(None) is None
+        assert await GatewayService._encrypt_client_key("") is None
+
+    @pytest.mark.asyncio
+    async def test_encrypt_client_key_idempotent(self, gateway_service):
+        """_encrypt_client_key does not double-encrypt already-encrypted values."""
+        from mcpgateway.services.gateway_service import GatewayService
+
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        already_encrypted = encryption.encrypt_secret("my-key")
+        result = await GatewayService._encrypt_client_key(already_encrypted)
+        assert result == already_encrypted
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_encrypts_client_key(self, gateway_service, test_db, monkeypatch):
+        """register_gateway encrypts client_key before persistence."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.flush = Mock()
+        test_db.refresh = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
+        gateway_service._notify_gateway_added = AsyncMock()
+
+        captured_gateway: dict[str, object] = {}
+
+        def _capture_add(obj):
+            if isinstance(obj, DbGateway):
+                captured_gateway["gateway"] = obj
+
+        test_db.add = Mock(side_effect=_capture_add)
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
+
+        gateway_create = GatewayCreate(
+            name="mtls_gateway",
+            url="https://example.com/gateway",
+            description="mTLS gateway",
+            client_cert="/path/to/cert.pem",
+            client_key="-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----",
+        )
+
+        await gateway_service.register_gateway(test_db, gateway_create)
+
+        stored_gateway = captured_gateway.get("gateway")
+        assert stored_gateway is not None
+        assert stored_gateway.client_cert == "/path/to/cert.pem"
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        assert encryption.is_encrypted(stored_gateway.client_key)
+
+    @pytest.mark.asyncio
     async def test_register_gateway_exception_rollback(self, gateway_service, test_db):
         """Test rollback on exception during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))

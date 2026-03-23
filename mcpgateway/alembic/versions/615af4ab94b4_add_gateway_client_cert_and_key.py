@@ -5,6 +5,7 @@ Revises: 20a0e0538ac5
 Create Date: 2026-03-20 10:47:06.592968
 
 """
+
 # Standard
 from typing import Sequence, Union
 
@@ -13,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = '615af4ab94b4'
-down_revision: Union[str, Sequence[str], None] = '20a0e0538ac5'
+revision: str = "615af4ab94b4"
+down_revision: Union[str, Sequence[str], None] = "20a0e0538ac5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

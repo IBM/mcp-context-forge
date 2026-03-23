@@ -3930,6 +3930,16 @@ class ToolService(BaseService):
                         if runtime_gateway_client_key:
                             gateway_client_key = runtime_gateway_client_key
 
+                    # Decrypt client_key if stored encrypted
+                    if gateway_client_key:
+                        try:
+                            from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
+
+                            _enc = get_encryption_service(settings.auth_encryption_secret)
+                            gateway_client_key = _enc.decrypt_secret_or_plaintext(gateway_client_key)
+                        except Exception as _dec_exc:
+                            logger.debug("client_key decryption skipped, using as-is: %s", _dec_exc)
+
                     def create_ssl_context(
                         ca_certificate: str,
                         client_cert: str | None = None,

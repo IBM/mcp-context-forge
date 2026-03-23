@@ -98,7 +98,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -524,6 +524,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # For all other URLs, preserve the domain name
         return url
+
+    @staticmethod
+    async def _encrypt_client_key(client_key: Optional[str]) -> Optional[str]:
+        """Encrypt a client private key for storage.
+
+        Args:
+            client_key: Plaintext client private key or None.
+
+        Returns:
+            Encrypted client key or None if input is None/empty.
+        """
+        if not client_key:
+            return None
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        if encryption.is_encrypted(client_key):
+            return client_key
+        return await encryption.encrypt_secret_async(client_key)
 
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
         """Create an SSL context with the provided CA certificate.
@@ -1154,6 +1171,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ca_certificate=gateway.ca_certificate,
                 ca_certificate_sig=gateway.ca_certificate_sig,
                 signing_algorithm=gateway.signing_algorithm,
+                # mTLS client certificate/key
+                client_cert=getattr(gateway, "client_cert", None),
+                client_key=await self._encrypt_client_key(getattr(gateway, "client_key", None)),
                 # Gateway mode configuration
                 gateway_mode=gateway_mode,
             )
@@ -1973,6 +1993,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     if gateway_update.team_id != gateway.team_id:
                         _validate_gateway_team_assignment(db, user_email, gateway_update.team_id)
                     gateway.team_id = gateway_update.team_id
+
+                # Update mTLS client certificate/key if provided
+                if getattr(gateway_update, "client_cert", None) is not None:
+                    gateway.client_cert = gateway_update.client_cert
+                if getattr(gateway_update, "client_key", None) is not None:
+                    if gateway_update.client_key == settings.masked_auth_value:
+                        pass  # Preserve existing encrypted value
+                    else:
+                        gateway.client_key = await self._encrypt_client_key(gateway_update.client_key)
 
                 # Only update auth_type if explicitly provided in the update
                 if gateway_update.auth_type is not None:
