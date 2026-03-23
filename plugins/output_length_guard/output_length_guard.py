@@ -194,64 +194,121 @@ def _is_numeric_string(text: str) -> bool:
 
 def _process_structured_data(
     data: Any,
+    min_chars: int,
     max_chars: Optional[int],
     ellipsis: str,
-    context: PluginContext
-) -> Tuple[Any, bool]:
-    """Recursively process structured data, truncating all string values.
+    strategy: str,
+    context: PluginContext,
+    path: str = ""
+) -> Tuple[Any, bool, Optional[PluginViolation]]:
+    """Recursively process structured data, truncating or blocking based on strategy.
     
-    This function traverses nested data structures (lists, dicts) and truncates
-    any string values found, preserving the structure. Numeric strings (integers,
-    floats, and scientific notation) are not truncated.
+    This function traverses nested data structures (lists, dicts) and either truncates
+    or blocks when string values exceed limits. Numeric strings (integers, floats,
+    and scientific notation) are not truncated or blocked.
     
     Args:
         data: The data to process (can be str, list, dict, or nested structures).
-        max_chars: Maximum characters for string truncation. None disables truncation.
+        min_chars: Minimum allowed characters. 0 disables minimum check.
+        max_chars: Maximum characters for string truncation/blocking. None disables max check.
         ellipsis: Ellipsis string to append when truncating.
+        strategy: "truncate" or "block" - determines behavior when limits exceeded.
         context: Plugin context for logging.
+        path: Current path in data structure (for error reporting).
     
     Returns:
-        Tuple of (modified_data, was_modified).
+        Tuple of (modified_data, was_modified, violation).
+        - In block mode: returns violation if any string exceeds limits
+        - In truncate mode: returns modified data with truncated strings
     """
-    # Base case: string - check if it's numeric, then truncate if not
+    # Base case: string - check if it's numeric, then process based on strategy
     if isinstance(data, str):
-        # Skip truncation for numeric strings (int, float, scientific notation)
+        # Skip processing for numeric strings (int, float, scientific notation)
         if _is_numeric_string(data):
             logger.info(f"🔄 Skipping numeric string: '{data}'")
-            return data, False
+            return data, False, None
         
-        truncated = _truncate(data, max_chars, ellipsis)
-        was_modified = truncated != data
-        if was_modified:
-            logger.info(f"🔄 Truncated string: '{data[:30]}...' -> '{truncated}'")
-        return truncated, was_modified
+        length = len(data)
+        
+        # Check if string is out of bounds
+        below_min = min_chars > 0 and length < min_chars
+        above_max = max_chars is not None and length > max_chars
+        
+        if below_min or above_max:
+            # BLOCK MODE: Return violation immediately
+            if strategy == "block":
+                location = f" at {path}" if path else ""
+                violation = PluginViolation(
+                    reason=f"String length out of bounds{location}",
+                    description=f"String length {length} not in [{min_chars}, {max_chars}]{location}",
+                    code="OUTPUT_LENGTH_VIOLATION",
+                    details={
+                        "length": length,
+                        "min": min_chars,
+                        "max": max_chars,
+                        "strategy": strategy,
+                        "location": path or "root",
+                        "value_preview": data[:50] + "..." if len(data) > 50 else data
+                    },
+                    http_status_code=422,
+                    mcp_error_code=-32000,
+                )
+                logger.info(f"🚫 BLOCKING: String at {path or 'root'} exceeds limits (length={length})")
+                return data, False, violation
+            
+            # TRUNCATE MODE: Only truncate if above max
+            if above_max and max_chars is not None:
+                truncated = _truncate(data, max_chars, ellipsis)
+                was_modified = truncated != data
+                if was_modified:
+                    logger.info(f"🔄 Truncated string at {path or 'root'}: '{data[:30]}...' -> '{truncated}'")
+                return truncated, was_modified, None
+        
+        # Within bounds - return unchanged
+        return data, False, None
     
     # Recursive case: list - process each element
     if isinstance(data, list):
         modified = False
         result = []
         for idx, item in enumerate(data):
-            processed_item, item_modified = _process_structured_data(item, max_chars, ellipsis, context)
+            item_path = f"{path}[{idx}]" if path else f"[{idx}]"
+            processed_item, item_modified, violation = _process_structured_data(
+                item, min_chars, max_chars, ellipsis, strategy, context, item_path
+            )
+            
+            # In block mode, return violation immediately
+            if violation:
+                return data, False, violation
+            
             result.append(processed_item)
             if item_modified:
                 modified = True
                 logger.info(f"🔄 Modified list item at index {idx}")
-        return result, modified
+        return result, modified, None
     
     # Recursive case: dict - process each value
     if isinstance(data, dict):
         modified = False
         result = {}
         for key, value in data.items():
-            processed_value, value_modified = _process_structured_data(value, max_chars, ellipsis, context)
+            value_path = f"{path}.{key}" if path else key
+            processed_value, value_modified, violation = _process_structured_data(
+                value, min_chars, max_chars, ellipsis, strategy, context, value_path
+            )
+            
+            # In block mode, return violation immediately
+            if violation:
+                return data, False, violation
+            
             result[key] = processed_value
             if value_modified:
                 modified = True
                 logger.info(f"🔄 Modified dict value for key '{key}'")
-        return result, modified
+        return result, modified, None
     
     # Other types (int, bool, None, etc.) - pass through unchanged
-    return data, False
+    return data, False, None
 
 
 def _generate_text_representation(data: Any) -> str:
@@ -422,13 +479,24 @@ class OutputLengthGuardPlugin(Plugin):
             if struct_key:
                 logger.info(f"🎯 Processing {struct_key} field FIRST (will skip content processing)")
                 
-                # Recursively truncate all strings in structured data
-                truncated_struct, struct_modified = _process_structured_data(
+                # Recursively process all strings in structured data (truncate or block)
+                truncated_struct, struct_modified, violation = _process_structured_data(
                     result[struct_key],
+                    cfg.min_chars,
                     cfg.max_chars,
                     cfg.ellipsis,
+                    cfg.strategy,
                     context
                 )
+                
+                # If blocking mode triggered a violation, return it immediately
+                if violation:
+                    logger.info(f"🚫 Blocking due to violation in {struct_key}")
+                    return ToolPostInvokeResult(
+                        continue_processing=False,
+                        violation=violation,
+                        metadata={"structured_content_blocked": True, "location": struct_key}
+                    )
                 
                 if struct_modified:
                     logger.info(f"🎯 {struct_key} was modified, regenerating content text")
