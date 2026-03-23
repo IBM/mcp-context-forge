@@ -983,6 +983,81 @@ class TestPromptService:
         assert res["template"] == "Hi, {{ name }}!"
 
     @pytest.mark.asyncio
+    async def test_update_prompt_team_id_rejects_nonexistent_team(self, prompt_service, test_db):
+        """Reassigning a prompt to a non-existent team must raise PromptError."""
+        existing = _build_db_prompt()
+        existing.team_id = "old-team"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None  # team not found
+        test_db.query = Mock(return_value=mock_query)
+
+        upd = PromptUpdate(team_id="nonexistent-team")
+
+        with pytest.raises(Exception, match="not found"):
+            await prompt_service.update_prompt(test_db, 1, upd)
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_visibility_team_without_team_id_rejects(self, prompt_service, test_db):
+        """Setting visibility to 'team' without any team_id must raise."""
+        existing = _build_db_prompt()
+        existing.team_id = None
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        test_db.query = Mock(return_value=mock_query)
+
+        upd = PromptUpdate(visibility="team")
+
+        with pytest.raises(Exception, match="without a team_id"):
+            await prompt_service.update_prompt(test_db, 1, upd)
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_team_id_rejects_non_owner(self, prompt_service, test_db):
+        """Reassigning a prompt to a team where user is not owner must raise."""
+        from mcpgateway.services.prompt_service import _validate_prompt_team_assignment
+
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        # Team exists but membership check returns None
+        mock_query.first.side_effect = [MagicMock(), None]
+
+        mock_db = MagicMock()
+        mock_db.query.return_value = mock_query
+
+        with pytest.raises(ValueError, match="membership"):
+            _validate_prompt_team_assignment(mock_db, "user@example.com", "other-team")
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_team_id_skips_ownership_without_user_email(self, prompt_service, test_db):
+        """System updates without user_email skip ownership checks and persist team_id."""
+        existing = _build_db_prompt()
+        existing.team_id = "old-team"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = MagicMock()  # Team exists
+        test_db.query = Mock(return_value=mock_query)
+        prompt_service._notify_prompt_updated = AsyncMock()
+
+        upd = PromptUpdate(team_id="new-team")
+        await prompt_service.update_prompt(test_db, 1, upd, user_email=None)
+
+        assert existing.team_id == "new-team"
+
+    @pytest.mark.asyncio
     async def test_update_prompt_name_conflict(self, prompt_service, test_db):
         existing = _build_db_prompt()
         test_db.get = Mock(return_value=existing)

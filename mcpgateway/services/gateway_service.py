@@ -81,6 +81,8 @@ except ImportError:
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.db import EmailTeam as DbEmailTeam
+from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
@@ -330,6 +332,36 @@ class GatewayConnectionError(GatewayError):
 
 class OAuthToolValidationError(GatewayConnectionError):
     """Raised when tool validation fails during OAuth-driven fetch."""
+
+
+def _validate_gateway_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+    """Validate team assignment for gateway updates.
+
+    Args:
+        db: Database session used for membership checks.
+        user_email: Requesting user email. When omitted, ownership checks are skipped.
+        target_team_id: Team identifier to validate.
+
+    Raises:
+        ValueError: If team does not exist or caller lacks ownership.
+    """
+    if not target_team_id:
+        raise ValueError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(DbEmailTeam).filter(DbEmailTeam.id == target_team_id).first()
+    if not team:
+        raise ValueError(f"Team {target_team_id} not found")
+
+    if not user_email:
+        return
+
+    membership = (
+        db.query(DbEmailTeamMember)
+        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+        .first()
+    )
+    if not membership:
+        raise ValueError("User membership in team not sufficient for this update.")
 
 
 class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
@@ -1904,6 +1936,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.tags = gateway_update.tags
                 if gateway_update.visibility is not None:
                     old_visibility = gateway.visibility
+                    # Validate visibility transitions
+                    if gateway_update.visibility == "team":
+                        target_team_id = gateway_update.team_id if gateway_update.team_id is not None else gateway.team_id
+                        _validate_gateway_team_assignment(db, user_email, target_team_id)
                     gateway.visibility = gateway_update.visibility
                     # Propagate visibility to all linked items immediately so it
                     # takes effect even when the upstream server is unreachable
@@ -1931,6 +1967,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             raise GatewayError("Invalid passthrough_headers format: must be list[str] or comma-separated string")
 
                     logger.info("Updated passthrough_headers for gateway {gateway.id}: {gateway.passthrough_headers}")
+
+                # Update team assignment if provided, validating ownership
+                if gateway_update.team_id is not None:
+                    if gateway_update.team_id != gateway.team_id:
+                        _validate_gateway_team_assignment(db, user_email, gateway_update.team_id)
+                    gateway.team_id = gateway_update.team_id
 
                 # Only update auth_type if explicitly provided in the update
                 if gateway_update.auth_type is not None:
