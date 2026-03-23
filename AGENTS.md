@@ -109,7 +109,7 @@ ContextForge implements a **two-layer security model**:
 - Keep the two-layer model on every path:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
-- Do not re-implement token team interpretation logic; always use `normalize_token_teams()` in `mcpgateway/auth.py`.
+- Do not re-implement token team interpretation logic; use `normalize_token_teams()` for API/legacy tokens and `resolve_session_teams()` for session tokens (both in `mcpgateway/auth.py`).
 - Do not accept inbound client auth tokens via URL query parameters.
 - Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
 - High-risk transports must be feature-flagged and disabled by default.

@@ -243,8 +243,9 @@ Key points:
 
 2. **Explicit Admin Bypass**
 
-   - Admin bypass requires explicit `teams: null` AND `is_admin: true`
-   - Empty teams `[]` disables bypass even for admins
+   - API/legacy tokens: admin bypass requires explicit `teams: null` AND `is_admin: true`
+   - Session tokens: admin bypass is DB-derived (DB `is_admin` flag); JWT `teams` only narrows non-admin sessions
+   - Empty teams `[]` disables bypass even for admins (API/legacy tokens)
 
 3. **Scoped Automation Tokens**
 
@@ -636,7 +637,7 @@ When `AUTH_REQUIRED=false`:
 
 | Use Case | Recommended Token Scope |
 |----------|------------------------|
-| Admin UI access | Session token (`teams: null` + `is_admin: true`) |
+| Admin UI access | Session token (admin bypass is DB-derived; no `teams` claim needed) |
 | CI/CD pipeline | `teams: []` (public-only) |
 | Service integration | Specific team(s) |
 | Developer access | Personal team + project teams |
