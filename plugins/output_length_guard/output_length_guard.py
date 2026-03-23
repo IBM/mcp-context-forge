@@ -50,6 +50,7 @@ class OutputLengthGuardConfig(BaseModel):
     """Configuration for the Output Length Guard plugin."""
 
     ALLOWED_STRATEGIES: ClassVar[set[str]] = {"truncate", "block"}
+    ALLOWED_LIMIT_MODES: ClassVar[set[str]] = {"character", "token"}
 
     # Output limits
     min_chars: int = Field(default=0, ge=0, description="Minimum allowed characters. 0 disables minimum check.")
@@ -59,6 +60,7 @@ class OutputLengthGuardConfig(BaseModel):
     chars_per_token: int = Field(default=4, ge=1, le=10, description="Characters per token ratio for estimation. Default: 4 (English/GPT models)")
     
     # Behavior
+    limit_mode: str = Field(default="character", description='Limit enforcement mode: "character" (character-based limits only) or "token" (token-based limits only). v0.4.2+')
     strategy: str = Field(default="truncate", description='Strategy when out of bounds: "truncate" or "block"')
     ellipsis: str = Field(default="…", description="Suffix appended on truncation. Use empty string to disable.")
     word_boundary: bool = Field(default=False, description="When true, truncate at word boundaries to avoid mid-word cuts.")
@@ -75,6 +77,27 @@ class OutputLengthGuardConfig(BaseModel):
         }),
         description="Keywords to sanitize in logs. Prevents information disclosure."
     )
+
+    @field_validator('limit_mode')
+    @classmethod
+    def validate_limit_mode(cls, v: str) -> str:
+        """Validate limit_mode is one of the allowed values.
+
+        Args:
+            v: Limit mode value to validate.
+
+        Returns:
+            Validated limit_mode value (lowercase).
+
+        Raises:
+            ValueError: If limit_mode is not 'character' or 'token'.
+        """
+        normalized = v.lower().strip()
+        if normalized not in cls.ALLOWED_LIMIT_MODES:
+            raise ValueError(
+                f"Invalid limit_mode '{v}'. Must be one of: {', '.join(sorted(cls.ALLOWED_LIMIT_MODES))}"
+            )
+        return normalized
 
     @field_validator('strategy')
     @classmethod
@@ -411,9 +434,7 @@ def _find_word_boundary(value: str, cut: int, max_chars: int) -> int:
     # PERFORMANCE: Use module-level constant instead of creating set
     for i in range(cut - 1, min_search - 1, -1):
         if value[i] in BOUNDARY_CHARS:
-            # Skip trailing whitespace
-            while i > 0 and value[i] in {' ', '\t', '\n', '\r'}:
-                i -= 1
+            # Return position after the boundary character (includes the space/boundary in result)
             return i + 1
     
     return cut  # No boundary found
@@ -427,7 +448,8 @@ def _truncate(
     max_tokens: Optional[int] = None,
     chars_per_token: int = 4,
     max_text_length: int = 1_000_000,
-    max_iterations: int = 30
+    max_iterations: int = 30,
+    limit_mode: str = "character"
 ) -> str:
     """Truncate string to maximum length with ellipsis.
 
@@ -436,6 +458,7 @@ def _truncate(
     FEATURE v0.3.5: Add word-boundary truncation to avoid mid-word cuts.
     FEATURE v0.4.0: Add token-based truncation with performance optimizations.
     FEATURE v0.4.1: Add configurable security limits.
+    FEATURE v0.4.2: Add limit_mode to enforce only character OR token limits.
 
     Args:
         value: String to truncate.
@@ -446,6 +469,7 @@ def _truncate(
         chars_per_token: Characters per token ratio for estimation.
         max_text_length: Maximum text size to process (security limit).
         max_iterations: Maximum binary search iterations (security limit).
+        limit_mode: "character" (character-based only) or "token" (token-based only).
 
     Returns:
         Truncated string, or original if within limits.
@@ -453,8 +477,8 @@ def _truncate(
     original_length = len(value)
     ell = ellipsis or ""
     
-    # Token-based truncation (if max_tokens specified)
-    if max_tokens is not None:
+    # Token-based truncation (only if limit_mode is "token" and max_tokens specified)
+    if limit_mode == "token" and max_tokens is not None:
         estimated_tokens = len(value) // chars_per_token
         
         if estimated_tokens > max_tokens:
@@ -488,7 +512,10 @@ def _truncate(
             
             return result
     
-    # Character-based truncation (existing logic)
+    # Character-based truncation (only if limit_mode is "character")
+    if limit_mode != "character":
+        return value
+    
     if max_chars is None:
         return value
 
@@ -566,7 +593,8 @@ def _process_structured_data(
     max_text_length: int = 1_000_000,
     max_structure_size: int = 10_000,
     max_recursion_depth: int = 100,
-    max_binary_search_iterations: int = 20
+    max_binary_search_iterations: int = 20,
+    limit_mode: str = "character"
 ) -> Tuple[Any, bool, Optional[PluginViolation]]:
     """Recursively process structured data, truncating or blocking based on strategy.
     
@@ -576,6 +604,7 @@ def _process_structured_data(
     
     FEATURE v0.4.0: Added token-based budget support with performance optimizations.
     FEATURE v0.4.1: Security limits now configurable via plugin settings.
+    FEATURE v0.4.2: Added limit_mode to enforce only character OR token limits.
     
     Args:
         data: The data to process (can be str, list, dict, or nested structures).
@@ -688,7 +717,7 @@ def _process_structured_data(
             if above_max_chars or above_max_tokens:
                 truncated = _truncate(
                     data, max_chars, ellipsis, word_boundary, max_tokens, chars_per_token,
-                    max_text_length, max_binary_search_iterations
+                    max_text_length, max_binary_search_iterations, limit_mode
                 )
                 was_modified = truncated != data
                 if was_modified:
@@ -707,7 +736,8 @@ def _process_structured_data(
             processed_item, item_modified, violation = _process_structured_data(
                 item, min_chars, max_chars, ellipsis, strategy, word_boundary, context, item_path,
                 min_tokens, max_tokens, chars_per_token,
-                max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations
+                max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations,
+                limit_mode
             )
             
             # In block mode, return violation immediately
@@ -729,7 +759,8 @@ def _process_structured_data(
             processed_value, value_modified, violation = _process_structured_data(
                 value, min_chars, max_chars, ellipsis, strategy, word_boundary, context, value_path,
                 min_tokens, max_tokens, chars_per_token,
-                max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations
+                max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations,
+                limit_mode
             )
             
             # In block mode, return violation immediately
@@ -873,7 +904,8 @@ class OutputLengthGuardPlugin(Plugin):
                     text, cfg.max_chars, cfg.ellipsis, cfg.word_boundary,
                     max_tokens=None, chars_per_token=cfg.chars_per_token,
                     max_text_length=cfg.max_text_length,
-                    max_iterations=cfg.max_binary_search_iterations
+                    max_iterations=cfg.max_binary_search_iterations,
+                    limit_mode=cfg.limit_mode
                 )
                 logger.info(f"🎯 handle_text: Truncated result: '{new_text}' (length={len(new_text)})")
                 meta.update({"truncated": True, "new_length": len(new_text)})
@@ -935,7 +967,8 @@ class OutputLengthGuardPlugin(Plugin):
                     cfg.max_text_length,
                     cfg.max_structure_size,
                     cfg.max_recursion_depth,
-                    cfg.max_binary_search_iterations
+                    cfg.max_binary_search_iterations,
+                    cfg.limit_mode
                 )
                 
                 # If blocking mode triggered a violation, return it immediately
