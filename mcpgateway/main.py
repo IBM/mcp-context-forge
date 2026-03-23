@@ -3295,8 +3295,9 @@ app.state.templates = templates
 
 # Policy Decision Point
 try:
-    from plugins.unified_pdp.pdp_models import PDPConfig, EngineConfig, EngineType
+    # First-Party
     from plugins.unified_pdp.pdp import PolicyDecisionPoint
+    from plugins.unified_pdp.pdp_models import EngineConfig, EngineType, PDPConfig
     pdp_config = PDPConfig(
         engines=[EngineConfig(name=EngineType.NATIVE, enabled=True, priority=0, settings={})]
     )
