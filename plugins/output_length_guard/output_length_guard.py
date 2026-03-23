@@ -55,6 +55,7 @@ class OutputLengthGuardConfig(BaseModel):
     max_chars: Optional[int] = Field(default=None, description="Maximum allowed characters. None disables maximum check.")
     strategy: str = Field(default="truncate", description='Strategy when out of bounds: "truncate" or "block"')
     ellipsis: str = Field(default="…", description="Suffix appended on truncation. Use empty string to disable.")
+    word_boundary: bool = Field(default=False, description="When true, truncate at word boundaries to avoid mid-word cuts.")
 
     @field_validator('strategy')
     @classmethod
@@ -134,16 +135,18 @@ def _length(value: str) -> int:
     return len(value)
 
 
-def _truncate(value: str, max_chars: Optional[int], ellipsis: str) -> str:
+def _truncate(value: str, max_chars: Optional[int], ellipsis: str, word_boundary: bool = False) -> str:
     """Truncate string to maximum length with ellipsis.
 
     BUG FIX #5: Handle max_chars=None correctly to disable truncation.
     BUG FIX #7: Optimize for large strings by caching length and using early returns.
+    FEATURE v0.3.5: Add word-boundary truncation to avoid mid-word cuts.
 
     Args:
         value: String to truncate.
         max_chars: Maximum number of characters. None means no limit.
         ellipsis: Ellipsis string to append.
+        word_boundary: If True, truncate at word boundaries to avoid mid-word cuts.
 
     Returns:
         Truncated string, or original if max_chars is None or within limits.
@@ -168,8 +171,27 @@ def _truncate(value: str, max_chars: Optional[int], ellipsis: str) -> str:
     if ell_len >= max_chars:
         return value[:max_chars]
 
-    # Calculate cut point and slice once (optimization)
+    # Calculate cut point
     cut = max_chars - ell_len
+    
+    # Word boundary truncation
+    if word_boundary and cut > 0:
+        # Define word boundary characters (whitespace and common punctuation)
+        boundary_chars = {' ', '\t', '\n', '\r', '.', ',', ';', ':', '!', '?', '-', '—', '–', '/', '\\', '(', ')', '[', ']', '{', '}'}
+        
+        # Search backwards from cut point to find last word boundary
+        # Limit search to 20% of max_chars to avoid excessive backtracking
+        min_search = max(0, cut - int(max_chars * 0.2))
+        
+        for i in range(cut - 1, min_search - 1, -1):
+            if value[i] in boundary_chars:
+                # Found a boundary - truncate here (include the boundary char)
+                return value[:i + 1].rstrip() + ell
+        
+        # No boundary found within search range - fall back to hard cut
+        logger.info(f"🔄 No word boundary found within search range, using hard cut at {cut}")
+    
+    # Hard cut (no word boundary mode or no boundary found)
     return value[:cut] + ell
 
 
@@ -198,6 +220,7 @@ def _process_structured_data(
     max_chars: Optional[int],
     ellipsis: str,
     strategy: str,
+    word_boundary: bool,
     context: PluginContext,
     path: str = ""
 ) -> Tuple[Any, bool, Optional[PluginViolation]]:
@@ -213,6 +236,7 @@ def _process_structured_data(
         max_chars: Maximum characters for string truncation/blocking. None disables max check.
         ellipsis: Ellipsis string to append when truncating.
         strategy: "truncate" or "block" - determines behavior when limits exceeded.
+        word_boundary: If True, truncate at word boundaries to avoid mid-word cuts.
         context: Plugin context for logging.
         path: Current path in data structure (for error reporting).
     
@@ -258,7 +282,7 @@ def _process_structured_data(
             
             # TRUNCATE MODE: Only truncate if above max
             if above_max and max_chars is not None:
-                truncated = _truncate(data, max_chars, ellipsis)
+                truncated = _truncate(data, max_chars, ellipsis, word_boundary)
                 was_modified = truncated != data
                 if was_modified:
                     logger.info(f"🔄 Truncated string at {path or 'root'}: '{data[:30]}...' -> '{truncated}'")
@@ -274,7 +298,7 @@ def _process_structured_data(
         for idx, item in enumerate(data):
             item_path = f"{path}[{idx}]" if path else f"[{idx}]"
             processed_item, item_modified, violation = _process_structured_data(
-                item, min_chars, max_chars, ellipsis, strategy, context, item_path
+                item, min_chars, max_chars, ellipsis, strategy, word_boundary, context, item_path
             )
             
             # In block mode, return violation immediately
@@ -294,7 +318,7 @@ def _process_structured_data(
         for key, value in data.items():
             value_path = f"{path}.{key}" if path else key
             processed_value, value_modified, violation = _process_structured_data(
-                value, min_chars, max_chars, ellipsis, strategy, context, value_path
+                value, min_chars, max_chars, ellipsis, strategy, word_boundary, context, value_path
             )
             
             # In block mode, return violation immediately
@@ -434,7 +458,7 @@ class OutputLengthGuardPlugin(Plugin):
             logger.info(f"🎯 handle_text: Checking truncation condition - above_max={above_max}, cfg.max_chars={cfg.max_chars}")
             if above_max and cfg.max_chars is not None:
                 logger.info(f"🎯 handle_text: TRUNCATING text from {length} to {cfg.max_chars} chars")
-                new_text = _truncate(text, cfg.max_chars, cfg.ellipsis)
+                new_text = _truncate(text, cfg.max_chars, cfg.ellipsis, cfg.word_boundary)
                 logger.info(f"🎯 handle_text: Truncated result: '{new_text}' (length={len(new_text)})")
                 meta.update({"truncated": True, "new_length": len(new_text)})
                 return new_text, meta, None
@@ -486,6 +510,7 @@ class OutputLengthGuardPlugin(Plugin):
                     cfg.max_chars,
                     cfg.ellipsis,
                     cfg.strategy,
+                    cfg.word_boundary,
                     context
                 )
                 
