@@ -3,6 +3,7 @@
 
 import builtins
 import typing
+
 __all__ = [
     "PIIDetectorRust",
 ]
@@ -64,10 +65,10 @@ class PIIDetectorRust:
         ```python
         {
             "ssn": [
-                {"value": "123-45-6789", "start": 10, "end": 21, "mask_strategy": "partial"}
+                {"value": "123-45-6789", "start": 10, "end": 21, "mask_strategy": "redact"}
             ],
             "email": [
-                {"value": "john@example.com", "start": 35, "end": 51, "mask_strategy": "partial"}
+                {"value": "john@example.com", "start": 35, "end": 51, "mask_strategy": "redact"}
             ]
         }
         ```

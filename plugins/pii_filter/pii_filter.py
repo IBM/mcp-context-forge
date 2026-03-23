@@ -58,6 +58,11 @@ except Exception as e:
     _RUST_AVAILABLE = False
 
 
+_PYTHON_PLUGIN_DEPRECATION_MESSAGE = (
+    "The legacy Python PII filter detector is deprecated and will be removed in a future release. Install the Rust-backed `pii_filter_rust` package to keep the PII filter plugin enabled."
+)
+
+
 class PIIType(str, Enum):
     """Types of PII that can be detected."""
 
@@ -452,6 +457,8 @@ class PIIDetector:
 class PIIFilterPlugin(Plugin):
     """PII Filter plugin for detecting and masking sensitive information."""
 
+    _python_deprecation_warned = False
+
     def __init__(self, config: PluginConfig):
         """Initialize the PII filter plugin.
 
@@ -469,6 +476,9 @@ class PIIFilterPlugin(Plugin):
         else:
             self.detector = PIIDetector(self.pii_config)
             self.implementation = "Python"
+            if not self.__class__._python_deprecation_warned:
+                logger.warning(_PYTHON_PLUGIN_DEPRECATION_MESSAGE)
+                self.__class__._python_deprecation_warned = True
             logger.info("🐍 PIIFilterPlugin initialized with Python implementation")
 
         self.detection_count = 0

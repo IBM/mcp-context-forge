@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "pii_filter"
-version = "1.0.0-RC-1"
+version = "1.0.0-RC-2"
 dependencies = [
  "criterion",
  "once_cell",

@@ -17,7 +17,7 @@ use super::patterns::{CompiledPatterns, compile_patterns};
 pub fn detect_pii(
     text: &str,
     patterns: &CompiledPatterns,
-    _config: &PIIConfig,
+    config: &PIIConfig,
 ) -> HashMap<PIIType, Vec<Detection>> {
     let mut detections: HashMap<PIIType, Vec<Detection>> = HashMap::new();
 
@@ -33,7 +33,9 @@ pub fn detect_pii(
                     value: mat.as_str().to_string(),
                     start: mat.start(),
                     end: mat.end(),
-                    mask_strategy: pattern.mask_strategy,
+                    mask_strategy: pattern
+                        .mask_strategy
+                        .unwrap_or(config.default_mask_strategy),
                 };
 
                 detections
@@ -132,10 +134,10 @@ impl PIIDetectorRust {
     /// ```python
     /// {
     ///     "ssn": [
-    ///         {"value": "123-45-6789", "start": 10, "end": 21, "mask_strategy": "partial"}
+    ///         {"value": "123-45-6789", "start": 10, "end": 21, "mask_strategy": "redact"}
     ///     ],
     ///     "email": [
-    ///         {"value": "john@example.com", "start": 35, "end": 51, "mask_strategy": "partial"}
+    ///         {"value": "john@example.com", "start": 35, "end": 51, "mask_strategy": "redact"}
     ///     ]
     /// }
     /// ```
@@ -347,7 +349,9 @@ impl PIIDetectorRust {
                         value,
                         start,
                         end,
-                        mask_strategy: pattern.mask_strategy,
+                        mask_strategy: pattern
+                            .mask_strategy
+                            .unwrap_or(self.config.default_mask_strategy),
                     };
 
                     detections
@@ -543,5 +547,56 @@ mod tests {
         // Should only detect once, not multiple times
         let total: usize = detections.values().map(|v| v.len()).sum();
         assert!(total >= 1);
+    }
+
+    #[test]
+    fn test_default_mask_strategy_applies_to_built_in_patterns() {
+        let config = PIIConfig {
+            detect_ssn: true,
+            detect_email: true,
+            detect_phone: false,
+            detect_ip_address: false,
+            default_mask_strategy: MaskingStrategy::Redact,
+            redaction_text: "[PII_REDACTED]".to_string(),
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+
+        let detections = detector.detect_internal("SSN: 123-45-6789 Email: john@example.com");
+
+        assert_eq!(
+            detections[&PIIType::Ssn][0].mask_strategy,
+            MaskingStrategy::Redact
+        );
+        assert_eq!(
+            detections[&PIIType::Email][0].mask_strategy,
+            MaskingStrategy::Redact
+        );
+    }
+
+    #[test]
+    fn test_custom_patterns_keep_explicit_mask_strategy() {
+        let mut config = PIIConfig {
+            default_mask_strategy: MaskingStrategy::Redact,
+            ..Default::default()
+        };
+        config
+            .custom_patterns
+            .push(super::super::config::CustomPattern {
+                pattern: r"\bEMP\d{6}\b".to_string(),
+                description: "Employee ID".to_string(),
+                mask_strategy: MaskingStrategy::Partial,
+                enabled: true,
+            });
+
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+        let detections = detector.detect_internal("Employee ID EMP123456");
+
+        assert_eq!(
+            detections[&PIIType::Custom][0].mask_strategy,
+            MaskingStrategy::Partial
+        );
     }
 }
