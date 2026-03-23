@@ -6,13 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 Playwright integration tests for admin UI menu visibility based on RBAC permissions.
 
 Tests verify that menu sections are properly hidden/shown based on user permissions,
-implementing the fix for GitHub issue #3554 (UX bug where users see inaccessible menu items).
+implementing the fixes for GitHub issues #3554 and #3416.
 
 Test coverage:
 - Platform admin sees all sections (unrestricted token bypass)
 - Team admin sees team management sections
 - Developer sees tool/resource sections but not admin sections
 - Viewer sees read-only sections only
+- Team creation controls are hidden without `teams.create`
 - Fail-closed behavior: permission check errors hide sections
 """
 
@@ -395,8 +396,9 @@ def menu_viewer_user(
 class TestAdminMenuVisibility:
     """Test admin UI menu visibility based on RBAC permissions.
 
-    Regression tests for GitHub issue #3554: UX bug where users see
-    inaccessible menu items that return 403 when clicked.
+    Regression tests for GitHub issues #3554 and #3416:
+    inaccessible sections and create actions must be hidden when the user
+    lacks the required permissions.
     """
 
     def test_platform_admin_sees_all_sections(
@@ -448,6 +450,9 @@ class TestAdminMenuVisibility:
 
         logger.info("✓ Team admin sees %d sections, %d hidden", len(TEAM_ADMIN_VISIBLE), len(platform_only))
 
+        create_team_button = page.locator("#create-team-btn")
+        assert create_team_button.count() > 0 and create_team_button.is_visible(), "Team admin should see Create New Team button"
+
     def test_developer_sees_tool_sections(
         self,
         page: Page,
@@ -472,6 +477,8 @@ class TestAdminMenuVisibility:
 
         logger.info("✓ Developer sees %d sections, %d hidden", len(DEVELOPER_VISIBLE), len(hidden_expected))
 
+        assert page.locator("#create-team-btn").count() == 0, "Developer should not see Create New Team button without teams.create"
+
     def test_viewer_sees_readonly_sections(
         self,
         page: Page,
@@ -495,6 +502,8 @@ class TestAdminMenuVisibility:
             assert not visibility.get(section, True), f"Viewer should NOT see '{section}' section"
 
         logger.info("✓ Viewer sees %d sections, %d hidden", len(VIEWER_VISIBLE), len(hidden_expected))
+
+        assert page.locator("#create-team-btn").count() == 0, "Viewer should not see Create New Team button without teams.create"
 
     def test_unauthenticated_redirects_to_login(self, page: Page):
         """Unauthenticated user should be redirected to login page."""
