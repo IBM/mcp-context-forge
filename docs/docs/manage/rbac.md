@@ -179,13 +179,9 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
     Session tokens skip `_check_team_membership` re-validation in the token scoping middleware because `resolve_session_teams()` already resolved membership from the database. Membership staleness is bounded by the `auth_cache` TTL. The cache stores the full DB membership (not the per-session narrowed intersection) so that multiple sessions for the same user narrow independently.
 
 !!! warning "Admin Bypass Requirements"
-    Admin bypass (unrestricted access) requires **BOTH** conditions:
+    **API / legacy tokens:** Admin bypass requires **BOTH** `teams: null` (explicit null, not missing key) and `is_admin: true`. A missing `teams` key or `teams: []` results in public-only access, even for admins.
 
-    1. `teams: null` (explicit null, not missing key)
-    2. `is_admin: true`
-
-    A missing `teams` key always results in public-only access, even for admins.
-    An empty `teams: []` also results in public-only access, even for admins.
+    **Session tokens:** Admin bypass is determined by the **database** `is_admin` flag, not the JWT `teams` claim. If the DB user is admin, `resolve_session_teams()` returns `None` (admin bypass) regardless of the JWT `teams` state. The JWT `teams` claim cannot narrow an admin session — it only narrows non-admin sessions.
 
 ### `is_admin`, `teams`, and `token_use` (Mental Model)
 
