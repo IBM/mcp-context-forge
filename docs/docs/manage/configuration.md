@@ -498,6 +498,8 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_OKTA_CLIENT_ID`          | Okta client ID                                   | (none)                | string  |
 | `SSO_OKTA_CLIENT_SECRET`      | Okta client secret                               | (none)                | string  |
 | `SSO_OKTA_ISSUER`             | Okta issuer URL                                  | (none)                | string  |
+| `SSO_OKTA_SCOPE`              | Okta OIDC scopes (space-separated)               | `openid profile email`| string  |
+| `OKTA_GROUP_MAPPING`          | JSON mapping of Okta group names to team UUIDs   | (none)                | string  |
 
 ### OAuth 2.0 Dynamic Client Registration (DCR) & PKCE
 
