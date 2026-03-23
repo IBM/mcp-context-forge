@@ -7,9 +7,9 @@ make many SSL connections.
 """
 
 # Standard
-import logging
 from datetime import datetime, timedelta
 import hashlib
+import logging
 import os
 import ssl
 import tempfile
@@ -50,7 +50,14 @@ def _is_expired(cache_key: str) -> bool:
 
 
 def _is_pem(value: str) -> bool:
-    """Check if a string looks like inline PEM content rather than a file path."""
+    """Check if a string looks like inline PEM content rather than a file path.
+
+    Args:
+        value: String to check (file path or PEM content).
+
+    Returns:
+        True if the string starts with a PEM header.
+    """
     return value.lstrip().startswith("-----BEGIN ")
 
 
@@ -60,6 +67,11 @@ def _load_client_cert_chain(ctx: ssl.SSLContext, client_cert: str, client_key: s
     ``ssl.SSLContext.load_cert_chain`` only accepts file paths.  When the
     values are inline PEM content (stored in the database), we write them
     to secure temporary files and load from there.
+
+    Args:
+        ctx: SSL context to load the client certificate chain into.
+        client_cert: Client certificate as a file path or inline PEM string.
+        client_key: Client private key as a file path or inline PEM string.
     """
     cert_is_pem = _is_pem(client_cert)
     key_is_pem = _is_pem(client_key)
@@ -117,6 +129,9 @@ def get_cached_ssl_context(
 
     Returns:
         ssl.SSLContext: Configured SSL context
+
+    Raises:
+        ValueError: If only one of client_cert/client_key is provided.
 
     Examples:
         The actual `ssl.SSLContext.load_verify_locations()` call requires valid PEM
