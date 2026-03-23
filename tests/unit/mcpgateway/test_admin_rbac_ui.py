@@ -1,6 +1,9 @@
 """Tests for RBAC UI permission checking in admin.py.
 
 Tests the get_user_action_permissions() function and UI_ACTION_PERMISSIONS constant.
+
+Includes regression coverage for issue #3416, where users without
+``teams.create`` must not see the team creation action in the admin UI.
 """
 
 import pytest
