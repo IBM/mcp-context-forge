@@ -71,6 +71,7 @@ from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
 from mcpgateway.utils.create_jwt_token import create_jwt_token
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.validation.jsonrpc import JSONRPCError
@@ -2304,11 +2305,11 @@ class SessionRegistry(SessionBackend):
                 # in mcp_session_pool.py and streamablehttp_transport.py). This avoids
                 # failures when the client-facing URL is not reachable from the server
                 # (e.g., behind a reverse proxy or service mesh). See #3049.
-                rpc_url = f"http://127.0.0.1:{settings.port}/rpc"
+                rpc_url = f"{internal_loopback_base_url()}/rpc"
 
                 logger.info(f"SSE RPC: Making call to {rpc_url} with method={method}, params={params}")
 
-                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
+                async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": internal_loopback_verify()}) as client:
                     logger.info(f"SSE RPC: Sending request to {rpc_url}")
                     rpc_response = await client.post(
                         url=rpc_url,

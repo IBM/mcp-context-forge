@@ -75,6 +75,7 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
@@ -2604,7 +2605,7 @@ class SessionManagerWrapper:
                     body = orjson.dumps(json_body)
                     logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
 
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                     rpc_headers = {
                         "content-type": "application/json",
                         "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
@@ -2615,7 +2616,7 @@ class SessionManagerWrapper:
                         rpc_headers["authorization"] = headers["authorization"]
 
                     response = await client.post(
-                        f"http://127.0.0.1:{settings.port}/rpc",
+                        f"{internal_loopback_base_url()}/rpc",
                         content=body,
                         headers=rpc_headers,
                         timeout=30.0,
@@ -2766,7 +2767,7 @@ class SessionManagerWrapper:
                             body = orjson.dumps(json_body)
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
-                        async with httpx.AsyncClient() as client:
+                        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                             rpc_headers = {
                                 "content-type": "application/json",
                                 "x-mcp-session-id": mcp_session_id,
@@ -2776,7 +2777,7 @@ class SessionManagerWrapper:
                                 rpc_headers["authorization"] = headers["authorization"]
 
                             response = await client.post(
-                                f"http://127.0.0.1:{settings.port}/rpc",
+                                f"{internal_loopback_base_url()}/rpc",
                                 content=body,
                                 headers=rpc_headers,
                                 timeout=30.0,
