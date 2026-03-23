@@ -327,6 +327,8 @@ class Settings(BaseSettings):
     sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")
     sso_okta_client_secret: Optional[SecretStr] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
+    sso_okta_scope: str = Field(default="openid profile email", description="Okta OIDC scopes (space-separated)")
+    okta_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of Okta group names to team UUIDs")
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
     sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")

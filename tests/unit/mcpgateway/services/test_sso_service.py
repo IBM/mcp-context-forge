@@ -1296,7 +1296,7 @@ class TestGetUserInfo:
             result = await sso_service._get_user_info(provider, "at", token_data)
 
         assert result is not None
-        assert result["groups"] == ["Engineering", "Platform"]
+        assert sorted(result["groups"]) == ["Engineering", "Platform"]
 
     @pytest.mark.asyncio
     async def test_get_user_info_generic_oidc_prefers_userinfo_groups_over_id_token(self, sso_service):
@@ -1342,7 +1342,99 @@ class TestGetUserInfo:
             result = await sso_service._get_user_info(provider, "at", token_data)
 
         assert result is not None
-        assert result["groups"] == ["admin", "editor"]
+        assert sorted(result["groups"]) == ["admin", "editor"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_okta_merges_groups_from_id_token(self, sso_service):
+        """Okta provider merges groups claim from id_token when userinfo omits it."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@okta.com", "name": "Okta User", "sub": "okta-123"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="okta", name="okta", provider_type="oidc", provider_metadata={})
+
+        id_token_claims = {"sub": "okta-123", "groups": ["Engineering", "Platform"]}
+        token_data = {"access_token": "at", "_verified_id_token_claims": id_token_claims}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert sorted(result["groups"]) == ["Engineering", "Platform"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_okta_merges_roles_from_id_token(self, sso_service):
+        """Okta provider merges roles claim from id_token when userinfo omits it."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@okta.com", "name": "Okta User", "sub": "okta-123"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="okta", name="okta", provider_type="oidc", provider_metadata={})
+
+        id_token_claims = {"sub": "okta-123", "roles": ["admin", "editor"]}
+        token_data = {"access_token": "at", "_verified_id_token_claims": id_token_claims}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert sorted(result["groups"]) == ["admin", "editor"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_okta_prefers_userinfo_groups(self, sso_service):
+        """When userinfo already contains groups, Okta id_token groups are not merged."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@okta.com", "name": "Okta User", "sub": "okta-123", "groups": ["FromUserinfo"]}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="okta", name="okta", provider_type="oidc", provider_metadata={})
+
+        id_token_claims = {"sub": "okta-123", "groups": ["FromIdToken"]}
+        token_data = {"access_token": "at", "_verified_id_token_claims": id_token_claims}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["groups"] == ["FromUserinfo"]
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_ibm_verify_merges_groups_from_id_token(self, sso_service):
+        """IBM Verify provider merges groups claim from id_token when userinfo omits it."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@ibm.com", "name": "IBM User", "sub": "ibm-123"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="ibm_verify", name="ibm_verify", provider_type="oidc", provider_metadata={})
+
+        id_token_claims = {"sub": "ibm-123", "groups": ["CloudOps", "Security"]}
+        token_data = {"access_token": "at", "_verified_id_token_claims": id_token_claims}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert sorted(result["groups"]) == ["CloudOps", "Security"]
 
 
 # ---------------------------------------------------------------------------

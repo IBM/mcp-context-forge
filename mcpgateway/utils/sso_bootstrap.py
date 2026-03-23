@@ -11,8 +11,9 @@ Bootstrap SSO providers with predefined configurations.
 from __future__ import annotations
 
 # Standard
+import json
 import logging
-from typing import Dict, List
+from typing import Any, Dict, List
 
 # First-Party
 from mcpgateway.config import settings
@@ -175,6 +176,16 @@ def get_predefined_sso_providers() -> List[Dict]:
     # Okta Provider
     if settings.sso_okta_enabled and settings.sso_okta_client_id:
         base_url = settings.sso_okta_issuer or "https://company.okta.com"
+        okta_team_mapping: Dict[str, Any] = {}
+        if settings.okta_group_mapping:
+            try:
+                parsed = json.loads(settings.okta_group_mapping)
+                if isinstance(parsed, dict):
+                    okta_team_mapping = parsed
+                else:
+                    logger.warning("OKTA_GROUP_MAPPING must be a JSON object (got %s); using empty team mapping", type(parsed).__name__)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Failed to parse OKTA_GROUP_MAPPING as JSON; using empty team mapping")
         providers.append(
             {
                 "id": "okta",
@@ -187,10 +198,10 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "token_url": f"{base_url}/oauth2/default/v1/token",
                 "userinfo_url": f"{base_url}/oauth2/default/v1/userinfo",
                 "issuer": f"{base_url}/oauth2/default",
-                "scope": "openid profile email",
+                "scope": settings.sso_okta_scope,
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
-                "team_mapping": {},
+                "team_mapping": okta_team_mapping,
             }
         )
 
@@ -359,6 +370,15 @@ async def bootstrap_sso_providers() -> None:
                     # Env provides base, DB values override (preserving Admin API changes)
                     merged_metadata = {**env_metadata, **db_metadata}
                     provider_config["provider_metadata"] = merged_metadata
+
+                # Preserve DB scope when env provides only the default value;
+                # an explicit non-default env scope takes precedence over DB.
+                if existing_provider.scope and existing_provider.scope != "openid profile email" and provider_config.get("scope") == "openid profile email":
+                    provider_config["scope"] = existing_provider.scope
+
+                # Preserve DB team_mapping if env provides empty mapping
+                if existing_provider.team_mapping and not provider_config.get("team_mapping"):
+                    provider_config["team_mapping"] = existing_provider.team_mapping
 
                 updated = await sso_service.update_provider(existing_provider.id, provider_config)
                 if updated:
