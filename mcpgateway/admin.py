@@ -226,8 +226,8 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     "export-import": "admin.system_config",
     "plugins": "admin.plugins",
     "metrics": "admin.system_config",
-    "version-info": "admin.version.read",
-    "settings": "admin.settings.read",
+    "version-info": "admin.system_config",
+    "settings": "admin.system_config",
     "llm-providers": "admin.system_config",
     "llm-models": "admin.system_config",
     "llm-api-info": "admin.system_config",
@@ -522,8 +522,13 @@ async def get_hidden_sections_for_user(
             continue
 
         if user_permissions is not None:
-            # In-memory check after a single batched permission fetch.
-            has_permission = required_permission in user_permissions or "*" in user_permissions
+            # SECURITY: Mirror check_permission() behavior — public-only tokens
+            # (token_teams=[]) must never satisfy admin.* permissions.
+            if required_permission.startswith("admin.") and token_teams is not None and len(token_teams) == 0:
+                has_permission = False
+            else:
+                # In-memory check after a single batched permission fetch.
+                has_permission = required_permission in user_permissions or "*" in user_permissions
         else:
             try:
                 has_permission = await permission_service.check_permission(

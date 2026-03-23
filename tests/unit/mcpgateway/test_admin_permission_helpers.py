@@ -125,6 +125,33 @@ class TestValidateSectionPermissions:
         assert "tools" in error_msg
         assert "servers" in error_msg
 
+    @patch('mcpgateway.admin.SECTION_PERMISSIONS', {'tools': 'tools.read', 'servers': 'servers.read'})
+    @patch('mcpgateway.admin._SECTION_TO_ROUTE_PATH', {'tools': '/admin/tools', 'servers': '/admin/servers'})
+    @patch('mcpgateway.admin.LOGGER')
+    def test_validate_section_permissions_production_warns_on_mismatch(self, mock_logger):
+        """Test validate_section_permissions logs warnings in production (non-test) env."""
+        route1 = MagicMock()
+        route1.path = '/admin/tools'
+        route1.endpoint = MagicMock()
+        route1.endpoint._required_permission = 'tools.write'  # Mismatch!
+
+        route2 = MagicMock()
+        route2.path = '/admin/servers'
+        route2.endpoint = MagicMock()
+        route2.endpoint._required_permission = 'servers.read'
+
+        router = MagicMock()
+        router.routes = [route1, route2]
+
+        # Simulate production environment by clearing test/CI env vars
+        with patch.dict('os.environ', {}, clear=True):
+            validate_section_permissions(router)
+
+        # Should log warnings instead of raising
+        assert mock_logger.warning.call_count == 2
+        assert "mismatches" in mock_logger.warning.call_args_list[0][0][0]
+        assert "mapping needs updating" in mock_logger.warning.call_args_list[1][0][0]
+
     @patch('mcpgateway.admin.SECTION_PERMISSIONS', {'tools': 'tools.read'})
     @patch('mcpgateway.admin._SECTION_TO_ROUTE_PATH', {'tools': '/admin/tools'})
     @patch('mcpgateway.admin.LOGGER')

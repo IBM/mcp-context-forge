@@ -300,3 +300,149 @@ async def test_combined_static_and_permission_hiding():
 
     # Permission-granted section should NOT be in result
     assert "tools" not in result
+
+
+@pytest.mark.asyncio
+async def test_batch_permission_path_used_when_available():
+    """When get_user_permissions() returns a set, batch in-memory checks are used."""
+    db = Mock()
+    static_hidden = set()
+
+    with patch("mcpgateway.admin.PermissionService") as mock_service_class:
+        mock_service = Mock()
+        # Return an awaitable set of permissions from get_user_permissions
+        mock_service.get_user_permissions = AsyncMock(return_value={"tools.read", "servers.read", "resources.read"})
+        # check_permission should NOT be called when batch path succeeds
+        mock_service.check_permission = AsyncMock(return_value=False)
+        mock_service_class.return_value = mock_service
+
+        result = await get_hidden_sections_for_user(
+            db=db,
+            user_email="user@example.com",
+            is_admin=False,
+            token_teams=["team1"],
+            static_hidden=static_hidden,
+        )
+
+    # Batch path should have been used - check_permission should not be called
+    mock_service.check_permission.assert_not_called()
+
+    # Sections with granted permissions should NOT be hidden
+    assert "tools" not in result
+    assert "servers" not in result
+    assert "resources" not in result
+
+    # Sections without granted permissions SHOULD be hidden
+    assert "users" in result
+    assert "maintenance" in result
+    assert "plugins" in result
+
+
+@pytest.mark.asyncio
+async def test_batch_permission_path_wildcard_grants_all():
+    """When get_user_permissions() returns '*', all sections are visible."""
+    db = Mock()
+    static_hidden = set()
+
+    with patch("mcpgateway.admin.PermissionService") as mock_service_class:
+        mock_service = Mock()
+        mock_service.get_user_permissions = AsyncMock(return_value={"*"})
+        mock_service.check_permission = AsyncMock(return_value=False)
+        mock_service_class.return_value = mock_service
+
+        result = await get_hidden_sections_for_user(
+            db=db,
+            user_email="admin@example.com",
+            is_admin=False,
+            token_teams=["team1"],
+            static_hidden=static_hidden,
+        )
+
+    # Wildcard should grant all permissions - no sections hidden
+    assert result == set()
+
+
+@pytest.mark.asyncio
+async def test_batch_permission_fallback_on_exception():
+    """When get_user_permissions() raises, falls back to per-section check_permission."""
+    db = Mock()
+    static_hidden = set()
+
+    with patch("mcpgateway.admin.PermissionService") as mock_service_class:
+        mock_service = Mock()
+        # get_user_permissions raises, triggering fallback
+        mock_service.get_user_permissions = AsyncMock(side_effect=Exception("Not implemented"))
+        mock_service.check_permission = AsyncMock(return_value=True)
+        mock_service_class.return_value = mock_service
+
+        result = await get_hidden_sections_for_user(
+            db=db,
+            user_email="user@example.com",
+            is_admin=False,
+            token_teams=["team1"],
+            static_hidden=static_hidden,
+        )
+
+    # Fallback to check_permission should have been used
+    assert mock_service.check_permission.call_count > 0
+    # All permissions granted via fallback
+    assert result == set()
+
+
+@pytest.mark.asyncio
+async def test_batch_path_denies_admin_perms_for_public_only_token():
+    """Public-only token (token_teams=[]) must not satisfy admin.* perms via batch path."""
+    db = Mock()
+    static_hidden = set()
+
+    with patch("mcpgateway.admin.PermissionService") as mock_service_class:
+        mock_service = Mock()
+        # Batch path returns admin permissions, but token is public-only
+        mock_service.get_user_permissions = AsyncMock(return_value={"admin.system_config", "tools.read", "*"})
+        mock_service.check_permission = AsyncMock(return_value=False)
+        mock_service_class.return_value = mock_service
+
+        result = await get_hidden_sections_for_user(
+            db=db,
+            user_email="user@example.com",
+            is_admin=False,
+            token_teams=[],  # Public-only
+            static_hidden=static_hidden,
+        )
+
+    # Admin sections should be hidden despite having admin.* and * in permissions
+    assert "users" in result
+    assert "maintenance" in result
+    assert "logs" in result
+    assert "plugins" in result
+
+    # Non-admin sections should still be visible (wildcard grants them)
+    assert "tools" not in result
+    assert "servers" not in result
+
+
+@pytest.mark.asyncio
+async def test_none_permission_sections_never_hidden():
+    """Sections mapped to None permission are never hidden by permission checks."""
+    db = Mock()
+    static_hidden = set()
+
+    with patch("mcpgateway.admin.SECTION_PERMISSIONS", {"visible_section": None, "tools": "tools.read"}):
+        with patch("mcpgateway.admin.PermissionService") as mock_service_class:
+            mock_service = Mock()
+            mock_service.get_user_permissions = AsyncMock(return_value=set())  # No permissions
+            mock_service.check_permission = AsyncMock(return_value=False)
+            mock_service_class.return_value = mock_service
+
+            result = await get_hidden_sections_for_user(
+                db=db,
+                user_email="user@example.com",
+                is_admin=False,
+                token_teams=["team1"],
+                static_hidden=static_hidden,
+            )
+
+    # None-permission section should NOT be hidden
+    assert "visible_section" not in result
+    # Section with denied permission should be hidden
+    assert "tools" in result
