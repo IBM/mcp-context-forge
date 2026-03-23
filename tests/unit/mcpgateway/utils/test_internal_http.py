@@ -40,9 +40,10 @@ class TestIsSSLEnabled:
         monkeypatch.setenv("SSL", "True")
         assert _is_ssl_enabled() is True
 
-    def test_ssl_with_whitespace(self, monkeypatch):
+    def test_ssl_with_whitespace_not_truthy(self, monkeypatch):
+        """Whitespace-padded values are not truthy, matching gunicorn.config.py and shell launchers."""
         monkeypatch.setenv("SSL", " true ")
-        assert _is_ssl_enabled() is True
+        assert _is_ssl_enabled() is False
 
     def test_ssl_one_is_not_truthy(self, monkeypatch):
         """Only 'true' is accepted — '1' is not, matching gunicorn.config.py."""

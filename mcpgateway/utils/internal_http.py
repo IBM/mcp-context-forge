@@ -18,8 +18,12 @@ from mcpgateway.config import settings
 
 
 def _is_ssl_enabled() -> bool:
-    """Check whether the gateway is running with SSL enabled."""
-    return os.getenv("SSL", "false").strip().lower() == "true"
+    """Check whether the gateway is running with SSL enabled.
+
+    Returns:
+        bool: ``True`` when ``SSL=true`` is set in the environment.
+    """
+    return os.getenv("SSL", "false").lower() == "true"
 
 
 def internal_loopback_base_url() -> str:
