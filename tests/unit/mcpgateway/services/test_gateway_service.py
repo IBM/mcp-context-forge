@@ -1623,11 +1623,7 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
 
-        # Tools should NOT have been deleted — no DELETE calls for tools/associations
-        for call in test_db.execute.call_args_list:
-            call_str = str(call)
-            assert "DELETE" not in call_str.upper() or "tool" not in call_str.lower(), \
-                f"Unexpected tool deletion for auth_code gateway with empty result: {call}"
+        assert test_db.execute.call_count == 2  # SELECT + UPDATE tools reachable (no DELETE)
 
     # ────────────────────────────────────────────────────────────────────
     # DELETE
