@@ -85,7 +85,7 @@ def _load_client_cert_chain(ctx: ssl.SSLContext, client_cert: str, client_key: s
     cert_tmp = key_tmp = None
     try:
         if cert_is_pem:
-            cert_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+            cert_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False, encoding="utf-8")
             cert_tmp.write(client_cert)
             cert_tmp.close()
             cert_path = cert_tmp.name
@@ -93,7 +93,7 @@ def _load_client_cert_chain(ctx: ssl.SSLContext, client_cert: str, client_key: s
             cert_path = client_cert
 
         if key_is_pem:
-            key_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+            key_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False, encoding="utf-8")
             key_tmp.write(client_key)
             key_tmp.close()
             key_path = key_tmp.name
