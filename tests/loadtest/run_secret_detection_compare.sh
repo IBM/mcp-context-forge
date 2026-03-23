@@ -26,12 +26,16 @@ SHADOW_DIR="$(pwd)/.tmp/python-shadow"
 OVERRIDE_BASE="$(pwd)/.tmp/docker-compose.override.base.yml"
 RUST_COMPOSE="$(pwd)/.tmp/docker-compose.rust.yml"
 PY_COMPOSE="$(pwd)/.tmp/docker-compose.python.yml"
+PY_OVERRIDE="$(pwd)/.tmp/docker-compose.python.override.yml"
 
-# Validate required environment variables
+# Validate required environment variables with defaults
 : "${VENV_DIR:?VENV_DIR must be set}"
 : "${COMPOSE_CMD:?COMPOSE_CMD must be set}"
 : "${IMAGE_LOCAL_NAME:?IMAGE_LOCAL_NAME must be set}"
 : "${SECRET_DETECTION_LOADTEST_HOST:?SECRET_DETECTION_LOADTEST_HOST must be set}"
+: "${SECRET_DETECTION_LOADTEST_USERS:=100}"
+: "${SECRET_DETECTION_LOADTEST_SPAWN_RATE:=10}"
+: "${SECRET_DETECTION_LOADTEST_RUN_TIME:=60s}"
 
 # Validate locustfile exists
 if [[ ! -f "${LOCUSTFILE}" ]]; then
@@ -44,9 +48,13 @@ fi
 # Helper Functions
 # ============================================================================
 
+# Health check configuration
+HEALTH_CHECK_MAX_ATTEMPTS=30
+HEALTH_CHECK_SLEEP_SECONDS=2
+
 wait_for_health() {
   local url="$1"
-  local max_attempts=30
+  local max_attempts="${HEALTH_CHECK_MAX_ATTEMPTS}"
   local attempt=0
   
   echo "   ⏳ Waiting for service health at ${url}..."
@@ -57,7 +65,7 @@ wait_for_health() {
       return 0
     fi
     attempt=$((attempt + 1))
-    sleep 2
+    sleep "${HEALTH_CHECK_SLEEP_SECONDS}"
   done
   
   echo "   ❌ Error: Service failed to become healthy after ${max_attempts} attempts" >&2
@@ -70,14 +78,22 @@ show_rust_flag() {
   
   # Extract and run a Python check in the container
   local rust_check
+  local exit_code=0
   rust_check=$(${COMPOSE_CMD} -f "${compose_file}" exec -T gateway python3 -c \
     "try:
     import secrets_detection_rust
     print('✅ Rust secrets detection: AVAILABLE')
 except ImportError as e:
-    print(f'⚠️  Rust secrets detection: NOT AVAILABLE ({e})')" 2>&1 || echo "❌ Failed to check")
+    print(f'⚠️  Rust secrets detection: NOT AVAILABLE ({e})')" 2>&1) || exit_code=$?
+  
+  if [[ ${exit_code} -ne 0 ]]; then
+    echo "   ❌ Failed to check Rust availability (exit code: ${exit_code})"
+    echo "   ⚠️  Warning: Benchmark results may be unreliable"
+    return 1
+  fi
   
   echo "   ${rust_check}"
+  return 0
 }
 
 run_locust() {
@@ -124,19 +140,26 @@ restore_rust_stack() {
 # ============================================================================
 
 echo "   📦 Creating shadow module to force Python fallback..."
-mkdir -p "${SHADOW_DIR}/secrets_detection_rust"
 
-# Create a fake Rust module that raises ImportError
-# This forces the secrets detection plugin to use pure Python implementation
-cat > "${SHADOW_DIR}/secrets_detection_rust/__init__.py" <<'EOF'
+# Only create shadow module if it doesn't exist or needs updating
+if [[ ! -f "${SHADOW_DIR}/secrets_detection_rust/__init__.py" ]]; then
+  mkdir -p "${SHADOW_DIR}/secrets_detection_rust"
+
+  # Create a fake Rust module that raises ImportError
+  # This forces the secrets detection plugin to use pure Python implementation
+  cat > "${SHADOW_DIR}/secrets_detection_rust/__init__.py" <<'EOF'
 # Shadow package to force Python fallback for benchmarking
 raise ImportError("forced python fallback for benchmark")
 EOF
 
-cat > "${SHADOW_DIR}/secrets_detection_rust/secrets_detection_rust.py" <<'EOF'
+  cat > "${SHADOW_DIR}/secrets_detection_rust/secrets_detection_rust.py" <<'EOF'
 # Shadow module to force Python fallback for benchmarking
 raise ImportError("forced python fallback for benchmark")
 EOF
+  echo "   ✅ Shadow module created"
+else
+  echo "   ✅ Shadow module already exists"
+fi
 
 # ============================================================================
 # Docker Compose Configuration

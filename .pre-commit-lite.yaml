@@ -1,4 +1,12 @@
 # Pre-commit hooks for the reduced local linting profile.
+#
+# Installation:
+#   pip install --user --upgrade pre-commit
+#   pre-commit install
+#
+# To skip pre-commit checks:
+#   git commit -m "Your message" --no-verify
+#
 exclude: >-
   (^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$
 

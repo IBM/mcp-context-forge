@@ -414,12 +414,25 @@ def test_default_config_disables_broad_generic_api_key_pattern():
     assert config.enabled["generic_api_key_assignment"] is False
 
 
+def test_partial_enabled_config_preserves_safe_defaults():
+    """Partial enabled maps should not silently enable broad heuristics."""
+    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig
+
+    config = SecretsDetectionConfig(enabled={"aws_access_key_id": False})
+
+    assert config.enabled["aws_access_key_id"] is False
+    assert config.enabled["github_token"] is True
+    assert config.enabled["stripe_secret_key"] is True
+    assert config.enabled["generic_api_key_assignment"] is False
+
+
 @pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available")
 def test_rust_scan_emits_python_log_records(caplog):
     """Rust logging should bridge into Python logging via pyo3_log."""
     from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
 
     caplog.set_level(logging.DEBUG)
+    # Fake AWS key for testing - not a real credential
     secret = "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"
 
     count, _redacted, findings = _scan_container(secret, SecretsDetectionConfig(), use_rust=True)

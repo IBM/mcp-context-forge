@@ -20,7 +20,7 @@ import re
 from typing import Any, Dict, Tuple
 
 # Third-Party
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -99,11 +99,30 @@ class SecretsDetectionConfig(BaseModel):
         min_findings_to_block: Minimum number of findings required to block.
     """
 
-    enabled: Dict[str, bool] = _default_enabled_patterns()
+    enabled: Dict[str, bool] = Field(default_factory=_default_enabled_patterns)
     redact: bool = False
     redaction_text: str = "***REDACTED***"
     block_on_detection: bool = True
     min_findings_to_block: int = 1
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _merge_enabled_patterns(cls, value: Any) -> Any:
+        """Merge partial enabled maps with safe defaults.
+
+        Plugin YAML often overrides only a subset of pattern toggles. Without
+        merging, missing keys would implicitly fall back to `True` at scan time,
+        which could accidentally enable broad heuristics like
+        `generic_api_key_assignment`.
+        """
+        if value is None:
+            return _default_enabled_patterns()
+        if not isinstance(value, dict):
+            return value
+
+        merged = _default_enabled_patterns()
+        merged.update(value)
+        return merged
 
 
 def _detect(text: str, cfg: SecretsDetectionConfig) -> list[dict[str, Any]]:
