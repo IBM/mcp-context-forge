@@ -1263,7 +1263,7 @@ class TestSchemaValidators:
     ])
     def test_visibility_validator_rejects_invalid_values(self, schema_cls, kwargs):
         """ToolCreate, ResourceCreate, and PromptCreate must reject invalid visibility strings."""
-        with pytest.raises(ValidationError, match="Visibility must be one of"):
+        with pytest.raises(ValidationError, match="literal_error"):
             schema_cls(**kwargs, visibility="bogus")
 
 

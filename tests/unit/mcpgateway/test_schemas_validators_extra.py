@@ -17,6 +17,7 @@ from mcpgateway.common.models import ResourceContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.schemas import (
+    _coerce_visibility,
     _mask_oauth_config,
     A2AAgentCreate,
     A2AAgentInvocation,
@@ -29,11 +30,14 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayUpdate,
     GrpcServiceCreate,
+    GrpcServiceRead,
     GrpcServiceUpdate,
     PromptCreate,
+    PromptRead,
     PromptUpdate,
     ResourceCreate,
     ResourceNotification,
+    ResourceRead,
     ResourceUpdate,
     RPCRequest,
     ServerCreate,
@@ -43,6 +47,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
     TokenScopeRequest,
     ToolCreate,
+    ToolRead,
     ToolUpdate,
 )
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -610,8 +615,8 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
     assert len(ServerUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert any("Description too long" in rec.message for rec in caplog.records)
 
-    with pytest.raises(ValueError):
-        ServerCreate.validate_visibility("invalid")
+    with pytest.raises(ValidationError):
+        ServerCreate(name="srv", visibility="invalid")
 
     assert ServerCreate.validate_team_id("550e8400-e29b-41d4-a716-446655440000")
 
@@ -639,10 +644,10 @@ def test_a2a_agent_create_and_update_more_branches(monkeypatch, caplog):
     assert len(A2AAgentCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(A2AAgentUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
-    with pytest.raises(ValueError):
-        A2AAgentCreate.validate_visibility("invalid")
-    with pytest.raises(ValueError):
-        A2AAgentUpdate.validate_visibility("invalid")
+    with pytest.raises((ValueError, ValidationError)):
+        A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", visibility="invalid")
+    with pytest.raises((ValueError, ValidationError)):
+        A2AAgentUpdate(visibility="invalid")
 
     with pytest.raises((ValidationError, ValueError)):
         A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", auth_type="basic", auth_username="u")
@@ -1216,3 +1221,147 @@ def test_a2a_agent_read_masked_preserves_empty_header_values():
     # Non-empty value should be masked
     secret_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Secret")
     assert secret_header["value"] == settings.masked_auth_value
+
+
+def test_visibility_literal_enum_validation():
+    """Schemas with Literal visibility reject invalid values and accept valid ones (issue #3525)."""
+    valid_values = ["private", "team", "public"]
+    invalid_values = ["invalid_value", "", "PUBLIC", "PRIVATE", "admin", "internal"]
+
+    # GatewayUpdate — the primary schema from the issue
+    for v in valid_values:
+        obj = GatewayUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GatewayUpdate(visibility=v)
+    assert GatewayUpdate().visibility is None  # default is None (optional)
+
+    # GatewayCreate
+    for v in valid_values:
+        assert GatewayCreate(name="gw", url="http://localhost:9000", visibility=v).visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GatewayCreate(name="gw", url="http://localhost:9000", visibility=v)
+
+    # ToolUpdate
+    for v in valid_values:
+        obj = ToolUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ToolUpdate(visibility=v)
+
+    # ToolCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+    assert ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST").visibility is None
+
+    # ResourceUpdate
+    for v in valid_values:
+        obj = ResourceUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ResourceUpdate(visibility=v)
+
+    # PromptUpdate
+    for v in valid_values:
+        obj = PromptUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            PromptUpdate(visibility=v)
+
+    # GrpcServiceUpdate
+    for v in valid_values:
+        obj = GrpcServiceUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GrpcServiceUpdate(visibility=v)
+
+    # GrpcServiceCreate — required fields: name, target
+    for v in valid_values:
+        obj = GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
+
+    # ResourceCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+    assert ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data").visibility is None
+
+    # PromptCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = PromptCreate(name="p", template="hello", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            PromptCreate(name="p", template="hello", visibility=v)
+    assert PromptCreate(name="p", template="hello").visibility is None
+
+    # ServerCreate — required field: name
+    for v in valid_values:
+        obj = ServerCreate(name="srv", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ServerCreate(name="srv", visibility=v)
+    assert ServerCreate(name="srv", visibility=None).visibility is None
+
+    # ServerUpdate — all fields optional
+    for v in valid_values:
+        obj = ServerUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ServerUpdate(visibility=v)
+    assert ServerUpdate().visibility is None
+
+    # A2AAgentCreate — required fields: name, endpoint_url
+    for v in valid_values:
+        obj = A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+    assert A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=None).visibility is None
+
+    # A2AAgentUpdate — all fields optional
+    for v in valid_values:
+        obj = A2AAgentUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(visibility=v)
+    assert A2AAgentUpdate().visibility is None
+
+
+def test_coerce_visibility_normalizes_invalid_values():
+    """_coerce_visibility must normalize invalid legacy values to 'public' instead of raising."""
+    assert _coerce_visibility("bogus") == "public"
+    assert _coerce_visibility("") == "public"
+    assert _coerce_visibility("PUBLIC") == "public"
+    assert _coerce_visibility("PRIVATE") == "public"
+    # Valid values pass through unchanged
+    assert _coerce_visibility("private") == "private"
+    assert _coerce_visibility("team") == "team"
+    assert _coerce_visibility("public") == "public"
+    assert _coerce_visibility(None) is None
+
+
+def test_read_schemas_have_visibility_coercion_wired():
+    """All Read schemas must have _normalize_visibility wired so legacy DB rows don't crash reads."""
+    for schema_cls in [ToolRead, ResourceRead, PromptRead, GatewayRead, ServerRead, A2AAgentRead, GrpcServiceRead]:
+        assert hasattr(schema_cls, "_normalize_visibility"), f"{schema_cls.__name__} missing _normalize_visibility"
