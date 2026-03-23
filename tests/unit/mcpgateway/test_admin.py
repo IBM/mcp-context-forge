@@ -21099,8 +21099,16 @@ class TestPaginationSwapStyle:
         # Third-Party
         from jinja2 import Environment, FileSystemLoader
 
+        import json
+
+        def _tojson_attr(value):
+            s = json.dumps(value, default=str)
+            s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
+            return s
+
         templates_dir = str(Path(__file__).resolve().parents[3] / "mcpgateway" / "templates")
         env = Environment(loader=FileSystemLoader(templates_dir))
+        env.filters["tojson_attr"] = _tojson_attr
         template = env.get_template("pagination_controls.html")
         ctx = {
             "pagination": {
@@ -21121,14 +21129,14 @@ class TestPaginationSwapStyle:
         return template.render(**ctx)
 
     def test_default_swap_is_innerhtml(self):
-        """Without hx_swap set, swapStyle defaults to innerHTML."""
+        """Without hx_swap set, data-hx-swap defaults to innerHTML."""
         html = self._render_pagination_controls()
-        assert "swapStyle: 'innerHTML'" in html
+        assert 'data-hx-swap="innerHTML"' in html
 
     def test_outerhtml_swap_when_set(self):
-        """When hx_swap='outerHTML', swapStyle is outerHTML."""
+        """When hx_swap='outerHTML', data-hx-swap is outerHTML."""
         html = self._render_pagination_controls(hx_swap="outerHTML")
-        assert "swapStyle: 'outerHTML'" in html
+        assert 'data-hx-swap="outerHTML"' in html
 
     @pytest.mark.parametrize(
         "partial_template",

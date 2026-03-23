@@ -105,6 +105,352 @@ window.addEventListener("beforeunload", () => {
     window.chartRegistry.destroyAll();
 });
 
+// ===================================================================
+// PAGINATION COMPONENT
+// Defined once here so all pagination_controls.html includes share
+// a single global definition. Each Alpine instance reads its own
+// per-section data from HTML data-* attributes in init().
+//
+// Extra query params (search terms, filters) that vary per-section are
+// registered via tojson-escaped <script> blocks in pagination_controls.html
+// and stored here under the section's table_name key.
+// ===================================================================
+
+// Registry populated by per-section <script> blocks in pagination_controls.html.
+// Must be initialised at module level so the inline <script> blocks that run
+// during HTML body parsing find it already defined (admin.js is loaded
+// synchronously in <head> before the body is parsed).
+window._paginationQuerySetters = {};
+
+// eslint-disable-next-line no-unused-vars
+function paginationData() {
+    return {
+        // Defaults; all overwritten by init() from data-* attributes.
+        currentPage: 1,
+        perPage: 10,
+        totalItems: 0,
+        totalPages: 0,
+        hasNext: false,
+        hasPrev: false,
+        targetSelector: "#tools-table",
+        swapStyle: "innerHTML",
+        tableName: "",
+        baseUrl: "",
+        indicator: "#loading",
+        pageItems: null,
+        _loading: false,
+
+        // Alpine lifecycle hook — called automatically when the component mounts.
+        // Reads per-instance values from this element's data-* attributes so that
+        // multiple components on the same page each get their own correct data.
+        init() {
+            const el = this.$el;
+            this.currentPage = parseInt(el.dataset.currentPage, 10) || 1;
+            this.perPage = parseInt(el.dataset.perPage, 10) || 10;
+            this.totalItems = parseInt(el.dataset.totalItems, 10) || 0;
+            this.totalPages = parseInt(el.dataset.totalPages, 10) || 0;
+            this.hasNext = el.dataset.hasNext === "true";
+            this.hasPrev = el.dataset.hasPrev === "true";
+            this.targetSelector = el.dataset.hxTarget || "#tools-table";
+            this.swapStyle = el.dataset.hxSwap || "innerHTML";
+            this.tableName = el.dataset.tableName || "";
+            this.baseUrl = el.dataset.baseUrl || "";
+            this.indicator = el.dataset.hxIndicator || "#loading";
+            this._loading = false;
+
+            // Honour namespaced URL param for page size (bookmarked / shared URLs).
+            if (this.tableName) {
+                const urlParams = new URLSearchParams(window.location.search);
+                const urlPageSize = parseInt(
+                    urlParams.get(this.tableName + "_size"),
+                    10,
+                );
+                if (
+                    urlPageSize &&
+                    [10, 25, 50, 100, 200, 500].includes(urlPageSize)
+                ) {
+                    this.perPage = urlPageSize;
+                }
+            }
+        },
+
+        goToPage(page) {
+            if (
+                page >= 1 &&
+                page <= this.totalPages &&
+                page !== this.currentPage
+            ) {
+                this.currentPage = page;
+                this.loadPage(page);
+            }
+        },
+
+        prevPage() {
+            if (this.hasPrev) {
+                this.goToPage(this.currentPage - 1);
+            }
+        },
+
+        nextPage() {
+            if (this.hasNext) {
+                this.goToPage(this.currentPage + 1);
+            }
+        },
+
+        changePageSize(size) {
+            this.perPage = parseInt(size, 10);
+            this.currentPage = 1;
+            this.loadPage(1);
+        },
+
+        // Updates the browser address bar with namespaced pagination params so
+        // that each table's state is independently bookmarkable / shareable.
+        updateBrowserUrl(page, includeInactive) {
+            if (!this.tableName) return;
+            const currentUrl = new URL(window.location.href);
+            const newParams = new URLSearchParams(currentUrl.searchParams);
+            const prefix = this.tableName + "_";
+
+            newParams.set(prefix + "page", page);
+            newParams.set(prefix + "size", this.perPage);
+            if (includeInactive !== undefined) {
+                newParams.set(prefix + "inactive", includeInactive.toString());
+            }
+
+            const newUrl =
+                currentUrl.pathname +
+                "?" +
+                newParams.toString() +
+                currentUrl.hash;
+            safeReplaceState({}, "", newUrl);
+        },
+
+        loadPage(page) {
+            // Prevent concurrent requests for the same pagination component.
+            if (this._loading) return;
+
+            // Bail out if the swap target was removed by a previous failed swap —
+            // this breaks an infinite-error loop that follows htmx:swapError.
+            const target = document.querySelector(this.targetSelector);
+            if (!target) return;
+
+            // Defer the request until after current HTMX swap completes
+            if (target.classList.contains("htmx-swapping")) {
+                setTimeout(() => this.loadPage(page), 100);
+                return;
+            }
+
+            this._loading = true;
+
+            // Capture targetSelector and tableName for closure to prevent race conditions
+            const targetSelector = this.targetSelector;
+
+            // Timeout safety: force unlock after 5 seconds to prevent permanent lock
+            const timeoutId = setTimeout(() => {
+                if (this._loading) {
+                    this._loading = false;
+                }
+            }, 5000);
+
+            // Event-scoped unlock: only unlock when this component's request completes
+            const unlock = (event) => {
+                clearTimeout(timeoutId);
+
+                // Only unlock if this event is for this target element
+                const eventTarget = event.detail?.target;
+                const thisTarget = document.querySelector(targetSelector);
+
+                if (eventTarget === thisTarget) {
+                    this._loading = false;
+                }
+            };
+
+            document.addEventListener("htmx:afterSettle", unlock, {
+                once: true,
+            });
+            document.addEventListener("htmx:responseError", unlock, {
+                once: true,
+            });
+            document.addEventListener("htmx:sendError", unlock, { once: true });
+
+            const url = new URL(this.baseUrl, window.location.origin);
+            url.searchParams.set("page", page);
+            url.searchParams.set("per_page", this.perPage);
+
+            // Resolve the include_inactive checkbox for this section by deriving
+            // its element ID from the HTMX target selector.
+            // Examples:
+            //   #servers-table          -> show-inactive-servers
+            //   #servers-table-body     -> show-inactive-servers
+            //   #resources-list-container -> show-inactive-resources
+            //   #agents-table           -> show-inactive-a2a-agents
+            let checkboxId = this.targetSelector
+                .replace("#", "show-inactive-")
+                .replace(/-table-body$/, "")
+                .replace(/-table$/, "")
+                .replace(/-list-container$/, "");
+            if (checkboxId === "show-inactive-agents") {
+                checkboxId = "show-inactive-a2a-agents";
+            }
+            const checkbox = document.getElementById(checkboxId);
+            let includeInactive;
+            if (checkbox) {
+                includeInactive = checkbox.checked;
+                url.searchParams.set(
+                    "include_inactive",
+                    includeInactive.toString(),
+                );
+            }
+
+            // Apply section-specific extra query params registered by the
+            // per-section <script> blocks in pagination_controls.html.
+            // Using a <script> tag (not an HTML attribute) avoids Jinja2
+            // HTML-encoding of special characters inside attribute values.
+            const setter = window._paginationQuerySetters[this.tableName];
+            if (typeof setter === "function") {
+                setter(url);
+            }
+
+            // Preserve extra server-side query params (team_id, gateway_id, etc.)
+            // Stored in a data attribute to avoid double-quote conflicts inside x-data.
+            const extraParams = JSON.parse(
+                this.$el.dataset.extraParams || "{}",
+            );
+            Object.entries(extraParams).forEach(([k, v]) => {
+                if (
+                    k !== "include_inactive" &&
+                    k !== "q" &&
+                    k !== "tags" &&
+                    v !== null &&
+                    v !== undefined
+                ) {
+                    url.searchParams.set(k, String(v));
+                }
+            });
+
+            // Read live search/tag filters: DOM inputs are primary (always current),
+            // URL params (written by updatePanelSearchStateInUrl) are fallback only
+            // when the DOM element is not found (bookmarked URL, restricted iframe,
+            // or search-input ID mismatch like catalog/a2a-agents).
+            const currentUrlParams = new URLSearchParams(
+                window.location.search,
+            );
+
+            if (this.tableName) {
+                const searchInput = document.getElementById(
+                    this.tableName + "-search-input",
+                );
+                const tagInput = document.getElementById(
+                    this.tableName + "-tag-filter",
+                );
+                const livePrefix = this.tableName + "_";
+
+                // When the input element exists, trust its value even if empty (user
+                // may have intentionally cleared the filter).  Only fall back to URL
+                // params when the element itself is absent.
+                const finalQuery =
+                    searchInput !== null
+                        ? searchInput.value.trim()
+                        : currentUrlParams.get(livePrefix + "q") || "";
+                const finalTags =
+                    tagInput !== null
+                        ? tagInput.value.trim()
+                        : currentUrlParams.get(livePrefix + "tags") || "";
+
+                if (finalQuery) {
+                    url.searchParams.set("q", finalQuery);
+                } else {
+                    url.searchParams.delete("q");
+                }
+                if (finalTags) {
+                    url.searchParams.set("tags", finalTags);
+                } else {
+                    url.searchParams.delete("tags");
+                }
+            }
+
+            // Preserve team_id from current URL (if present) - this ensures team filter
+            // is maintained during pagination
+
+            const teamIdFromUrl = currentUrlParams.get("team_id");
+            if (teamIdFromUrl && !extraParams.team_id) {
+                url.searchParams.set("team_id", teamIdFromUrl);
+            }
+
+            this.updateBrowserUrl(page, includeInactive);
+
+            // Scroll the target section into view before the fetch.
+            const targetElement = document.querySelector(this.targetSelector);
+            if (targetElement) {
+                const panel = targetElement.closest(
+                    ".tab-panel, .bg-white, .shadow",
+                );
+                if (panel) {
+                    panel.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                    });
+                } else {
+                    targetElement.scrollIntoView({
+                        behavior: "smooth",
+                        block: "start",
+                    });
+                }
+            }
+
+            // Trigger the HTMX fetch; indicator comes from data-hx-indicator.
+            htmx.ajax("GET", url.toString(), {
+                target: this.targetSelector,
+                swap: this.swapStyle,
+                indicator: this.indicator,
+            });
+        },
+    };
+}
+
+// Keyboard shortcuts for pagination (← / →).
+// Registered once here; the previous per-include <script> block registered
+// this listener N times (once per pagination control on the page).
+//
+// Tracks the last-clicked pagination root so that arrow keys target the
+// correct control when multiple pagination components are on the page.
+let _lastActivePaginationRoot = null;
+
+document.addEventListener("alpine:init", () => {
+    // Record which pagination component the user most recently interacted with.
+    document.addEventListener("click", (e) => {
+        const root = e.target.closest("[data-table-name]");
+        if (root) _lastActivePaginationRoot = root;
+    });
+
+    document.addEventListener("keydown", (e) => {
+        if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") {
+            return;
+        }
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+
+        e.preventDefault();
+
+        // Use the last-interacted control; fall back to the first visible one.
+        let root = _lastActivePaginationRoot;
+        if (!root || root.offsetParent === null) {
+            root = Array.from(
+                document.querySelectorAll("[data-table-name]"),
+            ).find((el) => el.offsetParent !== null);
+        }
+        if (!root) return;
+
+        // Drive navigation through Alpine's reactive data directly so that
+        // prevPage() / nextPage()'s own hasPrev / hasNext guards are the
+        // authority — avoids relying on DOM button disabled state which may
+        // not be evaluated yet after an HTMX swap.
+        const data = root._x_dataStack?.[0];
+        if (!data) return;
+        if (e.key === "ArrowLeft") data.prevPage();
+        else data.nextPage();
+    });
+});
+
 // Add three fields to passthrough section on Advanced button click
 function handleAddPassthrough() {
     const passthroughContainer = safeGetElement("passthrough-container");
@@ -18821,6 +19167,9 @@ function getPanelPerPage(panelConfig) {
     return Number.isNaN(parsed) ? panelConfig.defaultPerPage : parsed;
 }
 
+// Track active search panel requests to prevent concurrent reloads
+const activeSearchPanelRequests = new Set();
+
 function loadSearchablePanel(entityType) {
     const panelConfig = getPanelSearchConfig(entityType);
     if (!panelConfig) {
@@ -18832,8 +19181,17 @@ function loadSearchablePanel(entityType) {
     const query = (searchInput?.value || "").trim();
     const tags = (tagInput?.value || "").trim();
 
-    // Persist search state in namespaced URL params for pagination/shareability.
+    // Update URL first, even if request is blocked,
+    // to ensure it stays in sync with input state
     updatePanelSearchStateInUrl(panelConfig.tableName, query, tags);
+
+    // Prevent concurrent requests for the same panel
+    if (activeSearchPanelRequests.has(entityType)) {
+        console.log(
+            `[Search:${entityType}] Request already in progress, skipping HTMX call but URL updated`,
+        );
+        return;
+    }
 
     const includeInactive = Boolean(
         document.getElementById(panelConfig.inactiveCheckboxId)?.checked,
@@ -18854,12 +19212,45 @@ function loadSearchablePanel(entityType) {
     }
 
     const url = `${window.ROOT_PATH}/admin/${panelConfig.partialPath}?${params.toString()}`;
+
+    // Mark request as active
+    activeSearchPanelRequests.add(entityType);
+
+    // Set up scoped cleanup handlers - only cleanup when THIS panel's request completes
+    const targetSelector = panelConfig.targetSelector;
+    const cleanup = (event) => {
+        // Only cleanup if this event is for OUR target element
+        const eventTarget = event?.detail?.target;
+        const ourTarget = document.querySelector(targetSelector);
+
+        if (!eventTarget || eventTarget === ourTarget) {
+            activeSearchPanelRequests.delete(entityType);
+        }
+    };
+
+    // Cleanup on completion or error (scoped to our target)
+    document.addEventListener("htmx:afterSettle", cleanup, { once: true });
+    document.addEventListener("htmx:responseError", cleanup, { once: true });
+    document.addEventListener("htmx:sendError", cleanup, { once: true });
+
+    // Timeout safety: force cleanup after 30 seconds
+    setTimeout(() => {
+        if (activeSearchPanelRequests.has(entityType)) {
+            console.warn(
+                `[Search:${entityType}] Request timeout after 30s, forcing cleanup`,
+            );
+            activeSearchPanelRequests.delete(entityType);
+        }
+    }, 30000);
+
     if (window.htmx && window.htmx.ajax) {
         window.htmx.ajax("GET", url, {
             target: panelConfig.targetSelector,
             swap: "outerHTML",
             indicator: panelConfig.indicatorSelector,
         });
+    } else {
+        cleanup();
     }
 }
 
@@ -18867,7 +19258,25 @@ function queueSearchablePanelReload(entityType, delayMs = 250) {
     if (panelSearchReloadTimers[entityType]) {
         clearTimeout(panelSearchReloadTimers[entityType]);
     }
+
     panelSearchReloadTimers[entityType] = setTimeout(() => {
+        // Check if search input is now empty - if so, force clear the lock
+        // This allows empty search to trigger reload even if previous request is in flight
+        const panelConfig = getPanelSearchConfig(entityType);
+        if (panelConfig) {
+            const searchInput = document.getElementById(
+                panelConfig.searchInputId,
+            );
+            const tagInput = document.getElementById(panelConfig.tagInputId);
+            const query = (searchInput?.value || "").trim();
+            const tags = (tagInput?.value || "").trim();
+
+            // If both search and tags are empty, force clear the lock to allow reload
+            if (!query && !tags) {
+                activeSearchPanelRequests.delete(entityType);
+            }
+        }
+
         loadSearchablePanel(entityType);
     }, delayMs);
 }
@@ -18886,6 +19295,23 @@ function clearSearch(entityType) {
             if (tagInput) {
                 tagInput.value = "";
             }
+
+            // Clear any pending search reload timers
+            if (panelSearchReloadTimers[entityType]) {
+                clearTimeout(panelSearchReloadTimers[entityType]);
+                delete panelSearchReloadTimers[entityType];
+            }
+
+            // Force clear the active request lock to allow immediate reload
+            activeSearchPanelRequests.delete(entityType);
+
+            // Update URL BEFORE making the request so server sees cleared state
+            updatePanelSearchStateInUrl(panelConfig.tableName, "", "");
+
+            console.log(
+                `[Search:${entityType}] Clearing search and reloading panel`,
+            );
+
             // Trigger server-side reload to show all results (fixes #3128)
             // Removed client-side DOM filtering as it only filters visible page
             loadSearchablePanel(entityType);
@@ -18914,20 +19340,16 @@ window.clearSearch = clearSearch;
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
 
-    // Clone inputs to remove existing listeners from previous initialization runs.
-    Object.values(PANEL_SEARCH_CONFIG).forEach((panelConfig) => {
-        const input = document.getElementById(panelConfig.searchInputId);
-        if (input) {
-            const clonedInput = input.cloneNode(true);
-            clonedInput.removeAttribute("oninput");
-            input.parentNode.replaceChild(clonedInput, input);
-        }
-    });
-
     Object.entries(PANEL_SEARCH_CONFIG).forEach(([entityType, panelConfig]) => {
         const searchInput = document.getElementById(panelConfig.searchInputId);
         const tagInput = document.getElementById(panelConfig.tagInputId);
         if (!searchInput) {
+            return;
+        }
+
+        // Skip if already initialized (prevents duplicate listeners)
+        if (searchInput.dataset.searchInitialized === "true") {
+            console.log(`[Search:${entityType}] Already initialized, skipping`);
             return;
         }
 
@@ -18942,6 +19364,13 @@ function initializeSearchInputs() {
         searchInput.addEventListener("input", () => {
             queueSearchablePanelReload(entityType, 250);
         });
+
+        // Mark as initialized to prevent re-initialization loops
+        searchInput.dataset.searchInitialized = "true";
+
+        console.log(
+            `[Search:${entityType}] Initialized with query="${searchState.query}", tags="${searchState.tags}"`,
+        );
 
         const panel = document.getElementById(`${entityType}-panel`);
         const isVisible = Boolean(panel && !panel.classList.contains("hidden"));
@@ -19004,21 +19433,22 @@ window.updateFilterStatus = updateFilterStatus;
  * Rehydrate search inputs and filter status after HTMX content swaps.
  * This ensures that search/tag values from the URL are restored into the
  * input elements after pagination or partial refresh replaces table content.
+ *
+ * CRITICAL: Do NOT reinitialize on table swaps - search inputs are outside
+ * the table and don't get replaced. Only reinitialize on full page loads.
  */
 document.addEventListener("htmx:afterSettle", function (evt) {
-    const target = evt.detail?.target;
+    // Only update filter status for pagination-related targets
+    const target = evt?.detail?.target;
     if (!target || !target.id) return;
 
-    // Only rehydrate when a table partial or pagination was swapped
-    const isTableSwap =
-        target.id.endsWith("-table") ||
-        target.id.endsWith("-table-body") ||
-        target.id.endsWith("-list-container");
-    const isPaginationSwap = target.id.endsWith("-pagination-controls");
+    // Check if this is a pagination control or table target
+    const isPaginationTarget =
+        target.id.includes("-pagination-controls") ||
+        target.id.includes("-table") ||
+        target.id.includes("-list-container");
 
-    if (isTableSwap || isPaginationSwap) {
-        resetSearchInputsState();
-        initializeSearchInputsMemoized();
+    if (isPaginationTarget) {
         updateFilterStatus();
     }
 });
