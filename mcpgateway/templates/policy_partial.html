@@ -1,0 +1,278 @@
+<!-- htmlhint doctype-first:false -->
+<div class="space-y-6">
+  <!-- Header Card -->
+  <div class="bg-gradient-to-r from-green-600 to-teal-700 rounded-lg shadow-lg p-6 text-white">
+    <h2 class="text-2xl font-bold mb-4 flex items-center">
+      <svg class="h-8 w-8 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+      </svg>
+      Policy Engine (RBAC/ABAC)
+    </h2>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ health.healthy | string | capitalize }}</div>
+        <div class="text-green-100 text-sm">Overall Status</div>
+      </div>
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ engine_count }}</div>
+        <div class="text-green-100 text-sm">Engines</div>
+      </div>
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ rule_count }}</div>
+        <div class="text-green-100 text-sm">Native Rules</div>
+      </div>
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ cache_stats.hit_rate | default('N/A') }}</div>
+        <div class="text-green-100 text-sm">Cache Hit Rate</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Engine Health Cards -->
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    {% for engine in health.engines %}
+    <div class="bg-white rounded-lg shadow p-4 dark:bg-gray-800">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 uppercase">{{ engine.engine.value }}</h3>
+        {% if engine.status.value == 'healthy' %}
+        <span class="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded dark:bg-green-900 dark:text-green-200">✓ Healthy</span>
+        {% elif engine.status.value == 'disabled' %}
+        <span class="px-2 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded dark:bg-gray-700 dark:text-gray-400">Disabled</span>
+        {% else %}
+        <span class="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded dark:bg-red-900 dark:text-red-200">✗ Unhealthy</span>
+        {% endif %}
+      </div>
+      {% if engine.detail %}
+      <p class="text-xs text-gray-500 dark:text-gray-400">{{ engine.detail }}</p>
+      {% endif %}
+      {% if engine.latency_ms is not none and engine.latency_ms > 0 %}
+      <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ engine.latency_ms }}ms</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Two-column layout: Rules + Tester -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    <!-- Native RBAC Rules -->
+    <div class="bg-white rounded-lg shadow dark:bg-gray-800">
+      <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Native RBAC Rules</h3>
+        <button data-action="open-add-rule"
+          class="px-3 py-1.5 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors">
+          + Add Rule
+        </button>
+      </div>
+
+      {% if rules %}
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">ID</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Roles</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Actions</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Type</th>
+              <th class="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            {% for rule in rules %}
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+              <td class="px-4 py-3 text-sm font-mono text-gray-900 dark:text-gray-100">
+                {% if rule.id.startswith('deny:') %}
+                <span class="text-red-600 dark:text-red-400">{{ rule.id }}</span>
+                {% else %}
+                {{ rule.id }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+                {{ rule.roles | join(', ') if rule.roles else '*' }}
+              </td>
+              <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">
+                {{ rule.actions | join(', ') if rule.actions else '*' }}
+              </td>
+              <td class="px-4 py-3">
+                {% if rule.id.startswith('deny:') %}
+                <span class="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded dark:bg-red-900 dark:text-red-300">DENY</span>
+                {% else %}
+                <span class="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded dark:bg-green-900 dark:text-green-300">ALLOW</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <button data-action="delete-rule" data-rule-id="{{ rule.id }}"
+                  class="text-red-500 hover:text-red-700 text-xs font-medium transition-colors">
+                  Delete
+                </button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="p-8 text-center text-gray-500 dark:text-gray-400">
+        <svg class="mx-auto h-10 w-10 text-gray-300 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+        </svg>
+        <p class="text-sm">No rules configured. All requests will be denied.</p>
+        <button data-action="open-add-rule" class="mt-3 text-teal-600 hover:text-teal-700 text-sm font-medium">Add your first rule →</button>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Policy Tester -->
+    <div class="bg-white rounded-lg shadow dark:bg-gray-800">
+      <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Policy Tester</h3>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Simulate an access decision without affecting live traffic</p>
+      </div>
+      <div class="p-4 space-y-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Subject Email</label>
+          <input id="test-email" type="email" placeholder="user@example.com"
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Roles (comma-separated)</label>
+          <input id="test-roles" type="text" placeholder="admin, developer"
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Action</label>
+            <input id="test-action" type="text" placeholder="tools.invoke"
+              class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Resource Type</label>
+            <input id="test-resource-type" type="text" placeholder="tool"
+              class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Resource ID</label>
+          <input id="test-resource-id" type="text" placeholder="my-tool-123"
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Client IP</label>
+          <input id="test-ip" type="text" placeholder="127.0.0.1"
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+        </div>
+        <button data-action="run-policy-test"
+          class="w-full px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors">
+          Test Access →
+        </button>
+
+        <!-- Result box -->
+        <div id="policy-test-result" class="hidden mt-3 p-4 rounded-lg border">
+          <div id="policy-test-verdict" class="text-lg font-bold mb-2"></div>
+          <div id="policy-test-reason" class="text-sm text-gray-700 dark:text-gray-300 mb-2"></div>
+          <div id="policy-test-policies" class="text-xs text-gray-500 dark:text-gray-400"></div>
+          <div id="policy-test-timing" class="text-xs text-gray-400 dark:text-gray-500 mt-1"></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end two-column -->
+
+  <!-- Cache Stats -->
+  <div class="bg-white rounded-lg shadow p-4 dark:bg-gray-800">
+    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 uppercase mb-3">Cache Statistics</h3>
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+      <div>
+        <div class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ cache_stats.hits | default(0) }}</div>
+        <div class="text-xs text-gray-500">Hits</div>
+      </div>
+      <div>
+        <div class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ cache_stats.misses | default(0) }}</div>
+        <div class="text-xs text-gray-500">Misses</div>
+      </div>
+      <div>
+        <div class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ cache_stats.hit_rate | default('0%') }}</div>
+        <div class="text-xs text-gray-500">Hit Rate</div>
+      </div>
+      <div>
+        <div class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ cache_stats.size | default(0) }}</div>
+        <div class="text-xs text-gray-500">Cached Entries</div>
+      </div>
+      <div>
+        <div class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ cache_stats.ttl_seconds | default('N/A') }}s</div>
+        <div class="text-xs text-gray-500">TTL</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end space-y-6 -->
+
+
+<!-- Add Rule Modal -->
+<div id="add-rule-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+  <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-2/3 lg:w-1/2 shadow-lg rounded-md bg-white dark:bg-gray-800">
+    <div class="flex justify-between items-start mb-4">
+      <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Add RBAC Rule</h3>
+      <button data-action="close-add-rule" class="text-gray-400 hover:text-gray-500">
+        <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Rule ID <span class="text-gray-400 font-normal">(prefix with <code>deny:</code> for deny rules)</span>
+        </label>
+        <input id="rule-id" type="text" placeholder="allow:developer-tools or deny:block-contractors"
+          class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Roles (comma-separated, * for any)</label>
+          <input id="rule-roles" type="text" placeholder="admin, developer"
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Actions (comma-separated, globs OK)</label>
+          <input id="rule-actions" type="text" placeholder="tools.invoke, resources.*"
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Resource Types (comma-separated)</label>
+          <input id="rule-resource-types" type="text" placeholder="tool, prompt, *"
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Resource IDs (comma-separated, globs OK)</label>
+          <input id="rule-resource-ids" type="text" placeholder="* or specific-tool-id"
+            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Reason <span class="text-gray-400 font-normal">(shown in audit log on deny)</span>
+        </label>
+        <input id="rule-reason" type="text" placeholder="Developers can invoke tools"
+          class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+      </div>
+      <div id="rule-error" class="hidden text-sm text-red-600 dark:text-red-400"></div>
+    </div>
+    <div class="mt-4 flex gap-3 justify-end">
+      <button data-action="close-add-rule"
+        class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 transition-colors">
+        Cancel
+      </button>
+      <button data-action="submit-add-rule"
+        class="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 transition-colors">
+        Add Rule
+      </button>
+    </div>
+  </div>
+</div>
+
+

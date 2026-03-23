@@ -3291,8 +3291,20 @@ app.state.templates = templates
 
 # Plugin manager is obtained from factory at request time via get_plugin_manager()
 # No need to store in app state; routes will get it from the factory when needed
-
 # Plugin service will be initialized in lifespan after plugin manager is ready
+
+# Policy Decision Point
+try:
+    from plugins.unified_pdp.pdp_models import PDPConfig, EngineConfig, EngineType
+    from plugins.unified_pdp.pdp import PolicyDecisionPoint
+    pdp_config = PDPConfig(
+        engines=[EngineConfig(name=EngineType.NATIVE, enabled=True, priority=0, settings={})]
+    )
+    app.state.pdp = PolicyDecisionPoint(pdp_config)
+    logger.info("Policy Decision Point initialised")
+except Exception as exc:
+    logger.warning("PDP init failed: %s", exc)
+    app.state.pdp = None
 
 # Create API routers
 protocol_router = APIRouter(prefix="/protocol", tags=["Protocol"])
