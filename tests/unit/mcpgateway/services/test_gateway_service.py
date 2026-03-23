@@ -1599,15 +1599,18 @@ class TestGatewayService:
         mock_gateway.reachable = False  # Was offline
         mock_gateway.oauth_config = {"grant_type": "authorization_code"}
         mock_gateway.auth_type = "oauth"
-        tool = MagicMock(spec=DbTool, id=101, name="existing-tool", original_name="existing-tool")
-        mock_gateway.tools = [tool]
+
+        # Set up multiple existing tools to verify all are preserved
+        tool_names = ["tool-1", "tool-2", "tool-3", "tool-4", "tool-5"]
+        tools = [MagicMock(spec=DbTool, id=100 + i, name=n, original_name=n) for i, n in enumerate(tool_names)]
+        mock_gateway.tools = tools
         mock_gateway.resources = []
         mock_gateway.prompts = []
 
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
-                _make_execute_result(rowcount=1),  # UPDATE tools reachable
+                _make_execute_result(rowcount=len(tools)),  # UPDATE tools reachable
             ]
         )
         test_db.commit = Mock()
@@ -1624,6 +1627,9 @@ class TestGatewayService:
             await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
 
         assert test_db.execute.call_count == 2  # SELECT + UPDATE tools reachable (no DELETE)
+        # All existing tools must be preserved
+        assert len(mock_gateway.tools) == len(tool_names)
+        assert {t.id for t in mock_gateway.tools} == {100, 101, 102, 103, 104}
 
     # ────────────────────────────────────────────────────────────────────
     # DELETE

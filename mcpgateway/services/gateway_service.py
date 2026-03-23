@@ -2644,9 +2644,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # Register capabilities for notification-driven actions
                         register_gateway_capabilities_for_notifications(gateway.id, capabilities)
 
-                        gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
-                        gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
+                        if not _skip_stale_cleanup:
+                            gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
+                            gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
+                            gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
 
                         # Log cleanup results
                         tools_removed = len(stale_tool_ids)
