@@ -1,0 +1,65 @@
+###############################################################################
+# s390x wheel builder
+#
+# Builds native wheels for packages that lack pre-built s390x binaries on PyPI.
+# The resulting wheels are stored under /wheels and can be COPYed into
+# downstream Containerfile stages:
+#
+#   COPY --from=s390x-wheels /wheels /tmp/wheels
+#   pip install --no-index --find-links=/tmp/wheels <package>
+#
+# Build:
+#   podman build --platform linux/s390x -t s390x-wheels infra/s390x/
+###############################################################################
+
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1772441549
+
+ARG PYTHON_VERSION=3.12
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Build toolchain: compilers, OpenSSL, and autotools needed by native extensions
+# hadolint ignore=DL3041
+RUN microdnf update -y && \
+    microdnf install -y \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
+        gcc \
+        gcc-c++ \
+        make \
+        cmake \
+        openssl-devel \
+        libffi-devel \
+        rust \
+        cargo \
+        jq-devel \
+        autoconf \
+        automake \
+        libtool && \
+    microdnf clean all
+
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
+
+# Upgrade pip and install build front-ends
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# s390x does not support BoringSSL — force grpcio to build against OpenSSL
+ENV GRPC_PYTHON_BUILD_SYSTEM_OPENSSL=True
+
+WORKDIR /wheels
+
+# Build all wheels in a single layer to keep the image small.
+# --no-binary :all: forces a source build for every package so we get
+# native s390x wheels regardless of what PyPI ships.
+RUN python3 -m pip wheel --no-binary :all: --wheel-dir /wheels \
+        cryptography \
+        granian \
+        setproctitle \
+        jq \
+        MarkupSafe \
+        grpcio \
+        psutil \
+        brotli \
+        httptools \
+        uvloop \
+        argon2-cffi-bindings
