@@ -1090,7 +1090,10 @@ class TestGatewayService:
         test_db.refresh = Mock()
         mock_query = Mock()
         mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = None
+        # Return a mock team object so visibility->"team" validation passes
+        mock_team = MagicMock()
+        mock_team.id = 1
+        mock_query.first.return_value = mock_team
         mock_query.all.return_value = []
         test_db.query = Mock(return_value=mock_query)
 
@@ -1114,6 +1117,84 @@ class TestGatewayService:
         assert mock_prompt.visibility == "team", "Prompt visibility not propagated when gateway init failed"
         # Visibility changes must be persisted
         test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_team_id_rejects_nonexistent_team(self, gateway_service, mock_gateway, test_db):
+        """Reassigning a gateway to a non-existent team must raise GatewayError."""
+        mock_gateway.team_id = "old-team"
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None  # team not found
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_update = GatewayUpdate(team_id="nonexistent-team")
+
+        with pytest.raises(GatewayError, match="not found"):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_visibility_team_without_team_id_rejects(self, gateway_service, mock_gateway, test_db):
+        """Setting visibility to 'team' without any team_id (new or existing) must raise GatewayError."""
+        mock_gateway.team_id = None
+        mock_gateway.visibility = "public"
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_update = GatewayUpdate(visibility="team")
+
+        with pytest.raises(GatewayError, match="without a team_id"):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_team_id_rejects_non_owner(self, gateway_service, mock_gateway, test_db):
+        """Reassigning a gateway to a team where user is not owner must raise GatewayError."""
+        from mcpgateway.services.gateway_service import _validate_gateway_team_assignment
+
+        mock_team = MagicMock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        # Team exists but membership check returns None (not owner)
+        mock_query.first.side_effect = [mock_team, None]
+
+        mock_db = MagicMock()
+        mock_db.query.return_value = mock_query
+
+        with pytest.raises(ValueError, match="membership"):
+            _validate_gateway_team_assignment(mock_db, "user@example.com", "other-team")
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_team_id_skips_ownership_check_without_user_email(self, gateway_service, mock_gateway, test_db):
+        """System/internal updates without user_email should skip ownership checks and persist team_id."""
+        mock_gateway.team_id = "old-team"
+        mock_gateway.auth_type = "none"
+        mock_gateway.oauth_config = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.slug = "test_gateway"
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        # Team exists; no membership query needed (user_email is None)
+        mock_query.first.return_value = MagicMock()
+        mock_query.all.return_value = []
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("unreachable"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(team_id="new-team")
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update, user_email=None)
+
+        assert mock_gateway.team_id == "new-team"
 
     @pytest.mark.asyncio
     async def test_update_gateway_visibility_preserves_per_resource_overrides(self, gateway_service, mock_gateway, test_db):

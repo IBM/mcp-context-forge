@@ -302,6 +302,73 @@ class TestA2AAgentService:
                 assert mock_schema.called
                 assert sample_db_agent.version == 2  # Should be incremented
 
+    async def test_update_agent_team_id_rejects_nonexistent_team(self, service, mock_db, sample_db_agent):
+        """Reassigning an agent to a non-existent team must raise A2AAgentError."""
+        sample_db_agent.version = 1
+        sample_db_agent.team_id = "00000000-0000-0000-0000-000000000001"
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_query = MagicMock()
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = None  # team not found
+            mock_db.query.return_value = mock_query
+
+            update_data = A2AAgentUpdate(team_id="00000000-0000-0000-0000-000000000099")
+
+            with pytest.raises(A2AAgentError, match="not found"):
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+    async def test_update_agent_visibility_team_without_team_id_rejects(self, service, mock_db, sample_db_agent):
+        """Setting visibility to 'team' without any team_id must raise A2AAgentError."""
+        sample_db_agent.version = 1
+        sample_db_agent.team_id = None
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_query = MagicMock()
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = None
+            mock_db.query.return_value = mock_query
+
+            update_data = A2AAgentUpdate(visibility="team")
+
+            with pytest.raises(A2AAgentError, match="without a team_id"):
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+    async def test_update_agent_team_id_rejects_non_owner(self, service, mock_db, sample_db_agent):
+        """Reassigning an agent to a team where user is not owner must raise."""
+        from mcpgateway.services.a2a_service import _validate_a2a_team_assignment
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        # Team exists but membership check returns None
+        mock_query.first.side_effect = [MagicMock(), None]
+
+        mock_session = MagicMock()
+        mock_session.query.return_value = mock_query
+
+        with pytest.raises(ValueError, match="membership"):
+            _validate_a2a_team_assignment(mock_session, "user@example.com", "00000000-0000-0000-0000-000000000099")
+
+    async def test_update_agent_team_id_skips_ownership_without_user_email(self, service, mock_db, sample_db_agent):
+        """System updates without user_email skip ownership checks and persist team_id."""
+        sample_db_agent.version = 1
+        sample_db_agent.team_id = "00000000-0000-0000-0000-000000000001"
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            mock_query = MagicMock()
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = MagicMock()  # Team exists
+            mock_db.query.return_value = mock_query
+
+            with patch.object(service, "convert_agent_to_read", return_value=MagicMock()):
+                update_data = A2AAgentUpdate(team_id="00000000-0000-0000-0000-000000000099")
+                await service.update_agent(mock_db, sample_db_agent.id, update_data, user_email=None)
+
+        # UUID is normalized by schema
+        assert sample_db_agent.team_id == "00000000000000000000000000000099"
+
     async def test_update_agent_encrypts_oauth_sensitive_values(self, service, mock_db, sample_db_agent):
         """update_agent encrypts oauth_config secrets before saving."""
         sample_db_agent.version = 1
