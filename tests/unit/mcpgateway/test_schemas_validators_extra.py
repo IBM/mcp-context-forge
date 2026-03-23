@@ -914,6 +914,28 @@ class TestMaskOauthConfig:
         assert masked.oauth_config["client_secret"] == settings.masked_auth_value
         assert masked.oauth_config["token_url"] == "https://auth.example.com/token"
 
+    def test_gateway_read_masked_hides_client_key(self):
+        """GatewayRead.masked() masks client_key (mTLS private key)."""
+        gw = GatewayRead(
+            name="test-gw",
+            url="http://example.com",
+            client_cert="/path/to/cert.pem",
+            client_key="-----BEGIN PRIVATE KEY-----\nSECRETKEY\n-----END PRIVATE KEY-----",
+        )
+        masked = gw.masked()
+        assert masked.client_key == settings.masked_auth_value
+        assert masked.client_cert == "/path/to/cert.pem"
+
+    def test_gateway_read_masked_preserves_none_client_key(self):
+        """GatewayRead.masked() preserves None client_key."""
+        gw = GatewayRead(
+            name="test-gw",
+            url="http://example.com",
+            client_key=None,
+        )
+        masked = gw.masked()
+        assert masked.client_key is None
+
     def test_a2a_agent_read_masked_includes_oauth(self):
         """A2AAgentRead.masked() masks oauth_config sensitive keys."""
         now = datetime.now(timezone.utc)

@@ -242,8 +242,8 @@ def test_cache_eviction_preserves_current_entry_timestamp(monkeypatch):
         assert before_time <= timestamp <= after_time
 
 
-def test_is_expired_returns_false_when_no_timestamp():
-    """Test that _is_expired returns False when entry has no timestamp."""
-    # This covers line 43 (created_at is None check)
+def test_is_expired_returns_false_when_no_timestamp(monkeypatch):
+    """Test that _is_expired returns False when entry has no timestamp but TTL is enabled."""
+    monkeypatch.setattr(ssl_context_cache, "_SSL_CONTEXT_CACHE_TTL", 60)
     result = ssl_context_cache._is_expired("nonexistent-key")
     assert result is False

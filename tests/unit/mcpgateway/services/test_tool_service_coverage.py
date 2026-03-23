@@ -421,6 +421,22 @@ class TestBuildCachePayload:
         assert payload["gateway"] is not None
         assert payload["gateway"]["id"] == str(mock_gateway.id)
 
+    def test_build_tool_cache_payload_includes_mtls_fields(self, tool_service, mock_tool, mock_gateway):
+        """Cache payload should include client_cert and client_key for mTLS."""
+        mock_gateway.client_cert = "/path/to/client.pem"
+        mock_gateway.client_key = "/path/to/client-key.pem"
+        payload = tool_service._build_tool_cache_payload(mock_tool, mock_gateway)
+        assert payload["gateway"]["client_cert"] == "/path/to/client.pem"
+        assert payload["gateway"]["client_key"] == "/path/to/client-key.pem"
+
+    def test_build_tool_cache_payload_mtls_fields_none_by_default(self, tool_service, mock_tool, mock_gateway):
+        """Cache payload should include client_cert/client_key as None when not set."""
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+        payload = tool_service._build_tool_cache_payload(mock_tool, mock_gateway)
+        assert payload["gateway"]["client_cert"] is None
+        assert payload["gateway"]["client_key"] is None
+
     def test_build_tool_cache_payload_without_gateway(self, tool_service, mock_tool):
         """Cache payload without gateway should have gateway=None."""
         payload = tool_service._build_tool_cache_payload(mock_tool, None)

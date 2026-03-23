@@ -3609,6 +3609,8 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_token_unmasked"] = None
         masked_data["auth_header_value_unmasked"] = None
         masked_data["auth_headers_unmasked"] = None
+        # SECURITY: Mask mTLS client private key
+        masked_data["client_key"] = settings.masked_auth_value if masked_data.get("client_key") else None
         return GatewayRead.model_validate(masked_data)
 
 
