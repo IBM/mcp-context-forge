@@ -1578,8 +1578,13 @@ async def enforce_admin_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF token validation failed")
 
 
+# Mount admin endpoints under the configured UI base path when the UI is enabled.
+# When the UI is disabled (tests or API-only mode), expose the same admin
+# endpoints at the legacy `/admin` path so API clients can continue to use
+# `/admin/*` without being redirected by main.py's legacy redirect handler.
+admin_prefix = settings.mcpgateway_ui_base_path if getattr(settings, "mcpgateway_ui_enabled", True) else "/admin"
 admin_router = APIRouter(
-    prefix=settings.mcpgateway_ui_base_path,
+    prefix=admin_prefix,
     tags=["Admin UI"],
     dependencies=[Depends(enforce_admin_csrf)],
 )

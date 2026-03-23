@@ -10978,6 +10978,15 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 # Conditional UI and admin API handling
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
+    # Ensure the admin router is mounted at the UI base when the UI is enabled,
+    # or at the legacy `/admin` path when the UI is disabled. This allows tests
+    # and API-only deployments to address admin endpoints at `/admin` without
+    # being affected by the legacy redirect handler.
+    try:
+        admin_router.prefix = settings.mcpgateway_ui_base_path if getattr(settings, "mcpgateway_ui_enabled", True) else "/admin"
+    except Exception:
+        # Fallback to the configured UI base path on any error
+        admin_router.prefix = settings.mcpgateway_ui_base_path
     app.include_router(admin_router)  # Admin routes imported from admin.py
 
     # Validate section-to-permission mapping consistency at startup

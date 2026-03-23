@@ -1045,8 +1045,6 @@ class A2AAgentService(BaseService):
                 # overwrite real credentials with the mask string.
                 if field == "auth_headers" and value and isinstance(value, list):
                     # First-Party
-                    from mcpgateway.config import settings as _settings  # pylint: disable=import-outside-toplevel
-
                     existing_auth_raw = getattr(agent, "auth_value", None)
                     existing_auth: Dict[str, str] = {}
                     if isinstance(existing_auth_raw, str):
@@ -1063,7 +1061,7 @@ class A2AAgentService(BaseService):
                         if not key:
                             continue
                         hval = header.get("value", "")
-                        if hval == _settings.masked_auth_value and key in existing_auth:
+                        if hval == settings.masked_auth_value and key in existing_auth:
                             header_dict[key] = existing_auth[key]
                         else:
                             header_dict[key] = hval
