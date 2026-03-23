@@ -3024,7 +3024,9 @@ class _StreamableHttpAuthHandler:
             False if authentication fails and a 401 response is sent.
         """
         path = self.scope.get("path", "")
-        if (not path.endswith("/mcp") and not path.endswith("/mcp/")) or path.startswith("/.well-known/"):
+        # Check if this is an MCP-related path that requires authentication
+        is_mcp_path = path.endswith("/mcp") or path.endswith("/mcp/") or path.endswith("/mcp/sse") or path.endswith("/mcp/message")
+        if not is_mcp_path or path.startswith("/.well-known/"):
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
 
