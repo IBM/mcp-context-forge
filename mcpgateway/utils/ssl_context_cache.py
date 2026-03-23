@@ -7,10 +7,14 @@ make many SSL connections.
 """
 
 # Standard
+import logging
 from datetime import datetime, timedelta
 import hashlib
 import os
 import ssl
+import tempfile
+
+logger = logging.getLogger(__name__)
 
 # Cache for SSL contexts keyed by SSL parameter hash
 _ssl_context_cache: dict[str, ssl.SSLContext] = {}
@@ -43,6 +47,60 @@ def _is_expired(cache_key: str) -> bool:
         return False
 
     return datetime.now() - created_at > timedelta(seconds=_SSL_CONTEXT_CACHE_TTL)
+
+
+def _is_pem(value: str) -> bool:
+    """Check if a string looks like inline PEM content rather than a file path."""
+    return value.lstrip().startswith("-----BEGIN ")
+
+
+def _load_client_cert_chain(ctx: ssl.SSLContext, client_cert: str, client_key: str) -> None:
+    """Load client cert/key into an SSL context, handling both file paths and PEM strings.
+
+    ``ssl.SSLContext.load_cert_chain`` only accepts file paths.  When the
+    values are inline PEM content (stored in the database), we write them
+    to secure temporary files and load from there.
+    """
+    cert_is_pem = _is_pem(client_cert)
+    key_is_pem = _is_pem(client_key)
+
+    if not cert_is_pem and not key_is_pem:
+        # Both are file paths — use directly
+        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key)
+        return
+
+    # At least one value is inline PEM — write temp files
+    cert_tmp = key_tmp = None
+    try:
+        if cert_is_pem:
+            cert_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+            cert_tmp.write(client_cert)
+            cert_tmp.close()
+            cert_path = cert_tmp.name
+        else:
+            cert_path = client_cert
+
+        if key_is_pem:
+            key_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".pem", delete=False)
+            key_tmp.write(client_key)
+            key_tmp.close()
+            key_path = key_tmp.name
+        else:
+            key_path = client_key
+
+        ctx.load_cert_chain(certfile=cert_path, keyfile=key_path)
+    finally:
+        # Remove temp files immediately after loading
+        if cert_tmp is not None:
+            try:
+                os.unlink(cert_tmp.name)
+            except OSError:
+                logger.debug("Failed to remove temp cert file %s", cert_tmp.name)
+        if key_tmp is not None:
+            try:
+                os.unlink(key_tmp.name)
+            except OSError:
+                logger.debug("Failed to remove temp key file %s", key_tmp.name)
 
 
 def get_cached_ssl_context(
@@ -115,9 +173,13 @@ def get_cached_ssl_context(
     ctx = ssl.create_default_context()
     ctx.load_verify_locations(cadata=ca_certificate)
 
+    # Validate mTLS: require both or neither
+    if bool(client_cert) != bool(client_key):
+        raise ValueError("mTLS requires both client_cert and client_key; got only one")
+
     # Load client certificates for mTLS when provided
     if client_cert and client_key:
-        ctx.load_cert_chain(certfile=client_cert, keyfile=client_key)
+        _load_client_cert_chain(ctx, client_cert, client_key)
 
     # Cache entry creation timestamp if TTL is enabled
     _ssl_context_cache[cache_key] = ctx

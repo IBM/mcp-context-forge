@@ -7,6 +7,9 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+# Third-Party
+import pytest
+
 # First-Party
 import mcpgateway.utils.ssl_context_cache as ssl_context_cache
 
@@ -83,19 +86,105 @@ def test_clear_ssl_context_cache_forces_recreate() -> None:
     assert mock_create.call_count == 2
 
 
-def test_get_cached_ssl_context_loads_client_cert_and_key() -> None:
+def test_get_cached_ssl_context_loads_client_cert_and_key_paths() -> None:
+    """File-path client_cert/client_key are passed directly to load_cert_chain."""
     with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
         ctx = Mock()
         mock_create.return_value = ctx
 
         _ = ssl_context_cache.get_cached_ssl_context(
             "CA_CERT",
-            client_cert="CLIENT_CERT",
-            client_key="CLIENT_KEY",
+            client_cert="/path/to/cert.pem",
+            client_key="/path/to/key.pem",
         )
 
     assert ctx.load_verify_locations.called
-    ctx.load_cert_chain.assert_called_once_with(certfile="CLIENT_CERT", keyfile="CLIENT_KEY")
+    ctx.load_cert_chain.assert_called_once_with(certfile="/path/to/cert.pem", keyfile="/path/to/key.pem")
+
+
+def test_get_cached_ssl_context_loads_pem_content_via_tempfiles() -> None:
+    """Inline PEM content is written to temp files for load_cert_chain."""
+    pem_cert = "-----BEGIN CERTIFICATE-----\nFAKECERT\n-----END CERTIFICATE-----"
+    pem_key = "-----BEGIN PRIVATE KEY-----\nFAKEKEY\n-----END PRIVATE KEY-----"
+
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        _ = ssl_context_cache.get_cached_ssl_context("CA_CERT", client_cert=pem_cert, client_key=pem_key)
+
+    assert ctx.load_cert_chain.call_count == 1
+    call_args = ctx.load_cert_chain.call_args
+    # Should be called with temp file paths, not the PEM strings themselves
+    assert call_args.kwargs["certfile"] != pem_cert
+    assert call_args.kwargs["keyfile"] != pem_key
+    assert isinstance(call_args.kwargs["certfile"], str)
+    assert isinstance(call_args.kwargs["keyfile"], str)
+
+
+def test_get_cached_ssl_context_rejects_cert_without_key() -> None:
+    """Providing client_cert without client_key raises ValueError."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context"):
+        with pytest.raises(ValueError, match="both client_cert and client_key"):
+            ssl_context_cache.get_cached_ssl_context("CA_CERT", client_cert="/path/cert.pem", client_key=None)
+
+
+def test_get_cached_ssl_context_rejects_key_without_cert() -> None:
+    """Providing client_key without client_cert raises ValueError."""
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context"):
+        with pytest.raises(ValueError, match="both client_cert and client_key"):
+            ssl_context_cache.get_cached_ssl_context("CA_CERT", client_cert=None, client_key="/path/key.pem")
+
+
+def test_load_client_cert_chain_mixed_pem_and_path() -> None:
+    """When cert is PEM but key is a path, only cert uses a temp file."""
+    pem_cert = "-----BEGIN CERTIFICATE-----\nFAKECERT\n-----END CERTIFICATE-----"
+
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        _ = ssl_context_cache.get_cached_ssl_context("CA_CERT", client_cert=pem_cert, client_key="/path/to/key.pem")
+
+    assert ctx.load_cert_chain.call_count == 1
+    call_args = ctx.load_cert_chain.call_args
+    # cert should be a temp file path (not the PEM string), key should be the original path
+    assert call_args.kwargs["certfile"] != pem_cert
+    assert call_args.kwargs["keyfile"] == "/path/to/key.pem"
+
+
+def test_load_client_cert_chain_mixed_path_cert_pem_key() -> None:
+    """When cert is a path but key is PEM, only key uses a temp file."""
+    pem_key = "-----BEGIN PRIVATE KEY-----\nFAKEKEY\n-----END PRIVATE KEY-----"
+
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        _ = ssl_context_cache.get_cached_ssl_context("CA_CERT", client_cert="/path/to/cert.pem", client_key=pem_key)
+
+    assert ctx.load_cert_chain.call_count == 1
+    call_args = ctx.load_cert_chain.call_args
+    assert call_args.kwargs["certfile"] == "/path/to/cert.pem"
+    assert call_args.kwargs["keyfile"] != pem_key
+
+
+def test_load_client_cert_chain_cleanup_oserror_is_handled() -> None:
+    """OSError during temp file cleanup is logged, not raised."""
+    pem_cert = "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----"
+    pem_key = "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----"
+
+    with (
+        patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create,
+        patch("mcpgateway.utils.ssl_context_cache.os.unlink", side_effect=OSError("perm denied")),
+    ):
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        # Should not raise despite unlink failure
+        _ = ssl_context_cache.get_cached_ssl_context("CA_CERT", client_cert=pem_cert, client_key=pem_key)
+
+    assert ctx.load_cert_chain.call_count == 1
 
 
 def test_cache_key_different_for_client_cert_changes() -> None:
