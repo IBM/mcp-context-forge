@@ -31,7 +31,10 @@ type PatternDef = (&'static str, &'static str);
 
 // SSN patterns
 static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(r"\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b", "US Social Security Number")]
+    vec![(
+        r"\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b",
+        "US Social Security Number",
+    )]
 });
 
 // BSN patterns (Dutch Burgerservicenummer)
@@ -57,13 +60,15 @@ static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 });
 
 // Credit card patterns
-static CREDIT_CARD_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(r"\b(?:\d{4}[-\s]?){3}\d{4}\b", "Credit card number")]
-});
+static CREDIT_CARD_PATTERNS: Lazy<Vec<PatternDef>> =
+    Lazy::new(|| vec![(r"\b(?:\d{4}[-\s]?){3}\d{4}\b", "Credit card number")]);
 
 // Email patterns
 static EMAIL_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "Email address")]
+    vec![(
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+        "Email address",
+    )]
 });
 
 // Phone patterns (US and international)
@@ -73,10 +78,7 @@ static PHONE_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
             r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
             "US phone number",
         ),
-        (
-            r"\b\+[1-9]\d{9,14}\b",
-            "International phone number",
-        ),
+        (r"\b\+[1-9]\d{9,14}\b", "International phone number"),
     ]
 });
 
@@ -109,51 +111,47 @@ static DOB_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 });
 
 // Passport patterns
-static PASSPORT_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(r"\b[A-Z]{1,2}\d{6,9}\b", "Passport number")]
-});
+static PASSPORT_PATTERNS: Lazy<Vec<PatternDef>> =
+    Lazy::new(|| vec![(r"\b[A-Z]{1,2}\d{6,9}\b", "Passport number")]);
 
 // Driver's license patterns
 static DRIVER_LICENSE_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(r"\b(?:DL|License|Driver'?s? License)[#:\s]+[A-Z0-9]{5,20}\b", "Driver's license number")]
+    vec![(
+        r"\b(?:DL|License|Driver'?s? License)[#:\s]+[A-Z0-9]{5,20}\b",
+        "Driver's license number",
+    )]
 });
 
 // Bank account patterns
 static BANK_ACCOUNT_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![
-        (
-            r"\b\d{8,17}\b",
-            "Bank account number",
-        ),
-        (
-            r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:\d{3})?\b",
-            "IBAN",
-        ),
+        (r"\b\d{8,17}\b", "Bank account number"),
+        (r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:\d{3})?\b", "IBAN"),
     ]
 });
 
 // Medical record patterns
 static MEDICAL_RECORD_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(r"\b(?:MRN|Medical Record)[#:\s]+[A-Z0-9]{6,12}\b", "Medical record number")]
+    vec![(
+        r"\b(?:MRN|Medical Record)[#:\s]+[A-Z0-9]{6,12}\b",
+        "Medical record number",
+    )]
 });
 
 // AWS key patterns
 static AWS_KEY_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![
-        (
-            r"\bAKIA[0-9A-Z]{16}\b",
-            "AWS Access Key ID",
-        ),
-        (
-            r"\b[A-Za-z0-9/+=]{40}\b",
-            "AWS Secret Access Key",
-        ),
+        (r"\bAKIA[0-9A-Z]{16}\b", "AWS Access Key ID"),
+        (r"\b[A-Za-z0-9/+=]{40}\b", "AWS Secret Access Key"),
     ]
 });
 
 // API key patterns
 static API_KEY_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(r#"\b(?:api[_-]?key|apikey|api_token|access[_-]?token)[:\s]+['"]?[A-Za-z0-9\-_]{20,}['"]?\b"#, "Generic API key")]
+    vec![(
+        r#"\b(?:api[_-]?key|apikey|api_token|access[_-]?token)[:\s]+['"]?[A-Za-z0-9\-_]{20,}['"]?\b"#,
+        "Generic API key",
+    )]
 });
 
 /// Compile patterns based on configuration

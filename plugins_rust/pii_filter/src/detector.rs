@@ -33,7 +33,9 @@ pub fn detect_pii(
                     value: mat.as_str().to_string(),
                     start: mat.start(),
                     end: mat.end(),
-                    mask_strategy: pattern.mask_strategy.unwrap_or(config.default_mask_strategy),
+                    mask_strategy: pattern
+                        .mask_strategy
+                        .unwrap_or(config.default_mask_strategy),
                 };
 
                 detections
@@ -347,7 +349,9 @@ impl PIIDetectorRust {
                         value,
                         start,
                         end,
-                        mask_strategy: pattern.mask_strategy.unwrap_or(self.config.default_mask_strategy),
+                        mask_strategy: pattern
+                            .mask_strategy
+                            .unwrap_or(self.config.default_mask_strategy),
                     };
 
                     detections
@@ -561,8 +565,14 @@ mod tests {
 
         let detections = detector.detect_internal("SSN: 123-45-6789 Email: john@example.com");
 
-        assert_eq!(detections[&PIIType::Ssn][0].mask_strategy, MaskingStrategy::Redact);
-        assert_eq!(detections[&PIIType::Email][0].mask_strategy, MaskingStrategy::Redact);
+        assert_eq!(
+            detections[&PIIType::Ssn][0].mask_strategy,
+            MaskingStrategy::Redact
+        );
+        assert_eq!(
+            detections[&PIIType::Email][0].mask_strategy,
+            MaskingStrategy::Redact
+        );
     }
 
     #[test]
@@ -571,17 +581,22 @@ mod tests {
             default_mask_strategy: MaskingStrategy::Redact,
             ..Default::default()
         };
-        config.custom_patterns.push(super::super::config::CustomPattern {
-            pattern: r"\bEMP\d{6}\b".to_string(),
-            description: "Employee ID".to_string(),
-            mask_strategy: MaskingStrategy::Partial,
-            enabled: true,
-        });
+        config
+            .custom_patterns
+            .push(super::super::config::CustomPattern {
+                pattern: r"\bEMP\d{6}\b".to_string(),
+                description: "Employee ID".to_string(),
+                mask_strategy: MaskingStrategy::Partial,
+                enabled: true,
+            });
 
         let patterns = compile_patterns(&config).unwrap();
         let detector = PIIDetectorRust { patterns, config };
         let detections = detector.detect_internal("Employee ID EMP123456");
 
-        assert_eq!(detections[&PIIType::Custom][0].mask_strategy, MaskingStrategy::Partial);
+        assert_eq!(
+            detections[&PIIType::Custom][0].mask_strategy,
+            MaskingStrategy::Partial
+        );
     }
 }

@@ -773,8 +773,8 @@ class TestRustPIIDetectorSpecific:
         data = {"level1": {}}
         current = data["level1"]
         for i in range(100):
-            current[f"level{i+2}"] = {"ssn": f"{i:03d}-45-6789", "email": f"user{i}@example.com", "data": {}}
-            current = current[f"level{i+2}"]["data"]
+            current[f"level{i + 2}"] = {"ssn": f"{i:03d}-45-6789", "email": f"user{i}@example.com", "data": {}}
+            current = current[f"level{i + 2}"]["data"]
 
         start = time.time()
         modified, new_data, detections = detector.process_nested(data, path="")

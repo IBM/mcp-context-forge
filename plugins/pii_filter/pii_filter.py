@@ -59,8 +59,7 @@ except Exception as e:
 
 
 _PYTHON_PLUGIN_DEPRECATION_MESSAGE = (
-    "The legacy Python PII filter detector is deprecated and will be removed in a future release. "
-    "Install the Rust-backed `pii_filter_rust` package to keep the PII filter plugin enabled."
+    "The legacy Python PII filter detector is deprecated and will be removed in a future release. Install the Rust-backed `pii_filter_rust` package to keep the PII filter plugin enabled."
 )
 
 
