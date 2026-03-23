@@ -641,13 +641,13 @@ class TestAdminResourceAPIs:
                 "content": "UI app payload",
             }
 
-            create_response = await client.post("/admin/resources", data=form_data, headers=TEST_AUTH_HEADER)
+            create_response = await client.post("/ui/resources", data=form_data, headers=TEST_AUTH_HEADER)
             assert create_response.status_code == 200
             create_json = create_response.json()
             assert create_json.get("success") is True
             created_resources.append((resource_name, mime_value))
 
-        list_response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
+        list_response = await client.get("/ui/resources", headers=TEST_AUTH_HEADER)
         assert list_response.status_code == 200
         list_json = list_response.json()
         resources = list_json["data"] if isinstance(list_json, dict) and "data" in list_json else list_json
