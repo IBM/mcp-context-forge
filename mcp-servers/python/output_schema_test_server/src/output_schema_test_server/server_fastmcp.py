@@ -13,7 +13,7 @@ Implements tools with explicit output schemas to verify the complete workflow.
 import argparse
 import logging
 import sys
-from typing import Any
+from typing import Any, List, Dict
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -173,11 +173,62 @@ async def calculate_stats(
     return result
 
 
+@mcp.tool(description="Echo a list of strings (testing list input/output schema)")
+async def echo_list(
+    items: list[str] = Field(..., description="List of strings to echo back"),
+) -> list[str]:
+    """Echo back a list of strings.
+    
+    This tool demonstrates list-based input and output schema support.
+    Accepts a list of strings and returns the same list.
+    """
+    logger.info(f"Echoing list with {len(items)} items")
+    return items
+
+
+@mcp.tool(description="Echo a dictionary of strings (testing dict input/output schema)")
+async def echo_dict(
+    data: dict[str, str] = Field(..., description="Dictionary with string keys and values to echo back"),
+) -> dict[str, str]:
+    """Echo back a dictionary of strings.
+    
+    This tool demonstrates dictionary-based input and output schema support.
+    Accepts a dict with string keys and values, returns the same dict.
+    """
+    logger.info(f"Echoing dict with {len(data)} keys")
+    return data
+
+
 @mcp.tool(description="Simple echo tool without output schema (for comparison)")
 async def echo(message: str = Field(..., description="Message to echo back")) -> str:
     """Echo a message back - simple string return without schema."""
     logger.info(f"Echoing: {message}")
     return f"Echo: {message}"
+
+
+
+
+@mcp.tool(description="Inspectable echo tool")
+async def echo_back(message: str) -> str|int:
+    return f"{message}"
+
+
+class NestedData(BaseModel):
+    """Example of nested data with lists and dictionaries."""
+    message: str = Field(..., description="A simple string message")
+    num: str = Field(..., description="A large number as string")
+    nested_list: List[Any] = Field(..., description="A nested list, can contain strings or lists")
+    nested_dict: Dict[str, Any] = Field(..., description="A nested dictionary, can contain strings, lists, or dicts")
+
+@mcp.tool(description="Echo nested list and dictionary structure")
+async def echo_nested(
+    data: NestedData
+) -> NestedData:
+    """
+    Accepts a nested structure and returns it as-is.
+    Demonstrates nested list and dict support in MCP output schema.
+    """
+    return data
 
 
 @mcp.tool(description="Get server information and capabilities")
@@ -194,13 +245,16 @@ async def get_server_info() -> dict[str, Any]:
             "create_user",
             "validate_email",
             "calculate_stats",
+            "echo_list",
+            "echo_dict",
         ],
-        "tools_without_schemas": ["echo"],
+        "tools_without_schemas": ["echo", "echo_back"],
         "description": "Test server demonstrating MCP outputSchema field support",
         "schema_types": {
             "pydantic_models": ["CalculationResult", "UserInfo", "ValidationResult"],
-            "dict_returns": ["calculate_stats", "get_server_info"],
-            "simple_returns": ["echo"],
+            "dict_returns": ["calculate_stats", "get_server_info", "echo_dict"],
+            "list_returns": ["echo_list"],
+            "simple_returns": ["echo", "echo_back"],
         },
     }
 
