@@ -120,7 +120,7 @@ RUN set -euo pipefail \
     && dnf install -y \
         python${PYTHON_VERSION} \
         python${PYTHON_VERSION}-devel \
-        binutils openssl-devel gcc postgresql-devel gcc-c++ curl \
+        binutils openssl-devel gcc postgresql-devel gcc-c++ curl libpq-devel \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && dnf clean all
 
@@ -170,10 +170,8 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
     && if [ "$(uname -m)" = "s390x" ]; then \
         echo "📦 Installing dependencies for s390x architecture..."; \
-        dnf install -y libpq-devel 2>/dev/null || true; \
         /app/.venv/bin/pip install --no-cache-dir ".[redis,observability,granian]" \
-        && (/app/.venv/bin/pip install --no-cache-dir "psycopg[c]>=3.3.3" \
-            || /app/.venv/bin/pip install --no-cache-dir "psycopg>=3.3.3"); \
+        && /app/.venv/bin/pip install --no-cache-dir "psycopg[c]>=3.3.3"; \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian]"; \
     fi \
@@ -279,6 +277,7 @@ RUN microdnf upgrade -y --nodocs --setopt=install_weak_deps=0 \
     ca-certificates \
     procps-ng \
     shadow-utils \
+    libpq \
     && microdnf clean all \
     && rm -rf /var/cache/yum
 
