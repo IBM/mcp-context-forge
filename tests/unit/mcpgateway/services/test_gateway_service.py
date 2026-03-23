@@ -1090,7 +1090,10 @@ class TestGatewayService:
         test_db.refresh = Mock()
         mock_query = Mock()
         mock_query.filter.return_value = mock_query
-        mock_query.first.return_value = None
+        # Return a mock team object so visibility->"team" validation passes
+        mock_team = MagicMock()
+        mock_team.id = 1
+        mock_query.first.return_value = mock_team
         mock_query.all.return_value = []
         test_db.query = Mock(return_value=mock_query)
 

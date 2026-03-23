@@ -26,7 +26,9 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, EmailTeamMember as DbEmailTeamMember, fresh_db_session, get_for_update
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam
+from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -1061,6 +1063,11 @@ class A2AAgentService(BaseService):
                 # Validate team reassignment before persisting
                 if field == "team_id" and value is not None and value != agent.team_id:
                     _validate_a2a_team_assignment(db, user_email, value)
+
+                # Validate visibility transition to "team"
+                if field == "visibility" and value == "team":
+                    target_team_id = update_data.get("team_id", agent.team_id) if "team_id" in update_data else agent.team_id
+                    _validate_a2a_team_assignment(db, user_email, target_team_id)
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)

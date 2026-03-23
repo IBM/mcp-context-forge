@@ -2837,6 +2837,10 @@ class ResourceService(BaseService):
             if resource_update.uri_template is not None:
                 resource.uri_template = resource_update.uri_template
             if resource_update.visibility is not None:
+                # Validate visibility transitions
+                if resource_update.visibility == "team":
+                    target_team_id = resource_update.team_id if resource_update.team_id is not None else resource.team_id
+                    _validate_resource_team_assignment(db, user_email, target_team_id)
                 resource.visibility = resource_update.visibility
 
             # Update content if provided

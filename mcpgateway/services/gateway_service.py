@@ -1936,6 +1936,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway.tags = gateway_update.tags
                 if gateway_update.visibility is not None:
                     old_visibility = gateway.visibility
+                    # Validate visibility transitions
+                    if gateway_update.visibility == "team":
+                        target_team_id = gateway_update.team_id if gateway_update.team_id is not None else gateway.team_id
+                        _validate_gateway_team_assignment(db, user_email, target_team_id)
                     gateway.visibility = gateway_update.visibility
                     # Propagate visibility to all linked items immediately so it
                     # takes effect even when the upstream server is unreachable

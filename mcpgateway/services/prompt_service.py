@@ -2179,6 +2179,10 @@ class PromptService(BaseService):
                 prompt.argument_schema = argument_schema
 
             if prompt_update.visibility is not None:
+                # Validate visibility transitions
+                if prompt_update.visibility == "team":
+                    target_team_id = prompt_update.team_id if prompt_update.team_id is not None else prompt.team_id
+                    _validate_prompt_team_assignment(db, user_email, target_team_id)
                 prompt.visibility = prompt_update.visibility
 
             # Update tags if provided
