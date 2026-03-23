@@ -120,31 +120,31 @@ config:
 ### Run All Tests
 ```bash
 # Run all PII filter tests
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -v
 
 # Run with coverage
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py --cov=plugins.pii_filter --cov-report=term-missing
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py --cov=plugins.pii_filter --cov-report=term-missing
 ```
 
 ### Run Specific Test Classes
 ```bash
 # Test only the detector functionality
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector -v
 
 # Test only the plugin integration
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin -v
 ```
 
 ### Run Individual Tests
 ```bash
 # Test SSN detection
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_ssn_detection -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_ssn_detection -v
 
 # Test masking strategies
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_masking_strategies -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_masking_strategies -v
 
 # Test blocking mode
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin::test_prompt_pre_fetch_blocking -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin::test_prompt_pre_fetch_blocking -v
 ```
 
 ### Manual Testing with the Gateway
@@ -154,7 +154,8 @@ pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIFilte
 PLUGINS_ENABLED=true
 ```
 
-2. Start the gateway:
+2. Start the gateway.
+   Direct app port defaults to `http://localhost:4444`; the compose stack is typically exposed through nginx at `http://localhost:8080`.
 ```bash
 python -m mcpgateway.main
 ```
@@ -162,10 +163,10 @@ python -m mcpgateway.main
 3. Test with curl:
 ```bash
 # Test PII detection in prompt arguments
-curl -X POST http://localhost:8000/prompts/test_prompt \
+curl -X POST http://localhost:4444/prompts/test_prompt \
   -H "Content-Type: application/json" \
   -d '{
-    "args": {
+    "arguments": {
       "user_input": "My SSN is 123-45-6789 and email is john@example.com"
     }
   }'
@@ -312,7 +313,7 @@ DOB: 01/15/1985
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
 
 # Then test with a prompt containing various PII
-curl -X GET "http://localhost:4444/prompts/test_prompt" \
+curl -X POST "http://localhost:4444/prompts/test_prompt" \
   -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

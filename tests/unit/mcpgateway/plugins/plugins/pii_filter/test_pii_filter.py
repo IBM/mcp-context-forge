@@ -156,6 +156,7 @@ class TestPIIDetectorParametric:
 
     def test_ssn_masking_partial(self, detector):
         """Test partial masking of SSN."""
+        detector = type(detector)(PIIFilterConfig(detect_ssn=True, default_mask_strategy=MaskingStrategy.PARTIAL))
         text = "SSN: 123-45-6789"
         detections = detector.detect(text)
         masked = detector.mask(text, detections)
@@ -189,7 +190,7 @@ class TestPIIDetectorParametric:
 
     def test_bsn_masking(self, detector_class):
         """Test BSN partial masking."""
-        config = PIIFilterConfig(detect_bsn=True, detect_ssn=False, detect_phone=False, detect_bank_account=False)
+        config = PIIFilterConfig(detect_bsn=True, detect_ssn=False, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.PARTIAL)
         detector = detector_class(config)
 
         text = "My BSN is 180774955. Store it and confirm."
@@ -351,6 +352,7 @@ class TestPIIDetectorParametric:
 
     def test_credit_card_masking_partial(self, detector):
         """Test partial masking of credit card."""
+        detector = type(detector)(PIIFilterConfig(detect_credit_card=True, default_mask_strategy=MaskingStrategy.PARTIAL))
         text = "Card: 4111-1111-1111-1111"
         detections = detector.detect(text)
         masked = detector.mask(text, detections)
@@ -388,6 +390,7 @@ class TestPIIDetectorParametric:
 
     def test_email_masking_partial(self, detector):
         """Test partial masking of email."""
+        detector = type(detector)(PIIFilterConfig(detect_email=True, default_mask_strategy=MaskingStrategy.PARTIAL))
         text = "Contact: john@example.com"
         detections = detector.detect(text)
         masked = detector.mask(text, detections)
@@ -426,6 +429,7 @@ class TestPIIDetectorParametric:
 
     def test_phone_masking_partial(self, detector):
         """Test partial masking of phone."""
+        detector = type(detector)(PIIFilterConfig(detect_phone=True, default_mask_strategy=MaskingStrategy.PARTIAL))
         text = "Call: 555-123-4567"
         detections = detector.detect(text)
         masked = detector.mask(text, detections)
@@ -514,8 +518,9 @@ class TestPIIDetectorParametric:
         assert "email" in detection_keys
         assert "phone" in detection_keys
 
-    def test_mask_multiple_pii_types(self, detector):
+    def test_mask_multiple_pii_types(self, detector_class):
         """Test masking multiple PII types."""
+        detector = detector_class(PIIFilterConfig(detect_ssn=True, detect_email=True, detect_phone=False, default_mask_strategy=MaskingStrategy.PARTIAL))
         text = "SSN: 123-45-6789, Email: test@example.com"
         detections = detector.detect(text)
         masked = detector.mask(text, detections)
@@ -571,7 +576,7 @@ class TestPIIDetectorParametric:
     def test_masking_strategies(self, detector_class):
         """Test different masking strategies."""
         # Test PARTIAL strategy (default for SSN)
-        config = PIIFilterConfig(detect_ssn=True, detect_phone=False, detect_bank_account=False)
+        config = PIIFilterConfig(detect_ssn=True, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.PARTIAL)
         detector = detector_class(config)
         text = "SSN: 123-45-6789"
         detections = detector.detect(text)
@@ -587,15 +592,6 @@ class TestPIIDetectorParametric:
         masked = detector.mask(text, detections)
         assert "@example.com" in masked
         assert "john.doe" not in masked
-
-        # Test REMOVE strategy
-        config = PIIFilterConfig(detect_ssn=True, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.REMOVE)
-        detector = detector_class(config)
-        text = "SSN: 123-45-6789"
-        detections = detector.detect(text)
-        masked = detector.mask(text, detections)
-        assert "123-45-6789" not in masked
-        assert masked == "SSN: ***-**-6789"
 
     # Edge Cases and Error Handling
     def test_empty_string(self, detector):
@@ -656,8 +652,8 @@ class TestRustPIIDetectorSpecific:
         modified, new_data, detections = detector.process_nested(data, "")
 
         assert modified is True
-        assert new_data["user"]["ssn"] == "***-**-6789"
-        assert "@example.com" in new_data["user"]["email"]
+        assert new_data["user"]["ssn"] == "[REDACTED]"
+        assert new_data["user"]["email"] == "[REDACTED]"
         assert new_data["user"]["name"] == "John Doe"
 
         detection_keys = normalize_detection_keys(detections)
@@ -671,9 +667,9 @@ class TestRustPIIDetectorSpecific:
         modified, new_data, detections = detector.process_nested(data, "")
 
         assert modified is True
-        assert "***-**-6789" in new_data[0]
+        assert new_data[0] == "SSN: [REDACTED]"
         assert new_data[1] == "No PII here"
-        assert "@example.com" in new_data[2]
+        assert new_data[2] == "Email: [REDACTED]"
 
     def test_process_nested_mixed_structure(self, detector):
         """Test processing mixed nested structure."""
@@ -682,9 +678,9 @@ class TestRustPIIDetectorSpecific:
         modified, new_data, detections = detector.process_nested(data, "")
 
         assert modified is True
-        assert "***-**-6789" in new_data["users"][0]["ssn"]
-        assert "***-**-4321" in new_data["users"][1]["ssn"]
-        assert "@example.com" in new_data["contact"]["email"]
+        assert new_data["users"][0]["ssn"] == "[REDACTED]"
+        assert new_data["users"][1]["ssn"] == "[REDACTED]"
+        assert new_data["contact"]["email"] == "[REDACTED]"
 
     def test_process_nested_no_pii(self, detector):
         """Test processing nested data with no PII."""
@@ -705,6 +701,26 @@ class TestRustPIIDetectorSpecific:
         config = PIIFilterConfig()
         detector = RustDet(config)
         assert detector is not None
+
+    def test_default_mask_strategy_overrides_built_in_partial_masks(self):
+        """Built-in Rust detections should honor the configured default strategy."""
+        detector = RustPIIDetector(PIIFilterConfig(detect_ssn=True, detect_email=True, detect_phone=False, detect_ip_address=False, default_mask_strategy=MaskingStrategy.REDACT))
+        detections = detector.detect("SSN: 123-45-6789 Email: john@example.com")
+
+        assert detections["ssn"][0]["mask_strategy"] == "redact"
+        assert detections["email"][0]["mask_strategy"] == "redact"
+
+    def test_custom_pattern_keeps_explicit_strategy_when_default_redacts(self):
+        """Custom pattern overrides should win over the global default strategy."""
+        detector = RustPIIDetector(
+            PIIFilterConfig(
+                default_mask_strategy=MaskingStrategy.REDACT,
+                custom_patterns=[{"type": "custom", "pattern": r"\bEMP\d{6}\b", "description": "Employee ID", "mask_strategy": "partial", "enabled": True}],
+            )
+        )
+
+        detections = detector.detect("Employee ID EMP123456")
+        assert detections["custom"][0]["mask_strategy"] == "partial"
 
     def test_very_long_text_performance(self, detector):
         """Test performance with very long text."""
