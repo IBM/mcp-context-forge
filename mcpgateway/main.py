@@ -1712,7 +1712,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             Note: Currently only clears SSL cache; config reload may be
             added in future for other settings.
             """
-            try:
+            try:  # pragma: no cover - tested via simulation in test_main_sighup.py
                 # First-Party
                 from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache  # pylint: disable=import-outside-toplevel
 
@@ -1733,11 +1733,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 _signum: Signal number (should be signal.SIGHUP, unused but required by signature)
                 _frame: Current stack frame (unused but required by signal handler signature)
             """
-            logger.info("Received SIGHUP signal, scheduling SSL context cache refresh")
-            try:
+            logger.info("Received SIGHUP signal, scheduling SSL context cache refresh")  # pragma: no cover - tested via simulation
+            try:  # pragma: no cover - tested via simulation in test_main_sighup.py
                 event_loop = asyncio.get_running_loop()
                 event_loop.create_task(_sighup_reload())
-            except RuntimeError:
+            except RuntimeError:  # pragma: no cover - tested via simulation
                 logger.warning("SIGHUP received but event loop not running; skipping async reload")
 
         signal.signal(signal.SIGHUP, _sighup_handler)
