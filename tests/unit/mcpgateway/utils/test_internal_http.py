@@ -1,24 +1,97 @@
-"""Unit tests for internal loopback HTTP helpers."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/utils/test_internal_http.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
 
+Unit tests for internal loopback HTTP helpers.
+"""
+
+# Third-Party
 import pytest
-from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+
+# First-Party
+from mcpgateway.utils.internal_http import _is_ssl_enabled, internal_loopback_base_url, internal_loopback_verify
 
 
-@pytest.mark.parametrize("ssl_value", ["true"])
-def test_internal_loopback_helpers_ssl_enabled(monkeypatch, ssl_value):
-    """SSL truthy values should produce HTTPS base URL and disabled verification."""
-    monkeypatch.setenv("SSL", ssl_value)
-    monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 4444)
+class TestIsSSLEnabled:
+    """Tests for _is_ssl_enabled() edge cases."""
 
-    assert internal_loopback_base_url() == "https://127.0.0.1:4444"
-    assert internal_loopback_verify() is False
+    def test_ssl_true(self, monkeypatch):
+        monkeypatch.setenv("SSL", "true")
+        assert _is_ssl_enabled() is True
+
+    def test_ssl_false(self, monkeypatch):
+        monkeypatch.setenv("SSL", "false")
+        assert _is_ssl_enabled() is False
+
+    def test_ssl_unset(self, monkeypatch):
+        monkeypatch.delenv("SSL", raising=False)
+        assert _is_ssl_enabled() is False
+
+    def test_ssl_empty_string(self, monkeypatch):
+        monkeypatch.setenv("SSL", "")
+        assert _is_ssl_enabled() is False
+
+    def test_ssl_uppercase(self, monkeypatch):
+        monkeypatch.setenv("SSL", "TRUE")
+        assert _is_ssl_enabled() is True
+
+    def test_ssl_mixed_case(self, monkeypatch):
+        monkeypatch.setenv("SSL", "True")
+        assert _is_ssl_enabled() is True
+
+    def test_ssl_with_whitespace(self, monkeypatch):
+        monkeypatch.setenv("SSL", " true ")
+        assert _is_ssl_enabled() is True
+
+    def test_ssl_one_is_not_truthy(self, monkeypatch):
+        """Only 'true' is accepted — '1' is not, matching gunicorn.config.py."""
+        monkeypatch.setenv("SSL", "1")
+        assert _is_ssl_enabled() is False
+
+    def test_ssl_yes_is_not_truthy(self, monkeypatch):
+        monkeypatch.setenv("SSL", "yes")
+        assert _is_ssl_enabled() is False
 
 
-@pytest.mark.parametrize("ssl_value", ["false"])
-def test_internal_loopback_helpers_ssl_disabled(monkeypatch, ssl_value):
-    """Non-truthy SSL values should produce HTTP base URL and enabled verification."""
-    monkeypatch.setenv("SSL", ssl_value)
-    monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 8000)
+class TestInternalLoopbackBaseUrl:
+    """Tests for internal_loopback_base_url()."""
 
-    assert internal_loopback_base_url() == "http://127.0.0.1:8000"
-    assert internal_loopback_verify() is True
+    def test_https_when_ssl_enabled(self, monkeypatch):
+        monkeypatch.setenv("SSL", "true")
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 4444)
+        assert internal_loopback_base_url() == "https://127.0.0.1:4444"
+
+    def test_http_when_ssl_disabled(self, monkeypatch):
+        monkeypatch.setenv("SSL", "false")
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 8000)
+        assert internal_loopback_base_url() == "http://127.0.0.1:8000"
+
+    def test_http_when_ssl_unset(self, monkeypatch):
+        monkeypatch.delenv("SSL", raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 4444)
+        assert internal_loopback_base_url() == "http://127.0.0.1:4444"
+
+    def test_uses_configured_port(self, monkeypatch):
+        monkeypatch.setenv("SSL", "false")
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 9999)
+        assert internal_loopback_base_url() == "http://127.0.0.1:9999"
+
+
+class TestInternalLoopbackVerify:
+    """Tests for internal_loopback_verify()."""
+
+    def test_verify_disabled_when_ssl_enabled(self, monkeypatch):
+        monkeypatch.setenv("SSL", "true")
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 4444)
+        assert internal_loopback_verify() is False
+
+    def test_verify_enabled_when_ssl_disabled(self, monkeypatch):
+        monkeypatch.setenv("SSL", "false")
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 4444)
+        assert internal_loopback_verify() is True
+
+    def test_verify_enabled_when_ssl_unset(self, monkeypatch):
+        monkeypatch.delenv("SSL", raising=False)
+        monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 4444)
+        assert internal_loopback_verify() is True

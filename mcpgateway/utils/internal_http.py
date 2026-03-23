@@ -10,11 +10,16 @@ These helpers centralize protocol and TLS verification behavior for
 self-calls to local endpoints like /rpc.
 """
 
+# Standard
 import os
+
+# First-Party
 from mcpgateway.config import settings
 
 
-_SSL_TRUE_VALUES = {"true"}
+def _is_ssl_enabled() -> bool:
+    """Check whether the gateway is running with SSL enabled."""
+    return os.getenv("SSL", "false").strip().lower() == "true"
 
 
 def internal_loopback_base_url() -> str:
@@ -25,8 +30,7 @@ def internal_loopback_base_url() -> str:
     Returns:
         str: The base URL string (e.g. ``http://127.0.0.1:4444``).
     """
-    ssl_env = os.getenv("SSL", "false").strip().lower()
-    scheme = "https" if ssl_env in _SSL_TRUE_VALUES else "http"
+    scheme = "https" if _is_ssl_enabled() else "http"
     return f"{scheme}://127.0.0.1:{settings.port}"
 
 
@@ -39,4 +43,4 @@ def internal_loopback_verify() -> bool:
     Returns:
         bool: ``False`` when the loopback URL is HTTPS, ``True`` otherwise.
     """
-    return not internal_loopback_base_url().startswith("https://")
+    return not _is_ssl_enabled()
