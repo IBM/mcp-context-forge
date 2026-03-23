@@ -32700,6 +32700,64 @@ function refreshLLMProviders() {
     }
 }
 
+// Full model list for the model-id combobox (reset on each modal open)
+let _llmAllModels = [];
+
+function llmModelComboboxOpen() {
+    _renderLLMModelDropdown(_llmAllModels);
+    document.getElementById("llm-model-dropdown").classList.remove("hidden");
+}
+
+function llmModelComboboxClose() {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (ul) {
+        ul.classList.add("hidden");
+    }
+}
+
+function llmModelComboboxFilter(text) {
+    const lower = text.toLowerCase();
+    const filtered = _llmAllModels.filter((m) =>
+        m.id.toLowerCase().includes(lower),
+    );
+    _renderLLMModelDropdown(filtered);
+    document.getElementById("llm-model-dropdown").classList.remove("hidden");
+}
+
+function llmModelComboboxSelect(value) {
+    document.getElementById("llm-model-model-id").value = value;
+    llmModelComboboxClose();
+}
+
+function _renderLLMModelDropdown(models) {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (!ul) {
+        return;
+    }
+    if (!models.length) {
+        ul.innerHTML =
+            '<li class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">No models found. Enter ID manually.</li>';
+        return;
+    }
+    ul.innerHTML = models
+        .map(
+            (m) =>
+                `<li class="px-3 py-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100" data-model-id="${m.id.replace(/"/g, "&quot;")}">${m.id}</li>`,
+        )
+        .join("");
+}
+
+// Wire up delegated events on the dropdown once at load time
+document.addEventListener("DOMContentLoaded", () => {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (!ul) return;
+    ul.addEventListener("mousedown", (e) => e.preventDefault());
+    ul.addEventListener("click", (e) => {
+        const li = e.target.closest("li[data-model-id]");
+        if (li) llmModelComboboxSelect(li.dataset.modelId);
+    });
+});
+
 /**
  * Show Add Model Modal
  */
@@ -32708,6 +32766,8 @@ async function showAddModelModal() {
     document.getElementById("llm-model-form").reset();
     document.getElementById("llm-model-modal-title").textContent =
         "Add LLM Model";
+    _llmAllModels = [];
+    llmModelComboboxClose();
 
     // Populate providers dropdown
     await populateProviderDropdown();
@@ -32757,11 +32817,11 @@ function closeLLMModelModal() {
 async function onModelProviderChange() {
     const providerId = document.getElementById("llm-model-provider").value;
     const modelInput = document.getElementById("llm-model-model-id");
-    const datalist = document.getElementById("llm-model-suggestions");
     const statusEl = document.getElementById("llm-model-fetch-status");
 
     // Clear existing suggestions
-    datalist.innerHTML = "";
+    _llmAllModels = [];
+    llmModelComboboxClose();
 
     if (!providerId) {
         modelInput.placeholder = "Select provider first...";
@@ -32780,7 +32840,6 @@ async function onModelProviderChange() {
  */
 async function fetchModelsForModelModal() {
     const providerId = document.getElementById("llm-model-provider").value;
-    const datalist = document.getElementById("llm-model-suggestions");
     const statusEl = document.getElementById("llm-model-fetch-status");
 
     if (!providerId) {
@@ -32805,24 +32864,20 @@ async function fetchModelsForModelModal() {
         const result = await response.json();
 
         if (result.success && result.models && result.models.length > 0) {
-            // Populate datalist with model suggestions
-            datalist.innerHTML = "";
-            result.models.forEach((model) => {
-                const option = document.createElement("option");
-                option.value = model.id;
-                option.textContent = model.name || model.id;
-                datalist.appendChild(option);
-            });
+            _llmAllModels = result.models;
+            _renderLLMModelDropdown(_llmAllModels);
 
             statusEl.textContent = `Found ${result.models.length} models. Type to filter or enter custom.`;
             statusEl.classList.remove("hidden");
         } else {
+            _llmAllModels = [];
             statusEl.textContent =
                 result.error || "No models found. Enter model ID manually.";
             statusEl.classList.remove("hidden");
         }
     } catch (error) {
         console.error("Error fetching models:", error);
+        _llmAllModels = [];
         statusEl.textContent =
             "Failed to fetch models. Enter model ID manually.";
         statusEl.classList.remove("hidden");
@@ -33228,6 +33283,10 @@ window.fetchLLMProviderModels = fetchLLMProviderModels;
 window.syncLLMProviderModels = syncLLMProviderModels;
 window.showAddModelModal = showAddModelModal;
 window.closeLLMModelModal = closeLLMModelModal;
+window.llmModelComboboxOpen = llmModelComboboxOpen;
+window.llmModelComboboxClose = llmModelComboboxClose;
+window.llmModelComboboxFilter = llmModelComboboxFilter;
+window.llmModelComboboxSelect = llmModelComboboxSelect;
 window.editLLMModel = editLLMModel;
 window.saveLLMModel = saveLLMModel;
 window.deleteLLMModel = deleteLLMModel;
