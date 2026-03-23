@@ -78,7 +78,7 @@ ContextForge implements a **two-layer security model**:
 
 ### Token Scoping Quick Reference
 
-The `teams` claim in JWT tokens determines resource visibility:
+**API / legacy tokens** — JWT `teams` claim is the sole authority (`normalize_token_teams()`):
 
 | JWT `teams` State | `is_admin: true` | `is_admin: false` |
 |-------------------|------------------|-------------------|
@@ -87,11 +87,20 @@ The `teams` claim in JWT tokens determines resource visibility:
 | `teams: []` | PUBLIC-ONLY `[]` | PUBLIC-ONLY `[]` |
 | `teams: ["t1"]` | Team + Public | Team + Public |
 
+**Session tokens** (`token_use: "session"`) — DB is the authority; JWT `teams` only narrows (`resolve_session_teams()`):
+
+| JWT `teams` State | DB admin? | Result | Access Level |
+|-------------------|-----------|--------|--------------|
+| any | yes | `None` | ADMIN BYPASS (DB authority) |
+| Missing/null/`[]` | no | DB teams | Full DB membership |
+| `["t1"]` | no | intersection | Narrowed to overlap |
+| `["revoked"]` | no | `[]` | Public-only (fail-closed) |
+
 **Key behaviors:**
 
-- Missing `teams` key = public-only access (secure default)
-- Admin bypass requires BOTH `teams: null` AND `is_admin: true`
-- `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth
+- **API/legacy tokens**: Missing `teams` key = public-only access (secure default). Admin bypass requires BOTH `teams: null` AND `is_admin: true`. `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth.
+- **Session tokens**: Admin bypass is determined by the DB `is_admin` flag, not the JWT `teams` claim. Non-admin sessions can be narrowed via JWT `teams`. `resolve_session_teams()` in `mcpgateway/auth.py` is the single policy point.
+- **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
 
 ### Security Invariants (Required)
 
@@ -100,7 +109,7 @@ The `teams` claim in JWT tokens determines resource visibility:
 - Keep the two-layer model on every path:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
-- Do not re-implement token team interpretation logic; always use `normalize_token_teams()` in `mcpgateway/auth.py`.
+- Do not re-implement token team interpretation logic; use `normalize_token_teams()` for API/legacy tokens and `resolve_session_teams()` for session tokens (both in `mcpgateway/auth.py`).
 - Do not accept inbound client auth tokens via URL query parameters.
 - Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
 - High-risk transports must be feature-flagged and disabled by default.

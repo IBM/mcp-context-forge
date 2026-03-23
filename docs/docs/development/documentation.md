@@ -157,7 +157,7 @@ Tracked outputs:
 
 - `docs/docs/design/images/classes.svg` (class diagram)
 - `docs/docs/design/images/packages.svg` (package diagram)
-- `docs/docs/design/images/code2flow.svg` (call flow diagram)
+
 
 Commit updated SVGs when they change so the architecture pages stay current.
 
