@@ -573,12 +573,12 @@
           </div>
 
           <!-- Agents Section -->
-          {% if ('agents' not in hidden_sections) and (a2a_enabled or grpc_enabled) %}
+          {% if (a2a_enabled and 'agents' not in hidden_sections) or (grpc_enabled and 'grpc-services' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Agents</span>
           </div>
           <div class="space-y-1 px-2">
-            {% if a2a_enabled %}
+            {% if a2a_enabled and 'agents' not in hidden_sections %}
             <a href="#a2a-agents" id="tab-a2a-agents" data-testid="a2a-agents-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -587,7 +587,7 @@
               <span x-show="!sidebarCollapsed">Agents (A2A)</span>
             </a>
             {% endif %}
-            {% if grpc_enabled %}
+            {% if grpc_enabled and 'grpc-services' not in hidden_sections %}
             <a href="#grpc-services" id="tab-grpc-services" data-testid="grpc-services-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -626,7 +626,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and ('metrics' not in hidden_sections or performance_enabled or observability_enabled) %}
+          {% if 'metrics' not in hidden_sections or performance_enabled or observability_enabled %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
@@ -641,7 +641,7 @@
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
             {% endif %}
-            {% if performance_enabled %}
+            {% if performance_enabled and is_admin %}
             <a href="#performance" id="tab-performance" data-testid="performance-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -650,7 +650,7 @@
               <span x-show="!sidebarCollapsed">Performance</span>
             </a>
             {% endif %}
-            {% if observability_enabled %}
+            {% if observability_enabled and is_admin %}
             <a href="#observability" id="tab-observability" data-testid="observability-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -662,7 +662,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and 'plugins' not in hidden_sections %}
+          {% if 'plugins' not in hidden_sections %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
@@ -681,7 +681,7 @@
           {% endif %}
 
           <!-- Organization Section -->
-          {% if email_auth_enabled and ('teams' not in hidden_sections or ('users' not in hidden_sections and is_admin) or 'tokens' not in hidden_sections) %}
+          {% if email_auth_enabled and ('teams' not in hidden_sections or 'users' not in hidden_sections or 'tokens' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Organization</span>
           </div>
@@ -695,7 +695,7 @@
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
             {% endif %}
-            {% if is_admin and 'users' not in hidden_sections %}
+            {% if 'users' not in hidden_sections %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -716,7 +716,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and ('export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections) %}
+          {% if 'export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
@@ -1005,7 +1005,7 @@
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
-      {% if is_admin and 'logs' not in hidden_sections %}
+      {% if 'logs' not in hidden_sections %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1226,7 +1226,7 @@
       </div>
       {% endif %}
 
-      {% if is_admin and 'export-import' not in hidden_sections %}
+      {% if 'export-import' not in hidden_sections %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1658,17 +1658,17 @@
       </div>
       {% endif %}
 
-      {% if is_admin and 'version-info' not in hidden_sections %}
+      {% if 'version-info' not in hidden_sections %}
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin and 'maintenance' not in hidden_sections %}
+      {% if 'maintenance' not in hidden_sections %}
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin and 'plugins' not in hidden_sections %}
+      {% if 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
       {% endif %}
@@ -2846,6 +2846,7 @@
             </table>
           </div>
         </div>
+        {% if user_permissions.can_create_server %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New Server
@@ -3385,6 +3386,7 @@
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
 
 
@@ -3536,6 +3538,7 @@
             {% include 'pagination_controls.html' %}
           </div>
         </div>
+        {% if user_permissions.can_create_tool %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <div class="flex justify-between items-center mb-4">
             <div>
@@ -4182,6 +4185,7 @@
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
       {% if toolops_enabled %}
       <div id="tool-ops-panel" class="tab-panel hidden">
@@ -4516,6 +4520,7 @@
           <div id="resources-pagination-controls"></div>
         </div>
 
+        {% if user_permissions.can_create_resource %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New Resource
@@ -4676,6 +4681,7 @@
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
 
       {% endif %}
@@ -4767,7 +4773,7 @@
         </div>
 
 
-
+        {% if user_permissions.can_create_prompt %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New Prompt
@@ -4946,6 +4952,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
 
       {% endif %}
@@ -5419,6 +5426,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
+        {% if user_permissions.can_create_gateway %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800 mt-8">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New MCP Server or Gateway
@@ -6074,6 +6082,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
 
       {% endif %}
@@ -6090,6 +6099,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Teams you own, are a member of, and can join
               </p>
             </div>
+            {% if user_permissions.can_create_team %}
             <button
               id="create-team-btn"
               onclick="openCreateTeamModal()"
@@ -6110,6 +6120,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </svg>
               Create New Team
             </button>
+            {% endif %}
           </div>
 
           <!-- Search/Filter Bar -->
@@ -6185,7 +6196,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled and is_admin and 'users' not in hidden_sections %}
+      {% if email_auth_enabled and 'users' not in hidden_sections %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -6195,6 +6206,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <!-- Create User Form -->
+         {% if user_permissions.can_create_user %}
         <div class="bg-white shadow rounded-lg mb-6 dark:bg-gray-800">
           <div class="px-4 py-5 sm:p-6">
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -6389,6 +6401,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </form>
           </div>
         </div>
+        {% endif %}
 
         <!-- Users List -->
         <div class="bg-white shadow rounded-lg dark:bg-gray-800">
@@ -6460,6 +6473,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <!-- Create Token Form -->
+         {% if user_permissions.can_create_token %}
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
             Create New API Token
@@ -6658,6 +6672,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div id="token-creation-messages" class="mt-3" role="alert" aria-live="polite"></div>
           </form>
         </div>
+        {% endif %}
 
         <!-- Tokens List -->
         <div class="bg-white shadow rounded-lg dark:bg-gray-800">
@@ -6905,6 +6920,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
+        {% if user_permissions.can_create_agent %}
         <!-- A2A Agent Add Form -->
         <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800 mt-8">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
@@ -7541,13 +7557,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </form>
         </div>
+        {% endif %}
 
 
       </div>
       {% endif %}
 
       <!-- gRPC Services Panel -->
-      {% if grpc_enabled and 'agents' not in hidden_sections %}
+      {% if grpc_enabled and 'grpc-services' not in hidden_sections %}
       <div id="grpc-services-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -7995,7 +8012,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
       {% endif %}
 
-      {% if is_admin and 'metrics' not in hidden_sections %}
+      {% if 'metrics' not in hidden_sections %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->

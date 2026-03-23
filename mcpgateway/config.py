@@ -137,6 +137,7 @@ UI_HIDABLE_SECTIONS = frozenset(
         "teams",
         "users",
         "agents",
+        "grpc-services",
         "tokens",
         "settings",
     }
@@ -147,7 +148,6 @@ UI_HIDE_SECTION_ALIASES = {
     "virtual_servers": "servers",
     "a2a-agents": "agents",
     "a2a": "agents",
-    "grpc-services": "agents",
     "api_tokens": "tokens",
     "llm-settings": "settings",
 }
