@@ -1243,13 +1243,12 @@ flowchart TD
 These behaviors are enforced consistently across all access paths:
 
 1. `normalize_token_teams()` is the canonical interpreter of JWT team claims; `resolve_session_teams()` is the single policy point for session tokens (always DB-resolved)
-2. Missing `teams` key always returns `[]` (public-only, secure default)
+2. For API/legacy tokens: missing `teams` key always returns `[]` (public-only, secure default); empty `teams: []` also returns `[]`. For session tokens: missing, null, or empty `teams` returns the full DB membership (no narrowing requested)
 3. Admin bypass for API/legacy tokens requires BOTH `teams: null` AND `is_admin: true`; for session tokens, admin bypass is DB-derived (`is_admin` flag). In both cases the service layer requires `token_teams=None` AND `user_email=None` for unrestricted queries
-4. Empty teams list (`[]`) results in public-only access, even for admins
-5. All list endpoints pass `token_teams` to the service layer
-6. Service layer applies visibility filtering based on `token_teams` via `BaseService._apply_access_control()`
-7. Public-only tokens can ONLY access `visibility='public'` resources — owner and team access are both suppressed
-8. Owner-based access (`owner_email`) grants visibility only for `visibility='private'` resources — it does not bypass team scoping for team-visibility resources
+4. All list endpoints pass `token_teams` to the service layer
+5. Service layer applies visibility filtering based on `token_teams` via `BaseService._apply_access_control()`
+6. Public-only tokens can ONLY access `visibility='public'` resources — owner and team access are both suppressed
+7. Owner-based access (`owner_email`) grants visibility only for `visibility='private'` resources — it does not bypass team scoping for team-visibility resources
 
 ### Related Documentation
 

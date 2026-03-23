@@ -238,8 +238,8 @@ Key points:
 
 1. **Secure-First Defaults**
 
-   - Missing `teams` key always returns `[]` (public-only access)
-   - This prevents accidental exposure when tokens are misconfigured
+   - API/legacy tokens: missing `teams` key always returns `[]` (public-only access), preventing accidental exposure when tokens are misconfigured
+   - Session tokens: missing/null/empty `teams` returns full DB membership (no narrowing requested); the DB is the authority
 
 2. **Explicit Admin Bypass**
 
