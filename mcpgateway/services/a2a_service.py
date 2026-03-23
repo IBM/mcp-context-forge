@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, EmailTeamMember as DbEmailTeamMember, fresh_db_session, get_for_update
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -145,6 +145,36 @@ class A2AAgentNameConflictError(A2AAgentError):
         if not is_active:
             message += f" (currently inactive, ID: {agent_id})"
         super().__init__(message)
+
+
+def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+    """Validate team assignment for A2A agent updates.
+
+    Args:
+        db: Database session used for membership checks.
+        user_email: Requesting user email. When omitted, ownership checks are skipped.
+        target_team_id: Team identifier to validate.
+
+    Raises:
+        ValueError: If team does not exist or caller lacks ownership.
+    """
+    if not target_team_id:
+        raise ValueError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
+    if not team:
+        raise ValueError(f"Team {target_team_id} not found")
+
+    if not user_email:
+        return
+
+    membership = (
+        db.query(DbEmailTeamMember)
+        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+        .first()
+    )
+    if not membership:
+        raise ValueError("User membership in team not sufficient for this update.")
 
 
 class A2AAgentService(BaseService):
@@ -1027,6 +1057,10 @@ class A2AAgentService(BaseService):
 
                 if field == "oauth_config":
                     value = await protect_oauth_config_for_storage(value, existing_oauth_config=agent.oauth_config)
+
+                # Validate team reassignment before persisting
+                if field == "team_id" and value is not None and value != agent.team_id:
+                    _validate_a2a_team_assignment(db, user_email, value)
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)
