@@ -56,6 +56,28 @@ logger = logging.getLogger(__name__)
 _HOSTNAME_RE: Pattern[str] = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
 _SLUG_RE: Pattern[str] = re.compile(r"^[a-z0-9-]+$")
 
+_VALID_VISIBILITY = {"private", "team", "public"}
+
+
+def _coerce_visibility(v: Optional[str]) -> Optional[str]:
+    """Normalize legacy visibility values in Read/response schemas.
+
+    DB columns are unconstrained strings, so historical rows may contain
+    values outside the Literal enum.  Coerce them to 'public' (the DB
+    default) instead of letting Pydantic raise a ValidationError on the
+    read path.
+
+    Args:
+        v: Visibility value to normalize.
+
+    Returns:
+        The original value if valid, 'public' if invalid, or None if None.
+    """
+    if v is not None and v not in _VALID_VISIBILITY:
+        logger.warning("Coercing invalid visibility value %r to 'public'", v)
+        return "public"
+    return v
+
 
 def encode_datetime(v: datetime) -> str:
     """
@@ -1433,6 +1455,8 @@ class ToolRead(BaseModelWithConfigDict):
     # MCP protocol extension field
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
+
 
 class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
@@ -1940,6 +1964,8 @@ class ResourceRead(BaseModelWithConfigDict):
     title: Optional[str] = Field(None, description="Human-readable title for the resource")
     annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -2529,6 +2555,8 @@ class PromptRead(BaseModelWithConfigDict):
     # MCP protocol fields
     title: Optional[str] = Field(None, description="Human-readable title for the prompt")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 class PromptInvocation(BaseModelWithConfigDict):
@@ -3351,6 +3379,8 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Gateway mode configuration
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
     @classmethod
@@ -4188,6 +4218,8 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
     @classmethod
@@ -5055,6 +5087,8 @@ class A2AAgentRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
     @classmethod
@@ -7108,6 +7142,8 @@ class GrpcServiceRead(BaseModel):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Owner email")
     visibility: Literal["private", "team", "public"] = Field(default="public", description="Visibility level: private, team, or public")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 # Plugin-related schemas

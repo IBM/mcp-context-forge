@@ -17,6 +17,7 @@ from mcpgateway.common.models import ResourceContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.schemas import (
+    _coerce_visibility,
     _mask_oauth_config,
     A2AAgentCreate,
     A2AAgentInvocation,
@@ -29,11 +30,14 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayUpdate,
     GrpcServiceCreate,
+    GrpcServiceRead,
     GrpcServiceUpdate,
     PromptCreate,
+    PromptRead,
     PromptUpdate,
     ResourceCreate,
     ResourceNotification,
+    ResourceRead,
     ResourceUpdate,
     RPCRequest,
     ServerCreate,
@@ -43,6 +47,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
     TokenScopeRequest,
     ToolCreate,
+    ToolRead,
     ToolUpdate,
 )
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -1341,3 +1346,22 @@ def test_visibility_literal_enum_validation():
         with pytest.raises(ValidationError):
             A2AAgentUpdate(visibility=v)
     assert A2AAgentUpdate().visibility is None
+
+
+def test_coerce_visibility_normalizes_invalid_values():
+    """_coerce_visibility must normalize invalid legacy values to 'public' instead of raising."""
+    assert _coerce_visibility("bogus") == "public"
+    assert _coerce_visibility("") == "public"
+    assert _coerce_visibility("PUBLIC") == "public"
+    assert _coerce_visibility("PRIVATE") == "public"
+    # Valid values pass through unchanged
+    assert _coerce_visibility("private") == "private"
+    assert _coerce_visibility("team") == "team"
+    assert _coerce_visibility("public") == "public"
+    assert _coerce_visibility(None) is None
+
+
+def test_read_schemas_have_visibility_coercion_wired():
+    """All Read schemas must have _normalize_visibility wired so legacy DB rows don't crash reads."""
+    for schema_cls in [ToolRead, ResourceRead, PromptRead, GatewayRead, ServerRead, A2AAgentRead, GrpcServiceRead]:
+        assert hasattr(schema_cls, "_normalize_visibility"), f"{schema_cls.__name__} missing _normalize_visibility"
