@@ -98,7 +98,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
@@ -525,6 +525,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # For all other URLs, preserve the domain name
         return url
 
+    @staticmethod
+    async def _encrypt_client_key(client_key: Optional[str]) -> Optional[str]:
+        """Encrypt a client private key for storage.
+
+        Args:
+            client_key: Plaintext client private key or None.
+
+        Returns:
+            Encrypted client key or None if input is None/empty.
+        """
+        if not client_key:
+            return None
+        encryption = get_encryption_service(settings.auth_encryption_secret)
+        if encryption.is_encrypted(client_key):
+            return client_key
+        return await encryption.encrypt_secret_async(client_key)
+
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
         """Create an SSL context with the provided CA certificate.
 
@@ -877,6 +894,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             oauth_config = await protect_oauth_config_for_storage(getattr(gateway, "oauth_config", None))
             ca_certificate = getattr(gateway, "ca_certificate", None)
+            init_client_cert = getattr(gateway, "client_cert", None)
+            init_client_key = getattr(gateway, "client_key", None)
 
             # Check if gateway is in direct_proxy mode
             gateway_mode = getattr(gateway, "gateway_mode", "cache")
@@ -895,6 +914,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             oauth_config,
                             ca_certificate,
                             auth_query_params=auth_query_params_decrypted,
+                            client_cert=init_client_cert,
+                            client_key=init_client_key,
                         ),
                         timeout=initialize_timeout,
                     )
@@ -910,6 +931,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     oauth_config,
                     ca_certificate,
                     auth_query_params=auth_query_params_decrypted,
+                    client_cert=init_client_cert,
+                    client_key=init_client_key,
                 )
 
             if gateway.one_time_auth:
@@ -1154,6 +1177,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 ca_certificate=gateway.ca_certificate,
                 ca_certificate_sig=gateway.ca_certificate_sig,
                 signing_algorithm=gateway.signing_algorithm,
+                # mTLS client certificate/key
+                client_cert=getattr(gateway, "client_cert", None),
+                client_key=await self._encrypt_client_key(getattr(gateway, "client_key", None)),
                 # Gateway mode configuration
                 gateway_mode=gateway_mode,
             )
@@ -1974,6 +2000,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         _validate_gateway_team_assignment(db, user_email, gateway_update.team_id)
                     gateway.team_id = gateway_update.team_id
 
+                # Update CA certificate fields if provided
+                if getattr(gateway_update, "ca_certificate", None) is not None:
+                    gateway.ca_certificate = gateway_update.ca_certificate
+                if getattr(gateway_update, "ca_certificate_sig", None) is not None:
+                    gateway.ca_certificate_sig = gateway_update.ca_certificate_sig
+                if getattr(gateway_update, "signing_algorithm", None) is not None:
+                    gateway.signing_algorithm = gateway_update.signing_algorithm
+
+                # Update mTLS client certificate/key if provided
+                if getattr(gateway_update, "client_cert", None) is not None:
+                    gateway.client_cert = gateway_update.client_cert
+                if getattr(gateway_update, "client_key", None) is not None:
+                    if gateway_update.client_key == settings.masked_auth_value:
+                        pass  # Preserve existing encrypted value
+                    else:
+                        gateway.client_key = await self._encrypt_client_key(gateway_update.client_key)
+
                 # Only update auth_type if explicitly provided in the update
                 if gateway_update.auth_type is not None:
                     gateway.auth_type = gateway_update.auth_type
@@ -2111,6 +2154,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 try:
                     ca_certificate = getattr(gateway, "ca_certificate", None)
+                    update_client_cert = getattr(gateway, "client_cert", None)
+                    update_client_key = getattr(gateway, "client_key", None)
+                    # Decrypt client_key for initialization (stored encrypted)
+                    if update_client_key:
+                        try:
+                            _enc = get_encryption_service(settings.auth_encryption_secret)
+                            update_client_key = _enc.decrypt_secret_or_plaintext(update_client_key)
+                        except Exception:
+                            logger.debug("client_key decryption skipped during gateway re-init")
                     capabilities, tools, resources, prompts = await self._initialize_gateway(
                         init_url,
                         gateway.auth_value,
@@ -2119,6 +2171,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         gateway.oauth_config,
                         ca_certificate,
                         auth_query_params=auth_query_params_decrypted,
+                        client_cert=update_client_cert,
+                        client_key=update_client_key,
                     )
                     new_tool_names = [tool.name for tool in tools]
                     new_resource_uris = [resource.uri for resource in resources]
@@ -2567,8 +2621,24 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             if auth_query_params_decrypted:
                                 init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
+                        act_client_cert = getattr(gateway, "client_cert", None)
+                        act_client_key = getattr(gateway, "client_key", None)
+                        if act_client_key:
+                            try:
+                                _enc = get_encryption_service(settings.auth_encryption_secret)
+                                act_client_key = _enc.decrypt_secret_or_plaintext(act_client_key)
+                            except Exception:
+                                logger.debug("client_key decryption skipped during gateway activation")
                         capabilities, tools, resources, prompts = await self._initialize_gateway(
-                            init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, auth_query_params=auth_query_params_decrypted, oauth_auto_fetch_tool_flag=True
+                            init_url,
+                            gateway.auth_value,
+                            gateway.transport,
+                            gateway.auth_type,
+                            gateway.oauth_config,
+                            auth_query_params=auth_query_params_decrypted,
+                            oauth_auto_fetch_tool_flag=True,
+                            client_cert=act_client_cert,
+                            client_key=act_client_key,
                         )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
@@ -3223,6 +3293,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_oauth_config = gateway.oauth_config
         gateway_auth_value = gateway.auth_value
         gateway_auth_query_params = gateway.auth_query_params
+        health_client_cert = getattr(gateway, "client_cert", None)
+        health_client_key = getattr(gateway, "client_key", None)
 
         # Handle query_param auth - decrypt and apply to URL for health check
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -3261,8 +3333,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     valid = validate_signature(gateway_ca_certificate.encode(), gateway_ca_certificate_sig, public_key_pem)
                 else:
                     valid = True
-            if valid:
-                ssl_context = self.create_ssl_context(gateway_ca_certificate)
+
+            # Decrypt client_key for health check mTLS
+            _hc_client_key = health_client_key
+            if _hc_client_key:
+                try:
+                    _enc = get_encryption_service(settings.auth_encryption_secret)
+                    _hc_client_key = _enc.decrypt_secret_or_plaintext(_hc_client_key)
+                except Exception:
+                    logger.debug("client_key decryption skipped during health check")
+
+            if gateway_url and gateway_url.lower().startswith("http://"):
+                ssl_context = None
+            elif valid and gateway_ca_certificate:
+                ssl_context = get_cached_ssl_context(gateway_ca_certificate, client_cert=health_client_cert, client_key=_hc_client_key)
             else:
                 ssl_context = None
 
@@ -3605,6 +3689,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_prompts: bool = True,
         auth_query_params: Optional[Dict[str, str]] = None,
         oauth_auto_fetch_tool_flag: Optional[bool] = False,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -3626,6 +3712,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             oauth_auto_fetch_tool_flag: Whether to skip the early return for OAuth Authorization Code flow.
                 When False (default), auth_code gateways return empty lists immediately (for health checks).
                 When True, attempts to connect even for auth_code gateways (for activation after user authorization).
+            client_cert: Optional client certificate path or PEM for mTLS
+            client_key: Optional client private key path or PEM for mTLS
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -3706,9 +3794,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)
+                capabilities, tools, resources, prompts = await self.connect_to_sse_server(
+                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
+                )
             elif transport.lower() == "streamablehttp":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)
+                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(
+                    url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
+                )
 
             return capabilities, tools, resources, prompts
         except Exception as e:
@@ -4525,6 +4617,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_oauth_config = None
         gateway_ca_certificate = None
         gateway_auth_query_params = None
+        refresh_client_cert = None
+        refresh_client_key = None
 
         if gateway:
             if not gateway.enabled or not gateway.reachable:
@@ -4539,6 +4633,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_oauth_config = gateway.oauth_config
             gateway_ca_certificate = gateway.ca_certificate
             gateway_auth_query_params = gateway.auth_query_params
+            refresh_client_cert = getattr(gateway, "client_cert", None)
+            refresh_client_key = getattr(gateway, "client_key", None)
         else:
             with fresh_db_session() as db:
                 gateway_obj = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
@@ -4560,6 +4656,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_oauth_config = gateway_obj.oauth_config
                 gateway_ca_certificate = gateway_obj.ca_certificate
                 gateway_auth_query_params = gateway_obj.auth_query_params
+                refresh_client_cert = getattr(gateway_obj, "client_cert", None)
+                refresh_client_key = getattr(gateway_obj, "client_key", None)
 
         # Handle query_param auth - decrypt and apply to URL for refresh
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -4577,6 +4675,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Fetch tools/resources/prompts from MCP server (no DB connection held)
         try:
+            # Decrypt client_key for refresh initialization
+            _refresh_key = refresh_client_key
+            if _refresh_key:
+                try:
+                    _enc = get_encryption_service(settings.auth_encryption_secret)
+                    _refresh_key = _enc.decrypt_secret_or_plaintext(_refresh_key)
+                except Exception:
+                    logger.debug("client_key decryption skipped during gateway refresh")
             _capabilities, tools, resources, prompts = await self._initialize_gateway(
                 url=gateway_url,
                 authentication=gateway_auth_value,
@@ -4588,6 +4694,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 include_resources=include_resources,
                 include_prompts=include_prompts,
                 auth_query_params=auth_query_params_decrypted,
+                client_cert=refresh_client_cert,
+                client_key=_refresh_key,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch tools from gateway {gateway_name}: {e}")
@@ -5077,6 +5185,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_prompts: bool = True,
         include_resources: bool = True,
         auth_query_params: Optional[Dict[str, str]] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
     ):
         """Connect to an MCP server running with SSE transport.
 
@@ -5087,6 +5197,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             include_prompts: Whether to fetch prompts from the server.
             include_resources: Whether to fetch resources from the server.
             auth_query_params: Query param names for URL sanitization in error logs.
+            client_cert: Optional client certificate path or PEM for mTLS.
+            client_key: Optional client private key path or PEM for mTLS.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -5109,8 +5221,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
-            if ca_certificate:
-                ctx = self.create_ssl_context(ca_certificate)
+            if server_url and server_url.lower().startswith("http://"):
+                ctx = None
+            elif ca_certificate:
+                ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             else:
                 ctx = None
             return httpx.AsyncClient(
@@ -5237,6 +5351,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_prompts: bool = True,
         include_resources: bool = True,
         auth_query_params: Optional[Dict[str, str]] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
     ):
         """Connect to an MCP server running with Streamable HTTP transport.
 
@@ -5247,6 +5363,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             include_prompts: Whether to fetch prompts from the server.
             include_resources: Whether to fetch resources from the server.
             auth_query_params: Query param names for URL sanitization in error logs.
+            client_cert: Optional client certificate path or PEM for mTLS.
+            client_key: Optional client private key path or PEM for mTLS.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -5270,8 +5388,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
-            if ca_certificate:
-                ctx = self.create_ssl_context(ca_certificate)
+            if server_url and server_url.lower().startswith("http://"):
+                ctx = None
+            elif ca_certificate:
+                ctx = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
             else:
                 ctx = None
             return httpx.AsyncClient(
