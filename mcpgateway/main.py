@@ -72,7 +72,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from mcpgateway import __version__
 from mcpgateway import version as version_module
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, _resolve_teams_from_db, get_current_user, get_user_team_roles, normalize_token_teams
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -2588,7 +2588,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                     token_use = payload.get("token_use")
                     if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                         is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                        token_teams = await _resolve_teams_from_db(username, {"is_admin": is_admin})
+                        token_teams = await resolve_session_teams(payload, username, {"is_admin": is_admin})
                     else:
                         # API token or legacy path: embedded teams claim semantics
                         token_teams = normalize_token_teams(payload)

@@ -138,15 +138,17 @@ Protected entities:
 
 ## Token Scoping Model
 
-Token scoping controls what resources a token can access based on the `teams` claim in the JWT payload. The `normalize_token_teams()` function is the **single source of truth** for interpreting JWT team claims across all enforcement points.
+Token scoping controls what resources a token can access based on the `teams` claim in the JWT payload. The `normalize_token_teams()` function is the **single source of truth** for interpreting JWT team claims into a canonical form. For session tokens, `resolve_session_teams()` is the **single policy point** — it resolves teams from the database first (so revoked memberships take effect immediately), then narrows the result to the intersection with any JWT-embedded `teams` claim (so callers can scope a session to a subset of their memberships). If the intersection is empty (e.g. all JWT-claimed teams have been revoked), an empty list is returned, demoting the session to public-only scope — the user can still access public resources and their own private resources, but loses access to all team-scoped resources. An explicit `teams: []` in a session JWT is treated as "no restriction requested" and returns the full DB membership.
 
 ### Token Scoping Contract
 
 The `teams` claim in JWT tokens determines resource visibility. The system follows a **secure-first design**: when in doubt, access is denied.
 
+**API tokens and legacy tokens** — JWT `teams` claim is the sole authority:
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        Token Teams Claim Handling                           │
+│                   API / Legacy Token Teams Claim Handling                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  JWT Claim State          │  is_admin: true       │  is_admin: false        │
 ├───────────────────────────┼───────────────────────┼─────────────────────────┤
@@ -158,14 +160,28 @@ The `teams` claim in JWT tokens determines resource visibility. The system follo
 └───────────────────────────┴───────────────────────┴─────────────────────────┘
 ```
 
+**Session tokens** — DB is the authority; JWT `teams` only narrows (never broadens):
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                     Session Token Teams Resolution                               │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│  JWT Claim State       │  DB Teams          │  Result           │ Access Level   │
+├────────────────────────┼────────────────────┼───────────────────┼────────────────┤
+│  Missing / null / []   │  ["t1", "t2"]      │  ["t1", "t2"]     │ Full DB scope  │
+│  ["t1"]                │  ["t1", "t2"]      │  ["t1"]           │ Narrowed       │
+│  ["revoked"]           │  ["t1", "t2"]      │  []               │ Public-only    │
+│  any                   │  None (admin)      │  None             │ Admin bypass   │
+└────────────────────────┴────────────────────┴───────────────────┴────────────────┘
+```
+
+!!! note "Session Token Staleness"
+    Session tokens skip `_check_team_membership` re-validation in the token scoping middleware because `resolve_session_teams()` already resolved membership from the database. Membership staleness is bounded by the `auth_cache` TTL. The cache stores the full DB membership (not the per-session narrowed intersection) so that multiple sessions for the same user narrow independently.
+
 !!! warning "Admin Bypass Requirements"
-    Admin bypass (unrestricted access) requires **BOTH** conditions:
+    **API / legacy tokens:** Admin bypass requires **BOTH** `teams: null` (explicit null, not missing key) and `is_admin: true`. A missing `teams` key or `teams: []` results in public-only access, even for admins.
 
-    1. `teams: null` (explicit null, not missing key)
-    2. `is_admin: true`
-
-    A missing `teams` key always results in public-only access, even for admins.
-    An empty `teams: []` also results in public-only access, even for admins.
+    **Session tokens:** Admin bypass is determined by the **database** `is_admin` flag, not the JWT `teams` claim. If the DB user is admin, `resolve_session_teams()` returns `None` (admin bypass) regardless of the JWT `teams` state. The JWT `teams` claim cannot narrow an admin session — it only narrows non-admin sessions.
 
 ### `is_admin`, `teams`, and `token_use` (Mental Model)
 
@@ -194,7 +210,7 @@ Key points:
    - Verify JWT/API token.
    - Resolve `token_use`.
 2. **Normalize/resolve teams**
-   - `token_use=session` → resolve from DB (`_resolve_teams_from_db()`).
+   - `token_use=session` → resolve from DB and optionally narrow by JWT claim (`resolve_session_teams()`).
    - `token_use!=session` → normalize JWT `teams` (`normalize_token_teams()`).
 3. **Layer 1: Token scoping**
    - Filter accessible resources by `token_teams`.
@@ -222,13 +238,14 @@ Key points:
 
 1. **Secure-First Defaults**
 
-   - Missing `teams` key always returns `[]` (public-only access)
-   - This prevents accidental exposure when tokens are misconfigured
+   - API/legacy tokens: missing `teams` key always returns `[]` (public-only access), preventing accidental exposure when tokens are misconfigured
+   - Session tokens: missing/null/empty `teams` returns full DB membership (no narrowing requested); the DB is the authority
 
 2. **Explicit Admin Bypass**
 
-   - Admin bypass requires explicit `teams: null` AND `is_admin: true`
-   - Empty teams `[]` disables bypass even for admins
+   - API/legacy tokens: admin bypass requires explicit `teams: null` AND `is_admin: true`
+   - Session tokens: admin bypass is DB-derived (DB `is_admin` flag); JWT `teams` only narrows non-admin sessions
+   - Empty teams `[]` disables bypass even for admins (API/legacy tokens)
 
 3. **Scoped Automation Tokens**
 
@@ -620,7 +637,7 @@ When `AUTH_REQUIRED=false`:
 
 | Use Case | Recommended Token Scope |
 |----------|------------------------|
-| Admin UI access | Session token (`teams: null` + `is_admin: true`) |
+| Admin UI access | Session token (admin bypass is DB-derived; no `teams` claim needed) |
 | CI/CD pipeline | `teams: []` (public-only) |
 | Service integration | Specific team(s) |
 | Developer access | Personal team + project teams |

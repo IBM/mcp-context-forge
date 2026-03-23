@@ -206,56 +206,43 @@ def get_user_team_roles(db, user_email: str) -> Dict[str, str]:
         return {}
 
 
-def _resolve_teams_from_db_sync(email: str, is_admin: bool) -> Optional[List[str]]:
-    """Resolve teams synchronously with L1 cache support.
+def _narrow_by_jwt_teams(payload: Dict[str, Any], db_teams: Optional[List[str]]) -> Optional[List[str]]:
+    """Apply JWT intersection policy to DB-resolved teams.
 
-    Used by StreamableHTTP transport which runs in a sync context.
-    Checks the in-memory L1 cache before falling back to DB.
+    If *db_teams* is ``None`` (admin bypass), returns ``None`` immediately.
+    If the JWT ``teams`` claim is a non-empty list, returns the intersection
+    of *db_teams* and the JWT teams.  If the intersection is empty (e.g.
+    all JWT-claimed teams have been revoked), returns ``[]`` so that
+    downstream enforcement denies the request rather than silently
+    broadening scope.
 
     Args:
-        email: User email address
-        is_admin: Whether the user is an admin
+        payload: The decoded JWT payload dict.
+        db_teams: Teams resolved from the database, or ``None`` for admin bypass.
 
     Returns:
-        None (admin bypass), [] (no teams), or list of team ID strings
+        None (admin bypass), [] (public-only / empty intersection), or list of team ID strings.
     """
-    if is_admin:
-        return None  # Admin bypass
+    if db_teams is None:
+        return None
 
-    cache_key = f"{email}:True"
+    jwt_teams = payload.get("teams")
+    if isinstance(jwt_teams, list) and jwt_teams:
+        # Non-empty JWT teams → intersect with DB teams.  An empty
+        # intersection (all JWT teams revoked) returns [], which gives
+        # public-only access and lets downstream enforcement deny the
+        # request (fail-closed).
+        jwt_team_set = set(normalize_token_teams({"teams": jwt_teams}) or [])
+        return [t for t in db_teams if t in jwt_team_set]
 
-    # Check L1 in-memory cache (sync-safe, no network I/O)
-    try:
-        # First-Party
-        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-        entry = auth_cache._teams_list_cache.get(cache_key)  # pylint: disable=protected-access
-        if entry and not entry.is_expired():
-            auth_cache._hit_count += 1  # pylint: disable=protected-access
-            return entry.value
-    except Exception:  # nosec B110 - Cache unavailable is non-fatal
-        pass
-
-    # Cache miss: query DB
-    team_ids = _get_user_team_ids_sync(email)
-
-    # Populate L1 cache for subsequent requests
-    try:
-        # Standard
-        import time  # pylint: disable=import-outside-toplevel
-
-        # First-Party
-        from mcpgateway.cache.auth_cache import auth_cache, CacheEntry  # pylint: disable=import-outside-toplevel
-
-        with auth_cache._lock:  # pylint: disable=protected-access
-            auth_cache._teams_list_cache[cache_key] = CacheEntry(  # pylint: disable=protected-access
-                value=team_ids,
-                expiry=time.time() + auth_cache._teams_list_ttl,  # pylint: disable=protected-access
-            )
-    except Exception:  # nosec B110 - Cache write failure is non-fatal
-        pass
-
-    return team_ids
+    # JWT teams absent, null, or empty list → no narrowing requested.
+    # An explicit ``teams: []`` means "don't restrict by team" (i.e. use
+    # the full DB membership), which intentionally differs from
+    # ``normalize_token_teams`` where ``[] → public-only``.  The
+    # distinction exists because session tokens always start from DB-
+    # resolved teams — an empty JWT claim simply means the caller did not
+    # request a subset.
+    return db_teams
 
 
 async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
@@ -299,6 +286,65 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
         pass
 
     return team_ids
+
+
+_UNSET: Any = object()  # sentinel distinguishing "not supplied" from explicit None
+
+
+async def resolve_session_teams(
+    payload: Dict[str, Any],
+    email: Optional[str],
+    user_info,
+    *,
+    preresolved_db_teams: Optional[List[str]] = _UNSET,
+) -> Optional[List[str]]:
+    """Resolve teams for a session token, using DB as the authority.
+
+    The database is always consulted first so that revoked team memberships
+    take effect immediately.  If the JWT carries a ``teams`` claim, the
+    result is narrowed to the **intersection** of the DB teams and the JWT
+    teams — this lets callers scope a session to a subset of their actual
+    memberships (e.g. single-team mode) without risking stale grants.
+
+    This is the **single policy point** for session-token team resolution.
+    All code paths that need teams for a session token should call this
+    function rather than inlining the decision.
+
+    If *email* is ``None`` or empty, returns ``[]`` (public-only).  An
+    identity-less session token never receives admin bypass — there is no
+    user to resolve from the database.
+
+    Policy:
+        1. If *email* is falsy, return ``[]`` immediately (public-only).
+        2. Resolve teams from DB/cache (``_resolve_teams_from_db``), or
+           use *preresolved_db_teams* when the caller already fetched them
+           (e.g. via a batched query).
+        3. If DB returns ``None`` (admin bypass), return ``None``.
+        4. If the JWT ``teams`` claim is a non-empty list, intersect with
+           DB teams.  If the intersection is empty (all JWT-claimed teams
+           revoked), return ``[]`` so downstream enforcement denies the
+           request.
+        5. Otherwise return the full DB result.
+
+    Args:
+        payload: The decoded JWT payload dict.
+        email: User email address (for the DB lookup), or ``None``.
+        user_info: User dict or EmailUser instance (for admin detection).
+        preresolved_db_teams: If the caller already resolved DB teams (e.g.
+            from a batched query), pass them here to skip the DB call.
+            Pass ``None`` to indicate admin bypass was already determined.
+
+    Returns:
+        None (admin bypass), [] (public-only), or list of team ID strings.
+    """
+    if not email:
+        return []  # No identity — public-only; never admin bypass
+    if preresolved_db_teams is not _UNSET:
+        db_teams: Optional[List[str]] = preresolved_db_teams
+    else:
+        db_teams = await _resolve_teams_from_db(email, user_info)
+
+    return _narrow_by_jwt_teams(payload, db_teams)
 
 
 def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
@@ -1103,7 +1149,7 @@ async def get_current_user(
                         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                             # Session token: resolve teams from DB/cache
                             user_info = cached_ctx.user or {"is_admin": False}
-                            teams = await _resolve_teams_from_db(email, user_info)
+                            teams = await resolve_session_teams(payload, email, user_info)
                         else:
                             # API token or legacy: use embedded teams
                             teams = normalize_token_teams(payload)
@@ -1166,13 +1212,11 @@ async def get_current_user(
                 # Resolve teams based on token_use
                 token_use = payload.get("token_use")
                 if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-                    # Session token: use team_ids from batched query
+                    # Session token: use team_ids from batched query via resolve_session_teams
                     user_dict = auth_ctx.get("user")
                     is_admin = user_dict.get("is_admin", False) if user_dict else False
-                    if is_admin:
-                        teams = None  # Admin bypass
-                    else:
-                        teams = auth_ctx.get("team_ids", [])
+                    batch_teams = None if is_admin else auth_ctx.get("team_ids", [])
+                    teams = await resolve_session_teams(payload, email, {"is_admin": is_admin}, preresolved_db_teams=batch_teams)
                 else:
                     # API token or legacy: use embedded teams
                     teams = normalize_token_teams(payload)
@@ -1208,8 +1252,11 @@ async def get_current_user(
                         )
                         # Also populate teams-list cache so cached-path requests
                         # don't need an extra DB query via _resolve_teams_from_db()
-                        if token_use == "session" and teams is not None:  # nosec B105
-                            await auth_cache.set_user_teams(f"{email}:True", teams)
+                        # Cache the raw DB teams (batch_teams), not the narrowed
+                        # intersection (teams), so that other sessions for the same
+                        # user see the full membership and can narrow independently.
+                        if token_use == "session" and batch_teams is not None:  # nosec B105
+                            await auth_cache.set_user_teams(f"{email}:True", batch_teams)
                     except Exception as cache_set_error:
                         logger.debug(f"Failed to cache auth context: {cache_set_error}")
 
@@ -1307,7 +1354,7 @@ async def get_current_user(
         if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
             # Session token: resolve teams from DB/cache (fallback path — separate query OK)
             user_info = {"is_admin": payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)}
-            normalized_teams = await _resolve_teams_from_db(email, user_info)
+            normalized_teams = await resolve_session_teams(payload, email, user_info)
         else:
             # API token or legacy: use embedded teams
             normalized_teams = normalize_token_teams(payload)
