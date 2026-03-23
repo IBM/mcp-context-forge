@@ -2592,9 +2592,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                         # Count items before cleanup for logging
 
+                        # For authorization_code OAuth gateways, empty responses may indicate
+                        # a missing auth token rather than genuine removal of all items.
+                        # Skip stale cleanup to prevent destructive deletion of tools,
+                        # resources, prompts, and their virtual server associations.
+                        # Mirrors the guard in _refresh_gateway_tools_resources_prompts.
+                        _is_auth_code_gw = gateway.oauth_config and isinstance(gateway.oauth_config, dict) and gateway.oauth_config.get("grant_type") == "authorization_code"
+                        _skip_stale_cleanup = not tools and not resources and not prompts and _is_auth_code_gw
+                        if _skip_stale_cleanup:
+                            logger.debug(f"Empty response from auth_code gateway {gateway.name} during reactivation, preserving existing items")
+
                         # Bulk delete tools that are no longer available from the gateway
                         # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
-                        stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                        stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names] if not _skip_stale_cleanup else []
                         if stale_tool_ids:
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_tool_ids), 500):
@@ -2604,7 +2614,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
                         # Bulk delete resources that are no longer available from the gateway
-                        stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                        stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris] if not _skip_stale_cleanup else []
                         if stale_resource_ids:
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_resource_ids), 500):
@@ -2615,7 +2625,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
                         # Bulk delete prompts that are no longer available from the gateway
-                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
+                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names] if not _skip_stale_cleanup else []
                         if stale_prompt_ids:
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_prompt_ids), 500):

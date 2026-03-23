@@ -1592,6 +1592,43 @@ class TestGatewayService:
         assert "Bulk tool update failed" in str(exc_info.value)
         test_db.rollback.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_authcode_empty_result_preserves_tools(self, gateway_service, mock_gateway, test_db):
+        """Reactivating an auth_code gateway with empty results must not delete existing tools."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False  # Was offline
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        mock_gateway.auth_type = "oauth"
+        tool = MagicMock(spec=DbTool, id=101, name="existing-tool", original_name="existing-tool")
+        mock_gateway.tools = [tool]
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+                _make_execute_result(rowcount=1),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        # _initialize_gateway returns empty — simulates unauthenticated connection
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        # Tools should NOT have been deleted — no DELETE calls for tools/associations
+        for call in test_db.execute.call_args_list:
+            call_str = str(call)
+            assert "DELETE" not in call_str.upper() or "tool" not in call_str.lower(), \
+                f"Unexpected tool deletion for auth_code gateway with empty result: {call}"
+
     # ────────────────────────────────────────────────────────────────────
     # DELETE
     # ────────────────────────────────────────────────────────────────────
