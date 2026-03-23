@@ -450,8 +450,10 @@ class TestAdminMenuVisibility:
 
         logger.info("✓ Team admin sees %d sections, %d hidden", len(TEAM_ADMIN_VISIBLE), len(platform_only))
 
+        # Team admin role does NOT have teams.create — the "Create New Team" button
+        # should be hidden by the permission-based action hiding (UI_ACTION_PERMISSIONS).
         create_team_button = page.locator("#create-team-btn")
-        assert create_team_button.count() > 0 and create_team_button.is_visible(), "Team admin should see Create New Team button"
+        assert create_team_button.count() == 0, "Team admin without teams.create should NOT see Create New Team button"
 
     def test_developer_sees_tool_sections(
         self,
