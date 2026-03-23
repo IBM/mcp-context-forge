@@ -996,6 +996,43 @@ class TestResourceManagement:
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_resource_team_id_rejects_nonexistent_team(self, resource_service, mock_db, mock_resource):
+        """Reassigning a resource to a non-existent team must raise ResourceError."""
+        mock_resource.team_id = "old-team"
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None  # team not found
+        mock_db.query.return_value = mock_query
+
+        update_data = ResourceUpdate(team_id="nonexistent-team")
+
+        with pytest.raises(Exception, match="not found"):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+    @pytest.mark.asyncio
+    async def test_update_resource_visibility_team_without_team_id_rejects(self, resource_service, mock_db, mock_resource):
+        """Setting visibility to 'team' without any team_id must raise."""
+        mock_resource.team_id = None
+        mock_resource.visibility = "public"
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db.query.return_value = mock_query
+
+        update_data = ResourceUpdate(visibility="team")
+
+        with pytest.raises(Exception, match="without a team_id"):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+    @pytest.mark.asyncio
     async def test_update_resource_not_found(self, resource_service, mock_db):
         """Test updating non-existent resource."""
         update_data = ResourceUpdate(name="New Name")

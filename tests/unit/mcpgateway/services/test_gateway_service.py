@@ -1119,6 +1119,37 @@ class TestGatewayService:
         test_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_team_id_rejects_nonexistent_team(self, gateway_service, mock_gateway, test_db):
+        """Reassigning a gateway to a non-existent team must raise GatewayError."""
+        mock_gateway.team_id = "old-team"
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None  # team not found
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_update = GatewayUpdate(team_id="nonexistent-team")
+
+        with pytest.raises(GatewayError, match="not found"):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_visibility_team_without_team_id_rejects(self, gateway_service, mock_gateway, test_db):
+        """Setting visibility to 'team' without any team_id (new or existing) must raise GatewayError."""
+        mock_gateway.team_id = None
+        mock_gateway.visibility = "public"
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_update = GatewayUpdate(visibility="team")
+
+        with pytest.raises(GatewayError, match="without a team_id"):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+    @pytest.mark.asyncio
     async def test_update_gateway_visibility_preserves_per_resource_overrides(self, gateway_service, mock_gateway, test_db):
         """Visibility pre-propagation must not overwrite per-resource visibility overrides."""
         # Resource with inherited gateway visibility — should be updated

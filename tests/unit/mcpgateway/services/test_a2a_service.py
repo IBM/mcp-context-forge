@@ -302,6 +302,38 @@ class TestA2AAgentService:
                 assert mock_schema.called
                 assert sample_db_agent.version == 2  # Should be incremented
 
+    async def test_update_agent_team_id_rejects_nonexistent_team(self, service, mock_db, sample_db_agent):
+        """Reassigning an agent to a non-existent team must raise A2AAgentError."""
+        sample_db_agent.version = 1
+        sample_db_agent.team_id = "00000000-0000-0000-0000-000000000001"
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_query = MagicMock()
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = None  # team not found
+            mock_db.query.return_value = mock_query
+
+            update_data = A2AAgentUpdate(team_id="00000000-0000-0000-0000-000000000099")
+
+            with pytest.raises(A2AAgentError, match="not found"):
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
+    async def test_update_agent_visibility_team_without_team_id_rejects(self, service, mock_db, sample_db_agent):
+        """Setting visibility to 'team' without any team_id must raise A2AAgentError."""
+        sample_db_agent.version = 1
+        sample_db_agent.team_id = None
+
+        with patch("mcpgateway.services.a2a_service.get_for_update", return_value=sample_db_agent):
+            mock_query = MagicMock()
+            mock_query.filter.return_value = mock_query
+            mock_query.first.return_value = None
+            mock_db.query.return_value = mock_query
+
+            update_data = A2AAgentUpdate(visibility="team")
+
+            with pytest.raises(A2AAgentError, match="without a team_id"):
+                await service.update_agent(mock_db, sample_db_agent.id, update_data)
+
     async def test_update_agent_encrypts_oauth_sensitive_values(self, service, mock_db, sample_db_agent):
         """update_agent encrypts oauth_config secrets before saving."""
         sample_db_agent.version = 1
