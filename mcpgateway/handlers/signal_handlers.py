@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 async def sighup_reload() -> None:
-    """Clear SSL context cache on SIGHUP for certificate rotation.
+    """Clear SSL context cache and MCP session pool on SIGHUP for certificate rotation.
 
     Clears the SSL context cache to force recreation of SSL contexts
-    with potentially updated certificates. This enables certificate
-    rotation without restarting the application.
+    with potentially updated certificates, and closes the MCP session
+    pool so pooled connections reconnect with new TLS state.
     """
     try:
         # First-Party
@@ -27,6 +27,15 @@ async def sighup_reload() -> None:
         logger.info("SIGHUP: SSL context cache cleared")
     except Exception as exc:
         logger.error(f"SIGHUP handler failed to clear SSL context cache: {exc}")
+
+    try:
+        # First-Party
+        from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+        await close_mcp_session_pool()
+        logger.info("SIGHUP: MCP session pool closed for TLS rotation")
+    except Exception as exc:
+        logger.debug(f"SIGHUP: MCP session pool close skipped: {exc}")
 
 
 def sighup_handler(_signum: int, _frame: Any) -> None:
