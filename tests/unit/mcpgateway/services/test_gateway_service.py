@@ -1592,6 +1592,169 @@ class TestGatewayService:
         assert "Bulk tool update failed" in str(exc_info.value)
         test_db.rollback.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_authcode_empty_result_preserves_tools(self, gateway_service, mock_gateway, test_db):
+        """Reactivating an auth_code gateway with empty results must not delete existing tools."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False  # Was offline
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        mock_gateway.auth_type = "oauth"
+
+        # Set up multiple existing tools to verify all are preserved
+        tool_names = ["tool-1", "tool-2", "tool-3", "tool-4", "tool-5"]
+        tools = [MagicMock(spec=DbTool, id=100 + i, name=n, original_name=n) for i, n in enumerate(tool_names)]
+        mock_gateway.tools = tools
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+                _make_execute_result(rowcount=len(tools)),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        # _initialize_gateway returns empty — simulates unauthenticated connection
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        assert test_db.execute.call_count == 2  # SELECT + UPDATE tools reachable (no DELETE)
+        # All existing tools must be preserved
+        assert len(mock_gateway.tools) == len(tool_names)
+        assert {t.id for t in mock_gateway.tools} == {100, 101, 102, 103, 104}
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_non_authcode_empty_result_still_cleans(self, gateway_service, mock_gateway, test_db):
+        """Non-auth_code gateway with empty results must still run stale cleanup (tools list filtered)."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = None  # NOT authorization_code
+        mock_gateway.auth_type = "bearer"
+
+        tool = MagicMock(spec=DbTool, id=200, name="tool-1", original_name="tool-1")
+        mock_gateway.tools = [tool]
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # SELECT
+                Mock(),  # DELETE ToolMetric
+                Mock(),  # DELETE server_tool_association
+                Mock(),  # DELETE DbTool
+                _make_execute_result(rowcount=1),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.expire = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        # Empty return — but NOT auth_code, so cleanup should proceed
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        # For non-auth_code, in-memory list gets filtered to empty (stale tool removed)
+        assert len(mock_gateway.tools) == 0
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_authcode_partial_result_still_cleans(self, gateway_service, mock_gateway, test_db):
+        """Auth_code gateway with partial results (one tool returned) must still clean stale items."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        mock_gateway.auth_type = "oauth"
+
+        stale_tool = MagicMock(spec=DbTool, id=200, name="stale-tool", original_name="stale-tool")
+        kept_tool = MagicMock(spec=DbTool, id=201, name="kept-tool", original_name="kept-tool")
+        mock_gateway.tools = [stale_tool, kept_tool]
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        # _initialize_gateway returns one tool — partial, so skip_stale_cleanup = False
+        new_tool = MagicMock()
+        new_tool.name = "kept-tool"
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # SELECT
+                Mock(),  # DELETE ToolMetric (stale-tool)
+                Mock(),  # DELETE server_tool_association
+                Mock(),  # DELETE DbTool
+                _make_execute_result(rowcount=1),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.expire = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [new_tool], [], []))
+        gateway_service._update_or_create_tools = Mock(return_value=[])
+        gateway_service._update_or_create_resources = Mock(return_value=[])
+        gateway_service._update_or_create_prompts = Mock(return_value=[])
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        # Stale cleanup ran — stale-tool removed, kept-tool preserved
+        assert len(mock_gateway.tools) == 1
+        assert mock_gateway.tools[0].original_name == "kept-tool"
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_authcode_empty_result_preserves_resources_prompts(self, gateway_service, mock_gateway, test_db):
+        """Auth_code guard must also preserve existing resources and prompts."""
+        mock_gateway.enabled = True
+        mock_gateway.reachable = False
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        mock_gateway.auth_type = "oauth"
+
+        mock_gateway.tools = []
+        resource = MagicMock(spec=DbResource, id=300, uri="res://data")
+        mock_gateway.resources = [resource]
+        prompt = MagicMock(spec=DbPrompt, id=400, name="my-prompt", original_name="my-prompt")
+        mock_gateway.prompts = [prompt]
+
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # SELECT
+                _make_execute_result(rowcount=0),  # UPDATE tools reachable
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._notify_gateway_activated = AsyncMock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=True, only_update_reachable=True)
+
+        assert test_db.execute.call_count == 2  # SELECT + UPDATE only (no DELETE)
+        assert len(mock_gateway.resources) == 1
+        assert mock_gateway.resources[0].id == 300
+        assert len(mock_gateway.prompts) == 1
+        assert mock_gateway.prompts[0].id == 400
+
     # ────────────────────────────────────────────────────────────────────
     # DELETE
     # ────────────────────────────────────────────────────────────────────
