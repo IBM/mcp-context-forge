@@ -996,6 +996,43 @@ class TestResourceManagement:
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_resource_team_id_rejects_nonexistent_team(self, resource_service, mock_db, mock_resource):
+        """Reassigning a resource to a non-existent team must raise ResourceError."""
+        mock_resource.team_id = "old-team"
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None  # team not found
+        mock_db.query.return_value = mock_query
+
+        update_data = ResourceUpdate(team_id="nonexistent-team")
+
+        with pytest.raises(Exception, match="not found"):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+    @pytest.mark.asyncio
+    async def test_update_resource_visibility_team_without_team_id_rejects(self, resource_service, mock_db, mock_resource):
+        """Setting visibility to 'team' without any team_id must raise."""
+        mock_resource.team_id = None
+        mock_resource.visibility = "public"
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db.query.return_value = mock_query
+
+        update_data = ResourceUpdate(visibility="team")
+
+        with pytest.raises(Exception, match="without a team_id"):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+    @pytest.mark.asyncio
     async def test_update_resource_not_found(self, resource_service, mock_db):
         """Test updating non-existent resource."""
         update_data = ResourceUpdate(name="New Name")
@@ -1007,6 +1044,43 @@ class TestResourceManagement:
 
         with pytest.raises(ResourceNotFoundError):
             await resource_service.update_resource(mock_db, "http://example.com/missing", update_data)
+
+    @pytest.mark.asyncio
+    async def test_update_resource_team_id_rejects_non_owner(self, resource_service, mock_db, mock_resource):
+        """Reassigning a resource to a team where user is not owner must raise."""
+        from mcpgateway.services.resource_service import _validate_resource_team_assignment
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        # Team exists but membership check returns None
+        mock_query.first.side_effect = [MagicMock(), None]
+
+        mock_session = MagicMock()
+        mock_session.query.return_value = mock_query
+
+        with pytest.raises(ValueError, match="membership"):
+            _validate_resource_team_assignment(mock_session, "user@example.com", "other-team")
+
+    @pytest.mark.asyncio
+    async def test_update_resource_team_id_skips_ownership_without_user_email(self, resource_service, mock_db, mock_resource):
+        """System updates without user_email skip ownership checks and persist team_id."""
+        mock_resource.team_id = "old-team"
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = MagicMock()  # Team exists
+        mock_db.query.return_value = mock_query
+
+        update_data = ResourceUpdate(team_id="new-team")
+
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), \
+             patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data, user_email=None)
+
+        assert mock_resource.team_id == "new-team"
 
     @pytest.mark.asyncio
     async def test_update_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):

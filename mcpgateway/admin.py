@@ -2716,6 +2716,15 @@ async def admin_edit_server(
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
 
+        # Preserve existing server's team_id when no explicit team_id is provided.
+        # Without this guard, verify_team_for_user() falls back to the user's
+        # personal team, silently reassigning the server on every edit.
+        if not team_id:
+            existing_server = db.get(DbServer, server_id)
+            existing_team = getattr(existing_server, "team_id", None) if existing_server else None
+            if isinstance(existing_team, str) and existing_team:
+                team_id = existing_team
+
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -11790,6 +11799,15 @@ async def admin_edit_gateway(
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
 
+        # Preserve existing gateway's team_id when no explicit team_id is provided.
+        # Without this guard, verify_team_for_user() falls back to the user's
+        # personal team, silently reassigning the gateway on every edit.
+        if not team_id:
+            existing_gateway = db.get(DbGateway, gateway_id)
+            existing_team = getattr(existing_gateway, "team_id", None) if existing_gateway else None
+            if isinstance(existing_team, str) and existing_team:
+                team_id = existing_team
+
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -12148,6 +12166,23 @@ async def admin_edit_resource(
     LOGGER.info(f"Form data received for resource edit: {form}")
     visibility = str(form.get("visibility", "private"))
     _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
+
+    user_email = get_user_email(user)
+    team_id_raw = form.get("team_id", None)
+    team_id = str(team_id_raw) if team_id_raw is not None else None
+
+    # Preserve existing resource's team_id when no explicit team_id is provided.
+    # Without this guard, verify_team_for_user() falls back to the user's
+    # personal team, silently reassigning the resource on every edit.
+    if not team_id:
+        existing_resource = db.get(DbResource, resource_id)
+        existing_team = getattr(existing_resource, "team_id", None) if existing_resource else None
+        if isinstance(existing_team, str) and existing_team:
+            team_id = existing_team
+
+    team_service = TeamManagementService(db)
+    team_id = await team_service.verify_team_for_user(user_email, team_id)
+
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -12163,6 +12198,8 @@ async def admin_edit_resource(
             template=str(form.get("template")),
             tags=tags,
             visibility=visibility,
+            team_id=team_id,
+            owner_email=user_email,
         )
         LOGGER.info(f"ResourceUpdate object created: {resource}")
         await resource_service.update_resource(
@@ -12478,11 +12515,20 @@ async def admin_edit_prompt(
     _check_public_visibility_allowed(visibility, team_id=form.get("team_id"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
-    team_id = form.get("team_id", None)
-    LOGGER.info(f"befor Verifying team for user {user_email} with team_id {team_id}")
+    team_id_raw = form.get("team_id", None)
+    team_id = str(team_id_raw) if team_id_raw is not None else None
+
+    # Preserve existing prompt's team_id when no explicit team_id is provided.
+    # Without this guard, verify_team_for_user() falls back to the user's
+    # personal team, silently reassigning the prompt on every edit.
+    if not team_id:
+        existing_prompt = db.get(DbPrompt, prompt_id)
+        existing_team = getattr(existing_prompt, "team_id", None) if existing_prompt else None
+        if isinstance(existing_team, str) and existing_team:
+            team_id = existing_team
+
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
-    LOGGER.info(f"Verifying team for user {user_email} with team_id {team_id}")
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -14981,8 +15027,20 @@ async def admin_edit_a2a_agent(
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
         user_email = get_user_email(user)
+        team_id_raw = form.get("team_id", None)
+        team_id = str(team_id_raw) if team_id_raw is not None else None
+
+        # Preserve existing agent's team_id when no explicit team_id is provided.
+        # Without this guard, verify_team_for_user() falls back to the user's
+        # personal team, silently reassigning the agent on every edit.
+        if not team_id:
+            existing_agent = db.get(DbA2AAgent, agent_id)
+            existing_team = getattr(existing_agent, "team_id", None) if existing_agent else None
+            if isinstance(existing_team, str) and existing_team:
+                team_id = existing_team
+
         team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, form.get("team_id"))
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
 
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))

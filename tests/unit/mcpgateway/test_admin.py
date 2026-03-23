@@ -983,6 +983,89 @@ class TestAdminServerRoutes:
         assert isinstance(response, JSONResponse)
         assert response.status_code == 500
 
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_preserves_team_id_when_not_in_form(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """Editing a server without team_id in form should preserve the existing team, not fall back to personal team."""
+        server_id = "00000000-0000-0000-0000-000000000099"
+        existing_team_id = "team-original"
+
+        # Form data WITHOUT team_id (simulates All Teams view edit)
+        form_data = FakeForm({
+            "id": server_id,
+            "name": "My_Server",
+            "visibility": "team",
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        # Mock existing server in DB with original team
+        mock_existing_server = MagicMock()
+        mock_existing_server.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_server
+
+        # Mock verify_team_for_user to return whatever team_id is passed
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {"id": server_id, "name": "My_Server"}
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        # verify_team_for_user should have been called with the EXISTING team_id, not None
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        # ServerUpdate should have the existing team_id
+        call_args = mock_update_server.call_args
+        server_update = call_args[0][2]
+        assert server_update.team_id == existing_team_id
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_uses_explicit_team_id_from_form(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """When team_id IS provided in the form, it should be used instead of the existing one."""
+        server_id = "00000000-0000-0000-0000-000000000099"
+        explicit_team_id = "team-new"
+
+        form_data = FakeForm({
+            "id": server_id,
+            "name": "My_Server",
+            "visibility": "team",
+            "team_id": explicit_team_id,
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {"id": server_id, "name": "My_Server"}
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        # db.get should NOT have been called — the form-provided team_id takes precedence
+        mock_db.get.assert_not_called()
+        team_service.verify_team_for_user.assert_called_once_with("test-user", explicit_team_id)
+
     @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_activate(self, mock_set_state, mock_request, mock_db):
         """Test activating a server."""
@@ -2484,6 +2567,43 @@ class TestAdminResourceRoutes:
         assert mock_update_resource.call_args[0][1] == uri
 
     @patch.object(ResourceService, "update_resource")
+    async def test_admin_edit_resource_preserves_team_id_when_not_in_form(self, mock_update_resource, mock_request, mock_db, monkeypatch):
+        """Editing a resource without team_id in form should preserve the existing team."""
+        resource_id = "resource-99"
+        existing_team_id = "team-original"
+
+        form_data = FakeForm({
+            "uri": "/test/resource",
+            "name": "My Resource",
+            "mimeType": "text/plain",
+            "content": "hello",
+            "template": "t",
+            "visibility": "team",
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_existing_resource = MagicMock()
+        mock_existing_resource.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_resource
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_resource.return_value = None
+
+        result = await admin_edit_resource(resource_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        call_args = mock_update_resource.call_args
+        resource_update = call_args[0][2]
+        assert resource_update.team_id == existing_team_id
+
+    @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_content_size_error(self, mock_request, mock_db, monkeypatch):
         """Test editing resource with ContentSizeError."""
         from mcpgateway.services.content_security import ContentSizeError
@@ -2770,6 +2890,40 @@ class TestAdminPromptRoutes:
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 413
 
+
+    @patch.object(PromptService, "update_prompt")
+    async def test_admin_edit_prompt_preserves_team_id_when_not_in_form(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
+        """Editing a prompt without team_id in form should preserve the existing team."""
+        prompt_id = "prompt-99"
+        existing_team_id = "team-original"
+
+        form_data = FakeForm({
+            "name": "My Prompt",
+            "template": "Hello {{name}}",
+            "visibility": "team",
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_existing_prompt = MagicMock()
+        mock_existing_prompt.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_prompt
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_prompt.return_value = None
+
+        result = await admin_edit_prompt(prompt_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        call_args = mock_update_prompt.call_args
+        prompt_update = call_args[0][2]
+        assert prompt_update.team_id == existing_team_id
 
     @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_name_change(self, mock_update_prompt, mock_request, mock_db):
@@ -3093,6 +3247,41 @@ class TestAdminGatewayRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code in (400, 422)
         assert body["success"] is False
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_edit_gateway_preserves_team_id_when_not_in_form(self, mock_update_gateway, mock_request, mock_db, monkeypatch):
+        """Editing a gateway without team_id in form should preserve the existing team."""
+        gateway_id = "gateway-99"
+        existing_team_id = "team-original"
+
+        form_data = FakeForm({
+            "name": "Updated_Gateway",
+            "url": "http://example.com:9000/sse",
+            "transport": "SSE",
+            "visibility": "team",
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_existing_gw = MagicMock()
+        mock_existing_gw.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_gw
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+        mock_update_gateway.return_value = None
+
+        result = await admin_edit_gateway(gateway_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert result.status_code == 200
+        team_service.verify_team_for_user.assert_called_once_with("test-user", existing_team_id)
+        call_args = mock_update_gateway.call_args
+        gateway_update = call_args[1].get("gateway") or call_args[0][2]
+        assert gateway_update.team_id == existing_team_id
 
     @patch.object(GatewayService, "set_gateway_state")
     async def test_admin_set_gateway_state_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):
@@ -11799,6 +11988,48 @@ class TestAdminAdditionalCoverage:
         response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
         assert response.status_code == 200
         mock_service.update_agent.assert_called_once()
+
+    async def test_admin_edit_a2a_agent_preserves_team_id_when_not_in_form(self, monkeypatch, mock_request, mock_db):
+        """Editing an A2A agent without team_id in form should preserve the existing team."""
+        agent_id = "agent-99"
+        existing_team_id = "00000000-0000-0000-0000-000000000099"
+
+        mock_service = MagicMock()
+        mock_service.update_agent = AsyncMock()
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", mock_service)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(side_effect=lambda email, tid: tid)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+        encryption = MagicMock()
+        encryption.encrypt_secret_async = AsyncMock(return_value="encrypted")
+        monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda *_args, **_kwargs: encryption)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            MagicMock(return_value={"modified_by": "user", "modified_from_ip": "127.0.0.1", "modified_via": "ui", "modified_user_agent": "test"}),
+        )
+
+        # Form data WITHOUT team_id
+        form_data = FakeForm({
+            "name": "Agent Updated",
+            "endpoint_url": "http://example.com/agent",
+            "visibility": "team",
+        })
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_existing_agent = MagicMock()
+        mock_existing_agent.team_id = existing_team_id
+        mock_db.get.return_value = mock_existing_agent
+
+        response = await admin_edit_a2a_agent(agent_id, mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+
+        assert response.status_code == 200
+        team_service.verify_team_for_user.assert_called_once_with("user@example.com", existing_team_id)
+        call_args = mock_service.update_agent.call_args
+        agent_update = call_args[1].get("agent_data") or call_args[0][2]
+        # UUID is normalized (dashes removed) by schema validation
+        assert agent_update.team_id == existing_team_id.replace("-", "")
 
     async def test_admin_search_a2a_agents_access_filtering(self, monkeypatch, mock_db):
         """Search A2A agents with team access filters."""

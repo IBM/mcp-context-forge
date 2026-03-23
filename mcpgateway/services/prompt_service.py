@@ -38,6 +38,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
@@ -215,6 +216,36 @@ class PromptLockConflictError(PromptError):
         PromptLockConflictError: When attempting to modify a prompt that is
             currently locked by another concurrent request.
     """
+
+
+def _validate_prompt_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+    """Validate team assignment for prompt updates.
+
+    Args:
+        db: Database session used for membership checks.
+        user_email: Requesting user email. When omitted, ownership checks are skipped.
+        target_team_id: Team identifier to validate.
+
+    Raises:
+        ValueError: If team does not exist or caller lacks ownership.
+    """
+    if not target_team_id:
+        raise ValueError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
+    if not team:
+        raise ValueError(f"Team {target_team_id} not found")
+
+    if not user_email:
+        return
+
+    membership = (
+        db.query(DbEmailTeamMember)
+        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+        .first()
+    )
+    if not membership:
+        raise ValueError("User membership in team not sufficient for this update.")
 
 
 class PromptService(BaseService):
@@ -2148,11 +2179,21 @@ class PromptService(BaseService):
                 prompt.argument_schema = argument_schema
 
             if prompt_update.visibility is not None:
+                # Validate visibility transitions
+                if prompt_update.visibility == "team":
+                    target_team_id = prompt_update.team_id if prompt_update.team_id is not None else prompt.team_id
+                    _validate_prompt_team_assignment(db, user_email, target_team_id)
                 prompt.visibility = prompt_update.visibility
 
             # Update tags if provided
             if prompt_update.tags is not None:
                 prompt.tags = prompt_update.tags
+
+            # Update team assignment if provided, validating ownership
+            if prompt_update.team_id is not None:
+                if prompt_update.team_id != prompt.team_id:
+                    _validate_prompt_team_assignment(db, user_email, prompt_update.team_id)
+                prompt.team_id = prompt_update.team_id
 
             # Update metadata fields
             prompt.updated_at = datetime.now(timezone.utc)
