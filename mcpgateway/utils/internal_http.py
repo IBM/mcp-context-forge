@@ -23,7 +23,7 @@ def _is_ssl_enabled() -> bool:
     Returns:
         bool: ``True`` when ``SSL=true`` is set in the environment.
     """
-    return os.getenv("SSL", "false").lower() == "true"
+    return os.getenv("SSL", "false") == "true"
 
 
 def internal_loopback_base_url() -> str:

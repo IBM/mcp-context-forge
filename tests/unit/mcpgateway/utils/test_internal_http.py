@@ -32,13 +32,15 @@ class TestIsSSLEnabled:
         monkeypatch.setenv("SSL", "")
         assert _is_ssl_enabled() is False
 
-    def test_ssl_uppercase(self, monkeypatch):
+    def test_ssl_uppercase_not_truthy(self, monkeypatch):
+        """Shell launchers use exact [[ "${SSL}" == "true" ]], so uppercase is not truthy."""
         monkeypatch.setenv("SSL", "TRUE")
-        assert _is_ssl_enabled() is True
+        assert _is_ssl_enabled() is False
 
-    def test_ssl_mixed_case(self, monkeypatch):
+    def test_ssl_mixed_case_not_truthy(self, monkeypatch):
+        """Only exact lowercase 'true' enables SSL, matching run-gunicorn.sh / run-granian.sh."""
         monkeypatch.setenv("SSL", "True")
-        assert _is_ssl_enabled() is True
+        assert _is_ssl_enabled() is False
 
     def test_ssl_with_whitespace_not_truthy(self, monkeypatch):
         """Whitespace-padded values are not truthy, matching gunicorn.config.py and shell launchers."""
