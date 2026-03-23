@@ -56,7 +56,7 @@ class TestUnixRuntimeRun:
 
         env_vars = {
             "PLUGINS_CONFIG_PATH": "/custom/config.yaml",
-            "UNIX_SOCKET_PATH": "/custom/plugin.sock",
+            "PLUGINS_UNIX_SOCKET_PATH": "/custom/plugin.sock",
         }
         with patch.dict(os.environ, env_vars, clear=True):
             with patch(

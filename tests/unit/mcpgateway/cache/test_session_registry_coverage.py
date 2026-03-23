@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -44,6 +45,74 @@ class FakeSSETransport:
         if not self._connected:
             raise ConnectionError("Transport disconnected")
         self.sent.append(json.loads(json.dumps(msg)))
+
+
+class _FakeQuery:
+    """Minimal SQLAlchemy-like query stub for session owner tests."""
+
+    def __init__(self, db_session: "_FakeDbSession"):
+        self._db_session = db_session
+
+    def filter(self, *_args, **_kwargs):  # noqa: D401 - test helper
+        return self
+
+    def first(self):  # noqa: D401 - test helper
+        if self._db_session.first_results:
+            return self._db_session.first_results.pop(0)
+        return None
+
+    def update(self, values, synchronize_session=False):  # noqa: D401 - test helper, ARG002
+        self._db_session.updated_values.append(values)
+        if self._db_session.update_results:
+            return self._db_session.update_results.pop(0)
+        return 0
+
+
+class _FakeDbSession:
+    """Minimal DB session stub for exercising database owner branches."""
+
+    def __init__(
+        self,
+        *,
+        first_results: Optional[List[Any]] = None,
+        update_results: Optional[List[int]] = None,
+        commit_effects: Optional[List[Any]] = None,
+    ):
+        self.first_results = list(first_results or [])
+        self.update_results = list(update_results or [])
+        self.commit_effects = list(commit_effects or [])
+        self.added: List[Any] = []
+        self.updated_values: List[Dict[str, Any]] = []
+        self.flush_called = False
+        self.rollback_called = False
+        self.closed = False
+        self.commit_called = 0
+
+    def query(self, _model):  # noqa: D401 - test helper
+        return _FakeQuery(self)
+
+    def add(self, obj):  # noqa: D401 - test helper
+        self.added.append(obj)
+
+    def flush(self):  # noqa: D401 - test helper
+        self.flush_called = True
+
+    def commit(self):  # noqa: D401 - test helper
+        self.commit_called += 1
+        if self.commit_effects:
+            effect = self.commit_effects.pop(0)
+            if isinstance(effect, Exception):
+                raise effect
+
+    def rollback(self):  # noqa: D401 - test helper
+        self.rollback_called = True
+
+    def close(self):  # noqa: D401 - test helper
+        self.closed = True
+
+
+async def _run_sync_to_thread(func, *args, **kwargs):  # noqa: D401 - test helper
+    return func(*args, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -917,7 +986,7 @@ class TestRespondBackends:
         reg._backend = "redis"
         reg._redis = None
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert "Redis client not initialized, cannot respond to sid" in caplog.text
 
     @pytest.mark.asyncio
@@ -969,7 +1038,7 @@ class TestRespondBackends:
 
         reg._redis = _MockRedis()
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert captured["transport"] is tr
         assert captured["message"]["method"] == "ping"
         assert pubsub.unsubscribed == "sid"
@@ -1015,7 +1084,7 @@ class TestRespondBackends:
 
         reg._redis = _MockRedis()
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert pubsub.unsubscribed == "sid"
         assert pubsub.closed is True
 
@@ -1060,7 +1129,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)) as mock_sleep:
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
             mock_sleep.assert_any_await(0.1)
 
         assert pubsub.unsubscribed == "sid"
@@ -1106,7 +1175,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)) as mock_sleep:
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
             mock_sleep.assert_any_await(0.1)
 
         assert pubsub.unsubscribed == "sid"
@@ -1153,7 +1222,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert pubsub.unsubscribed == "sid"
         assert pubsub.closed is True
@@ -1199,7 +1268,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert pubsub.unsubscribed == "sid"
 
@@ -1230,7 +1299,7 @@ class TestRespondBackends:
 
         reg._redis = _MockRedis()
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert "PubSub listener error for session sid: boom" in caplog.text
 
     @pytest.mark.asyncio
@@ -1261,7 +1330,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with pytest.raises(asyncio.CancelledError):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "PubSub listener for session sid cancelled" in caplog.text
 
@@ -1295,7 +1364,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Pubsub unsubscribe timed out for session sid" in caplog.text
 
@@ -1328,7 +1397,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Error unsubscribing pubsub for session sid: unsub boom" in caplog.text
 
@@ -1361,7 +1430,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Pubsub close timed out for session sid" in caplog.text
 
@@ -1394,7 +1463,7 @@ class TestRespondBackends:
         reg._redis = _MockRedis()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Error closing pubsub for session sid: close boom" in caplog.text
 
@@ -1406,7 +1475,7 @@ class TestRespondBackends:
         reg._backend = "database"
         reg._closing_sessions.add("sid")
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert "closing, stopping poll loop early" in caplog.text
 
     @pytest.mark.asyncio
@@ -1455,7 +1524,7 @@ class TestRespondBackends:
         monkeypatch.setattr(reg, "generate_response", AsyncMock(return_value=None))
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         reg.generate_response.assert_awaited()
         assert mock_db.commit.called
@@ -1490,7 +1559,7 @@ class TestRespondBackends:
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
-            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert mock_db.close.called
 
@@ -1505,7 +1574,7 @@ class TestRespondBackends:
             raise RuntimeError("db poll boom")
 
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", boom_to_thread)
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         assert "Message check loop error for session sid" in caplog.text
 
     @pytest.mark.asyncio
@@ -1532,7 +1601,7 @@ class TestRespondBackends:
 
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
         mock_db.rollback.assert_called()
         mock_db.close.assert_called()
 
@@ -1579,7 +1648,7 @@ class TestRespondBackends:
 
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
 
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
 
         mock_db.rollback.assert_called()
         mock_db.close.assert_called()
@@ -1602,7 +1671,7 @@ class TestRespondBackends:
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", cancel_sleep):
             with pytest.raises(asyncio.CancelledError):
-                await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+                await reg.respond(server_id=None, user={}, session_id="sid")
 
         assert "Message check loop cancelled for session sid" in caplog.text
         assert "Database respond cancelled for session sid" in caplog.text
@@ -1612,7 +1681,7 @@ class TestRespondBackends:
         """Line 1253->exit: Force respond() backend chain fall-through for branch coverage."""
         reg = SessionRegistry(backend="memory")
         reg._backend = "unknown"
-        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        await reg.respond(server_id=None, user={}, session_id="sid")
 
 
 # ---------------------------------------------------------------------------
@@ -2176,7 +2245,7 @@ class TestGenerateResponseEdgeCases:
                 transport=tr,
                 server_id=None,
                 user={"auth_token": "my_jwt_token", "email": "user@test.com"},
-                base_url="http://host",
+
             )
 
         assert tr.sent[-1] == {"jsonrpc": "2.0", "result": {}, "id": 77}
@@ -2214,7 +2283,6 @@ class TestGenerateResponseEdgeCases:
                     transport=tr,
                     server_id=None,
                     user={"auth_token": "tok", "email": "u@t.com"},
-                    base_url="http://host",
                 )
 
                 mock_reg.assert_awaited_once()
@@ -2225,10 +2293,10 @@ class TestGenerateResponseEdgeCases:
         assert "x-mcp-session-id" in headers
 
     @pytest.mark.asyncio
-    async def test_generate_response_servers_path_extraction(self, registry, stub_db, stub_services):
-        """Lines 1962-1968: URL path with /servers/ prefix."""
-        tr = FakeSSETransport("srv_path")
-        await registry.add_session("srv_path", tr)
+    async def test_generate_response_uses_loopback_url(self, registry, stub_db, stub_services):
+        """Verify generate_response uses loopback URL for internal RPC call (#3049)."""
+        tr = FakeSSETransport("loopback_test")
+        await registry.add_session("loopback_test", tr)
 
         mock_response = Mock()
         mock_response.json.return_value = {"result": {}, "id": 99}
@@ -2254,14 +2322,11 @@ class TestGenerateResponseEdgeCases:
                 transport=tr,
                 server_id=None,
                 user={"auth_token": "tok"},
-                base_url="http://host/prefix/servers/abc123",
             )
 
-        # Verify the RPC URL strips the /servers/ part
         call_args = mock_client.post.call_args
         url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert "/servers/" not in url
-        assert url.endswith("/rpc")
+        assert url == f"http://127.0.0.1:{settings.port}/rpc"
 
 
 # ---------------------------------------------------------------------------
@@ -2407,104 +2472,6 @@ class TestReapStuckTasksDoneException:
 
 
 # ---------------------------------------------------------------------------
-# generate_response: servers path where root_path == "/" (lines 1965-1966)
-# ---------------------------------------------------------------------------
-class TestGenerateResponseServersPath:
-    """Cover the /servers/ path extraction edge case."""
-
-    @pytest.mark.asyncio
-    async def test_generate_response_servers_at_root(self, registry, stub_db, stub_services):
-        """Lines 1965-1966: root_path == '/' becomes empty string."""
-        tr = FakeSSETransport("root_srv")
-        await registry.add_session("root_srv", tr)
-
-        mock_response = Mock()
-        mock_response.json.return_value = {"result": {}, "id": 55}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-
-        class MockAsyncClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                return None
-
-        msg = {"method": "ping", "id": 55, "params": {}}
-
-        with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
-            await registry.generate_response(
-                message=msg,
-                transport=tr,
-                server_id=None,
-                user={"auth_token": "tok"},
-                base_url="http://host/servers/abc123",
-            )
-
-        call_args = mock_client.post.call_args
-        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert url == "http://host/rpc"
-
-    @pytest.mark.asyncio
-    async def test_generate_response_servers_index_value_error(self, registry, stub_db, stub_services):
-        """Lines 1966-1967: ValueError in path_parts.index('servers') falls back to empty root_path."""
-        tr = FakeSSETransport("valerr_srv")
-        await registry.add_session("valerr_srv", tr)
-
-        mock_response = Mock()
-        mock_response.json.return_value = {"result": {}, "id": 56}
-
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-
-        class MockAsyncClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return mock_client
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                return None
-
-        class _Parts(list):
-            def index(self, *_args, **_kwargs):  # noqa: A003 - match list.index signature
-                raise ValueError("servers not found")
-
-        class _Path(str):
-            def split(self, sep=None, maxsplit=-1):  # noqa: D401
-                return _Parts(super().split(sep, maxsplit))
-
-        class _Parsed:
-            scheme = "http"
-            netloc = "host"
-            path = _Path("/servers/abc123")
-
-        def fake_urlparse(_url: str):  # noqa: D401
-            return _Parsed()
-
-        msg = {"method": "ping", "id": 56, "params": {}}
-
-        with patch("mcpgateway.cache.session_registry.urlparse", fake_urlparse):
-            with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
-                await registry.generate_response(
-                    message=msg,
-                    transport=tr,
-                    server_id=None,
-                    user={"auth_token": "tok"},
-                    base_url="http://ignored/servers/abc123",
-                )
-
-        call_args = mock_client.post.call_args
-        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert url == "http://host/rpc"
-
-
-# ---------------------------------------------------------------------------
 # OAuth config: scopes fallback (line 1727->1731 branch)
 # ---------------------------------------------------------------------------
 class TestOauthConfigScopesBranch:
@@ -2534,6 +2501,534 @@ class TestOauthConfigScopesBranch:
         assert result is not None
         assert "scopes_supported" not in result["oauth"]
         assert result["oauth"]["bearer_methods_supported"] == ["header"]
+
+
+class TestSessionOwnerTracking:
+    """Cover session owner set/get lifecycle for message authorization."""
+
+    @pytest.mark.asyncio
+    async def test_set_and_get_session_owner_memory_backend(self, registry):
+        tr = FakeSSETransport("owner-1")
+        await registry.add_session("owner-1", tr)
+
+        await registry.set_session_owner("owner-1", "owner@example.com")
+        owner = await registry.get_session_owner("owner-1")
+        assert owner == "owner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_none_backend_noop(self, registry):
+        registry._backend = "none"
+        await registry.set_session_owner("owner-none", "owner@example.com")
+        assert "owner-none" not in registry._session_owners
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_memory_clear(self, registry):
+        await registry.set_session_owner("owner-clear", "owner@example.com")
+        await registry.set_session_owner("owner-clear", None)
+        assert "owner-clear" not in registry._session_owners
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_redis_without_client(self, registry):
+        registry._backend = "redis"
+        registry._redis = None
+        await registry.set_session_owner("owner-r-noclient", "owner@example.com")
+        # Local cache is still updated before backend write attempt.
+        assert registry._session_owners["owner-r-noclient"] == "owner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_redis_set_and_delete(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        registry._redis = redis_client
+
+        await registry.set_session_owner("owner-r1", "owner@example.com")
+        redis_client.setex.assert_awaited_once_with("mcp:session_owner:owner-r1", registry._session_ttl, "owner@example.com")
+
+        await registry.set_session_owner("owner-r1", None)
+        redis_client.delete.assert_awaited_with("mcp:session_owner:owner-r1")
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_redis_logs_error(self, registry, caplog):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.setex.side_effect = RuntimeError("redis down")
+        registry._redis = redis_client
+        caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+        await registry.set_session_owner("owner-r-err", "owner@example.com")
+        assert "Redis error setting owner for session owner-r-err" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_database_creates_record(self, registry):
+        registry._backend = "database"
+        fake_db = _FakeDbSession(first_results=[None])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            await registry.set_session_owner("owner-db-1", "owner@example.com")
+
+        assert fake_db.flush_called is True
+        assert fake_db.commit_called >= 1
+        assert fake_db.closed is True
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_database_handles_invalid_existing_data(self, registry):
+        registry._backend = "database"
+        fake_record = SimpleNamespace(data="{invalid-json")
+        fake_db = _FakeDbSession(first_results=[fake_record])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            await registry.set_session_owner("owner-db-2", "owner@example.com")
+
+        assert "owner_email" in fake_record.data
+        assert fake_db.commit_called >= 1
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_database_parses_existing_dict_and_clears_owner(self, registry):
+        registry._backend = "database"
+        fake_record = SimpleNamespace(data='{"owner_email":"old@example.com","x":1}')
+        fake_db = _FakeDbSession(first_results=[fake_record])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            await registry.set_session_owner("owner-db-2b", None)
+
+        assert "owner_email" not in (fake_record.data or "")
+        assert '"x":1' in (fake_record.data or "")
+
+    @pytest.mark.asyncio
+    async def test_set_session_owner_database_rollback_path(self, registry, caplog):
+        registry._backend = "database"
+        fake_record = SimpleNamespace(data=None)
+        fake_db = _FakeDbSession(first_results=[fake_record], commit_effects=[RuntimeError("db write failed")])
+
+        def fake_get_db():
+            yield fake_db
+
+        caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            await registry.set_session_owner("owner-db-3", "owner@example.com")
+
+        assert fake_db.rollback_called is True
+        assert "Database error setting owner for session owner-db-3" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_remove_session_clears_session_owner(self, registry):
+        tr = FakeSSETransport("owner-2")
+        await registry.add_session("owner-2", tr)
+        await registry.set_session_owner("owner-2", "owner@example.com")
+
+        await registry.remove_session("owner-2")
+        owner = await registry.get_session_owner("owner-2")
+        assert owner is None
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_memory_backend_returns_existing_owner(self, registry):
+        tr = FakeSSETransport("owner-3")
+        await registry.add_session("owner-3", tr)
+
+        first = await registry.claim_session_owner("owner-3", "first@example.com")
+        second = await registry.claim_session_owner("owner-3", "second@example.com")
+
+        assert first == "first@example.com"
+        assert second == "first@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_memory_backend_is_atomic_under_concurrency(self, registry):
+        tr = FakeSSETransport("owner-4")
+        await registry.add_session("owner-4", tr)
+
+        first_task = asyncio.create_task(registry.claim_session_owner("owner-4", "first@example.com"))
+        second_task = asyncio.create_task(registry.claim_session_owner("owner-4", "second@example.com"))
+
+        first_result, second_result = await asyncio.gather(first_task, second_task)
+
+        assert first_result == second_result
+        assert first_result in {"first@example.com", "second@example.com"}
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_none_backend(self, registry):
+        registry._backend = "none"
+        claimed = await registry.claim_session_owner("owner-none-claim", "owner@example.com")
+        assert claimed == "owner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_memory_existing_owner_inside_lock(self, registry):
+        registry._backend = "memory"
+        registry._session_owners.clear()
+
+        class InjectingLock:
+            async def __aenter__(self_inner):  # noqa: ANN001
+                registry._session_owners["owner-lock"] = "existing@example.com"
+
+            async def __aexit__(self_inner, exc_type, exc, tb):  # noqa: ANN001, ARG002
+                return False
+
+        registry._lock = InjectingLock()
+        claimed = await registry.claim_session_owner("owner-lock", "owner@example.com")
+        assert claimed == "existing@example.com"
+
+    @pytest.mark.asyncio
+    async def test_session_exists_memory_backend(self, registry):
+        assert await registry.session_exists("missing-session") is False
+
+        tr = FakeSSETransport("owner-5")
+        await registry.add_session("owner-5", tr)
+        assert await registry.session_exists("owner-5") is True
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_without_client_returns_none(self, registry):
+        registry._backend = "redis"
+        registry._redis = None
+
+        claimed = await registry.claim_session_owner("owner-6", "owner@example.com")
+        assert claimed is None
+        assert "owner-6" not in registry._session_owners
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_claim_success(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.return_value = True
+        registry._redis = redis_client
+
+        claimed = await registry.claim_session_owner("owner-7", "owner@example.com")
+        assert claimed == "owner@example.com"
+        assert registry._session_owners["owner-7"] == "owner@example.com"
+        redis_client.set.assert_awaited_once_with("mcp:session_owner:owner-7", "owner@example.com", ex=registry._session_ttl, nx=True)
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_returns_existing_owner_when_nx_fails(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.side_effect = [False]
+        redis_client.get.return_value = b"existing@example.com"
+        registry._redis = redis_client
+
+        claimed = await registry.claim_session_owner("owner-8", "owner@example.com")
+        assert claimed == "existing@example.com"
+        assert registry._session_owners["owner-8"] == "existing@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_retry_claim_success(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.side_effect = [False, True]
+        redis_client.get.return_value = None
+        registry._redis = redis_client
+
+        claimed = await registry.claim_session_owner("owner-8b", "owner@example.com")
+        assert claimed == "owner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_retry_reads_owner_after_second_failure(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.side_effect = [False, False]
+        redis_client.get.side_effect = [None, b"final@example.com"]
+        registry._redis = redis_client
+
+        claimed = await registry.claim_session_owner("owner-8c", "owner@example.com")
+        assert claimed == "final@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_retry_returns_none_when_owner_missing(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.side_effect = [False, False]
+        redis_client.get.side_effect = [None, None]
+        registry._redis = redis_client
+
+        claimed = await registry.claim_session_owner("owner-8d", "owner@example.com")
+        assert claimed is None
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_retry_owner_empty_string_returns_none(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.side_effect = [False, False]
+        redis_client.get.side_effect = [None, b""]
+        registry._redis = redis_client
+
+        claimed = await registry.claim_session_owner("owner-8d-empty", "owner@example.com")
+        assert claimed is None
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_redis_error(self, registry, caplog):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.set.side_effect = RuntimeError("redis failure")
+        registry._redis = redis_client
+        caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+        claimed = await registry.claim_session_owner("owner-8e", "owner@example.com")
+        assert claimed is None
+        assert "Redis error claiming owner for session owner-8e" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_uses_thread_result(self, registry):
+        registry._backend = "database"
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(return_value="dbowner@example.com")):
+            claimed = await registry.claim_session_owner("owner-9", "owner@example.com")
+
+        assert claimed == "dbowner@example.com"
+        assert registry._session_owners["owner-9"] == "dbowner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_returns_none_when_unverifiable(self, registry):
+        registry._backend = "database"
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(return_value=None)):
+            claimed = await registry.claim_session_owner("owner-10", "owner@example.com")
+
+        assert claimed is None
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_create_conflict_then_success(self, registry):
+        registry._backend = "database"
+        # First loop insert commit fails -> rollback/continue; second loop succeeds.
+        fake_db = _FakeDbSession(first_results=[None, None], commit_effects=[RuntimeError("dup"), None])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            claimed = await registry.claim_session_owner("owner-db-claim-1", "owner@example.com")
+
+        assert claimed == "owner@example.com"
+        assert fake_db.rollback_called is True
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_returns_existing_owner(self, registry):
+        registry._backend = "database"
+        fake_record = SimpleNamespace(data='{"owner_email":"existing@example.com"}')
+        fake_db = _FakeDbSession(first_results=[fake_record])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            claimed = await registry.claim_session_owner("owner-db-claim-2", "owner@example.com")
+
+        assert claimed == "existing@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_updates_missing_owner_none_data(self, registry):
+        registry._backend = "database"
+        fake_record = SimpleNamespace(data=None)
+        fake_db = _FakeDbSession(first_results=[fake_record], update_results=[1])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            claimed = await registry.claim_session_owner("owner-db-claim-3", "owner@example.com")
+
+        assert claimed == "owner@example.com"
+        assert fake_db.updated_values
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_updates_missing_owner_invalid_json(self, registry):
+        registry._backend = "database"
+        fake_record = SimpleNamespace(data="{not-json")
+        fake_db = _FakeDbSession(first_results=[fake_record], update_results=[1])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            claimed = await registry.claim_session_owner("owner-db-claim-4", "owner@example.com")
+
+        assert claimed == "owner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_update_conflict_retries_and_returns_none(self, registry):
+        registry._backend = "database"
+        fake_record = SimpleNamespace(data=None)
+        fake_db = _FakeDbSession(first_results=[fake_record, fake_record, fake_record], update_results=[0, 0, 0])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            claimed = await registry.claim_session_owner("owner-db-claim-5", "owner@example.com")
+
+        assert claimed is None
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_database_outer_exception(self, registry, caplog):
+        registry._backend = "database"
+        caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(side_effect=RuntimeError("thread fail"))):
+            claimed = await registry.claim_session_owner("owner-db-claim-6", "owner@example.com")
+
+        assert claimed is None
+        assert "Database error claiming owner for session owner-db-claim-6" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_claim_session_owner_unknown_backend_returns_none(self, registry):
+        registry._backend = "custom"
+        claimed = await registry.claim_session_owner("owner-unknown-backend", "owner@example.com")
+        assert claimed is None
+
+    @pytest.mark.asyncio
+    async def test_session_exists_redis_backend(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.exists.return_value = 1
+        registry._redis = redis_client
+
+        assert await registry.session_exists("owner-11") is True
+
+        redis_client.exists.return_value = 0
+        assert await registry.session_exists("owner-12") is False
+
+    @pytest.mark.asyncio
+    async def test_session_exists_redis_without_client_is_unverifiable(self, registry):
+        registry._backend = "redis"
+        registry._redis = None
+        assert await registry.session_exists("owner-13") is None
+
+    @pytest.mark.asyncio
+    async def test_session_exists_redis_exception_returns_none(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        redis_client.exists.side_effect = RuntimeError("redis exists failed")
+        registry._redis = redis_client
+        assert await registry.session_exists("owner-13e") is None
+
+    @pytest.mark.asyncio
+    async def test_session_exists_database_backend(self, registry):
+        registry._backend = "database"
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(return_value=True)):
+            assert await registry.session_exists("owner-14") is True
+
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(side_effect=RuntimeError("db error"))):
+            assert await registry.session_exists("owner-14") is None
+
+    @pytest.mark.asyncio
+    async def test_session_exists_none_and_unknown_backend(self, registry):
+        registry._backend = "none"
+        assert await registry.session_exists("owner-15") is False
+
+        registry._backend = "custom"
+        assert await registry.session_exists("owner-15") is False
+
+    @pytest.mark.asyncio
+    async def test_session_exists_database_executes_inner_query(self, registry):
+        registry._backend = "database"
+        fake_db = _FakeDbSession(first_results=[SimpleNamespace(data=None)])
+
+        def fake_get_db():
+            yield fake_db
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            exists = await registry.session_exists("owner-16")
+
+        assert exists is True
+        assert fake_db.closed is True
+
+    @pytest.mark.asyncio
+    async def test_get_session_owner_redis_branches(self, registry, caplog):
+        registry._backend = "redis"
+        caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+        registry._redis = None
+        assert await registry.get_session_owner("owner-17") is None
+
+        redis_client = AsyncMock()
+        redis_client.get.side_effect = [None, b"redis@example.com", "redis2@example.com", RuntimeError("redis get error")]
+        registry._redis = redis_client
+
+        assert await registry.get_session_owner("owner-18") is None
+        assert await registry.get_session_owner("owner-19") == "redis@example.com"
+        # Clear cache to cover non-bytes decode path.
+        registry._session_owners.pop("owner-19", None)
+        assert await registry.get_session_owner("owner-19") == "redis2@example.com"
+        # Clear cache to force backend call and exception path.
+        registry._session_owners.pop("owner-19", None)
+        assert await registry.get_session_owner("owner-19") is None
+        assert "Redis error getting owner for session owner-19" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_get_session_owner_database_branches(self, registry, caplog):
+        registry._backend = "database"
+        caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+
+        # No record
+        fake_db_none = _FakeDbSession(first_results=[None])
+        # Invalid JSON
+        fake_db_invalid = _FakeDbSession(first_results=[SimpleNamespace(data="{bad-json")])
+        # Non-dict JSON
+        fake_db_nondict = _FakeDbSession(first_results=[SimpleNamespace(data="[]")])
+        # Valid owner
+        fake_db_valid = _FakeDbSession(first_results=[SimpleNamespace(data='{"owner_email":"db@example.com"}')])
+        db_sessions = [fake_db_none, fake_db_invalid, fake_db_nondict, fake_db_valid]
+
+        def fake_get_db():
+            yield db_sessions.pop(0)
+
+        with (
+            patch("mcpgateway.cache.session_registry.get_db", fake_get_db),
+            patch("mcpgateway.cache.session_registry.asyncio.to_thread", _run_sync_to_thread),
+        ):
+            assert await registry.get_session_owner("owner-db-g1") is None
+            assert await registry.get_session_owner("owner-db-g2") is None
+            assert await registry.get_session_owner("owner-db-g3") is None
+            assert await registry.get_session_owner("owner-db-g4") == "db@example.com"
+
+        with patch("mcpgateway.cache.session_registry.asyncio.to_thread", new=AsyncMock(side_effect=RuntimeError("db read error"))):
+            assert await registry.get_session_owner("owner-db-g5") is None
+        assert "Database error getting owner for session owner-db-g5" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_remove_session_redis_deletes_owner_key(self, registry):
+        registry._backend = "redis"
+        redis_client = AsyncMock()
+        registry._redis = redis_client
+        tr = FakeSSETransport("owner-20")
+        await registry.add_session("owner-20", tr)
+        await registry.set_session_owner("owner-20", "owner@example.com")
+
+        await registry.remove_session("owner-20")
+        redis_client.delete.assert_any_await("mcp:session:owner-20")
+        redis_client.delete.assert_any_await("mcp:session_owner:owner-20")
 
 
 if __name__ == "__main__":

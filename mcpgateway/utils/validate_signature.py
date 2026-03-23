@@ -316,4 +316,4 @@ if __name__ == "__main__":
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode()
 
-    logger.info("Signature valid:", validate_signature(message, sig, public_pem))
+    logger.info("Signature valid: %s", validate_signature(message, sig, public_pem))

@@ -1,6 +1,6 @@
 # Migration Guide: Upgrading to Multi-Tenancy (v0.6.0 to v0.7.0)
 
-This guide walks you through upgrading from MCP Gateway v0.6.0 to v0.7.0 that implements comprehensive multi-tenancy, team management, and RBAC.
+This guide walks you through upgrading from ContextForge v0.6.0 to v0.7.0 that implements comprehensive multi-tenancy, team management, and RBAC.
 
 ## Overview
 
@@ -38,9 +38,6 @@ cp mcp.db mcp.db.backup.$(date +%Y%m%d_%H%M%S)
 
 # For PostgreSQL
 pg_dump -h localhost -U postgres -d mcp > mcp_backup_$(date +%Y%m%d_%H%M%S).sql
-
-# For MySQL
-mysqldump -u mysql -p mcp > mcp_backup_$(date +%Y%m%d_%H%M%S).sql
 ```
 
 #### Environment Configuration Backup
@@ -53,7 +50,7 @@ cp .env .env.bak
 **💡 Export your current configuration via the Admin UI before migration:**
 
 ```bash
-# 1. Start your current MCP Gateway
+# 1. Start your current ContextForge
 make dev  # or however you normally run it
 
 # 2. Access the admin UI
@@ -170,7 +167,7 @@ The migration process is automated and handles:
 
 **⚠️ PREREQUISITE**: Ensure `.env` file is configured with `PLATFORM_ADMIN_EMAIL` etc. (see step 3 above)
 **✅ Configuration**: Uses your `.env` settings automatically
-**✅ Database Compatibility**: Works with **SQLite**, **PostgreSQL**, and **MySQL**
+**✅ Database Compatibility**: Works with **SQLite** and **PostgreSQL**
 
 ```bash
 # IMPORTANT: Setup .env first (if not already done)
@@ -557,10 +554,6 @@ cp mcp.db.backup.YYYYMMDD_HHMMSS mcp.db
 dropdb mcp
 createdb mcp
 psql -d mcp < mcp_backup_YYYYMMDD_HHMMSS.sql
-
-# For MySQL
-mysql -u mysql -p -e "DROP DATABASE mcp; CREATE DATABASE mcp;"
-mysql -u mysql -p mcp < mcp_backup_YYYYMMDD_HHMMSS.sql
 ```
 
 ### 2. Revert Environment Configuration
@@ -666,7 +659,7 @@ python3 scripts/fix_multitenancy_0_7_0_resources.py
 
 > **Common Issue**: `sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) disk I/O error`
 
-This section helps diagnose and fix SQLite database issues, especially with MCP Gateway v0.7.0 multitenancy.
+This section helps diagnose and fix SQLite database issues, especially with ContextForge v0.7.0 multitenancy.
 
 ### Quick Diagnosis Commands
 
@@ -921,7 +914,7 @@ python3 scripts/test_sqlite.py --database-url "sqlite:////Users/$USER/Library/Ap
 
 This script tests:
 - Direct SQLite access
-- SQLAlchemy engine with MCP Gateway settings
+- SQLAlchemy engine with ContextForge settings
 - System diagnostics and recommendations
 
 ### Quick Reference Table

@@ -6,7 +6,7 @@
 
 ## Context
 
-MCP Gateway uses Gunicorn with Uvicorn workers as its production HTTP server stack. This provides good performance with the `uvicorn[standard]` extras (ADR-0024) and is battle-tested. However, a Rust-based alternative called Granian offers potential benefits:
+ContextForge uses Gunicorn with Uvicorn workers as its production HTTP server stack. This provides good performance with the `uvicorn[standard]` extras (ADR-0024) and is battle-tested. However, a Rust-based alternative called Granian offers potential benefits:
 
 - Native HTTP/2 support (without requiring a reverse proxy)
 - Native WebSocket support
@@ -180,12 +180,12 @@ services:
 ```bash
 # Run container with Gunicorn (default)
 make container-run
-make container-run-gunicorn
-make container-run-gunicorn-ssl
+make container-run CONTAINER_HTTP_SERVER=gunicorn
+make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn
 
 # Run container with Granian (alternative)
-make container-run-granian
-make container-run-granian-ssl
+make container-run CONTAINER_HTTP_SERVER=granian
+make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian
 
 # Or pass HTTP_SERVER directly
 docker run mcpgateway/mcpgateway                         # Gunicorn (default)

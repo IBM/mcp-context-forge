@@ -55,7 +55,7 @@ class DummySettings:
     validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
 
     # Character validation patterns
-    validation_name_pattern = r"^[a-zA-Z0-9_.\-\s]+$"  # Names can have spaces
+    validation_name_pattern = r"^[a-zA-Z0-9_.\- ]+$"  # Names can have spaces (literal space, not \s to reject control chars)
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"  # IDs cannot have spaces
     validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern = r'[<>"\'\\]'
@@ -386,6 +386,20 @@ def test_validate_name_invalid():
             SecurityValidator.validate_name(name, "Name")
 
 
+def test_validate_name_rejects_control_characters():
+    """EDGE-03: Control characters (\\n, \\t, \\r) must be rejected, not treated as whitespace."""
+    control_char_names = [
+        "test\nname",   # newline
+        "test\tname",   # tab
+        "test\rname",   # carriage return
+        "test\x0bname", # vertical tab
+        "test\x0cname", # form feed
+    ]
+    for name in control_char_names:
+        with pytest.raises(ValueError, match="can only contain letters, numbers"):
+            SecurityValidator.validate_name(name, "Name")
+
+
 def test_validate_name_length():
     """Test name length validation."""
     # At limit (100 chars)
@@ -572,14 +586,14 @@ def test_validate_template_dangerous():
 
 
 def test_validate_template_length():
-    """Test template length validation."""
+    """Test template length passes schema validation (size enforced at service layer)."""
     # At limit (10000 chars)
     valid_template = "a" * 10000
     assert SecurityValidator.validate_template(valid_template) == valid_template
 
-    # Over limit
-    with pytest.raises(ValueError, match="exceeds maximum length"):
-        SecurityValidator.validate_template("a" * 10001)
+    # Over limit - schema no longer rejects; size enforcement is at service layer
+    over_limit = "a" * 10001
+    assert SecurityValidator.validate_template(over_limit) == over_limit
 
 
 # =============================================================================
@@ -594,8 +608,8 @@ def test_validate_url_valid():
         "https://example.com",
         "https://example.com/path",
         "https://example.com:8080/path?query=value",
-        "ws://websocket.example.com",
-        "wss://secure-websocket.example.com",
+        "ws://example.com/ws",
+        "wss://example.com/ws",
     ]
 
     for url in valid_urls:
@@ -863,10 +877,16 @@ class TestValidateMimeType:
         assert SecurityValidator.validate_mime_type("image/jpeg") == "image/jpeg"
 
     def test_invalid_format(self):
-        with pytest.raises(ValueError, match="Invalid MIME type"):
-            SecurityValidator.validate_mime_type("invalid")
-        with pytest.raises(ValueError, match="Invalid MIME type"):
-            SecurityValidator.validate_mime_type("text/")
+        allowed_mime_types = DummySettings.validation_allowed_mime_types
+        invalid_mime_types = [
+            "invalid",
+            *(f"{mime_type};param" for mime_type in allowed_mime_types),
+            *(f"{mime_type}; charset" for mime_type in allowed_mime_types),
+            *(f"{mime_type.split('/', 1)[0]}/" for mime_type in allowed_mime_types if "/" in mime_type),
+        ]
+        for mime_type in invalid_mime_types:
+            with pytest.raises(ValueError, match="Invalid MIME type"):
+                SecurityValidator.validate_mime_type(mime_type)
 
     def test_vendor_types_allowed(self):
         assert SecurityValidator.validate_mime_type("application/x-custom") == "application/x-custom"
@@ -876,9 +896,20 @@ class TestValidateMimeType:
         assert SecurityValidator.validate_mime_type("application/vnd.api+json") == "application/vnd.api+json"
         assert SecurityValidator.validate_mime_type("image/svg+xml") == "image/svg+xml"
 
+    def test_parameterized_types_allowed(self):
+        allowed_parameterized_types = [
+            "text/plain; charset=utf-8",
+            "application/json; charset=utf-8",
+            "text/html; profile=interactive-app",
+        ]
+        for mime_type in allowed_parameterized_types:
+            assert SecurityValidator.validate_mime_type(mime_type) == mime_type
+
     def test_not_in_whitelist(self):
         with pytest.raises(ValueError, match="not in the allowed list"):
             SecurityValidator.validate_mime_type("application/evil")
+        with pytest.raises(ValueError, match="not in the allowed list"):
+            SecurityValidator.validate_mime_type("application/evil; charset=utf-8")
 
 
 # --------------------------------------------------------------------------- #
@@ -1185,6 +1216,7 @@ class TestValidateSsrf:
         s.ssrf_blocked_hosts = ["metadata.google.internal"]
         s.ssrf_allow_localhost = False
         s.ssrf_allow_private_networks = False
+        s.ssrf_allowed_networks = []
         s.ssrf_dns_fail_closed = True
         return s
 
@@ -1208,6 +1240,11 @@ class TestValidateSsrf:
             with pytest.raises(ValueError, match="private network"):
                 SecurityValidator._validate_ssrf("10.1.2.3", "URL")
 
+    def test_private_network_allowed_when_in_allowlist(self, ssrf_settings):
+        ssrf_settings.ssrf_allowed_networks = ["10.1.0.0/16"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("10.1.2.3", "URL")  # Should not raise
+
     def test_dns_fail_closed(self, ssrf_settings):
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             with patch("socket.getaddrinfo", side_effect=socket.gaierror):
@@ -1226,6 +1263,12 @@ class TestValidateSsrf:
         ssrf_settings.ssrf_allow_private_networks = True
         with patch("mcpgateway.common.validators.settings", ssrf_settings):
             SecurityValidator._validate_ssrf("8.8.8.8", "URL")  # Should not raise
+
+    def test_invalid_allowlist_cidr_logged(self, ssrf_settings):
+        ssrf_settings.ssrf_allowed_networks = ["invalid-cidr"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="private network"):
+                SecurityValidator._validate_ssrf("10.1.2.3", "URL")
 
     def test_no_resolved_addresses_fail_closed(self, ssrf_settings):
         """DNS resolves but returns no valid addresses."""

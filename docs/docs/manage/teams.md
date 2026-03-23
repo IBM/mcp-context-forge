@@ -1,6 +1,6 @@
 # Team Management
 
-MCP Gateway organizes users into teams so you can scope access and group operational responsibilities. While first-class UI for team administration is evolving, teams are already referenced across SSO guides and configuration for mapping identities to gateway-scoped groups.
+ContextForge organizes users into teams so you can scope access and group operational responsibilities. While first-class UI for team administration is evolving, teams are already referenced across SSO guides and configuration for mapping identities to gateway-scoped groups.
 
 ---
 
@@ -34,7 +34,7 @@ GOOGLE_GROUPS_MAPPING={"group1@yourcompany.com": "team-uuid-1", "admins@yourcomp
 
 ```bash
 # Map Okta groups to gateway team IDs
-OKTA_GROUP_MAPPING={"MCP Gateway Admins": "admin-team-uuid", "MCP Gateway Users": "user-team-uuid"}
+OKTA_GROUP_MAPPING={"ContextForge Admins": "admin-team-uuid", "ContextForge Users": "user-team-uuid"}
 ```
 
 ### IBM Security Verify (Groups) → Team

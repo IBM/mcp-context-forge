@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, MultipleResultsFound
 
 # First-Party
 from mcpgateway.db import Resource as DbResource
@@ -450,6 +450,36 @@ class TestResourceListing:
         result = await resource_service.list_server_resources(mock_db, "server123")
 
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_server_resources_with_include_metrics_true(self, resource_service, mock_db):
+        """Test that list_server_resources eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        mock_resource = MagicMock()
+        mock_resource.enabled = True
+        mock_resource.team_id = None
+        mock_resource.team = None
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [mock_resource]
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_execute_result
+
+        resource_service.convert_resource_to_read = MagicMock(return_value="converted_resource_with_metrics")
+
+        # Call with include_metrics=True to trigger eager loading code path
+        resources = await resource_service.list_server_resources(mock_db, server_id="server123", include_metrics=True)
+
+        assert resources == ["converted_resource_with_metrics"]
+        # Verify convert_resource_to_read was called with include_metrics=True
+        resource_service.convert_resource_to_read.assert_called_once_with(
+            mock_resource, include_metrics=True
+        )
 
     @pytest.mark.asyncio
     async def test_list_resources_cache_hit_returns_cached(self, resource_service, mock_db):
@@ -966,6 +996,43 @@ class TestResourceManagement:
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_resource_team_id_rejects_nonexistent_team(self, resource_service, mock_db, mock_resource):
+        """Reassigning a resource to a non-existent team must raise ResourceError."""
+        mock_resource.team_id = "old-team"
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None  # team not found
+        mock_db.query.return_value = mock_query
+
+        update_data = ResourceUpdate(team_id="nonexistent-team")
+
+        with pytest.raises(Exception, match="not found"):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+    @pytest.mark.asyncio
+    async def test_update_resource_visibility_team_without_team_id_rejects(self, resource_service, mock_db, mock_resource):
+        """Setting visibility to 'team' without any team_id must raise."""
+        mock_resource.team_id = None
+        mock_resource.visibility = "public"
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db.query.return_value = mock_query
+
+        update_data = ResourceUpdate(visibility="team")
+
+        with pytest.raises(Exception, match="without a team_id"):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+    @pytest.mark.asyncio
     async def test_update_resource_not_found(self, resource_service, mock_db):
         """Test updating non-existent resource."""
         update_data = ResourceUpdate(name="New Name")
@@ -977,6 +1044,43 @@ class TestResourceManagement:
 
         with pytest.raises(ResourceNotFoundError):
             await resource_service.update_resource(mock_db, "http://example.com/missing", update_data)
+
+    @pytest.mark.asyncio
+    async def test_update_resource_team_id_rejects_non_owner(self, resource_service, mock_db, mock_resource):
+        """Reassigning a resource to a team where user is not owner must raise."""
+        from mcpgateway.services.resource_service import _validate_resource_team_assignment
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        # Team exists but membership check returns None
+        mock_query.first.side_effect = [MagicMock(), None]
+
+        mock_session = MagicMock()
+        mock_session.query.return_value = mock_query
+
+        with pytest.raises(ValueError, match="membership"):
+            _validate_resource_team_assignment(mock_session, "user@example.com", "other-team")
+
+    @pytest.mark.asyncio
+    async def test_update_resource_team_id_skips_ownership_without_user_email(self, resource_service, mock_db, mock_resource):
+        """System updates without user_email skip ownership checks and persist team_id."""
+        mock_resource.team_id = "old-team"
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = MagicMock()  # Team exists
+        mock_db.query.return_value = mock_query
+
+        update_data = ResourceUpdate(team_id="new-team")
+
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), \
+             patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+            await resource_service.update_resource(mock_db, mock_resource.id, update_data, user_email=None)
+
+        assert mock_resource.team_id == "new-team"
 
     @pytest.mark.asyncio
     async def test_update_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):
@@ -1200,6 +1304,23 @@ class TestResourceSubscriptions:
         assert "exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_subscribe_resource_denied_when_visibility_check_fails(self, resource_service, mock_db, mock_resource):
+        """Subscription should be denied when the requester cannot access the resource."""
+        subscription = ResourceSubscription(uri="http://example.com/resource", subscriber_id="subscriber1")
+
+        mock_resource.visibility = "private"
+        mock_resource.owner_email = "owner@example.com"
+
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+
+        with pytest.raises(PermissionError):
+            await resource_service.subscribe_resource(mock_db, subscription, user_email="other@example.com", token_teams=[])
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_unsubscribe_resource_success(self, resource_service, mock_db, mock_resource):
         """Test successful resource unsubscription."""
         subscription = ResourceSubscription(uri="test://resource", subscriber_id="subscriber1")
@@ -1265,6 +1386,119 @@ class TestResourceSubscriptions:
 
         assert event["type"] == "resource_created"
         resource_service._event_service.subscribe_events.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_filters_private_events_for_non_owner(self, resource_service):
+        """Scoped subscriptions should not receive private events for other users."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://private",
+                    "visibility": "private",
+                    "owner_email": "owner@example.com",
+                    "team_id": None,
+                },
+            }
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://public",
+                    "visibility": "public",
+                    "owner_email": None,
+                    "team_id": None,
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="other@example.com", token_teams=[]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://public"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_allows_team_events_for_member_scope(self, resource_service):
+        """Scoped team subscribers should receive team-visible events for their teams."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://team",
+                    "visibility": "team",
+                    "owner_email": None,
+                    "team_id": "team-1",
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="member@example.com", token_teams=["team-1"]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://team"
+
+    @pytest.mark.asyncio
+    async def test_check_resource_access_team_without_db_fails_closed(self, resource_service):
+        """Team-scoped access checks should fail closed when DB context is missing."""
+        resource = MagicMock()
+        resource.visibility = "team"
+        resource.team_id = "team-1"
+        resource.owner_email = None
+
+        allowed = await resource_service._check_resource_access(
+            db=None,
+            resource=resource,
+            user_email="member@example.com",
+            token_teams=None,
+        )
+        assert allowed is False
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_ignores_malformed_event_data(self, resource_service):
+        """Malformed event payloads should be ignored by scoped subscriptions."""
+
+        async def mock_generator():
+            yield {"type": "resource_updated", "data": "not-a-dict"}
+            yield {"type": "resource_updated", "data": {"uri": "resource://public", "visibility": "public"}}
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="user@example.com", token_teams=[]):
+            events.append(event)
+
+        assert len(events) == 1
+        assert events[0]["data"]["uri"] == "resource://public"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_events_user_with_none_token_teams_fails_closed(self, resource_service):
+        """User-scoped subscriptions with missing token_teams should normalize to public-only."""
+
+        async def mock_generator():
+            yield {
+                "type": "resource_updated",
+                "data": {
+                    "uri": "resource://team",
+                    "visibility": "team",
+                    "team_id": "team-1",
+                    "owner_email": None,
+                },
+            }
+
+        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+
+        events = []
+        async for event in resource_service.subscribe_events(user_email="member@example.com", token_teams=None):
+            events.append(event)
+
+        assert events == []
 
 
 # --------------------------------------------------------------------------- #
@@ -1895,6 +2129,73 @@ class TestErrorHandling:
         mock_db.rollback.assert_called_once()
 
 
+
+class TestResourceServiceContentSizeError:
+    """Tests for ContentSizeError handling in resource service."""
+
+    @pytest.mark.asyncio
+    async def test_register_resource_content_size_error(self, resource_service, mock_db, sample_resource_create):
+        """Test that ContentSizeError is caught and re-raised during resource registration."""
+        from mcpgateway.services.content_security import ContentSizeError
+
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        # Mock get_content_security_service to return a mock that raises ContentSizeError
+        mock_security_service = MagicMock()
+        mock_security_service.validate_resource_size.side_effect = ContentSizeError(
+            content_type="Resource content",
+            actual_size=150000,
+            max_size=102400
+        )
+
+        with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
+            # Create a resource with large content
+            large_resource = sample_resource_create
+            large_resource.content = "x" * 150000  # 150KB content
+
+            with pytest.raises(ContentSizeError) as exc_info:
+                await resource_service.register_resource(
+                    mock_db,
+                    large_resource,
+                    created_by="user@example.com",
+                    owner_email="user@example.com",
+                )
+
+            # Verify the error details
+            assert exc_info.value.actual_size == 150000
+            assert exc_info.value.max_size == 102400
+            assert exc_info.value.content_type == "Resource content"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_content_size_error(self, resource_service, mock_db, mock_resource):
+        """Test that ContentSizeError is caught and re-raised during resource update."""
+        from mcpgateway.services.content_security import ContentSizeError
+        from mcpgateway.schemas import ResourceUpdate
+
+        mock_resource.owner_email = "user@example.com"
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        # Mock get_content_security_service to return a mock that raises ContentSizeError
+        mock_security_service = MagicMock()
+        mock_security_service.validate_resource_size.side_effect = ContentSizeError(
+            content_type="Resource content",
+            actual_size=150000,
+            max_size=102400
+        )
+
+        with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
+            # Update with large content
+            update = ResourceUpdate(content="x" * 150000)  # 150KB content
+
+            with pytest.raises(ContentSizeError) as exc_info:
+                await resource_service.update_resource(mock_db, 1, update)
+
+            # Verify the error details
+            assert exc_info.value.actual_size == 150000
+            assert exc_info.value.max_size == 102400
+            assert exc_info.value.content_type == "Resource content"
+
 class TestResourceServiceMetricsExtended:
     """Extended tests for resource service metrics."""
 
@@ -1912,7 +2213,7 @@ class TestResourceServiceMetricsExtended:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql"
         mock_db.get_bind.return_value = bind
 
         with patch("mcpgateway.services.resource_service.select", return_value=mock_query):
@@ -3014,7 +3315,7 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
                 mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 cs_session = AsyncMock()
@@ -3062,7 +3363,7 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
                 mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 cs_session = AsyncMock()
@@ -3113,7 +3414,7 @@ class TestInvokeResourceCoverage:
                 metrics_buffer = MagicMock()
                 mock_metrics_buffer.return_value = metrics_buffer
 
-                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
                 mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
                 cs_session = AsyncMock()
@@ -3182,7 +3483,7 @@ class TestInvokeResourceCoverage:
         ):
             mock_trace.get = MagicMock(return_value=None)
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             def _capture_url(*_a, **kw):
@@ -3244,7 +3545,7 @@ class TestInvokeResourceCoverage:
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
@@ -3299,7 +3600,7 @@ class TestInvokeResourceCoverage:
             mock_trace.get = MagicMock(return_value=None)
             mock_metrics_buffer.return_value = MagicMock()
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
@@ -3358,7 +3659,7 @@ class TestInvokeResourceCoverage:
                 return mock_sse.return_value
 
             mock_sse.side_effect = _sse_side_effect
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
 
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
@@ -3765,6 +4066,17 @@ class TestConvertResourceToReadMetrics:
             created_by="user@test.com",
             modified_by="user@test.com",
             _sa_instance_state=MagicMock(),
+            # Mock metrics_summary property (matches new implementation)
+            metrics_summary={
+                "total_executions": 2,
+                "successful_executions": 1,
+                "failed_executions": 1,
+                "failure_rate": 0.5,
+                "min_response_time": 0.1,
+                "max_response_time": 0.3,
+                "avg_response_time": 0.2,
+                "last_execution_time": now,
+            },
         )
         result = resource_service.convert_resource_to_read(resource, include_metrics=True)
         assert result.metrics is not None
@@ -3798,6 +4110,17 @@ class TestConvertResourceToReadMetrics:
             created_by="user@test.com",
             modified_by="user@test.com",
             _sa_instance_state=MagicMock(),
+            # Mock metrics_summary property (matches new implementation)
+            metrics_summary={
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "failure_rate": 0.0,
+                "min_response_time": None,
+                "max_response_time": None,
+                "avg_response_time": None,
+                "last_execution_time": None,
+            },
         )
         result = resource_service.convert_resource_to_read(resource, include_metrics=True)
         assert result.metrics is not None
@@ -4680,6 +5003,73 @@ class TestReadResourceCoverageEdges:
         span.set_attribute.assert_any_call("success", True)
 
     @pytest.mark.asyncio
+    async def test_read_resource_server_scoped_uri_lookup_avoids_duplicate_uri_collisions(self):
+        """Server-scoped URI reads must not fail when the same URI exists on another gateway."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource_db = MagicMock(
+            id="res-1",
+            uri="time://formats",
+            enabled=True,
+            content="SCOPED TEXT",
+            gateway=None,
+            visibility="public",
+            owner_email=None,
+            team_id=None,
+        )
+
+        resource_lookup_result = MagicMock()
+        resource_lookup_result.scalar_one_or_none.return_value = resource_db
+        server_match_result = MagicMock()
+        server_match_result.first.return_value = ("res-1",)
+
+        def execute_side_effect(statement, *args, **kwargs):
+            sql = str(statement)
+            if "resources.uri" in sql and "resources.enabled" in sql:
+                if "JOIN server_resource_association" not in sql:
+                    raise MultipleResultsFound("duplicate URI across gateways")
+                return resource_lookup_result
+            if "server_resource_association.resource_id" in sql:
+                return server_match_result
+            raise AssertionError(sql)
+
+        db.execute.side_effect = execute_side_effect
+
+        with (
+            patch.object(svc, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+        ):
+            out = await svc.read_resource(db, resource_uri="time://formats", server_id="srv-1")
+
+        assert out.text == "SCOPED TEXT"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_generic_uri_lookup_reports_ambiguity(self):
+        """Generic URI reads should fail cleanly when the same URI exists on multiple servers."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        def execute_side_effect(statement, *args, **kwargs):
+            sql = str(statement)
+            if "resources.uri" in sql and "resources.enabled" in sql:
+                raise MultipleResultsFound("duplicate URI across gateways")
+            raise AssertionError(sql)
+
+        db.execute.side_effect = execute_side_effect
+
+        with pytest.raises(ResourceError, match=r"ambiguous across multiple servers; use /servers/\{id\}/mcp"):
+            await svc.read_resource(db, resource_uri="time://formats")
+
+    @pytest.mark.asyncio
     async def test_read_resource_quack_branch_stateful_hasattr_covers_unreachable_elif_false_arc(self):
         """Cover the (practically unreachable) branch arc (2296->2321) by using a stateful __getattr__."""
         from mcpgateway.services.resource_service import ResourceService
@@ -4919,7 +5309,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -4984,7 +5374,7 @@ class TestInvokeResourceCoverageEdges:
             mock_trace.get = MagicMock(return_value=None)
 
             mock_sse.side_effect = _capture_url
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5055,14 +5445,174 @@ class TestInvokeResourceCoverageEdges:
             mock_tss.return_value.get_user_token = AsyncMock(return_value="tok")
 
             mock_sse.side_effect = _capture_headers
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            out = await svc.invoke_resource(
+                db,
+                "res-1",
+                "http://ignored",
+                resource_obj=resource,
+                gateway_obj=gateway,
+                user_identity={"email": "caller@example.com"},
+            )
+        assert out == "ok"
+        assert captured_headers.get("Authorization") == "Bearer tok"
+        mock_tss.return_value.get_user_token.assert_awaited_once_with("gw-1", "caller@example.com")
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_sse_connect_to_sse_session_unpacks_two_values(self):
+        """
+        Regression test: connect_to_sse_session must unpack only 2 values from sse_client.
+        sse_client yields (read_stream, write_stream) only — unlike streamablehttp_client
+        which yields a 3rd session ID getter. Unpacking 3 values raises ValueError which
+        is silently caught, causing all SSE resource reads to return None/Incorrect result.
+        """
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.name = "GW"
+        gateway.url = "http://gw.test"
+        gateway.transport = "sse"
+        gateway.ca_certificate = None
+        gateway.ca_certificate_sig = None
+        gateway.auth_type = None
+        gateway.auth_value = {}
+        gateway.oauth_config = None
+        gateway.auth_query_params = None
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(
+            contents=[MagicMock(text="sse_resource_content", blob=None)]
+        )
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(
+                    return_value=MagicMock(
+                        __enter__=MagicMock(return_value=MagicMock()),
+                        __exit__=MagicMock(return_value=False),
+                    )
+                ),
+            ),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+
+            # Simulate real sse_client: yields exactly 2 values (no session ID getter)
+            # Previously the code unpacked 3 values here, causing silent ValueError -> None
+            mock_sse.return_value.__aenter__ = AsyncMock(
+                return_value=(AsyncMock(), AsyncMock())  # 2 values only — correct sse_client contract
+            )
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            out = await svc.invoke_resource(
+                db,
+                "res-1",
+                "test://resource/1",
+                resource_obj=resource,
+                gateway_obj=gateway,
+            )
+
+        # Core assertion: SSE resource must return content, not None
+        # Before fix: ValueError from 3-value unpack was silently caught -> returned None
+        # After fix: 2-value unpack succeeds -> returns actual resource content
+        assert out == "sse_resource_content", (
+            "SSE resource read returned None — likely caused by incorrect 3-value unpack of sse_client. "
+            "sse_client yields (read_stream, write_stream) only, not (read_stream, write_stream, get_session_id)."
+        )
+
+        # Verify sse_client was actually called (not streamablehttp_client)
+        mock_sse.assert_called_once()
+        cs_session.read_resource.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_invoke_resource_oauth_authorization_code_without_user_identity_skips_token_lookup(self):
+        """OAuth auth_code flow should not use fallback identities for token lookup."""
+        from mcpgateway.services.resource_service import ResourceService
+
+        svc = ResourceService()
+        db = MagicMock()
+        db.commit = MagicMock()
+        db.close = MagicMock()
+
+        resource = MagicMock(id="res-1", name="R", gateway_id="gw-1")
+        gateway = MagicMock(id="gw-1", name="GW", url="http://gw.test", transport="sse", ca_certificate=None, ca_certificate_sig=None, auth_type="oauth", auth_value={}, oauth_config={"grant_type": "authorization_code"}, auth_query_params=None)
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        captured_headers: dict[str, object] = {}
+
+        def _capture_headers(*_a, **kw):
+            captured_headers.update(kw.get("headers") or {})
+            return mock_sse.return_value
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_fresh.return_value.__enter__.return_value = MagicMock()
+            mock_fresh.return_value.__exit__.return_value = False
+            mock_tss.return_value.get_user_token = AsyncMock(return_value="tok")
+
+            mock_sse.side_effect = _capture_headers
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
 
             out = await svc.invoke_resource(db, "res-1", "http://ignored", resource_obj=resource, gateway_obj=gateway)
         assert out == "ok"
-        assert captured_headers.get("Authorization") == "Bearer tok"
+        assert "Authorization" not in captured_headers
+        mock_tss.return_value.get_user_token.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_invoke_resource_oauth_authorization_code_token_lookup_error_marks_span_unhealthy(self):
@@ -5109,7 +5659,7 @@ class TestInvokeResourceCoverageEdges:
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5161,7 +5711,7 @@ class TestInvokeResourceCoverageEdges:
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5215,7 +5765,8 @@ class TestInvokeResourceCoverageEdges:
         ):
             mock_trace.get = MagicMock(return_value=None)
             mock_sse.side_effect = _capture_headers
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5263,7 +5814,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5309,7 +5860,7 @@ class TestInvokeResourceCoverageEdges:
             patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
         ):
             mock_trace.get = MagicMock(return_value=None)
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -5449,7 +6000,7 @@ class TestInvokeResourceCoverageEdges:
             mock_fresh.return_value.__exit__.return_value = False
             mock_tss.return_value.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
 
-            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock()))
             mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
             MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
             MockCS.return_value.__aexit__ = AsyncMock(return_value=False)

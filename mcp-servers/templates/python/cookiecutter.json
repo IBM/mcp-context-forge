@@ -1,0 +1,14 @@
+{
+    "project_name": "Awesome MCP Server",
+    "project_slug": "{{ cookiecutter.project_name|lower|replace(' ', '-') }}",
+    "package_name": "{{ cookiecutter.project_name|lower|replace(' ', '_')|replace('-', '_') }}",
+    "dist_name": "{{ cookiecutter.project_name|lower|replace(' ', '-') }}",
+    "description": "Example Python MCP server (stdio + optional HTTP bridge)",
+    "version": "0.1.0",
+    "author_name": "Your Name",
+    "author_email": "your@email.com",
+    "license": ["Apache-2.0", "MIT"],
+    "python_min": "3.11",
+    "include_container": true,
+    "include_http_bridge": true
+}

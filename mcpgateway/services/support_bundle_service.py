@@ -99,8 +99,8 @@ class SupportBundleService:
         (re.compile(r'secret["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), r"secret: *****"),
         (re.compile(r"bearer\s+[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE), r"bearer *****"),
         (re.compile(r'authorization:\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), r"authorization: *****"),
-        # Database URLs
-        (re.compile(r"(postgresql|mysql|redis)://([^:]+):([^@]+)@"), r"\1://\2:*****@"),
+        # Database / service URLs (scheme-agnostic to catch legacy or misconfigured DSNs)
+        (re.compile(r"(\w[\w+.-]*)://([^:]+):([^@]+)@"), r"\1://\2:*****@"),
         # JWT tokens (eyJ pattern)
         (re.compile(r"eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+"), r"eyJ*****"),
     ]
@@ -451,9 +451,9 @@ class SupportBundleService:
                     zf.writestr(f"logs/{log_name}", log_content)
 
             # Add README
-            readme = f"""# MCP Gateway Support Bundle
+            readme = f"""# ContextForge Support Bundle
 
-This bundle contains diagnostic information for troubleshooting MCP Gateway issues.
+This bundle contains diagnostic information for troubleshooting ContextForge issues.
 
 ## Contents
 

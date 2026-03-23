@@ -14,7 +14,7 @@ import pytest
 
 
 class TestRealtimeFeatures:
-    """Real-time WebSocket and SSE feature tests for MCP Gateway Admin UI.
+    """Real-time WebSocket and SSE feature tests for ContextForge Admin UI.
 
     Examples:
         pytest tests/playwright/test_realtime_features.py

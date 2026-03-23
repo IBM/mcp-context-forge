@@ -1,6 +1,6 @@
 # Configuration Reference
 
-This guide provides comprehensive configuration options for MCP Gateway, including database setup, environment variables, and deployment-specific settings.
+This guide provides comprehensive configuration options for ContextForge, including database setup, environment variables, and deployment-specific settings.
 
 ---
 
@@ -49,7 +49,7 @@ These values in `.env.example` differ from code defaults to provide a working lo
 
 ## 🗄️ Database Configuration
 
-MCP Gateway supports multiple database backends with full feature parity across all supported systems.
+ContextForge supports multiple database backends with full feature parity across all supported systems.
 
 ### Supported Databases
 
@@ -57,8 +57,6 @@ MCP Gateway supports multiple database backends with full feature parity across 
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
 | PostgreSQL  | ✅ Full       | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
-| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
-| MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
 
 ### PostgreSQL System Dependencies
 
@@ -85,92 +83,6 @@ MCP Gateway supports multiple database backends with full feature parity across 
     pip install .[postgres]
     ```
 
-### MariaDB/MySQL Setup Details
-
-!!! success "MariaDB & MySQL Full Support"
-    MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
-
-    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
-    - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
-    - Complete feature parity with SQLite and PostgreSQL
-    - Supports all MCP Gateway features including federation, caching, and A2A agents
-
-#### Connection String Format
-
-```bash
-DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
-```
-
-#### Local MariaDB/MySQL Installation
-
-=== "Ubuntu/Debian (MariaDB)"
-    ```bash
-    # Install MariaDB server
-    sudo apt update && sudo apt install mariadb-server
-
-    # Secure installation (optional)
-    sudo mariadb-secure-installation
-
-    # Create database and user
-    sudo mariadb -e "CREATE DATABASE mcp;"
-    sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    sudo mariadb -e "FLUSH PRIVILEGES;"
-    ```
-
-=== "Ubuntu/Debian (MySQL)"
-    ```bash
-    # Install MySQL server
-    sudo apt update && sudo apt install mysql-server
-
-    # Secure installation (optional)
-    sudo mysql_secure_installation
-
-    # Create database and user
-    sudo mysql -e "CREATE DATABASE mcp;"
-    sudo mysql -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    sudo mysql -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
-    ```
-
-=== "macOS (Homebrew - MariaDB)"
-    ```bash
-    # Install MariaDB
-    brew install mariadb
-    brew services start mariadb
-
-    # Create database and user
-    mariadb -u root -e "CREATE DATABASE mcp;"
-    mariadb -u root -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    mariadb -u root -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    mariadb -u root -e "FLUSH PRIVILEGES;"
-    ```
-
-#### Docker MariaDB/MySQL Setup
-
-```bash
-# Start MariaDB container (recommended)
-docker run -d --name mariadb-mcp \
-  -e MYSQL_ROOT_PASSWORD=mysecretpassword \
-  -e MYSQL_DATABASE=mcp \
-  -e MYSQL_USER=mysql \
-  -e MYSQL_PASSWORD=changeme \
-  -p 3306:3306 \
-  registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
-
-# Or start MySQL container
-docker run -d --name mysql-mcp \
-  -e MYSQL_ROOT_PASSWORD=mysecretpassword \
-  -e MYSQL_DATABASE=mcp \
-  -e MYSQL_USER=mysql \
-  -e MYSQL_PASSWORD=changeme \
-  -p 3306:3306 \
-  mysql:8
-
-# Connection string for MCP Gateway (same for both)
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
-```
-
 ---
 
 ## 🔧 Environment Variables Reference
@@ -179,7 +91,7 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
 | Setting            | Description                              | Default                | Options                |
 |--------------------|------------------------------------------|------------------------|------------------------|
-| `APP_NAME`         | Gateway / OpenAPI title                  | `MCP_Gateway`          | string                 |
+| `APP_NAME`         | Gateway / OpenAPI title                  | `ContextForge`         | string                 |
 | `HOST`             | Bind address for the app                 | `127.0.0.1`            | IPv4/IPv6              |
 | `PORT`             | Port the server listens on               | `4444`                 | 1-65535                |
 | `CLIENT_MODE`      | Client-only mode for gateway-as-client   | `false`                | bool                   |
@@ -247,15 +159,33 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
 ### UI Features
 
+For detailed guidance on embedding and section customization, see [Admin UI Customization](admin-ui-customization.md).
+
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
 | `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
+| `MCPGATEWAY_UI_EMBEDDED`       | Embedded UI mode (hides logout + team selector by default) | `false` | bool |
+| `MCPGATEWAY_UI_HIDE_SECTIONS`  | CSV/JSON list of UI sections to hide (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings) | `[]` | CSV/JSON list |
+| `MCPGATEWAY_UI_HIDE_HEADER_ITEMS` | CSV/JSON list of header items to hide (logout, team_selector, user_identity, theme_toggle) | `[]` | CSV/JSON list |
 | `MCPGATEWAY_BULK_IMPORT_ENABLED` | Enable bulk import endpoint for tools | `true`  | bool    |
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
 | `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT` | Rate limit for bulk import endpoint (requests per minute) | `10` | int |
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
+
+!!! note "Per-Request UI Hiding"
+    For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.
+
+    Example:
+    ```text
+    /admin/?ui_hide=prompts,resources,teams
+    ```
+
+    The query value is stored in an HttpOnly cookie with a 30-day lifetime. Clear it by visiting:
+    ```text
+    /admin/?ui_hide=
+    ```
 
 !!! tip "Production Settings"
     Set both UI and Admin API to `false` to disable management UI and APIs in production.
@@ -303,7 +233,7 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
-| `LLMCHAT_ENABLED`             | Enable LLM Chat functionality          | `false` | bool    |
+| `LLMCHAT_ENABLED`             | Enable LLM Chat functionality          | `true` | bool    |
 | `LLM_PROVIDER`                | LLM provider selection                 | `azure_openai` | `azure_openai`, `openai`, `anthropic`, `aws_bedrock`, `ollama` |
 
 **Azure OpenAI Configuration:**
@@ -389,7 +319,7 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 
 ### LLM Settings (Internal API)
 
-The LLM Settings feature enables MCP Gateway to act as a unified LLM provider with an OpenAI-compatible API.
+The LLM Settings feature enables ContextForge to act as a unified LLM provider with an OpenAI-compatible API.
 
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
@@ -439,6 +369,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `10`                  | int > 0 |
 | `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `1`                   | int > 0 |
 | `ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED` | Send lockout notification emails      | `true`                | bool    |
+| `FAILED_LOGIN_MIN_RESPONSE_MS` | Minimum failed-login response duration to reduce timing side channels | `250` | int >= 0 |
 | `PASSWORD_RESET_ENABLED`      | Enable self-service forgot-password/reset flow   | `true`                | bool    |
 | `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` | Password reset token expiry window     | `60`                  | int > 0 |
 | `PASSWORD_RESET_RATE_LIMIT`   | Max reset requests per email in rate window      | `5`                   | int > 0 |
@@ -452,7 +383,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `SMTP_USER`                   | SMTP username                                     | (none)                | string  |
 | `SMTP_PASSWORD`               | SMTP password                                     | (none)                | string  |
 | `SMTP_FROM_EMAIL`             | Sender email address                              | (none)                | string  |
-| `SMTP_FROM_NAME`              | Sender display name                               | `MCP Gateway`         | string  |
+| `SMTP_FROM_NAME`              | Sender display name                               | `ContextForge`         | string  |
 | `SMTP_USE_TLS`                | Use STARTTLS                                      | `true`                | bool    |
 | `SMTP_USE_SSL`                | Use implicit SSL/TLS                              | `false`               | bool    |
 | `SMTP_TIMEOUT_SECONDS`        | SMTP timeout in seconds                           | `15`                  | int > 0 |
@@ -465,7 +396,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
-| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only | `false` | bool |
+| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only (except servers with `oauth_enabled=True`, which always require authentication) | `false` | bool |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
@@ -534,6 +465,14 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_ENTRA_CLIENT_ID`         | Microsoft Entra ID client ID                     | (none)                | string  |
 | `SSO_ENTRA_CLIENT_SECRET`     | Microsoft Entra ID client secret                 | (none)                | string  |
 | `SSO_ENTRA_TENANT_ID`         | Microsoft Entra ID tenant ID                     | (none)                | string  |
+| `SSO_ENTRA_GROUPS_CLAIM`      | JWT claim for Entra groups/roles                | `groups`              | string  |
+| `SSO_ENTRA_ADMIN_GROUPS`      | Groups granting `platform_admin`                | `[]`                  | JSON array |
+| `SSO_ENTRA_ROLE_MAPPINGS`     | Map Entra groups to ContextForge roles         | `{}`                  | JSON object |
+| `SSO_ENTRA_DEFAULT_ROLE`      | Default role when no mapping matches            | (none)                | string/null |
+| `SSO_ENTRA_SYNC_ROLES_ON_LOGIN` | Synchronize mapped roles on every login       | `true`                | bool    |
+| `SSO_ENTRA_GRAPH_API_ENABLED` | Enable Graph API fallback for groups overage    | `true`                | bool    |
+| `SSO_ENTRA_GRAPH_API_TIMEOUT` | Timeout (seconds) for Graph fallback request    | `10`                  | int     |
+| `SSO_ENTRA_GRAPH_API_MAX_GROUPS` | Maximum groups retained from Graph fallback (`0` = unlimited) | `0` | int |
 
 **Generic OIDC Provider (Auth0, Authentik, etc.):**
 
@@ -548,6 +487,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_GENERIC_TOKEN_URL`             | Token endpoint URL                               | (none)                     | string  |
 | `SSO_GENERIC_USERINFO_URL`          | Userinfo endpoint URL                            | (none)                     | string  |
 | `SSO_GENERIC_ISSUER`                | OIDC issuer URL                                  | (none)                     | string  |
+| `SSO_GENERIC_JWKS_URI`             | JWKS endpoint URL for id_token signature verification | (auto-discovered)     | string  |
 | `SSO_GENERIC_SCOPE`                 | OAuth scopes (space-separated)                   | `openid profile email`     | string  |
 
 **Okta OIDC:**
@@ -558,6 +498,8 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_OKTA_CLIENT_ID`          | Okta client ID                                   | (none)                | string  |
 | `SSO_OKTA_CLIENT_SECRET`      | Okta client secret                               | (none)                | string  |
 | `SSO_OKTA_ISSUER`             | Okta issuer URL                                  | (none)                | string  |
+| `SSO_OKTA_SCOPE`              | Okta OIDC scopes (space-separated)               | `openid profile email`| string  |
+| `OKTA_GROUP_MAPPING`          | JSON mapping of Okta group names to team UUIDs   | (none)                | string  |
 
 ### OAuth 2.0 Dynamic Client Registration (DCR) & PKCE
 
@@ -571,7 +513,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
 | `DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
 | `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
-| `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
+| `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `ContextForge ({gateway_name})` | string        |
 | `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
@@ -581,11 +523,14 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | Setting                                  | Description                                      | Default    | Options |
 | ---------------------------------------- | ------------------------------------------------ | ---------- | ------- |
 | `AUTO_CREATE_PERSONAL_TEAMS`             | Enable automatic personal team creation for new users | `true`   | bool    |
-| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix                      | `personal` | string  |
+| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix (empty = derive from display name) | `""` | string  |
 | `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
-| `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |
+| `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team (platform admins are exempt from this limit) | `100`      | int > 0 |
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
+| `ALLOW_TEAM_CREATION`                    | Allow users to create organizational teams (admins always can) | `true`  | bool    |
+| `ALLOW_TEAM_JOIN_REQUESTS`               | Allow users to request to join public teams | `true`  | bool    |
+| `ALLOW_TEAM_INVITATIONS`                 | Allow team owners to send invitations       | `true`  | bool    |
 
 ### MCP Server Catalog
 
@@ -635,14 +580,15 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 
 ### SSRF Protection
 
-MCP Gateway includes **Server-Side Request Forgery (SSRF) protection** to prevent the gateway from being used to access internal resources or cloud metadata services.
+ContextForge includes **Server-Side Request Forgery (SSRF) protection** to prevent the gateway from being used to access internal resources or cloud metadata services.
 
 | Setting                     | Description                                                      | Default | Options |
 | --------------------------- | ---------------------------------------------------------------- | ------- | ------- |
 | `SSRF_PROTECTION_ENABLED`   | Master switch for SSRF protection                                | `true`  | bool    |
-| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `true`  | bool    |
-| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `true`  | bool    |
-| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `false` | bool    |
+| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `false` | bool    |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `false` | bool    |
+| `SSRF_ALLOWED_NETWORKS`     | Optional private CIDR allowlist when private networks are blocked | `[]`  | JSON array |
+| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `true`  | bool    |
 | `SSRF_BLOCKED_NETWORKS`     | CIDR ranges always blocked (cloud metadata by default)          | See below | JSON array |
 | `SSRF_BLOCKED_HOSTS`        | Hostnames always blocked (case-insensitive)                     | See below | JSON array |
 
@@ -662,24 +608,24 @@ MCP Gateway includes **Server-Side Request Forgery (SSRF) protection** to preven
 !!! note "DNS Resolution Behavior"
     The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA records) and validates each one. If ANY resolved IP is blocked, the request is rejected.
 
-    - **DNS fail-open** (default): Unresolvable hostnames are allowed (hostname blocklist still applies)
-    - **DNS fail-closed** (`SSRF_DNS_FAIL_CLOSED=true`): Unresolvable hostnames are rejected
-
-    For maximum security, enable `SSRF_DNS_FAIL_CLOSED=true` in production. Note that DNS rebinding attacks (where DNS changes between validation and connection) require additional mitigations like a dedicated SSRF proxy.
+    - **DNS fail-closed** (default): Unresolvable hostnames are rejected
+    - **DNS fail-open** (`SSRF_DNS_FAIL_CLOSED=false`): Unresolvable hostnames are allowed (hostname blocklist still applies)
 
 !!! tip "Configuration Modes"
-    **Development/Internal Mode** (default): Localhost and private networks allowed, only cloud metadata blocked.
-    ```bash
-    SSRF_PROTECTION_ENABLED=true
-    SSRF_ALLOW_LOCALHOST=true
-    SSRF_ALLOW_PRIVATE_NETWORKS=true
-    ```
-
-    **Strict Production Mode** (external endpoints only):
+    **Strict Mode (default)**: External endpoints only.
     ```bash
     SSRF_PROTECTION_ENABLED=true
     SSRF_ALLOW_LOCALHOST=false
     SSRF_ALLOW_PRIVATE_NETWORKS=false
+    SSRF_DNS_FAIL_CLOSED=true
+    ```
+
+    **Controlled Internal Access** (explicit CIDR exceptions):
+    ```bash
+    SSRF_PROTECTION_ENABLED=true
+    SSRF_ALLOW_LOCALHOST=false
+    SSRF_ALLOW_PRIVATE_NETWORKS=false
+    SSRF_ALLOWED_NETWORKS='["10.20.0.0/16","192.168.50.0/24"]'
     ```
 
     **Custom Blocked Networks** (add additional ranges):
@@ -688,9 +634,71 @@ MCP Gateway includes **Server-Side Request Forgery (SSRF) protection** to preven
     ```
     The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
 
+#### Helm/Kubernetes registration examples
+
+When deployed with the Helm chart, the testing registration jobs create gateways pointing to
+in-cluster Service DNS names:
+
+- Fast-time: `http://<release>-mcp-fast-time-server:80/http`
+- Fast-test: `http://<release>-fast-test-server:8880/mcp`
+
+Under strict defaults (`SSRF_ALLOW_PRIVATE_NETWORKS=false`, `SSRF_ALLOWED_NETWORKS=[]`), these private
+destinations are rejected with `422` during `/gateways` creation.
+
+Recommended approach for cluster deployments is to keep private networks blocked globally and allow only
+known internal CIDRs:
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_PROTECTION_ENABLED: "true"
+    SSRF_ALLOW_LOCALHOST: "false"
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR, adjust to your environment
+    SSRF_DNS_FAIL_CLOSED: "true"
+```
+
+For local benchmark profiles where broad private access is acceptable, use:
+
+```yaml
+mcpContextForge:
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+```
+
+!!! note "Local Development Defaults"
+    The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
+    (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
+    Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
+
+### Content Security - Size Limits
+
+Content size limits prevent DoS attacks and resource exhaustion from oversized content submissions. Validation occurs at the service layer before database writes and returns **HTTP 413 Payload Too Large** with structured error details.
+
+| Setting                      | Description                                      | Default   | Range           |
+| ---------------------------- | ------------------------------------------------ | --------- | --------------- |
+| `CONTENT_MAX_RESOURCE_SIZE`  | Maximum resource content size (bytes)            | `102400` (100KB) | 1KB – 10MB |
+| `CONTENT_MAX_PROMPT_SIZE`    | Maximum prompt template size (bytes)             | `10240` (10KB)   | 512B – 1MB |
+
+!!! note "Scope"
+    Size limits apply only to new create and update operations. Existing content is not retroactively validated.
+
+!!! example "Error Response"
+    Oversized content returns a structured 413 response:
+    ```json
+    {
+      "detail": {
+        "error": "Resource content size limit exceeded",
+        "message": "Resource content size (195.3 KB) exceeds maximum allowed size (100.0 KB)",
+        "actual_size": 200000,
+        "max_size": 102400
+      }
+    }
+    ```
+
 ### Ed25519 Certificate Signing
 
-MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification.
+ContextForge supports **Ed25519 digital signatures** for certificate validation and integrity verification.
 
 | Setting                     | Description                                      | Default | Options |
 | --------------------------- | ------------------------------------------------ | ------- | ------- |
@@ -707,7 +715,7 @@ python mcpgateway/utils/generate_keys.py
 
 ### Response Compression
 
-MCP Gateway includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses.
+ContextForge includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses.
 
 | Setting                       | Description                                       | Default | Options              |
 | ----------------------------- | ------------------------------------------------- | ------- | -------------------- |
@@ -740,13 +748,13 @@ MCP Gateway includes automatic response compression middleware that reduces band
 
 ### Observability (OpenTelemetry)
 
-MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed tracing. Works with Phoenix, Jaeger, Zipkin, Tempo, DataDog, New Relic, and any OTLP-compatible backend.
+ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed tracing. Works with Phoenix, Jaeger, Zipkin, Tempo, DataDog, New Relic, and any OTLP-compatible backend.
 
 | Setting                         | Description                                    | Default               | Options                                    |
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-1`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-2`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -790,7 +798,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 
 | Setting                      | Description                                              | Default   | Options          |
 | ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
-| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `ENABLE_METRICS`             | Enable Prometheus metrics endpoint (requires JWT auth)   | `false`   | bool             |
 | `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
 | `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
 | `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |
@@ -819,12 +827,16 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting                   | Description                        | Default | Options                         |
 | ------------------------- | ---------------------------------- | ------- | ------------------------------- |
 | `TRANSPORT_TYPE`          | Enabled transports                 | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
+| `MCPGATEWAY_WS_RELAY_ENABLED` | Enable `/ws` JSON-RPC WebSocket relay | `false` | bool                       |
+| `MCPGATEWAY_REVERSE_PROXY_ENABLED` | Enable `/reverse-proxy/*` endpoints | `false` | bool                     |
 | `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
 | `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
 | `SSE_KEEPALIVE_ENABLED`   | Enable SSE keepalive events        | `true`  | bool                            |
 | `SSE_KEEPALIVE_INTERVAL`  | SSE keepalive interval (secs)      | `30`    | int > 0                         |
 | `USE_STATEFUL_SESSIONS`   | streamable http config             | `false` | bool                            |
 | `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
+
+`MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
 
 ### Federation
 
@@ -989,20 +1001,63 @@ The gateway includes built-in observability features for tracking HTTP requests,
 !!! warning "Security Warning"
     Header passthrough is disabled by default for security. Only enable if you understand the implications.
 
-### Plugin Configuration
+### Plugins Configuration
 
-| Setting                        | Description                                      | Default               | Options |
-| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
-| `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
-| `PLUGIN_CONFIG_FILE`          | Path to main plugin configuration file          | `plugins/config.yaml` | string  |
-| `PLUGINS_CLIENT_MTLS_CA_BUNDLE`      | Default CA bundle for external plugin mTLS | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_CERTFILE`       | Gateway client certificate for plugin mTLS | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_KEYFILE`        | Gateway client key for plugin mTLS         | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD` | Password for plugin client key           | (empty)               | string  |
-| `PLUGINS_CLIENT_MTLS_VERIFY`         | Verify remote plugin certificates          | `true`                | bool    |
-| `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME` | Enforce hostname verification for plugins  | `true`                | bool    |
-| `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
-| `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
+Plugin settings are documented separately to match the plugin-framework
+settings split in code.
+
+- See [Plugin Configuration Reference](configuration-plugins.md) for all
+  `PLUGINS_*` settings and aliases.
+
+#### Gateway-Level Plugin Security Overrides
+
+These settings control how much authority plugins have over gateway security
+decisions. They are part of the core gateway `Settings` (not the plugin
+framework's `PluginsSettings`) and require a **server restart** to take effect.
+
+Both default to `false` (secure by default). Only enable them when all loaded
+plugins are fully trusted.
+
+| Setting                              | Description                                                                                                           | Default | Options |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------- | ------- |
+| `PLUGINS_CAN_OVERRIDE_RBAC`         | Allow `HTTP_AUTH_CHECK_PERMISSION` plugin hooks to short-circuit built-in RBAC grants. When disabled, plugin grant decisions are audit-only. | `false` | bool    |
+| `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS`  | Allow pre-request plugin hooks to override auth-sensitive headers (`Authorization`, `Cookie`, `X-Api-Key`, `Proxy-Authorization`) that the client already sent. Required for plugin-driven token exchange workflows (e.g. WXO auth). | `false` | bool    |
+
+!!! danger "Security Impact"
+    Enabling `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS` allows a plugin to rewrite the
+    `Authorization` header, effectively impersonating any user. Only enable when
+    all loaded plugins are fully trusted and the deployment specifically requires
+    plugin-driven token exchange.
+
+#### Plugin Framework (Standalone) Settings
+
+The plugin framework has its own configuration via `pydantic-settings` with the `PLUGINS_` env var prefix. These settings allow the plugin framework to operate independently of the gateway configuration. When the plugin framework is used standalone (e.g., via the `mcpplugins` CLI or as a library), only these `PLUGINS_`-prefixed variables are needed. When running inside the gateway, **both** the gateway settings (above) and these framework settings are in effect.
+
+`PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are shared — the same env var is read by both the gateway and the plugin framework. The HTTP client and SSL settings below are scoped specifically to plugin requests.
+
+| Setting                                  | Description                                              | Default               | Options |
+| ---------------------------------------- | -------------------------------------------------------- | --------------------- | ------- |
+| `PLUGINS_ENABLED`                       | Enable the plugin framework (shared with gateway)        | `false`               | bool    |
+| `PLUGINS_CONFIG_FILE`                   | Path to plugin configuration file                        | `plugins/config.yaml` | string  |
+| `PLUGINS_PLUGIN_TIMEOUT`               | Plugin execution timeout (seconds)                       | `30`                  | int     |
+| `PLUGINS_LOG_LEVEL`                     | Plugin framework log level                               | `INFO`                | string  |
+| `PLUGINS_SKIP_SSL_VERIFY`              | Skip TLS verification for plugin HTTP requests           | `false`               | bool    |
+| `PLUGINS_HTTPX_MAX_CONNECTIONS`         | Plugin HTTP client max total connections                 | `200`                 | int     |
+| `PLUGINS_HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Plugin HTTP client max keepalive connections            | `100`                 | int     |
+| `PLUGINS_HTTPX_KEEPALIVE_EXPIRY`        | Plugin HTTP client keepalive expiry (seconds)            | `30.0`                | float   |
+| `PLUGINS_HTTPX_CONNECT_TIMEOUT`         | Plugin HTTP client TCP connect timeout (seconds)         | `5.0`                 | float   |
+| `PLUGINS_HTTPX_READ_TIMEOUT`            | Plugin HTTP client read timeout (seconds)                | `120.0`               | float   |
+| `PLUGINS_HTTPX_WRITE_TIMEOUT`           | Plugin HTTP client write timeout (seconds)               | `30.0`                | float   |
+| `PLUGINS_HTTPX_POOL_TIMEOUT`            | Plugin HTTP client pool timeout (seconds)                | `10.0`                | float   |
+| `PLUGINS_CLI_COMPLETION`               | Enable CLI auto-completion (shared with gateway)          | `false`               | bool    |
+| `PLUGINS_CLI_MARKUP_MODE`              | CLI markup mode (shared with gateway)                     | (none)                | `rich`, `markdown`, `disabled` |
+
+!!! note "Gateway ↔ Plugin Framework Shared Settings"
+    `PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are read by both the gateway
+    and the plugin framework from the same env var. The gateway also reads `PLUGIN_CONFIG_FILE` for backwards
+    compatibility, while the plugin framework reads `PLUGINS_CONFIG_FILE`. The gateway's `HTTPX_CONNECT_TIMEOUT` /
+    `HTTPX_READ_TIMEOUT` / `SKIP_SSL_VERIFY` are independent of the plugin framework's `PLUGINS_HTTPX_CONNECT_TIMEOUT` /
+    `PLUGINS_HTTPX_READ_TIMEOUT` / `PLUGINS_SKIP_SSL_VERIFY`.
 
 ### HTTP Retry Configuration
 
@@ -1051,16 +1106,21 @@ Create a `.env` file for Docker deployments:
 # .env file for Docker
 HOST=0.0.0.0
 PORT=4444
-DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp
+DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
 REDIS_URL=redis://redis:6379/0
 JWT_SECRET_KEY=my-secret-key
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
+# Embedded UI mode (hides logout + team selector by default)
+MCPGATEWAY_UI_EMBEDDED=false
+# CSV/JSON list of UI sections/header items to hide (optional)
+MCPGATEWAY_UI_HIDE_SECTIONS=
+MCPGATEWAY_UI_HIDE_HEADER_ITEMS=
 ```
 
-### Docker Compose with MySQL
+### Docker Compose with PostgreSQL
 
 ```yaml
 version: "3.9"
@@ -1071,26 +1131,25 @@ services:
     ports:
       - "4444:4444"
     environment:
-      - DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp
+      - DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=my-secret-key
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_started
 
-  mysql:
-    image: mysql:8
+  postgres:
+    image: postgres:17
     environment:
-      - MYSQL_ROOT_PASSWORD=mysecretpassword
-      - MYSQL_DATABASE=mcp
-      - MYSQL_USER=mysql
-      - MYSQL_PASSWORD=changeme
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=changeme
+      - POSTGRES_DB=mcp
     volumes:
-      - mysql_data:/var/lib/mysql
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -1101,7 +1160,7 @@ services:
       - redis_data:/data
 
 volumes:
-  mysql_data:
+  pg_data:
   redis_data:
 ```
 
@@ -1117,7 +1176,7 @@ kind: ConfigMap
 metadata:
   name: mcpgateway-config
 data:
-  DATABASE_URL: "mysql+pymysql://mysql:changeme@mysql-service:3306/mcp"
+  DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp"
   REDIS_URL: "redis://redis-service:6379/0"
   JWT_SECRET_KEY: "your-secret-key"
   BASIC_AUTH_USER: "admin"
@@ -1125,55 +1184,6 @@ data:
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
   LOG_LEVEL: "INFO"
-```
-
-### MySQL Service Example
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mysql
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mysql
-  template:
-    metadata:
-      labels:
-        app: mysql
-    spec:
-      containers:
-        - name: mysql
-          image: mysql:8
-          env:
-            - name: MYSQL_ROOT_PASSWORD
-              value: "mysecretpassword"
-            - name: MYSQL_DATABASE
-              value: "mcp"
-            - name: MYSQL_USER
-              value: "mysql"
-            - name: MYSQL_PASSWORD
-              value: "changeme"
-          volumeMounts:
-            - name: mysql-storage
-              mountPath: /var/lib/mysql
-      volumes:
-        - name: mysql-storage
-          persistentVolumeClaim:
-            claimName: mysql-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mysql-service
-spec:
-  selector:
-    app: mysql
-  ports:
-    - port: 3306
-      targetPort: 3306
 ```
 
 ---

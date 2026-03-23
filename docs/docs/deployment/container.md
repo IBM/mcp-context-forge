@@ -1,6 +1,6 @@
 # 📦 Container Deployment
 
-You can run MCP Gateway as a fully self-contained container. This is the recommended method for production or platform-agnostic deployments. You can use any container engine (ex: Docker or Podman).
+You can run ContextForge as a fully self-contained container. This is the recommended method for production or platform-agnostic deployments. You can use any container engine (ex: Docker or Podman).
 
 ---
 
@@ -20,7 +20,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 
 docker logs mcpgateway
 ```

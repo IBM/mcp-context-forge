@@ -121,7 +121,7 @@ class TestHeaderSecurity:
         # Standard
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Only valid header should pass through
@@ -166,7 +166,7 @@ class TestHeaderSecurity:
         # Standard
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Header should be skipped
@@ -244,7 +244,7 @@ class TestHeaderSecurity:
         # Standard
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
         # Authorization should be blocked

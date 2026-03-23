@@ -27,6 +27,7 @@ from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.services.log_storage_service import LogStorageService
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.url_auth import sanitize_exception_message
 
 # Optional OpenTelemetry support (Third-Party)
 try:
@@ -369,6 +370,9 @@ class LoggingService:
         # Suppress noisy upstream logs for normal stream closures in MCP streamable HTTP
         self._install_closedresourceerror_filter()
 
+        # Redact sensitive query parameters from httpx/httpcore log messages
+        self._install_httpx_url_sanitize_filter()
+
     async def shutdown(self) -> None:
         """Shutdown logging service.
 
@@ -476,6 +480,62 @@ class LoggingService:
         target_logger = logging.getLogger("mcp.server.streamable_http")
         target_logger.addFilter(_SuppressClosedResourceErrorFilter())
 
+    @staticmethod
+    def _install_httpx_url_sanitize_filter() -> None:
+        """Install a filter to redact sensitive query parameters from httpx/httpcore log messages.
+
+        httpx and httpcore log full request URLs at INFO level, bypassing
+        application-level sanitization. This filter intercepts those log
+        records and redacts sensitive query parameters (api_key, token, etc.)
+        before they reach any handler.
+
+        Examples:
+            >>> import asyncio, logging
+            >>> service = LoggingService()
+            >>> asyncio.run(service.initialize())
+            >>> filt = [f for f in logging.getLogger('httpx').filters
+            ...         if f.__class__.__name__ == '_HttpxUrlSanitizeFilter'][0]
+            >>> rec = logging.makeLogRecord({
+            ...     'name': 'httpx',
+            ...     'msg': 'HTTP Request: GET https://example.mcp.server.com/sse?api_key=secret-value "HTTP/1.1 200 OK"',
+            ... })
+            >>> filt.filter(rec)
+            True
+            >>> 'secret-value' not in rec.getMessage()
+            True
+            >>> 'api_key=REDACTED' in rec.getMessage()
+            True
+            >>> asyncio.run(service.shutdown())
+
+        """
+
+        class _HttpxUrlSanitizeFilter(logging.Filter):
+            """Filter that redacts sensitive query parameters from URLs in httpx log messages."""
+
+            def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+                """Sanitize URLs in the log record message, then allow it through.
+
+                Args:
+                    record: The log record to sanitize.
+
+                Returns:
+                    Always True (record is never suppressed, only sanitized).
+
+                """
+                try:
+                    msg = record.getMessage()
+                    sanitized = sanitize_exception_message(msg)
+                    if sanitized != msg:
+                        record.msg = sanitized
+                        record.args = None
+                except Exception:
+                    pass  # nosec B110 - Never break logging due to sanitization failure
+                return True
+
+        url_filter = _HttpxUrlSanitizeFilter()
+        for logger_name in ("httpx", "httpcore"):
+            logging.getLogger(logger_name).addFilter(url_filter)
+
     def get_logger(self, name: str) -> logging.Logger:
         """Get or create logger instance.
 
@@ -501,9 +561,9 @@ class LoggingService:
             # This prevents duplicate logging while maintaining dual output (console + file)
             logger.propagate = True
 
-            # Set level to match service level
-            log_level = getattr(logging, self._level.upper())
-            logger.setLevel(log_level)
+            # Don't set level on child loggers - let them inherit from root logger
+            # This ensures LOG_LEVEL environment variable is respected after initialize() runs
+            # The root logger level is set in initialize() based on settings.log_level
 
             self._loggers[name] = logger
 
@@ -527,8 +587,16 @@ class LoggingService:
         """
         self._level = level
 
-        # Update all loggers
+        # Update all loggers and handlers
         log_level = getattr(logging, level.upper())
+
+        # Update Python root logger so new child loggers inherit the correct level
+        logging.getLogger().setLevel(log_level)
+
+        # Update handler levels so they don't filter out records the logger passes
+        for handler in logging.getLogger().handlers:
+            handler.setLevel(log_level)
+
         for logger in self._loggers.values():
             logger.setLevel(log_level)
 

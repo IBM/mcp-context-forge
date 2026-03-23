@@ -38,7 +38,7 @@ def generate_self_signed_cert(tmp_path: Path, common_name: str = "localhost", ex
         Tuple of (cert_path, key_path)
     """
     # Generate private key
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=4096, backend=default_backend())
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
 
     # Certificate validity period
     if expired:
@@ -104,7 +104,7 @@ def generate_ca_and_signed_cert(tmp_path: Path, common_name: str = "localhost") 
         Tuple of (ca_cert_path, server_cert_path, server_key_path)
     """
     # Generate CA private key
-    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=4096, backend=default_backend())
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
 
     # Create CA certificate
     ca_subject = x509.Name(
@@ -133,7 +133,7 @@ def generate_ca_and_signed_cert(tmp_path: Path, common_name: str = "localhost") 
     )
 
     # Generate server private key
-    server_key = rsa.generate_private_key(public_exponent=65537, key_size=4096, backend=default_backend())
+    server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048, backend=default_backend())
 
     # Create server certificate signed by CA
     server_subject = x509.Name(

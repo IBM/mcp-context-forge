@@ -1,12 +1,18 @@
 # ADR-038: Experimental Rust Transport Backend (Streamable HTTP)
 
-- *Status:* Proposed
+- *Status:* Superseded by ADR-043
 - *Date:* 2025-12-26
 - *Deciders:* Platform Team
 
 ## Context
 
-The MCP Gateway currently implements its transport layer (stdio, SSE, WebSocket, and Streamable HTTP) in Python using asyncio. While this provides functional correctness, the transport layer experiences performance and memory limitations under higher concurrency due to Python runtime overhead and GIL constraints.
+!!! warning
+    This ADR records the original experiment proposal only. The implemented
+    architecture has moved to a Rust sidecar/runtime with mode-based rollout.
+    See [ADR-043](043-rust-mcp-runtime-sidecar-mode-model.md) for the current
+    decision.
+
+ContextForge currently implements its transport layer (stdio, SSE, WebSocket, and Streamable HTTP) in Python using asyncio. While this provides functional correctness, the transport layer experiences performance and memory limitations under higher concurrency due to Python runtime overhead and GIL constraints.
 
 Issue #1621 proposes evaluating a Rust-based transport backend to improve throughput, latency, and resource efficiency while preserving the existing Transport API and protocol semantics.
 

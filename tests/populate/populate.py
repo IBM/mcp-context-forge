@@ -236,7 +236,7 @@ async def run_population(config: Dict[str, Any], base_url: str, dry_run: bool = 
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Populate MCP Gateway with test data via REST API",
+        description="Populate ContextForge with test data via REST API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

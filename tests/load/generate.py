@@ -301,7 +301,7 @@ def generate_data(config: Dict[str, Any], dry_run: bool = False) -> Dict[str, An
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Generate production-scale load test data for MCP Gateway",
+        description="Generate production-scale load test data for ContextForge",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 

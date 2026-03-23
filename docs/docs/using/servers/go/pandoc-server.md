@@ -66,7 +66,7 @@ docker run -i pandoc-server
 # Run the built server
 ./dist/pandoc-server
 
-# Or with MCP Gateway for HTTP/SSE access
+# Or with ContextForge for HTTP/SSE access
 python3 -m mcpgateway.translate --stdio "./dist/pandoc-server" --port 9000
 ```
 
@@ -115,7 +115,7 @@ Check if pandoc is installed and return version information.
 }
 ```
 
-### Via MCP Gateway
+### Via ContextForge
 
 ```json
 {
@@ -256,15 +256,15 @@ Check if pandoc is installed and return version information.
 
 ## Integration
 
-### With MCP Gateway
+### With ContextForge
 
-The Pandoc server integrates seamlessly with MCP Gateway for HTTP and SSE access:
+The Pandoc server integrates seamlessly with ContextForge for HTTP and SSE access:
 
 ```bash
-# Start pandoc server via MCP Gateway
+# Start pandoc server via ContextForge
 python3 -m mcpgateway.translate --stdio "./dist/pandoc-server" --port 9000
 
-# Register with MCP Gateway
+# Register with ContextForge
 curl -X POST http://localhost:8000/gateways \
   -H "Content-Type: application/json" \
   -d '{

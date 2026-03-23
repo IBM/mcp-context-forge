@@ -5,6 +5,7 @@
 import base64
 from datetime import datetime, timezone
 import json
+import logging
 from types import SimpleNamespace
 
 # Third-Party
@@ -16,6 +17,7 @@ from mcpgateway.common.models import ResourceContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.schemas import (
+    _coerce_visibility,
     _mask_oauth_config,
     A2AAgentCreate,
     A2AAgentInvocation,
@@ -28,11 +30,14 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayUpdate,
     GrpcServiceCreate,
+    GrpcServiceRead,
     GrpcServiceUpdate,
     PromptCreate,
+    PromptRead,
     PromptUpdate,
     ResourceCreate,
     ResourceNotification,
+    ResourceRead,
     ResourceUpdate,
     RPCRequest,
     ServerCreate,
@@ -42,6 +47,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
     TokenScopeRequest,
     ToolCreate,
+    ToolRead,
     ToolUpdate,
 )
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -127,17 +133,112 @@ def test_tool_update_validators():
         ToolUpdate.prevent_manual_mcp_update({"integration_type": "A2A"})
 
 
+class TestToolUpdateDescriptionValidationStrict:
+    """Tests for ToolUpdate.validate_description forbidden-pattern check.
+
+    Mirrors TestToolCreateDescriptionValidationStrict to ensure ToolUpdate
+    respects VALIDATION_STRICT the same way ToolCreate does.
+    """
+
+    def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
+        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolUpdate.validate_description(f"Valid prefix {pat} suffix")
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "run cmd1 && cmd2",
+            "end statement;",
+            "try this || that",
+            "expand $(cmd)",
+            "pipe | grep",
+            "Search docs > results",
+            "read < file",
+        ],
+        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+    )
+    def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
+        """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolUpdate.validate_description(description)
+        assert result is not None
+        assert any("potentially unsafe" in rec.message for rec in caplog.records)
+
+    def test_non_strict_logs_single_warning_for_multiple_patterns(self, monkeypatch, caplog):
+        """Only one warning is logged even when a description matches multiple forbidden patterns."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolUpdate.validate_description("foo && bar | baz > qux")
+        assert result is not None
+        unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
+        assert len(unsafe_warnings) == 1
+
+    def test_safe_description_always_accepted(self, monkeypatch):
+        """Safe descriptions pass in both strict and non-strict modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            result = ToolUpdate.validate_description("A perfectly safe description.")
+            assert result == "A perfectly safe description."
+
+    def test_none_description_always_accepted(self, monkeypatch):
+        """None descriptions pass through unchanged in both modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            assert ToolUpdate.validate_description(None) is None
+
+    def test_forbidden_patterns_match_tool_create(self, monkeypatch):
+        """Ensure ToolCreate and ToolUpdate reject the exact same set of forbidden patterns in strict mode."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
+        for pat in forbidden_patterns:
+            payload = f"test {pat} injection"
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolCreate.validate_description(payload)
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolUpdate.validate_description(payload)
+
+    def test_empty_string_accepted(self):
+        """Empty string is a valid description (not None, not forbidden)."""
+        assert ToolUpdate.validate_description("") == ""
+
+    def test_forbidden_pattern_at_start(self, monkeypatch):
+        """Forbidden pattern at the very start of a description is still caught."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolUpdate.validate_description("&&rest of description")
+
+    def test_forbidden_pattern_at_end(self, monkeypatch):
+        """Forbidden pattern at the very end of a description is still caught."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolUpdate.validate_description("description ends with ||")
+
+    def test_exact_max_length_not_truncated(self):
+        """Description exactly at MAX_DESCRIPTION_LENGTH is accepted without truncation."""
+        exact = "x" * SecurityValidator.MAX_DESCRIPTION_LENGTH
+        result = ToolUpdate.validate_description(exact)
+        assert len(result) == SecurityValidator.MAX_DESCRIPTION_LENGTH
+
+
 def test_resource_update_content_and_description():
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
     truncated = ResourceUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
-    with pytest.raises(ValueError):
-        ResourceUpdate.validate_content("x" * (SecurityValidator.MAX_CONTENT_LENGTH + 1))
+    # Size validation is now done at service layer, not schema layer
+    # Schema layer only validates encoding and dangerous patterns
 
+    # Test UTF-8 encoding validation
     with pytest.raises(ValueError):
         ResourceUpdate.validate_content(b"\xff\xfe\xfd")
 
+    # Test dangerous HTML pattern detection
     with pytest.raises(ValueError):
         ResourceUpdate.validate_content("<script>alert(1)</script>")
 
@@ -348,7 +449,7 @@ def test_tool_create_optional_none_branches():
 def test_tool_update_more_branches(caplog):
     assert ToolUpdate.validate_url(None) is None
 
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     truncated = ToolUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -391,7 +492,7 @@ def test_resource_create_and_notifications_serialization():
 
 
 def test_prompt_update_description_truncation(caplog):
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     truncated = PromptUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
@@ -424,7 +525,7 @@ def test_gateway_create_more_branches(monkeypatch):
 
 
 def test_gateway_update_more_branches(caplog):
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(GatewayUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
@@ -508,14 +609,14 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
 
     assert AdminToolCreate.validate_json("") is None
 
-    caplog.set_level("INFO")
+    caplog.set_level("INFO", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(ServerCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(ServerUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert any("Description too long" in rec.message for rec in caplog.records)
 
-    with pytest.raises(ValueError):
-        ServerCreate.validate_visibility("invalid")
+    with pytest.raises(ValidationError):
+        ServerCreate(name="srv", visibility="invalid")
 
     assert ServerCreate.validate_team_id("550e8400-e29b-41d4-a716-446655440000")
 
@@ -538,15 +639,15 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
 
 
 def test_a2a_agent_create_and_update_more_branches(monkeypatch, caplog):
-    caplog.set_level("WARNING")
+    caplog.set_level("WARNING", logger="mcpgateway.schemas")
     long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1)
     assert len(A2AAgentCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(A2AAgentUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
-    with pytest.raises(ValueError):
-        A2AAgentCreate.validate_visibility("invalid")
-    with pytest.raises(ValueError):
-        A2AAgentUpdate.validate_visibility("invalid")
+    with pytest.raises((ValueError, ValidationError)):
+        A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", visibility="invalid")
+    with pytest.raises((ValueError, ValidationError)):
+        A2AAgentUpdate(visibility="invalid")
 
     with pytest.raises((ValidationError, ValueError)):
         A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", auth_type="basic", auth_username="u")
@@ -833,3 +934,434 @@ class TestMaskOauthConfig:
         masked = agent.masked()
         assert masked.oauth_config["client_secret"] == settings.masked_auth_value
         assert masked.oauth_config["grant_type"] == "client_credentials"
+
+    def test_server_read_masked_includes_oauth(self):
+        """ServerRead.masked() masks oauth_config sensitive keys."""
+        now = datetime.now(timezone.utc)
+        server = ServerRead(
+            id="srv-1",
+            name="srv",
+            description=None,
+            icon=None,
+            created_at=now,
+            updated_at=now,
+            enabled=True,
+            associated_tools=[],
+            associated_resources=[],
+            associated_prompts=[],
+            associated_a2a_agents=[],
+            oauth_enabled=True,
+            oauth_config={"client_secret": "secret", "authorization_server": "https://idp.example.com"},
+        )
+        masked = server.masked()
+        assert masked.oauth_config["client_secret"] == settings.masked_auth_value
+        assert masked.oauth_config["authorization_server"] == "https://idp.example.com"
+
+
+class TestToolCreateDescriptionValidationStrict:
+    """Tests for issue #3711 — VALIDATION_STRICT gates the forbidden-pattern check.
+
+    ToolCreate.validate_description must raise when validation_strict=True (default)
+    and must only log a warning when validation_strict=False, so that MCP server
+    tools with Markdown-formatted descriptions (e.g. "> blockquote") can register.
+    """
+
+    def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
+        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolCreate.validate_description(f"Valid prefix {pat} suffix")
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "run cmd1 && cmd2",
+            "end statement;",
+            "try this || that",
+            "expand $(cmd)",
+            "pipe | grep",
+            "Search docs > results",
+            "read < file",
+        ],
+        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+    )
+    def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
+        """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolCreate.validate_description(description)
+        assert result is not None
+        assert any("potentially unsafe" in rec.message for rec in caplog.records)
+
+    def test_non_strict_logs_single_warning_for_multiple_patterns(self, monkeypatch, caplog):
+        """Only one warning is logged even when a description matches multiple forbidden patterns."""
+        monkeypatch.setattr(settings, "validation_strict", False)
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
+            result = ToolCreate.validate_description("foo && bar | baz > qux")
+        assert result is not None
+        unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
+        assert len(unsafe_warnings) == 1
+
+    def test_safe_description_always_accepted(self, monkeypatch):
+        """Safe descriptions pass in both strict and non-strict modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            result = ToolCreate.validate_description("A perfectly safe description.")
+            assert result == "A perfectly safe description."
+
+    def test_none_description_always_accepted(self, monkeypatch):
+        """None descriptions pass through unchanged in both modes."""
+        for strict in (True, False):
+            monkeypatch.setattr(settings, "validation_strict", strict)
+            assert ToolCreate.validate_description(None) is None
+
+
+def test_a2a_agent_read_populates_auth_headers_single():
+    """Test A2AAgentRead populates auth_headers from single custom header."""
+    auth_value = encode_auth({"X-API-Key": "secret123"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers is not None
+    assert isinstance(agent.auth_headers, list)
+    assert len(agent.auth_headers) == 1
+    assert agent.auth_headers[0]["key"] == "X-API-Key"
+    assert agent.auth_headers[0]["value"] == "secret123"
+    # Backward compatibility
+    assert agent.auth_header_key == "X-API-Key"
+    assert agent.auth_header_value == "secret123"
+
+
+def test_a2a_agent_read_populates_auth_headers_multiple():
+    """Test A2AAgentRead populates auth_headers from multiple custom headers."""
+    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456", "X-Region": "us-east-1"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers is not None
+    assert len(agent.auth_headers) == 3
+    keys = [h["key"] for h in agent.auth_headers]
+    assert "X-API-Key" in keys
+    assert "X-Client-ID" in keys
+    assert "X-Region" in keys
+
+
+def test_a2a_agent_read_masked_hides_auth_header_values():
+    """Test A2AAgentRead.masked() masks auth_headers values."""
+    auth_value = encode_auth({"X-API-Key": "secret123", "X-Client-ID": "client456"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        last_interaction=None,
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+    masked_agent = agent.masked()
+
+    assert masked_agent.auth_headers is not None
+    assert len(masked_agent.auth_headers) == 2
+    # Keys should be visible
+    assert masked_agent.auth_headers[0]["key"] == "X-API-Key"
+    assert masked_agent.auth_headers[1]["key"] == "X-Client-ID"
+    # Values should be masked
+    assert masked_agent.auth_headers[0]["value"] == settings.masked_auth_value
+    assert masked_agent.auth_headers[1]["value"] == settings.masked_auth_value
+
+
+def test_a2a_agent_read_auth_headers_empty_values():
+    """Test A2AAgentRead handles empty header values correctly."""
+    auth_value = encode_auth({"X-Empty-Header": ""})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers[0]["value"] == ""
+
+
+def test_a2a_agent_read_authheaders_rejects_non_dict():
+    """Test A2AAgentRead._populate_auth raises ValueError when decoded auth_value is not a dict."""
+    # encode_auth expects a dict, so we encode a list-wrapping hack that decode_auth
+    # still returns as a dict.  Instead, manually construct with a raw string to bypass
+    # encode_auth and trigger the isinstance guard.
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=encode_auth({"_list": ["not-a-dict"]}),
+    )
+    # Monkey-patch decode_auth to return a non-dict value
+    # First-Party
+    import mcpgateway.schemas as _schemas_mod
+
+    _original = _schemas_mod.decode_auth
+
+    def _fake_decode(val, **kw):
+        return ["not", "a", "dict"]
+
+    _schemas_mod.decode_auth = _fake_decode
+    try:
+        with pytest.raises(ValueError, match="authheaders requires at least one key/value pair"):
+            A2AAgentRead._populate_auth(agent)
+    finally:
+        _schemas_mod.decode_auth = _original
+
+
+def test_a2a_agent_read_auth_headers_none_values():
+    """Test A2AAgentRead handles None header values by converting to empty string."""
+    auth_value = encode_auth({"X-Null-Header": None})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+
+    assert agent.auth_headers[0]["key"] == "X-Null-Header"
+    assert agent.auth_headers[0]["value"] == ""
+
+
+def test_a2a_agent_read_masked_preserves_empty_header_values():
+    """Test A2AAgentRead.masked() does not mask empty header values."""
+    auth_value = encode_auth({"X-Empty": "", "X-Secret": "real-value"})
+    agent = A2AAgentRead.model_construct(
+        id="test-id",
+        name="Test Agent",
+        endpoint_url="https://api.example.com",
+        agent_type="generic",
+        protocol_version="1.0",
+        capabilities={},
+        config={},
+        enabled=True,
+        reachable=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        last_interaction=None,
+        auth_type="authheaders",
+        auth_value=auth_value,
+    )
+    agent = agent._populate_auth()
+    masked_agent = agent.masked()
+
+    # Empty value should stay empty (not masked)
+    empty_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Empty")
+    assert empty_header["value"] == ""
+    # Non-empty value should be masked
+    secret_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Secret")
+    assert secret_header["value"] == settings.masked_auth_value
+
+
+def test_visibility_literal_enum_validation():
+    """Schemas with Literal visibility reject invalid values and accept valid ones (issue #3525)."""
+    valid_values = ["private", "team", "public"]
+    invalid_values = ["invalid_value", "", "PUBLIC", "PRIVATE", "admin", "internal"]
+
+    # GatewayUpdate — the primary schema from the issue
+    for v in valid_values:
+        obj = GatewayUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GatewayUpdate(visibility=v)
+    assert GatewayUpdate().visibility is None  # default is None (optional)
+
+    # GatewayCreate
+    for v in valid_values:
+        assert GatewayCreate(name="gw", url="http://localhost:9000", visibility=v).visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GatewayCreate(name="gw", url="http://localhost:9000", visibility=v)
+
+    # ToolUpdate
+    for v in valid_values:
+        obj = ToolUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ToolUpdate(visibility=v)
+
+    # ToolCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+    assert ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST").visibility is None
+
+    # ResourceUpdate
+    for v in valid_values:
+        obj = ResourceUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ResourceUpdate(visibility=v)
+
+    # PromptUpdate
+    for v in valid_values:
+        obj = PromptUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            PromptUpdate(visibility=v)
+
+    # GrpcServiceUpdate
+    for v in valid_values:
+        obj = GrpcServiceUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GrpcServiceUpdate(visibility=v)
+
+    # GrpcServiceCreate — required fields: name, target
+    for v in valid_values:
+        obj = GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
+
+    # ResourceCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+    assert ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data").visibility is None
+
+    # PromptCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = PromptCreate(name="p", template="hello", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            PromptCreate(name="p", template="hello", visibility=v)
+    assert PromptCreate(name="p", template="hello").visibility is None
+
+    # ServerCreate — required field: name
+    for v in valid_values:
+        obj = ServerCreate(name="srv", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ServerCreate(name="srv", visibility=v)
+    assert ServerCreate(name="srv", visibility=None).visibility is None
+
+    # ServerUpdate — all fields optional
+    for v in valid_values:
+        obj = ServerUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ServerUpdate(visibility=v)
+    assert ServerUpdate().visibility is None
+
+    # A2AAgentCreate — required fields: name, endpoint_url
+    for v in valid_values:
+        obj = A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+    assert A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=None).visibility is None
+
+    # A2AAgentUpdate — all fields optional
+    for v in valid_values:
+        obj = A2AAgentUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(visibility=v)
+    assert A2AAgentUpdate().visibility is None
+
+
+def test_coerce_visibility_normalizes_invalid_values():
+    """_coerce_visibility must normalize invalid legacy values to 'public' instead of raising."""
+    assert _coerce_visibility("bogus") == "public"
+    assert _coerce_visibility("") == "public"
+    assert _coerce_visibility("PUBLIC") == "public"
+    assert _coerce_visibility("PRIVATE") == "public"
+    # Valid values pass through unchanged
+    assert _coerce_visibility("private") == "private"
+    assert _coerce_visibility("team") == "team"
+    assert _coerce_visibility("public") == "public"
+    assert _coerce_visibility(None) is None
+
+
+def test_read_schemas_have_visibility_coercion_wired():
+    """All Read schemas must have _normalize_visibility wired so legacy DB rows don't crash reads."""
+    for schema_cls in [ToolRead, ResourceRead, PromptRead, GatewayRead, ServerRead, A2AAgentRead, GrpcServiceRead]:
+        assert hasattr(schema_cls, "_normalize_visibility"), f"{schema_cls.__name__} missing _normalize_visibility"

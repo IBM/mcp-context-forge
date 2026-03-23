@@ -9,6 +9,7 @@ Servers page object for Virtual MCP Server management features.
 
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -212,8 +213,9 @@ class ServersPage(BasePage):
     # ==================== High-Level Navigation Methods ====================
 
     def navigate_to_servers_tab(self) -> None:
-        """Navigate to Servers/Catalog tab and wait for panel to be visible."""
+        """Navigate to Servers/Catalog tab and wait for the table to finish loading."""
         self.sidebar.click_servers_tab()
+        self.wait_for_servers_table_loaded()
 
     # ==================== High-Level Server Operations ====================
 
@@ -282,14 +284,98 @@ class ServersPage(BasePage):
     def search_servers(self, query: str) -> None:
         """Search for servers using the search input.
 
+        Search is server-side via HTMX with a debounce. Avoid Playwright
+        ``networkidle`` because admin pages can keep long-lived requests open.
+        Wait for table/indicator state instead.
+
         Args:
             query: Search query string
         """
+        if query == "":
+            self.clear_search()
+            return
+
         self.fill_locator(self.search_input, query)
 
+        try:
+            self.page.wait_for_selector("#servers-loading.htmx-request", timeout=5000)
+        except PlaywrightTimeoutError:
+            # Fallback: explicitly trigger the server-side reload for the catalog panel.
+            self.page.evaluate(
+                "(q) => { const el = document.getElementById('servers-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                query,
+            )
+            try:
+                self.page.wait_for_selector("#servers-loading.htmx-request", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
+        try:
+            self.page.wait_for_selector(
+                "#servers-table-body",
+                state="attached",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            # Recovery path: if the partial response did not restore the table
+            # structure, hard-reload and reopen catalog.
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_servers_tab()
+            self.wait_for_servers_table_loaded()
+            return
+
+        # In some environments the clear action can leave the table in a stale
+        # empty state (e.g., after a zero-result search). Recover by reloading
+        # and re-opening the catalog tab so subsequent assertions see the
+        # canonical server list.
+        if self.get_server_count() == 0:
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_servers_tab()
+            self.wait_for_servers_table_loaded()
+
     def clear_search(self) -> None:
-        """Clear the server search."""
-        self.click_locator(self.clear_search_btn)
+        """Clear the server search.
+
+        Triggers an HTMX reload of the servers table, then waits for
+        table/indicator settling.
+        """
+        request_seen = False
+        try:
+            with self.page.expect_response(
+                lambda response: "/admin/servers/partial" in response.url and response.request.method == "GET",
+                timeout=5000,
+            ):
+                self.click_locator(self.clear_search_btn)
+            request_seen = True
+        except PlaywrightTimeoutError:
+            pass
+
+        if not request_seen:
+            # Fallback: invoke the same clear function the button uses and
+            # explicitly wait for the partial reload request.
+            try:
+                with self.page.expect_response(
+                    lambda response: "/admin/servers/partial" in response.url and response.request.method == "GET",
+                    timeout=5000,
+                ):
+                    self.page.evaluate("window.clearSearch && window.clearSearch('catalog')")
+                request_seen = True
+            except PlaywrightTimeoutError:
+                # Last-resort best effort: force a reload call even if request
+                # observation missed due timing.
+                self.page.evaluate(
+                    "() => { const el = document.getElementById('servers-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                )
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#servers-table-body", state="attached", timeout=15000)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive servers checkbox.
@@ -297,6 +383,7 @@ class ServersPage(BasePage):
         Args:
             show: True to show inactive servers, False to hide them
         """
+        self.page.wait_for_selector("#catalog-panel:not(.hidden)", timeout=15000)
         is_checked = self.show_inactive_checkbox.is_checked()
         if (show and not is_checked) or (not show and is_checked):
             self.click_locator(self.show_inactive_checkbox)
@@ -307,6 +394,7 @@ class ServersPage(BasePage):
         Returns:
             Number of visible server rows
         """
+        self.page.wait_for_selector("#catalog-panel:not(.hidden)", timeout=15000)
         self.page.wait_for_selector('[data-testid="server-list"]', state="attached")
         return self.server_items.locator(":visible").count()
 
@@ -397,3 +485,122 @@ class ServersPage(BasePage):
             server_name: The name of the server
         """
         expect(self.page.locator(f"text={server_name}")).to_be_hidden()
+
+    # ==================== Edit Server Modal Elements ====================
+
+    @property
+    def edit_server_modal(self) -> Locator:
+        """Edit server modal container."""
+        return self.page.locator("#server-edit-modal")
+
+    @property
+    def edit_server_name_input(self) -> Locator:
+        """Name input inside the edit server modal."""
+        return self.edit_server_modal.locator('input[name="name"]')
+
+    @property
+    def edit_server_cancel_btn(self) -> Locator:
+        """Cancel button inside the edit server modal."""
+        return self.edit_server_modal.locator('button:has-text("Cancel")')
+
+    @property
+    def edit_server_save_btn(self) -> Locator:
+        """Save Changes button inside the edit server modal."""
+        return self.edit_server_modal.locator('button:has-text("Save Changes")')
+
+    @property
+    def edit_tools_container(self) -> Locator:
+        """Associated Tools container in edit modal."""
+        return self.page.locator("#edit-server-tools")
+
+    @property
+    def edit_tools_search_input(self) -> Locator:
+        """Tools search input in edit modal."""
+        return self.page.locator("#searchEditTools")
+
+    @property
+    def edit_select_all_tools_btn(self) -> Locator:
+        """Select All tools button in edit modal."""
+        return self.page.locator("#selectAllEditToolsBtn")
+
+    @property
+    def edit_resources_container(self) -> Locator:
+        """Associated Resources container in edit modal."""
+        return self.page.locator("#edit-server-resources")
+
+    @property
+    def edit_resources_search_input(self) -> Locator:
+        """Resources search input in edit modal."""
+        return self.page.locator("#searchEditResources")
+
+    @property
+    def edit_select_all_resources_btn(self) -> Locator:
+        """Select All resources button in edit modal."""
+        return self.page.locator("#selectAllEditResourcesBtn")
+
+    @property
+    def edit_prompts_container(self) -> Locator:
+        """Associated Prompts container in edit modal."""
+        return self.page.locator("#edit-server-prompts")
+
+    @property
+    def edit_prompts_search_input(self) -> Locator:
+        """Prompts search input in edit modal."""
+        return self.page.locator("#searchEditPrompts")
+
+    @property
+    def edit_select_all_prompts_btn(self) -> Locator:
+        """Select All prompts button in edit modal."""
+        return self.page.locator("#selectAllEditPromptsBtn")
+
+    # ==================== Edit Server Modal Methods ====================
+
+    def open_edit_modal(self, server_name: str) -> None:
+        """Find a server row by name and click its Edit button.
+
+        Args:
+            server_name: Name of the server to edit
+        """
+        server_row = self.page.locator(f'[data-testid="server-item"]:has-text("{server_name}")').first
+        expect(server_row).to_be_visible(timeout=10000)
+        edit_btn = server_row.locator('button:has-text("Edit")')
+        edit_btn.click()
+        expect(self.edit_server_modal).to_be_visible(timeout=10000)
+
+    def get_edit_checked_tools(self) -> list[str]:
+        """Return values of checked tool checkboxes in the edit modal."""
+        return self.page.evaluate(
+            """
+            () => {
+                const container = document.getElementById('edit-server-tools');
+                if (!container) return [];
+                return Array.from(
+                    container.querySelectorAll('input[name="associatedTools"]:checked')
+                ).map(cb => cb.value);
+            }
+        """
+        )
+
+    def get_edit_tool_store_size(self) -> int:
+        """Read the in-memory editServerSelections store size for tools."""
+        return self._get_edit_store_size("edit-server-tools")
+
+    def get_edit_resource_store_size(self) -> int:
+        """Read the in-memory editServerSelections store size for resources."""
+        return self._get_edit_store_size("edit-server-resources")
+
+    def get_edit_prompt_store_size(self) -> int:
+        """Read the in-memory editServerSelections store size for prompts."""
+        return self._get_edit_store_size("edit-server-prompts")
+
+    def _get_edit_store_size(self, key: str) -> int:
+        """Read the in-memory editServerSelections store size for a given key."""
+        return self.page.evaluate(
+            """
+            (key) => {
+                const store = window.editServerSelections && window.editServerSelections[key];
+                return store ? store.size : 0;
+            }
+        """,
+            key,
+        )

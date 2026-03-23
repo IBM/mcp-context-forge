@@ -199,6 +199,11 @@ spec:
 
 The remote gateway must have the reverse proxy endpoints enabled:
 
+```bash
+# Required on the gateway
+MCPGATEWAY_REVERSE_PROXY_ENABLED=true
+```
+
 ### 1. WebSocket Endpoint
 
 The gateway exposes `/reverse-proxy/ws` for WebSocket connections:
@@ -232,6 +237,7 @@ Reverse-proxied servers automatically appear in the gateway's server catalog and
 
 - Always use authentication tokens in production
 - Tokens should have appropriate expiration times
+- WebSocket auth accepts bearer tokens from the `Authorization` header only (`?token=` query auth is not supported)
 - Consider using mutual TLS for additional security
 
 ### Network Security
@@ -370,7 +376,7 @@ class MonitoredReverseProxy(ReverseProxyClient):
 
 ## Related Documentation
 
-- [MCP Gateway Documentation](../index.md)
+- [ContextForge Documentation](../index.md)
 - [MCP Protocol Specification](https://modelcontextprotocol.io)
 - [Transport Protocols](../architecture/index.md)
 - [Authentication Guide](../manage/securing.md)

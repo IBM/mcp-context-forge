@@ -2,7 +2,14 @@
  * Unit tests for admin.js table filtering functions.
  */
 
-import { describe, test, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import {
+    describe,
+    test,
+    expect,
+    beforeAll,
+    beforeEach,
+    afterAll,
+} from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
@@ -149,10 +156,36 @@ describe("filterToolsTable", () => {
     }
 
     test("shows matching rows and hides non-matching", () => {
-        // Columns: Actions(0), S.No.(1), Source(2), Name(3), ...
+        // Columns: Actions(0), S.No.(1), ToolID(2), Source(3), Name(4), ...
         const tbody = buildToolsTable([
-            ["act", "1", "REST", "get-users", "GET", "Gets users", "", "", "", "", "Active"],
-            ["act", "2", "MCP", "list-files", "POST", "Lists files", "", "", "", "", "Active"],
+            [
+                "act",
+                "1",
+                "id-1",
+                "REST",
+                "get-users",
+                "GET",
+                "Gets users",
+                "",
+                "",
+                "",
+                "",
+                "Active",
+            ],
+            [
+                "act",
+                "2",
+                "id-2",
+                "MCP",
+                "list-files",
+                "POST",
+                "Lists files",
+                "",
+                "",
+                "",
+                "",
+                "Active",
+            ],
         ]);
         f()("get-users");
         const rows = tbody.querySelectorAll("tr");
@@ -162,8 +195,34 @@ describe("filterToolsTable", () => {
 
     test("empty search shows all rows", () => {
         const tbody = buildToolsTable([
-            ["act", "1", "REST", "tool-a", "GET", "desc", "", "", "", "", "Active"],
-            ["act", "2", "MCP", "tool-b", "POST", "desc", "", "", "", "", "Active"],
+            [
+                "act",
+                "1",
+                "id-a",
+                "REST",
+                "tool-a",
+                "GET",
+                "desc",
+                "",
+                "",
+                "",
+                "",
+                "Active",
+            ],
+            [
+                "act",
+                "2",
+                "id-b",
+                "MCP",
+                "tool-b",
+                "POST",
+                "desc",
+                "",
+                "",
+                "",
+                "",
+                "Active",
+            ],
         ]);
         f()("");
         const rows = tbody.querySelectorAll("tr");
@@ -203,8 +262,26 @@ describe("filterResourcesTable", () => {
     test("shows matching rows and hides non-matching", () => {
         // Columns: Actions(0), Source(1), Name(2), ...
         const tbody = buildResourcesTable([
-            ["act", "gateway-1", "config-file", "Configuration file", "prod", "admin", "team-a", "Active"],
-            ["act", "gateway-2", "log-file", "Log file", "staging", "dev", "team-b", "Active"],
+            [
+                "act",
+                "gateway-1",
+                "config-file",
+                "Configuration file",
+                "prod",
+                "admin",
+                "team-a",
+                "Active",
+            ],
+            [
+                "act",
+                "gateway-2",
+                "log-file",
+                "Log file",
+                "staging",
+                "dev",
+                "team-b",
+                "Active",
+            ],
         ]);
         f()("config");
         const rows = tbody.querySelectorAll("tr");
@@ -255,8 +332,28 @@ describe("filterPromptsTable", () => {
     test("shows matching rows and hides non-matching", () => {
         // Columns: Actions(0), S.No.(1), GatewayName(2), Name(3), ...
         const tbody = buildPromptsTable([
-            ["act", "1", "gw-1", "greeting-prompt", "A greeting", "tag-a", "owner", "team", "Active"],
-            ["act", "2", "gw-2", "farewell-prompt", "A farewell", "tag-b", "owner", "team", "Active"],
+            [
+                "act",
+                "1",
+                "gw-1",
+                "greeting-prompt",
+                "A greeting",
+                "tag-a",
+                "owner",
+                "team",
+                "Active",
+            ],
+            [
+                "act",
+                "2",
+                "gw-2",
+                "farewell-prompt",
+                "A farewell",
+                "tag-b",
+                "owner",
+                "team",
+                "Active",
+            ],
         ]);
         f()("greeting");
         const rows = tbody.querySelectorAll("tr");
@@ -307,10 +404,38 @@ describe("filterA2AAgentsTable", () => {
     }
 
     test("shows matching rows via #agents-table", () => {
-        // Columns: Actions(0), ID(1), Name(2), ...
+        // Columns: Actions(0), S.No.(1), AgentID(2), Name(3), ...
         const tbody = buildAgentsTable([
-            ["act", "id-1", "Weather Agent", "Gets weather", "http://a", "tag", "type", "Active", "OK", "owner", "team", "public"],
-            ["act", "id-2", "Search Agent", "Does search", "http://b", "tag", "type", "Active", "OK", "owner", "team", "public"],
+            [
+                "act",
+                "1",
+                "id-1",
+                "Weather Agent",
+                "Gets weather",
+                "http://a",
+                "tag",
+                "type",
+                "Active",
+                "OK",
+                "owner",
+                "team",
+                "public",
+            ],
+            [
+                "act",
+                "2",
+                "id-2",
+                "Search Agent",
+                "Does search",
+                "http://b",
+                "tag",
+                "type",
+                "Active",
+                "OK",
+                "owner",
+                "team",
+                "public",
+            ],
         ]);
         f()("weather");
         const rows = tbody.querySelectorAll("tr");
@@ -320,7 +445,23 @@ describe("filterA2AAgentsTable", () => {
 
     test("falls back to #a2a-agents-panel", () => {
         const tbody = buildAgentsTable(
-            [["act", "id-1", "Fallback Agent", "desc", "http://c", "", "", "", "", "", "", ""]],
+            [
+                [
+                    "act",
+                    "1",
+                    "id-1",
+                    "Fallback Agent",
+                    "desc",
+                    "http://c",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
+            ],
             { usePanel: true },
         );
         f()("fallback");
@@ -329,8 +470,36 @@ describe("filterA2AAgentsTable", () => {
 
     test("empty search shows all rows", () => {
         const tbody = buildAgentsTable([
-            ["act", "id-1", "Agent A", "desc", "", "", "", "", "", "", "", ""],
-            ["act", "id-2", "Agent B", "desc", "", "", "", "", "", "", "", ""],
+            [
+                "act",
+                "1",
+                "id-1",
+                "Agent A",
+                "desc",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
+            [
+                "act",
+                "2",
+                "id-2",
+                "Agent B",
+                "desc",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ],
         ]);
         f()("");
         const rows = tbody.querySelectorAll("tr");
@@ -355,7 +524,18 @@ describe("filterGatewaysTable", () => {
         const table = doc.createElement("table");
         const thead = doc.createElement("thead");
         const headerRow = doc.createElement("tr");
-        ["actions", "s.no.", "name", "url", "tags", "status", "lastseen", "owner", "team", "visibility"].forEach((h) => {
+        [
+            "actions",
+            "s.no.",
+            "name",
+            "url",
+            "tags",
+            "status",
+            "lastseen",
+            "owner",
+            "team",
+            "visibility",
+        ].forEach((h) => {
             const th = doc.createElement("th");
             th.textContent = h;
             headerRow.appendChild(th);
@@ -383,8 +563,30 @@ describe("filterGatewaysTable", () => {
 
     test("shows matching rows and hides non-matching (strategy 1: gateways-panel)", () => {
         const tbody = buildGatewaysTable([
-            ["act", "1", "Server Alpha", "http://alpha.com", "prod", "Active", "now", "admin", "team-a", "public"],
-            ["act", "2", "Server Beta", "http://beta.com", "staging", "Active", "now", "admin", "team-b", "public"],
+            [
+                "act",
+                "1",
+                "Server Alpha",
+                "http://alpha.com",
+                "prod",
+                "Active",
+                "now",
+                "admin",
+                "team-a",
+                "public",
+            ],
+            [
+                "act",
+                "2",
+                "Server Beta",
+                "http://beta.com",
+                "staging",
+                "Active",
+                "now",
+                "admin",
+                "team-b",
+                "public",
+            ],
         ]);
         f()("alpha");
         const rows = tbody.querySelectorAll("tr");
@@ -394,8 +596,30 @@ describe("filterGatewaysTable", () => {
 
     test("empty search shows all rows", () => {
         const tbody = buildGatewaysTable([
-            ["act", "1", "Server A", "http://a.com", "", "Active", "", "", "", ""],
-            ["act", "2", "Server B", "http://b.com", "", "Active", "", "", "", ""],
+            [
+                "act",
+                "1",
+                "Server A",
+                "http://a.com",
+                "",
+                "Active",
+                "",
+                "",
+                "",
+                "",
+            ],
+            [
+                "act",
+                "2",
+                "Server B",
+                "http://b.com",
+                "",
+                "Active",
+                "",
+                "",
+                "",
+                "",
+            ],
         ]);
         f()("");
         const rows = tbody.querySelectorAll("tr");
@@ -413,8 +637,30 @@ describe("filterGatewaysTable", () => {
 
         const tbody = buildGatewaysTable(
             [
-                ["act", "1", "Enabled GW", "http://a.com", "", "Active", "", "", "", ""],
-                ["act", "2", "Disabled GW", "http://b.com", "", "Inactive", "", "", "", ""],
+                [
+                    "act",
+                    "1",
+                    "Enabled GW",
+                    "http://a.com",
+                    "",
+                    "Active",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
+                [
+                    "act",
+                    "2",
+                    "Disabled GW",
+                    "http://b.com",
+                    "",
+                    "Inactive",
+                    "",
+                    "",
+                    "",
+                    "",
+                ],
             ],
             { enabledValues: ["true", "false"] },
         );
@@ -433,7 +679,18 @@ describe("filterGatewaysTable", () => {
         const table = doc.createElement("table");
         const thead = doc.createElement("thead");
         const headerRow = doc.createElement("tr");
-        ["actions", "s.no.", "name", "url", "tags", "status", "lastseen", "owner", "team", "visibility"].forEach((h) => {
+        [
+            "actions",
+            "s.no.",
+            "name",
+            "url",
+            "tags",
+            "status",
+            "lastseen",
+            "owner",
+            "team",
+            "visibility",
+        ].forEach((h) => {
             const th = doc.createElement("th");
             th.textContent = h;
             headerRow.appendChild(th);
@@ -444,7 +701,18 @@ describe("filterGatewaysTable", () => {
         const tbody = doc.createElement("tbody");
         const tr = doc.createElement("tr");
         tr.setAttribute("data-enabled", "true");
-        ["act", "1", "Found Server", "http://found.com", "", "Active", "", "", "", ""].forEach((text) => {
+        [
+            "act",
+            "1",
+            "Found Server",
+            "http://found.com",
+            "",
+            "Active",
+            "",
+            "",
+            "",
+            "",
+        ].forEach((text) => {
             const td = doc.createElement("td");
             td.textContent = text;
             tr.appendChild(td);
@@ -516,7 +784,10 @@ describe("addTagToFilter", () => {
 
         f()("tools", "production");
         // Should still just be "production" (not duplicated)
-        const tags = input.value.split(",").map((t) => t.trim()).filter((t) => t);
+        const tags = input.value
+            .split(",")
+            .map((t) => t.trim())
+            .filter((t) => t);
         expect(tags.filter((t) => t === "production")).toHaveLength(1);
     });
 
@@ -545,7 +816,8 @@ describe("filterEntitiesByTags", () => {
             const tagTd = doc.createElement("td");
             tags.forEach((tag) => {
                 const span = doc.createElement("span");
-                span.className = "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full";
+                span.className =
+                    "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full";
                 span.textContent = tag;
                 tagTd.appendChild(span);
             });

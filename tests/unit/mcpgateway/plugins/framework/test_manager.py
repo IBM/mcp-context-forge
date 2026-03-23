@@ -25,7 +25,7 @@ async def test_manager_single_transformer_prompt_plugin():
     assert manager.config.plugins[0].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
     assert manager.config.plugins[0].description == "A plugin for finding and replacing words."
     assert manager.config.plugins[0].version == "0.1"
-    assert manager.config.plugins[0].author == "MCP Context Forge Team"
+    assert manager.config.plugins[0].author == "ContextForge Team"
     assert manager.config.plugins[0].hooks[0] == "prompt_pre_fetch"
     assert manager.config.plugins[0].hooks[1] == "prompt_post_fetch"
     assert manager.config.plugins[0].config
@@ -60,7 +60,7 @@ async def test_manager_multiple_transformer_preprompt_plugin():
     assert manager.config.plugins[0].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
     assert manager.config.plugins[0].description == "A plugin for finding and replacing synonyms."
     assert manager.config.plugins[0].version == "0.1"
-    assert manager.config.plugins[0].author == "MCP Context Forge Team"
+    assert manager.config.plugins[0].author == "ContextForge Team"
     assert manager.config.plugins[0].hooks[0] == "prompt_pre_fetch"
     assert manager.config.plugins[0].hooks[1] == "prompt_post_fetch"
     assert manager.config.plugins[0].config
@@ -72,7 +72,7 @@ async def test_manager_multiple_transformer_preprompt_plugin():
     assert manager.config.plugins[1].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
     assert manager.config.plugins[1].description == "A plugin for finding and replacing words."
     assert manager.config.plugins[1].version == "0.1"
-    assert manager.config.plugins[1].author == "MCP Context Forge Team"
+    assert manager.config.plugins[1].author == "ContextForge Team"
     assert manager.config.plugins[1].hooks[0] == "prompt_pre_fetch"
     assert manager.config.plugins[1].hooks[1] == "prompt_post_fetch"
     assert manager.config.plugins[1].config

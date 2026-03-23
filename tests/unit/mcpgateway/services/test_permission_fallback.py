@@ -45,37 +45,32 @@ class TestPermissionFallback:
 
     @pytest.mark.asyncio
     async def test_team_create_permission_for_regular_users(self, permission_service):
-        """Test that regular users can create teams."""
+        """Regular users need explicit RBAC grants for team operations."""
         with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
-            # Regular user should be able to create teams (global permission)
-            assert await permission_service.check_permission("user@example.com", "teams.create") == True
+            assert await permission_service.check_permission("user@example.com", "teams.create") == False
 
     @pytest.mark.asyncio
     async def test_team_owner_permissions(self, permission_service):
-        """Test that team owners have full permissions on their teams."""
+        """Implicit team ownership should not grant permissions without RBAC roles."""
         with (
             patch.object(permission_service, "_is_user_admin", return_value=False),
             patch.object(permission_service, "get_user_permissions", return_value=set()),
             patch.object(permission_service, "_get_user_team_role", return_value="owner"),
         ):
-            # Team owner should have full permissions on their team
-            assert await permission_service.check_permission("owner@example.com", "teams.read", team_id="team-123") == True
-            assert await permission_service.check_permission("owner@example.com", "teams.update", team_id="team-123") == True
-            assert await permission_service.check_permission("owner@example.com", "teams.delete", team_id="team-123") == True
-            assert await permission_service.check_permission("owner@example.com", "teams.manage_members", team_id="team-123") == True
+            assert await permission_service.check_permission("owner@example.com", "teams.read", team_id="team-123") == False
+            assert await permission_service.check_permission("owner@example.com", "teams.update", team_id="team-123") == False
+            assert await permission_service.check_permission("owner@example.com", "teams.delete", team_id="team-123") == False
+            assert await permission_service.check_permission("owner@example.com", "teams.manage_members", team_id="team-123") == False
 
     @pytest.mark.asyncio
     async def test_team_member_permissions(self, permission_service):
-        """Test that team members have read permissions on their teams."""
+        """Implicit team membership should not grant permissions without RBAC roles."""
         with (
             patch.object(permission_service, "_is_user_admin", return_value=False),
             patch.object(permission_service, "get_user_permissions", return_value=set()),
             patch.object(permission_service, "_get_user_team_role", return_value="member"),
         ):
-            # Team member should have read permissions
-            assert await permission_service.check_permission("member@example.com", "teams.read", team_id="team-123") == True
-
-            # But not management permissions
+            assert await permission_service.check_permission("member@example.com", "teams.read", team_id="team-123") == False
             assert await permission_service.check_permission("member@example.com", "teams.update", team_id="team-123") == False
             assert await permission_service.check_permission("member@example.com", "teams.delete", team_id="team-123") == False
             assert await permission_service.check_permission("member@example.com", "teams.manage_members", team_id="team-123") == False
@@ -163,35 +158,31 @@ class TestPermissionFallback:
 
 
 class TestTokenPermissionFallback:
-    """Test permission fallback functionality for token management."""
+    """Token management requires explicit RBAC permissions."""
 
     @pytest.mark.asyncio
     async def test_regular_user_can_create_tokens(self, permission_service):
-        """Test that regular users can create their own tokens."""
+        """Regular users need explicit RBAC grants for token operations."""
         with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
-            # Regular user should be able to create tokens
-            assert await permission_service.check_permission("user@example.com", "tokens.create") is True
+            assert await permission_service.check_permission("user@example.com", "tokens.create") is False
 
     @pytest.mark.asyncio
     async def test_regular_user_can_read_tokens(self, permission_service):
-        """Test that regular users can read their own tokens."""
+        """Regular users need explicit RBAC grants for token operations."""
         with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
-            # Regular user should be able to read tokens
-            assert await permission_service.check_permission("user@example.com", "tokens.read") is True
+            assert await permission_service.check_permission("user@example.com", "tokens.read") is False
 
     @pytest.mark.asyncio
     async def test_regular_user_can_revoke_tokens(self, permission_service):
-        """Test that regular users can revoke their own tokens."""
+        """Regular users need explicit RBAC grants for token operations."""
         with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
-            # Regular user should be able to revoke tokens
-            assert await permission_service.check_permission("user@example.com", "tokens.revoke") is True
+            assert await permission_service.check_permission("user@example.com", "tokens.revoke") is False
 
     @pytest.mark.asyncio
     async def test_regular_user_can_update_tokens(self, permission_service):
-        """Test that regular users can update their own tokens."""
+        """Regular users need explicit RBAC grants for token operations."""
         with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
-            # Regular user should be able to update tokens
-            assert await permission_service.check_permission("user@example.com", "tokens.update") is True
+            assert await permission_service.check_permission("user@example.com", "tokens.update") is False
 
     @pytest.mark.asyncio
     async def test_admin_user_has_all_token_permissions(self, permission_service):

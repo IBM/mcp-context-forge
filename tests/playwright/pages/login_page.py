@@ -118,12 +118,8 @@ class LoginPage(BasePage):
 
     def click_submit(self) -> None:
         """Click submit button."""
-        previous_url = self.page.url
         self.click_locator(self.submit_button)
         self.page.wait_for_load_state("domcontentloaded")
-        # Give extra time if URL hasn't changed
-        if self.page.url == previous_url:
-            self.page.wait_for_timeout(500)
 
     def submit_login(self, email: str, password: str) -> None:
         """Fill and submit login form.

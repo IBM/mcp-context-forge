@@ -8,7 +8,7 @@ plugins:
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     mcp:
       proto: STREAMABLEHTTP
-      url: http://127.0.0.1:3001/mcp
+      url: http://localhost:3001/mcp
 
 # Plugin directories to scan
 plugin_dirs:

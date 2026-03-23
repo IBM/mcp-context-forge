@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-OAuth Token Storage Service for MCP Gateway.
+OAuth Token Storage Service for ContextForge.
 
 This module handles the storage, retrieval, and management of OAuth access and refresh tokens
 for Authorization Code flow implementations.
@@ -20,6 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import get_settings
 from mcpgateway.db import OAuthToken
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -79,7 +80,7 @@ class TokenStorageService:
         Args:
             gateway_id: ID of the gateway
             user_id: OAuth provider user ID
-            app_user_email: MCP Gateway user email (required)
+            app_user_email: ContextForge user email (required)
             access_token: Access token from OAuth provider
             refresh_token: Refresh token from OAuth provider (optional)
             expires_in: Token expiration time in seconds
@@ -114,14 +115,18 @@ class TokenStorageService:
                 token_record.expires_at = expires_at
                 token_record.scopes = scopes
                 token_record.updated_at = datetime.now(timezone.utc)
-                logger.info(f"Updated OAuth tokens for gateway {gateway_id}, app user {app_user_email}, OAuth user {user_id}")
+                logger.info(
+                    f"Updated OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}, OAuth user {SecurityValidator.sanitize_log_message(user_id)}"
+                )
             else:
                 # Create new record
                 token_record = OAuthToken(
                     gateway_id=gateway_id, user_id=user_id, app_user_email=app_user_email, access_token=encrypted_access, refresh_token=encrypted_refresh, expires_at=expires_at, scopes=scopes
                 )
                 self.db.add(token_record)
-                logger.info(f"Stored new OAuth tokens for gateway {gateway_id}, app user {app_user_email}, OAuth user {user_id}")
+                logger.info(
+                    f"Stored new OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}, OAuth user {SecurityValidator.sanitize_log_message(user_id)}"
+                )
 
             self.db.commit()
             return token_record
@@ -132,11 +137,11 @@ class TokenStorageService:
             raise OAuthError(f"Token storage failed: {str(e)}")
 
     async def get_user_token(self, gateway_id: str, app_user_email: str, threshold_seconds: int = 300) -> Optional[str]:
-        """Get a valid access token for a specific MCP Gateway user, refreshing if necessary.
+        """Get a valid access token for a specific ContextForge user, refreshing if necessary.
 
         Args:
             gateway_id: ID of the gateway
-            app_user_email: MCP Gateway user email (required)
+            app_user_email: ContextForge user email (required)
             threshold_seconds: Seconds before expiry to consider token expired
 
         Returns:
@@ -146,12 +151,12 @@ class TokenStorageService:
             token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
 
             if not token_record:
-                logger.debug(f"No OAuth tokens found for gateway {gateway_id}, app user {app_user_email}")
+                logger.debug(f"No OAuth tokens found for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}")
                 return None
 
             # Check if token is expired or near expiration
             if self._is_token_expired(token_record, threshold_seconds):
-                logger.info(f"OAuth token expired for gateway {gateway_id}, app user {app_user_email}")
+                logger.info(f"OAuth token expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}")
                 if token_record.refresh_token:
                     # Attempt to refresh token
                     new_token = await self._refresh_access_token(token_record)
@@ -340,7 +345,7 @@ class TokenStorageService:
 
         Args:
             gateway_id: ID of the gateway
-            app_user_email: MCP Gateway user email
+            app_user_email: ContextForge user email
 
         Returns:
             Token information dictionary or None if not found
@@ -374,7 +379,7 @@ class TokenStorageService:
 
             return {
                 "user_id": token_record.user_id,  # OAuth provider user ID
-                "app_user_email": token_record.app_user_email,  # MCP Gateway user
+                "app_user_email": token_record.app_user_email,  # ContextForge user
                 "token_type": token_record.token_type,
                 "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None,
                 "scopes": token_record.scopes,
@@ -392,7 +397,7 @@ class TokenStorageService:
 
         Args:
             gateway_id: ID of the gateway
-            app_user_email: MCP Gateway user email
+            app_user_email: ContextForge user email
 
         Returns:
             True if tokens were revoked successfully
@@ -419,7 +424,7 @@ class TokenStorageService:
             if token_record:
                 self.db.delete(token_record)
                 self.db.commit()
-                logger.info(f"Revoked OAuth tokens for gateway {gateway_id}, user {app_user_email}")
+                logger.info(f"Revoked OAuth tokens for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(app_user_email)}")
                 return True
 
             return False

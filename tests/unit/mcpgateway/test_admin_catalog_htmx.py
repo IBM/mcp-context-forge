@@ -62,7 +62,20 @@ def client():
     if not hasattr(PermissionService, "_original_check_permission"):
         PermissionService._original_check_permission = PermissionService.check_permission
 
-    async def mock_check_permission(self, user_email: str, permission: str, resource_type=None, resource_id=None, team_id=None, ip_address=None, user_agent=None) -> bool:
+    async def mock_check_permission(
+        self,
+        user_email: str,
+        permission: str,
+        resource_type=None,
+        resource_id=None,
+        team_id=None,
+        token_teams=None,
+        ip_address=None,
+        user_agent=None,
+        allow_admin_bypass=True,
+        check_any_team=False,
+        **_kwargs,
+    ) -> bool:
         return True
 
     PermissionService.check_permission = mock_check_permission
@@ -84,8 +97,9 @@ def client():
     shared_get_instance.start()
     shared_shutdown.start()
 
-    with TestClient(app) as test_client:
-        yield test_client
+    # Skip lifespan to avoid parallel test hangs (no `with` context manager)
+    test_client = TestClient(app)
+    yield test_client
 
     # Cleanup
     app.dependency_overrides.pop(get_current_user, None)

@@ -1,6 +1,6 @@
-# Logging Examples for MCP Gateway
+# Logging Examples for ContextForge
 
-This document provides practical examples of using the logging features in MCP Gateway.
+This document provides practical examples of using the logging features in ContextForge.
 
 !!! tip "Complete Configuration"
     For production deployments, copy `.env.example` to `.env` and configure all settings including multitenancy:
@@ -116,7 +116,7 @@ LOG_FOLDER=logs
 # docker-compose.yml
 services:
   mcpgateway:
-    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     environment:
 
       - LOG_LEVEL=INFO

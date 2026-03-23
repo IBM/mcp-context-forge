@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 
 A2A Agent Service
 
-This module implements A2A (Agent-to-Agent) agent management for the MCP Gateway.
+This module implements A2A (Agent-to-Agent) agent management for ContextForge.
 It handles agent registration, listing, retrieval, updates, activation toggling, deletion,
 and interactions with A2A-compatible agents.
 """
@@ -26,8 +26,12 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
-from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam
+from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import fresh_db_session, get_for_update
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -145,12 +149,44 @@ class A2AAgentNameConflictError(A2AAgentError):
         super().__init__(message)
 
 
-class A2AAgentService:
+def _validate_a2a_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+    """Validate team assignment for A2A agent updates.
+
+    Args:
+        db: Database session used for membership checks.
+        user_email: Requesting user email. When omitted, ownership checks are skipped.
+        target_team_id: Team identifier to validate.
+
+    Raises:
+        ValueError: If team does not exist or caller lacks ownership.
+    """
+    if not target_team_id:
+        raise ValueError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
+    if not team:
+        raise ValueError(f"Team {target_team_id} not found")
+
+    if not user_email:
+        return
+
+    membership = (
+        db.query(DbEmailTeamMember)
+        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+        .first()
+    )
+    if not membership:
+        raise ValueError("User membership in team not sufficient for this update.")
+
+
+class A2AAgentService(BaseService):
     """Service for managing A2A agents in the gateway.
 
     Provides methods to create, list, retrieve, update, set state, and delete agent records.
     Also supports interactions with A2A-compatible agents.
     """
+
+    _visibility_model_cls = DbA2AAgent
 
     def __init__(self) -> None:
         """Initialize a new A2AAgentService instance."""
@@ -216,89 +252,51 @@ class A2AAgentService:
         """Check if user has access to agent based on visibility rules.
 
         Access rules (matching tools/resources/prompts):
-        - token_teams is None: Admin bypass (unrestricted access)
         - public visibility: Always allowed
+        - token_teams is None AND user_email is None: Admin bypass (unrestricted access)
+        - No user context (but not admin): Deny access to non-public agents
         - team visibility: Allowed if agent.team_id in token_teams
-        - private visibility: Allowed if owner, BUT NOT for public-only tokens
+        - private visibility: Allowed if owner (requires user_email and non-empty token_teams)
 
         Args:
             agent: The agent to check access for
             user_email: User's email for owner matching
-            token_teams: Teams from JWT. None = admin, [] = public-only (no owner access)
+            token_teams: Teams from JWT. None = admin bypass, [] = public-only (no owner access)
 
         Returns:
             True if access allowed, False otherwise.
         """
-        # Admin bypass - token_teams is None means unrestricted access
-        if token_teams is None:
-            return True
-
+        # Public agents are accessible by everyone
         if agent.visibility == "public":
             return True
 
-        if agent.visibility == "team" and token_teams:
+        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
+        # This happens when is_admin=True and no team scoping in token
+        if token_teams is None and user_email is None:
+            return True
+
+        # No user context (but not admin) = deny access to non-public agents
+        if not user_email:
+            return False
+
+        # Public-only tokens (empty teams array) can ONLY access public agents
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token:
+            return False  # Already checked public above
+
+        # Owner can access their own private agents
+        if agent.visibility == "private" and agent.owner_email and agent.owner_email == user_email:
+            return True
+
+        # Team agents: check team membership
+        # token_teams=None means admin bypass — allow all team agents
+        # ([] already handled by public-only check above)
+        if agent.visibility == "team":
+            if token_teams is None:
+                return True
             return agent.team_id in token_teams
 
-        # Private visibility: owner can access, BUT NOT for public-only tokens
-        # Public-only tokens (empty teams array) should NOT get owner access
-        is_public_only_token = len(token_teams) == 0
-        if agent.visibility == "private" and user_email and not is_public_only_token:
-            return agent.owner_email == user_email
-
         return False
-
-    def _apply_visibility_filter(
-        self,
-        query,
-        user_email: Optional[str],
-        token_teams: List[str],
-        team_id: Optional[str] = None,
-    ) -> Any:
-        """Apply visibility-based access control to query.
-
-        Access rules (matching tools/resources/prompts):
-        - public: visible to all
-        - team: visible to team members (token_teams contains team_id)
-        - private: visible only to owner, BUT NOT for public-only tokens
-
-        Args:
-            query: SQLAlchemy query to filter
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. [] = public-only (no owner access)
-            team_id: Optional specific team filter
-
-        Returns:
-            Filtered query
-        """
-        # Check if this is a public-only token (empty teams array)
-        # Public-only tokens can ONLY see public resources - no owner access
-        is_public_only_token = len(token_teams) == 0
-
-        if team_id:
-            # User requesting specific team - verify access
-            if team_id not in token_teams:
-                # Return query that matches nothing (will return empty result)
-                return query.where(False)
-
-            access_conditions = [
-                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
-            ]
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
-            return query.where(or_(*access_conditions))
-
-        # General access: public + team (+ owner if not public-only token)
-        access_conditions = [DbA2AAgent.visibility == "public"]
-
-        # Only include owner access for non-public-only tokens with user_email
-        if not is_public_only_token and user_email:
-            access_conditions.append(DbA2AAgent.owner_email == user_email)
-
-        if token_teams:
-            access_conditions.append(and_(DbA2AAgent.team_id.in_(token_teams), DbA2AAgent.visibility.in_(["team", "public"])))
-
-        return query.where(or_(*access_conditions))
 
     async def register_agent(
         self,
@@ -379,7 +377,7 @@ class A2AAgentService:
                 pass
                 # auth_value = {}
 
-            oauth_config = getattr(agent_data, "oauth_config", None)
+            oauth_config = await protect_oauth_config_for_storage(getattr(agent_data, "oauth_config", None))
 
             # Handle query_param auth - encrypt and prepare for storage
             auth_query_params_encrypted: Optional[Dict[str, str]] = None
@@ -619,11 +617,11 @@ class A2AAgentService:
         # ══════════════════════════════════════════════════════════════════════
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts
-                cached_agents = [A2AAgentRead.model_validate(a) for a in cached["agents"]]
+                cached_agents = [A2AAgentRead.model_validate(a).masked() for a in cached["agents"]]
                 return (cached_agents, cached.get("next_cursor"))
 
         # Build base query with ordering
@@ -633,24 +631,8 @@ class A2AAgentService:
         if not include_inactive:
             query = query.where(DbA2AAgent.enabled)
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public agents
-        if user_email or token_teams is not None:
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            # Default is public-only access (empty teams) when no teams are available.
-            effective_teams: List[str] = []
-            if token_teams is not None:
-                effective_teams = token_teams
-            elif user_email:
-                # Look up user's teams from DB (for admin UI / first-party access)
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                effective_teams = [team.id for team in user_teams]
+        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
-
-        # IMPORTANT: Apply visibility filter AFTER access control
-        # This allows users to further filter by visibility within their allowed access
         if visibility:
             query = query.where(DbA2AAgent.visibility == visibility)
 
@@ -1041,6 +1023,51 @@ class A2AAgentService:
                 # Skip query_param fields - handled separately below
                 if field in ("auth_query_param_key", "auth_query_param_value"):
                     continue
+
+                # auth_headers is on the schema but not the DB model; translate
+                # it into auth_value, preserving masked placeholders from the
+                # existing encrypted value so an unchanged edit does not
+                # overwrite real credentials with the mask string.
+                if field == "auth_headers" and value and isinstance(value, list):
+                    # First-Party
+                    from mcpgateway.config import settings as _settings  # pylint: disable=import-outside-toplevel
+
+                    existing_auth_raw = getattr(agent, "auth_value", None)
+                    existing_auth: Dict[str, str] = {}
+                    if isinstance(existing_auth_raw, str):
+                        try:
+                            existing_auth = decode_auth(existing_auth_raw)
+                        except Exception:
+                            existing_auth = {}
+                    elif isinstance(existing_auth_raw, dict):
+                        existing_auth = existing_auth_raw
+
+                    header_dict: Dict[str, str] = {}
+                    for header in value:
+                        key = header.get("key")
+                        if not key:
+                            continue
+                        hval = header.get("value", "")
+                        if hval == _settings.masked_auth_value and key in existing_auth:
+                            header_dict[key] = existing_auth[key]
+                        else:
+                            header_dict[key] = hval
+
+                    if header_dict:
+                        agent.auth_value = encode_auth(header_dict)
+                    continue
+
+                if field == "oauth_config":
+                    value = await protect_oauth_config_for_storage(value, existing_oauth_config=agent.oauth_config)
+
+                # Validate team reassignment before persisting
+                if field == "team_id" and value is not None and value != agent.team_id:
+                    _validate_a2a_team_assignment(db, user_email, value)
+
+                # Validate visibility transition to "team"
+                if field == "visibility" and value == "team":
+                    target_team_id = update_data.get("team_id", agent.team_id) if "team_id" in update_data else agent.team_id
+                    _validate_a2a_team_assignment(db, user_email, target_team_id)
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)
@@ -1565,7 +1592,7 @@ class A2AAgentService:
 
         return response or {"error": error_message}
 
-    async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
+    async def aggregate_metrics(self, db: Session) -> A2AAgentAggregateMetrics:
         """Aggregate metrics for all A2A agents.
 
         Combines recent raw metrics (within retention period) with historical
@@ -1576,7 +1603,7 @@ class A2AAgentService:
             db: Database session.
 
         Returns:
-            Aggregated metrics from raw + hourly rollup tables.
+            A2AAgentAggregateMetrics: Aggregated metrics from raw + hourly rollup tables.
         """
         # Check cache first (if enabled)
         # First-Party
@@ -1584,8 +1611,8 @@ class A2AAgentService:
 
         if is_cache_enabled():
             cached = metrics_cache.get("a2a")
-            if cached is not None:
-                return cached
+            if cached is not None and isinstance(cached, dict):
+                return A2AAgentAggregateMetrics(**cached)
 
         # Get total/active agent counts from cache (avoids 2 COUNT queries per call)
         counts = a2a_stats_cache.get_counts(db)
@@ -1602,21 +1629,21 @@ class A2AAgentService:
         successful_interactions = result.successful_executions
         failed_interactions = result.failed_executions
 
-        metrics = {
-            "total_agents": total_agents,
-            "active_agents": active_agents,
-            "total_interactions": total_interactions,
-            "successful_interactions": successful_interactions,
-            "failed_interactions": failed_interactions,
-            "success_rate": (successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
-            "avg_response_time": float(result.avg_response_time or 0.0),
-            "min_response_time": float(result.min_response_time or 0.0),
-            "max_response_time": float(result.max_response_time or 0.0),
-        }
+        metrics = A2AAgentAggregateMetrics(
+            total_agents=total_agents,
+            active_agents=active_agents,
+            total_interactions=total_interactions,
+            successful_interactions=successful_interactions,
+            failed_interactions=failed_interactions,
+            success_rate=(successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
+            avg_response_time=float(result.avg_response_time or 0.0),
+            min_response_time=float(result.min_response_time or 0.0),
+            max_response_time=float(result.max_response_time or 0.0),
+        )
 
-        # Cache the result (if enabled)
+        # Cache the result as dict for serialization compatibility (if enabled)
         if is_cache_enabled():
-            metrics_cache.set("a2a", metrics)
+            metrics_cache.set("a2a", metrics.model_dump())
 
         return metrics
 

@@ -1,12 +1,12 @@
 # Configuration Export & Import
 
-MCP Gateway provides comprehensive configuration export and import capabilities for backup, disaster recovery, environment promotion, and configuration management workflows.
+ContextForge provides comprehensive configuration export and import capabilities for backup, disaster recovery, environment promotion, and configuration management workflows.
 
 ---
 
 ## 🎯 Overview
 
-The export/import system enables complete backup and restoration of your MCP Gateway configuration including:
+The export/import system enables complete backup and restoration of your ContextForge configuration including:
 
 - **Tools** (locally created REST API tools)
 - **Gateways** (peer gateway connections)
@@ -126,11 +126,11 @@ mcpgateway import backup.json --conflict-strategy fail    # Fail on conflicts
 ### REST API Import
 
 ```bash
-# Basic import
-curl -X POST -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d @export.json \
-     "http://localhost:4444/import"
+# Basic import (wrap export data in import_data field)
+jq -n --slurpfile data export.json '{"import_data": $data[0]}' | \
+  curl -X POST -H "Authorization: Bearer $TOKEN" \
+       -H "Content-Type: application/json" \
+       -d @- "http://localhost:4444/import"
 
 # Import with options
 curl -X POST -H "Authorization: Bearer $TOKEN" \
@@ -328,8 +328,10 @@ Monitor import progress via API:
 
 ```bash
 # Start import and get import ID
-IMPORT_ID=$(curl -X POST -H "Authorization: Bearer $TOKEN" \
-  -d @backup.json "http://localhost:4444/import" | jq -r .import_id)
+IMPORT_ID=$(jq -n --slurpfile data backup.json '{"import_data": $data[0]}' | \
+  curl -X POST -H "Authorization: Bearer $TOKEN" \
+       -H "Content-Type: application/json" \
+       -d @- "http://localhost:4444/import" | jq -r .import_id)
 
 # Check progress
 curl -H "Authorization: Bearer $TOKEN" \

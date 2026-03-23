@@ -4,7 +4,7 @@ plugins:
     kind: "plugins.deny_filter.deny.DenyListPlugin"
     description: "A plugin that implements a deny list filter."
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge Team"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "filter", "denylist", "pre-post"]
     mode: "enforce"  # enforce | permissive | disabled
@@ -24,7 +24,7 @@ plugins:
     kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
     description: "A plugin for finding and replacing words."
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge Team"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
     mode: "enforce"  # enforce | permissive | disabled
@@ -44,7 +44,7 @@ plugins:
     kind: "plugins.resource_filter.resource_filter.ResourceFilterPlugin"
     description: "Demonstrates resource pre/post fetch hooks for filtering and validation"
     version: "1.0.0"
-    author: "MCP Gateway Team"
+    author: "ContextForge Team"
     hooks: ["resource_pre_fetch", "resource_post_fetch"]
     tags: ["resource", "filter", "security", "example"]
     mode: "enforce"  # Block resources that violate rules

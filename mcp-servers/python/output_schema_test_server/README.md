@@ -1,6 +1,14 @@
 # Output Schema Test MCP Server
 
-A test MCP server for validating outputSchema field support in the MCP Gateway.
+> Authors: Teryl Taylor, Jonathan Springer
+
+A test MCP server for validating outputSchema field support in ContextForge.
+
+> **Warning:** This is an unsupported sample server for demonstration and testing only.
+> Never run untrusted MCP servers directly on your local filesystem — always use a
+> sandbox, container, or microVM (e.g. Docker, gVisor, Firecracker) with restricted
+> capabilities. Perform your own security evaluation before registering any remote MCP
+> server, including servers from public catalogs.
 
 ## Purpose
 
@@ -82,7 +90,7 @@ This will:
 
 ## Testing Output Schema Support
 
-### 1. Register with MCP Gateway
+### 1. Register with ContextForge
 
 ```bash
 # Add as a gateway peer
@@ -191,7 +199,7 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-### Via MCP Gateway
+### Via ContextForge
 
 Register as a gateway peer (see Testing section above).
 

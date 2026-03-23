@@ -117,13 +117,13 @@ class SidebarComponent:
         self.page.wait_for_selector("#users-panel:not(.hidden)")
 
     def click_tokens_tab(self) -> None:
-        """Click on tokens tab and wait for panel."""
+        """Click on tokens tab and wait for panel and form setup."""
         self.tokens_tab.click()
         self.page.wait_for_selector("#tokens-panel:not(.hidden)")
-        # Wait for the form to be ready
+        # Wait for the form to be visible
         self.page.wait_for_selector("#create-token-form", state="visible")
-        # Wait a bit for any JavaScript initialization
-        self.page.wait_for_timeout(500)
+        # Wait for the JS submit handler to be attached (set via 300ms debounced setTimeout in showTab)
+        self.page.wait_for_selector('#create-token-form[data-setup="true"]', state="attached", timeout=10000)
 
     def click_metrics_tab(self) -> None:
         """Click on metrics tab and wait for panel."""

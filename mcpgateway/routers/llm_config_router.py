@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.llm_schemas import (
     GatewayModelsResponse,
@@ -36,6 +37,7 @@ from mcpgateway.services.llm_provider_service import (
     LLMProviderNameConflictError,
     LLMProviderNotFoundError,
     LLMProviderService,
+    LLMProviderValidationError,
 )
 from mcpgateway.services.logging_service import LoggingService
 
@@ -94,6 +96,8 @@ async def create_provider(
         return result
     except LLMProviderNameConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except LLMProviderValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create LLM provider: {e}")
         raise HTTPException(
@@ -112,7 +116,7 @@ async def create_provider(
 async def list_providers(
     enabled_only: bool = Query(False, description="Only return enabled providers"),
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    page_size: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> LLMProviderListResponse:
@@ -227,6 +231,8 @@ async def update_provider(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except LLMProviderNameConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except LLMProviderValidationError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e))
 
 
 @llm_config_router.delete(
@@ -386,7 +392,7 @@ async def list_models(
     provider_id: Optional[str] = Query(None, description="Filter by provider ID"),
     enabled_only: bool = Query(False, description="Only return enabled models"),
     page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    page_size: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> LLMModelListResponse:

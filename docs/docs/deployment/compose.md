@@ -1,6 +1,6 @@
 # 🧩 Docker Compose
 
-Running **MCP Gateway** with **Compose** spins up a full stack (Gateway, Postgres, Redis, optional MCP servers) behind a single YAML file.
+Running **ContextForge** with **Compose** spins up a full stack (Gateway, Postgres, Redis, optional MCP servers) behind a single YAML file.
 The Makefile detects Podman or Docker automatically, and you can override it with `COMPOSE_CMD=`.
 Health-checks (`service_healthy`) gate the Gateway until the database is ready, preventing race conditions.
 If dependencies become temporarily unavailable, the Gateway uses **exponential backoff with jitter** for connection retries—see [Startup Resilience](../architecture/performance-architecture.md#startup-resilience) for details.
@@ -85,7 +85,7 @@ export COMPOSE_CMD="docker compose"
 ## 🐳/🦭 Build the images
 
 ```bash
-docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 ## 🐳/🦭 Build the images (when doing local development)
@@ -179,6 +179,42 @@ curl http://localhost:8080/health    # {"status":"healthy"}
 
 ---
 
+## Rust MCP Compose Modes
+
+For the compose-backed testing stack, the Rust MCP runtime is exposed through
+mode-specific make targets:
+
+```bash
+make testing-rebuild-rust-shadow
+make testing-rebuild-rust
+make testing-rebuild-rust-full
+```
+
+Mode summary:
+
+- `shadow`: Rust sidecar present, but public `/mcp` stays on Python
+- `edge`: public `/mcp` routed directly from nginx to Rust
+- `full`: `edge` plus Rust session/event-store/resume/live-stream/affinity
+  cores
+
+Verify the active mode via `/health`:
+
+```bash
+curl -sD - http://localhost:8080/health -o /dev/null | rg 'x-contextforge-mcp-'
+```
+
+Examples:
+
+- `x-contextforge-mcp-transport-mounted: python` means the public MCP path is
+  still Python-owned
+- `x-contextforge-mcp-transport-mounted: rust` means nginx is routing public
+  `/mcp` traffic directly to the Rust runtime
+
+For the current runtime architecture, see
+[Rust MCP Runtime](../architecture/rust-mcp-runtime.md).
+
+---
+
 ## 🗄 Selecting a database
 
 Uncomment one service block in `docker-compose.yml` and align `DATABASE_URL`:
@@ -186,18 +222,8 @@ Uncomment one service block in `docker-compose.yml` and align `DATABASE_URL`:
 | Service block         | Connection string                             | Notes                          |
 | --------------------- | --------------------------------------------- | ------------------------------ |
 | `postgres:` (default) | `postgresql+psycopg://postgres:...@postgres:5432/mcp` | Recommended for production     |
-| `mariadb:`            | `mysql+pymysql://mysql:...@mariadb:3306/mcp`  | **Fully supported** - MariaDB 10.6+ |
-| `mysql:`              | `mysql+pymysql://admin:...@mysql:3306/mcp`    | Alternative MySQL variant      |
 
-Named volumes (`pgdata`, `mariadbdata`, `mysqldata`, `mongodata`) isolate persistent data.
-
-!!! info "MariaDB & MySQL Full Support"
-    MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
-
-    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
-    - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
-    - The `mariadb:` service block is available in `docker-compose.yml`
-    - Use connection string: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp`
+Named volumes (`pgdata`) isolate persistent data.
 
 ---
 
@@ -279,7 +305,7 @@ PgBouncer supports three pool modes:
     - **LISTEN/NOTIFY** requires session mode
     - **Advisory locks** (used during migrations/bootstrap) are session-level; ensure `server_reset_query` clears them (use `DISCARD ALL` or add `SELECT pg_advisory_unlock_all()`), or run migrations against direct PostgreSQL.
 
-    MCP Gateway is designed to work with transaction mode.
+    ContextForge is designed to work with transaction mode.
 
 ### Configuration Reference
 

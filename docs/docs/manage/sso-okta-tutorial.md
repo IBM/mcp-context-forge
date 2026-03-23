@@ -1,10 +1,10 @@
 # Okta OIDC Setup Tutorial
 
-This tutorial walks you through setting up Okta Single Sign-On (SSO) authentication for MCP Gateway, enabling enterprise identity management with Okta's comprehensive platform.
+This tutorial walks you through setting up Okta Single Sign-On (SSO) authentication for ContextForge, enabling enterprise identity management with Okta's comprehensive platform.
 
 ## Prerequisites
 
-- MCP Gateway installed and running
+- ContextForge installed and running
 - Okta account with admin access (Developer or Enterprise edition)
 - Access to your gateway's environment configuration
 
@@ -28,7 +28,7 @@ This tutorial walks you through setting up Okta Single Sign-On (SSO) authenticat
 
 ### 1.3 Configure General Settings
 
-**App integration name**: `MCP Gateway`
+**App integration name**: `ContextForge`
 
 **App logo**: Upload your organization's logo (optional)
 
@@ -108,7 +108,7 @@ Example custom claim configuration:
 2. Select groups that should have access:
 
    - `Everyone` - All users (not recommended for production)
-   - `MCP Gateway Users` - Custom group for gateway access
+   - `ContextForge Users` - Custom group for gateway access
    - `IT Admins` - Administrative access
 
 3. For each group, you can set a custom **Application username**
@@ -116,18 +116,18 @@ Example custom claim configuration:
 
 ### 3.3 Create Custom Groups (Optional)
 
-If you want specific groups for MCP Gateway:
+If you want specific groups for ContextForge:
 
 1. Go to **Directory** → **Groups**
 2. Click **Add Group**
 3. Create groups like:
 
-   - **Name**: `MCP Gateway Users`
-   - **Description**: `Users with access to MCP Gateway`
+   - **Name**: `ContextForge Users`
+   - **Description**: `Users with access to ContextForge`
 
 4. Add appropriate users to these groups
 
-## Step 4: Configure MCP Gateway Environment
+## Step 4: Configure ContextForge Environment
 
 ### 4.1 Update Environment Variables
 
@@ -194,7 +194,7 @@ SSO_PRESERVE_ADMIN_AUTH=true
 SSO_OKTA_SCOPE="openid profile email groups address phone"
 
 # Group mapping for automatic team assignment
-OKTA_GROUP_MAPPING={"MCP Gateway Admins": "admin-team-uuid", "MCP Gateway Users": "user-team-uuid"}
+OKTA_GROUP_MAPPING={"ContextForge Admins": "admin-team-uuid", "ContextForge Users": "user-team-uuid"}
 
 # Custom authorization server (if using custom Okta authorization server)
 SSO_OKTA_ISSUER=https://dev-12345.okta.com/oauth2/custom-auth-server-id
@@ -273,7 +273,7 @@ curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
 Configure MFA policies in Okta:
 
 1. Go to **Security** → **Multifactor**
-2. Set up MFA policies for your MCP Gateway application
+2. Set up MFA policies for your ContextForge application
 3. Configure factors (SMS, Email, Okta Verify app, etc.)
 4. Users will be prompted for MFA during login
 
@@ -452,7 +452,7 @@ def sync_okta_groups():
 For advanced API access patterns:
 
 1. Create custom authorization server in Okta
-2. Define custom scopes for MCP Gateway APIs
+2. Define custom scopes for ContextForge APIs
 3. Configure audience restrictions
 4. Use for service-to-service authentication
 

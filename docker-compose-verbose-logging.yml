@@ -47,9 +47,10 @@ volumes:                # Named volumes survive podman-compose down/up
   grafanadata:
   prometheusdata:
   lokidata:
+  prometheus_token:
 
 ###############################################################################
-#  CORE SERVICE - MCP Gateway
+#  CORE SERVICE - ContextForge
 ###############################################################################
 services:
 
@@ -99,11 +100,11 @@ services:
           memory: 512M
 
   # ──────────────────────────────────────────────────────────────────────
-  # MCP Gateway - the main API server for the MCP stack
+  # ContextForge - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
-    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 # Use the release MCP Context Forge image
+    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 # Use the release ContextForge image
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
@@ -137,6 +138,16 @@ services:
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
+      # Prometheus metrics endpoint (disabled by default; requires JWT auth when enabled)
+      - ENABLE_METRICS=true
+      # WebSocket transport features (disabled by default; opt-in only)
+      - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
+      - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
+      # Local compose profile: allow local/private upstream URLs used by bundled test services.
+      # Production deployments should override these to stricter values.
+      - SSRF_ALLOW_LOCALHOST=${SSRF_ALLOW_LOCALHOST:-true}
+      - SSRF_ALLOW_PRIVATE_NETWORKS=${SSRF_ALLOW_PRIVATE_NETWORKS:-true}
+      - SSRF_DNS_FAIL_CLOSED=${SSRF_DNS_FAIL_CLOSED:-false}
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
@@ -241,16 +252,19 @@ services:
       # SSRF Protection (Server-Side Request Forgery)
       # ═══════════════════════════════════════════════════════════════════════════
       # Prevents gateway from accessing internal resources or cloud metadata services.
-      # Default: enabled with safe settings for dev/internal deployments.
+      # Default: strict mode (external endpoints only).
       # Cloud metadata (169.254.169.254, etc.) is ALWAYS blocked by default.
       # - SSRF_PROTECTION_ENABLED=true           # Master switch (default: true)
-      # - SSRF_ALLOW_LOCALHOST=true              # Allow localhost (default: true for dev)
-      # - SSRF_ALLOW_PRIVATE_NETWORKS=true       # Allow 10.x, 172.16.x, 192.168.x (default: true)
-      # - SSRF_DNS_FAIL_CLOSED=false             # Reject on DNS failure (default: false = fail open)
-      # For strict production mode (external endpoints only):
+      # - SSRF_ALLOW_LOCALHOST=false             # Block localhost/loopback (default: false)
+      # - SSRF_ALLOW_PRIVATE_NETWORKS=false      # Block RFC1918 private IPs (default: false)
+      # - SSRF_DNS_FAIL_CLOSED=true              # Reject on DNS failure (default: true)
+      # Optional explicit internal allowlist (when private networks are blocked):
+      # - SSRF_ALLOWED_NETWORKS=["10.20.0.0/16","192.168.50.0/24"]
+      # For controlled internal access:
       # - SSRF_ALLOW_LOCALHOST=false
       # - SSRF_ALLOW_PRIVATE_NETWORKS=false
       # - SSRF_DNS_FAIL_CLOSED=true
+      # - SSRF_ALLOWED_NETWORKS=["10.20.0.0/16"]
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
@@ -908,15 +922,44 @@ services:
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheusdata:/prometheus
+      - prometheus_token:/tokens:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=7d'
       - '--web.enable-lifecycle'
     depends_on:
-      - postgres_exporter
-      - redis_exporter
-      - nginx_exporter
-      - cadvisor
+      postgres_exporter:
+        condition: service_started
+      redis_exporter:
+        condition: service_started
+      nginx_exporter:
+        condition: service_started
+      cadvisor:
+        condition: service_started
+      prometheus_token:
+        condition: service_completed_successfully
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Prometheus scrape token - generates a JWT for Prometheus to
+  # authenticate against the gateway's /metrics/prometheus endpoint
+  # ──────────────────────────────────────────────────────────────────────
+  prometheus_token:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    restart: "no"
+    user: "0"
+    volumes:
+      - prometheus_token:/tokens
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token \
+          --username prometheus@monitoring --exp 0 \
+          --secret my-test-key --algo HS256 2>/dev/null)
+        printf "%s" "$$TOKEN" > /tokens/gateway.jwt
+        echo "✅ Prometheus scrape token written to /tokens/gateway.jwt"
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────

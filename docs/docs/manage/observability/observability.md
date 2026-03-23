@@ -1,10 +1,10 @@
 # Observability
 
-MCP Gateway includes production-grade OpenTelemetry instrumentation for distributed tracing, enabling you to monitor performance, debug issues, and understand request flows across your gateway instances.
+ContextForge includes production-grade OpenTelemetry instrumentation for distributed tracing, enabling you to monitor performance, debug issues, and understand request flows across your gateway instances.
 
 ## Overview
 
-The observability implementation is **vendor-agnostic** and works with any OTLP-compatible backend. MCP Gateway supports multiple observability backends, each optimized for different use cases.
+The observability implementation is **vendor-agnostic** and works with any OTLP-compatible backend. ContextForge supports multiple observability backends, each optimized for different use cases.
 
 ## Recommended Backend Options
 
@@ -121,7 +121,7 @@ export OTEL_ENABLE_OBSERVABILITY=true
 
 # Service identification
 export OTEL_SERVICE_NAME=mcp-gateway
-export OTEL_SERVICE_VERSION=1.0.0-RC-1
+export OTEL_SERVICE_VERSION=1.0.0-RC-2
 export OTEL_DEPLOYMENT_ENVIRONMENT=development
 
 # Choose your backend (otlp, jaeger, zipkin, console, none)
@@ -226,7 +226,7 @@ export OTEL_TRACES_EXPORTER=console
 export OTEL_SERVICE_NAME=mcp-gateway
 ```
 
-### 4. Run MCP Gateway
+### 4. Run ContextForge
 
 ```bash
 # Start the gateway (observability is disabled by default)
@@ -235,7 +235,7 @@ mcpgateway
 # Or with Docker
 docker run -e OTEL_ENABLE_OBSERVABILITY=true \
            -e OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317 \
-           ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+           ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 ## Configuration Reference
@@ -246,7 +246,7 @@ docker run -e OTEL_ENABLE_OBSERVABILITY=true \
 |----------|-------------|---------|---------|
 | `OTEL_ENABLE_OBSERVABILITY` | Master switch | `false` | `true`, `false` |
 | `OTEL_SERVICE_NAME` | Service identifier | `mcp-gateway` | Any string |
-| `OTEL_SERVICE_VERSION` | Service version | `1.0.0-RC-1` | Any string |
+| `OTEL_SERVICE_VERSION` | Service version | `1.0.0-RC-2` | Any string |
 | `OTEL_DEPLOYMENT_ENVIRONMENT` | Environment tag | `development` | `development`, `staging`, `production` |
 | `OTEL_TRACES_EXPORTER` | Export backend | `otlp` | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES` | Custom attributes | - | `key=value,key2=value2` |
@@ -322,7 +322,7 @@ Failed operations include:
 Use the provided compose files:
 
 ```bash
-# Start MCP Gateway with Phoenix observability
+# Start ContextForge with Phoenix observability
 docker-compose -f docker-compose.yml \
                -f docker-compose.with-phoenix.yml up -d
 ```
@@ -342,7 +342,7 @@ spec:
       containers:
 
       - name: gateway
-        image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+        image: ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
         env:
 
         - name: OTEL_ENABLE_OBSERVABILITY

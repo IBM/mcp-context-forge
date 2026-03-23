@@ -139,11 +139,11 @@ flowchart LR
 
 ---
 
-## Pattern S5 - MCP Gateway (Core Pattern)
+## Pattern S5 - ContextForge (Core Pattern)
 
 **Description**
 
-A dedicated **MCP Gateway** sits between hosts and multiple MCP servers, providing centralized control, security, and governance. The gateway becomes the single, policy-enforced ingress for agent access to organizational capabilities.
+A dedicated **ContextForge** sits between hosts and multiple MCP servers, providing centralized control, security, and governance. The gateway becomes the single, policy-enforced ingress for agent access to organizational capabilities.
 
 **Core Gateway Responsibilities**
 
@@ -157,11 +157,11 @@ A dedicated **MCP Gateway** sits between hosts and multiple MCP servers, providi
 | **Reliability & Scale** | HA, autoscaling, circuit breaking, retries with idempotency, backpressure, traffic shaping |
 | **Compatibility** | Feature detection, server capability negotiation, schema normalization, version pinning, kill switches |
 
-Reference implementation: **[IBM MCP Context Forge](https://github.com/IBM/mcp-context-forge)**. For detailed enterprise guidance, see the [IBM Enterprise AI Agents Guide](https://ibm.biz/enterprise-ai-with-mcp).
+Reference implementation: **[IBM ContextForge](https://github.com/IBM/mcp-context-forge)**. For detailed enterprise guidance, see the [IBM Enterprise AI Agents Guide](https://ibm.biz/enterprise-ai-with-mcp).
 
 ```mermaid
 flowchart LR
-  H["MCP Host"] --> G["MCP Gateway"]
+  H["MCP Host"] --> G["ContextForge"]
   G --> P["Policy Engine"]
   G --> R["Tool Registry"]
   G --> S1["MCP Server A"]
@@ -175,7 +175,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
   participant A as Agent/Host
-  participant G as MCP Gateway
+  participant G as ContextForge
   participant P as Policy Engine
   participant S as MCP Server
   participant B as Backend System
@@ -217,7 +217,7 @@ A specialized MCP server for executing code or complex workflows in a **sandboxe
 | **Container Security Profiles** | seccomp, AppArmor, SELinux to restrict syscalls and capabilities |
 | **Network Controls** | Disable or tightly scope outbound/inbound connections; route through gateway |
 | **Filesystem Policies** | Ephemeral or read-only volumes; block access to secrets, logs, host files |
-| **Gateway-Level Enforcement** | Combine with centralized MCP Gateway policies for throttling and access controls |
+| **Gateway-Level Enforcement** | Combine with centralized ContextForge policies for throttling and access controls |
 
 ```mermaid
 flowchart LR
@@ -259,7 +259,7 @@ Design MCP servers with explicit tenancy boundaries for enterprise deployments s
 
 ```mermaid
 flowchart TB
-  subgraph Gateway["MCP Gateway"]
+  subgraph Gateway["ContextForge"]
     R["Router"]
     P["Policy Engine"]
   end
@@ -944,7 +944,7 @@ flowchart LR
 - [ ] Domain-focused MCP servers (single responsibility)
 - [ ] Workflow-oriented tools (end-to-end user goals)
 - [ ] Progressive discovery (reveal tools when needed)
-- [ ] MCP Gateway for enterprise deployments
+- [ ] ContextForge for enterprise deployments
 - [ ] Central host policy and consent
 - [ ] No token passthrough
 - [ ] Strict OAuth state handling
@@ -987,7 +987,7 @@ flowchart TB
     H2["Host B"]
   end
 
-  subgraph Gateway["MCP Gateway Layer"]
+  subgraph Gateway["ContextForge Layer"]
     AUTH["Auth & Identity"]
     POLICY["Policy Engine"]
     CATALOG["Tool Catalog"]
@@ -1055,7 +1055,7 @@ For enterprise deployments, MCP architecture should align with the **Agent Devel
 - MCP Security Best Practices
   https://modelcontextprotocol.io/specification/draft/basic/security_best_practices
 
-- IBM MCP Context Forge (Gateway Pattern)
+- IBM ContextForge (Gateway Pattern)
   https://github.com/IBM/mcp-context-forge
 
 - **Architecting Secure Enterprise AI Agents with MCP** (IBM, Verified by Anthropic, October 2025)

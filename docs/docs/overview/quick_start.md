@@ -6,10 +6,10 @@ owner: Mihai Criveti
 
 # 🚀 Quick Start
 
-MCP Gateway can be running on your laptop or server in **< 5 minutes**.
+ContextForge can be running on your laptop or server in **< 5 minutes**.
 Pick an install method below, generate an auth token, then walk through a real tool + server demo.
 
-## Installing and starting MCP Gateway
+## Installing and starting ContextForge
 
 !!! tip "Choose a base URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
@@ -122,7 +122,7 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e PLATFORM_ADMIN_EMAIL=admin@example.com \
           -e PLATFORM_ADMIN_PASSWORD=changeme \
           -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-          ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+          ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
         ```
 
     2. **(Optional) persist the DB**
@@ -138,30 +138,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
-            ```
-
-        === "MySQL"
-            ```bash
-            # Start MySQL container first
-            docker run -d --name mysql-db \
-              -e MYSQL_ROOT_PASSWORD=mysecretpassword \
-              -e MYSQL_DATABASE=mcp \
-              -e MYSQL_USER=mysql \
-              -e MYSQL_PASSWORD=changeme \
-              -p 3306:3306 \
-              mysql:8
-
-            # Start MCP Gateway with MySQL connection
-            docker run -d --name mcpgateway \
-              -p 4444:4444 \
-              --link mysql-db:mysql \
-              -e DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp \
-              -e JWT_SECRET_KEY=my-test-key \
-              -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-              -e PLATFORM_ADMIN_PASSWORD=changeme \
-              -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+              ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
             ```
 
         === "PostgreSQL"
@@ -174,7 +151,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 5432:5432 \
               postgres:17
 
-            # Start MCP Gateway with PostgreSQL connection
+            # Start ContextForge with PostgreSQL connection
             docker run -d --name mcpgateway \
               -p 4444:4444 \
               --link postgres-db:postgres \
@@ -183,7 +160,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+              ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
             ```
 
     3. **Generate a token inside the container**
@@ -220,7 +197,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     2. **Pull the published image**
 
         ```bash
-        docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+        docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
         ```
 
     3. **Start the stack**
@@ -240,13 +217,9 @@ Pick an install method below, generate an auth token, then walk through a real t
         ```
 
     !!! tip "Database Support"
-        The sample Compose file includes multiple database options:
+        The sample Compose file uses PostgreSQL by default:
 
         - **PostgreSQL** (default): `postgresql+psycopg://postgres:password@postgres:5432/mcp`
-        - **MariaDB**: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp` - fully supported with 36+ tables
-        - **MySQL**: `mysql+pymysql://admin:changeme@mysql:3306/mcp`
-
-        MariaDB 10.6+ and MySQL 8.0+ are fully compatible with all VARCHAR length requirements resolved.
 
 ---
 
@@ -352,5 +325,5 @@ Use the `BASE_URL` you set above (for example `http://localhost:4444` or `http:/
 * Tweak **`.env`** - see [example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example)
 
 !!! success "Gateway is ready!"
-You now have an authenticated MCP Gateway proxying a live tool, exposed via SSE **and** stdio.
+You now have an authenticated ContextForge proxying a live tool, exposed via SSE **and** stdio.
 Jump into the Admin UI or start wiring it into your agents and clients!

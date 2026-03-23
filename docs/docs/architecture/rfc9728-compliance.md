@@ -2,7 +2,7 @@
 
 ## Overview
 
-MCP Gateway implements [RFC 9728: OAuth 2.0 Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) to enable OAuth-protected MCP servers to advertise their authorization server configuration. This allows MCP clients (like Claude Desktop, MCP Inspector) to discover OAuth endpoints and initiate browser-based SSO flows.
+ContextForge implements [RFC 9728: OAuth 2.0 Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) to enable OAuth-protected MCP servers to advertise their authorization server configuration. This allows MCP clients (like Claude Desktop, MCP Inspector) to discover OAuth endpoints and initiate browser-based SSO flows.
 
 ## RFC 9728 Requirements
 
@@ -43,7 +43,7 @@ The metadata response fields (per RFC 9728 Section 2):
 
 **Authentication:** None required (per RFC 9728)
 
-**Implementation:** [`mcpgateway/routers/well_known.py:118`](../../mcpgateway/routers/well_known.py#L118)
+**Implementation:** [`mcpgateway/routers/well_known.py:118`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L118)
 
 **Features:**
 
@@ -73,7 +73,7 @@ curl https://gateway.example.com/.well-known/oauth-protected-resource/servers/55
 
 ### Service Layer
 
-**Implementation:** [`mcpgateway/services/server_service.py:1913`](../../mcpgateway/services/server_service.py#L1913)
+**Implementation:** [`mcpgateway/services/server_service.py:1913`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/services/server_service.py#L1913)
 
 The `get_oauth_protected_resource_metadata()` method:
 
@@ -105,11 +105,46 @@ The endpoint validates that `server_id` is a valid UUID using regex pattern matc
 - Private/team servers return 404 (prevents information leakage)
 - OAuth must be explicitly enabled on the server
 
-**Implementation:** [`mcpgateway/routers/well_known.py:39`](../../mcpgateway/routers/well_known.py#L39)
+**Implementation:** [`mcpgateway/routers/well_known.py:39`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L39)
 
 ```python
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 ```
+
+## Per-Server OAuth Enforcement
+
+### Overview
+
+When a virtual server has `oauth_enabled=True`, ContextForge enforces authentication for that server's MCP endpoints regardless of the global `MCP_REQUIRE_AUTH` setting. This closes the gap where OAuth capability was *advertised* via RFC 9728 metadata but never *enforced* on subsequent MCP requests.
+
+### Behavior
+
+- **Permissive mode (`MCP_REQUIRE_AUTH=false`)**: Unauthenticated requests to `oauth_enabled` servers are rejected with HTTP 401. Non-OAuth servers continue to allow unauthenticated access with public-only visibility.
+- **Strict mode (`MCP_REQUIRE_AUTH=true`)**: All unauthenticated requests are already rejected by the middleware, so per-server enforcement is not needed.
+- **Authenticated requests**: Requests with a valid Bearer token are always allowed through, regardless of the server's `oauth_enabled` flag.
+
+### WWW-Authenticate Header
+
+When an unauthenticated request is rejected, the 401 response includes a `WWW-Authenticate` header with the RFC 9728 resource metadata URL:
+
+```
+WWW-Authenticate: Bearer resource_metadata="https://gateway.example.com/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
+```
+
+This enables MCP clients to discover the authorization server and initiate an OAuth flow automatically.
+
+**Deployment note:** The `resource_metadata` URL is constructed from the request's `Host` and `X-Forwarded-Proto` headers. Deployments must ensure their reverse proxy sets these headers authoritatively to prevent challenge URL poisoning by untrusted clients.
+
+### Fail-Closed on Infrastructure Errors
+
+If the database is unavailable when checking a server's `oauth_enabled` flag, the request is rejected with HTTP 503 (Service Unavailable) rather than silently allowed. This fail-closed behavior prevents unauthenticated access during infrastructure outages.
+
+### Defense-in-Depth
+
+OAuth enforcement is applied at two levels in the Streamable HTTP transport:
+
+1. **Middleware (`streamable_http_auth`)**: Primary enforcement point — checks `oauth_enabled` before allowing unauthenticated requests through in permissive mode.
+2. **MCP handlers** (`list_tools`, `call_tool`, `list_prompts`, `get_prompt`, `list_resources`, `read_resource`, `list_resource_templates`, `set_logging_level`, `complete`): Secondary enforcement — each handler re-checks per-server OAuth as a defense-in-depth guard, with results cached per-request via a `ContextVar` to avoid redundant DB lookups.
 
 ## Deprecated Endpoints
 
@@ -184,7 +219,7 @@ This is automatically wrapped in an array in the response.
 
 ### Unit Tests
 
-Comprehensive test suite: [`tests/unit/mcpgateway/routers/test_well_known_rfc9728.py`](../../tests/unit/mcpgateway/routers/test_well_known_rfc9728.py)
+Comprehensive test suite: [`tests/unit/mcpgateway/routers/test_well_known_rfc9728.py`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/tests/unit/mcpgateway/routers/test_well_known_rfc9728.py)
 
 **Test Coverage:**
 
@@ -221,7 +256,7 @@ curl -i https://gateway.example.com/servers/550e8400-e29b-41d4-a716-446655440000
 
 **Test with MCP Inspector:**
 
-1. Configure an OAuth-enabled server in MCP Gateway
+1. Configure an OAuth-enabled server in ContextForge
 2. Open MCP Inspector
 3. Connect to the server using the MCP endpoint: `https://gateway.example.com/servers/{server_id}/mcp`
 4. MCP Inspector should automatically discover OAuth metadata via RFC 9728
@@ -229,7 +264,7 @@ curl -i https://gateway.example.com/servers/550e8400-e29b-41d4-a716-446655440000
 
 ## Migration Guide
 
-### For MCP Gateway Administrators
+### For ContextForge Administrators
 
 **No action required.** The implementation maintains backward compatibility:
 

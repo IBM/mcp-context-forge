@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<!--
+  iframe-test-harness.html  (served at /static/iframe-test-harness.html)
+  ========================================================================
+  Standalone manual/visual test harness for PR #3373
+  "Fix dynamically loaded UI elements that relied on onclick/onchange handlers"
+
+  PURPOSE
+  -------
+  Embeds the ContextForge admin UI inside an <iframe> and runs a suite of
+  JavaScript assertions in the HOST page to verify that:
+
+    1. The innerHTML guard (PR #3129) strips inline onclick attributes.
+    2. The data-action + addEventListener pattern (PR #3373) survives the guard.
+    3. Dynamically loaded elements (team selector, tool table, metrics retry,
+       global search) are interactive inside an iframe.
+
+  HOW TO USE
+  ----------
+  This file MUST be served from the same origin as the admin UI so that the
+  host page can access the iframe's DOM (same-origin policy).
+
+  1. Start the ContextForge server:
+       make dev          # http://localhost:8000
+       # or
+       make serve        # http://localhost:4444
+
+  2. Open in your browser (same origin as the server):
+       http://localhost:4444/static/iframe-test-harness.html
+       # or with a custom base:
+       http://localhost:8000/static/iframe-test-harness.html
+
+  3. Log in to the admin UI inside the iframe when prompted.
+
+  4. Click "▶ Run All Tests" to execute the test suite.
+     Each test shows a ✅ PASS or ❌ FAIL badge with details.
+
+  QUERY PARAMETERS
+  ----------------
+  ?auto=1    Auto-run tests after iframe loads (useful for CI screenshots)
+
+  NOTES
+  -----
+  - Both this page and the iframe are served from the same origin, so direct
+    contentWindow DOM access works without postMessage.
+  - X-Frame-Options / CSP frame-ancestors headers may block the iframe from
+    loading /admin/ inside itself. Set X_FRAME_OPTIONS=SAMEORIGIN in your
+    .env to allow same-origin embedding.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PR #3373 — iframe Test Harness</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: grid;
+      grid-template-columns: 440px 1fr;
+      grid-template-rows: 56px 1fr;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      grid-column: 1 / -1;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+    }
+    header h1 { font-size: 15px; font-weight: 600; color: #f1f5f9; }
+    header .badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      background: #7c3aed;
+      color: #fff;
+      font-weight: 500;
+    }
+    header .spacer { flex: 1; }
+    header .origin-label {
+      font-size: 12px;
+      color: #94a3b8;
+      font-family: monospace;
+    }
+
+    /* ── Left panel: test runner ── */
+    #panel {
+      background: #1e293b;
+      border-right: 1px solid #334155;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #panel-toolbar {
+      padding: 12px 16px;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 6px 14px;
+      transition: background 0.15s;
+    }
+    #btn-run { background: #6366f1; color: #fff; }
+    #btn-run:hover { background: #4f46e5; }
+    #btn-run:disabled { background: #475569; cursor: not-allowed; }
+    #btn-clear { background: #334155; color: #94a3b8; }
+    #btn-clear:hover { background: #475569; }
+
+    #summary {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-left: auto;
+      white-space: nowrap;
+    }
+    #summary .pass { color: #4ade80; font-weight: 600; }
+    #summary .fail { color: #f87171; font-weight: 600; }
+
+    #results {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .test-item {
+      padding: 10px 16px;
+      border-bottom: 1px solid #0f172a;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .test-item:last-child { border-bottom: none; }
+
+    .test-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .test-badge {
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 4px;
+      margin-top: 1px;
+      min-width: 44px;
+      text-align: center;
+    }
+    .test-badge.pass    { background: #14532d; color: #4ade80; }
+    .test-badge.fail    { background: #450a0a; color: #f87171; }
+    .test-badge.skip    { background: #1c1917; color: #a8a29e; }
+    .test-badge.running { background: #1e3a5f; color: #60a5fa; }
+    .test-badge.pending { background: #1e293b; color: #64748b; }
+
+    .test-name  { font-size: 13px; color: #e2e8f0; line-height: 1.4; }
+    .test-group {
+      font-size: 11px; color: #64748b; font-weight: 500;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .test-detail {
+      font-size: 12px; color: #94a3b8; font-family: monospace;
+      background: #0f172a; border-radius: 4px; padding: 6px 8px;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .test-detail.error { color: #fca5a5; }
+
+    /* ── Right panel: iframe ── */
+    #iframe-container { position: relative; background: #000; }
+
+    #admin-frame { width: 100%; height: 100%; border: none; display: block; }
+
+    #iframe-overlay {
+      position: absolute; inset: 0;
+      background: rgba(15, 23, 42, 0.85);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px; z-index: 10;
+    }
+    #iframe-overlay.hidden { display: none; }
+    #iframe-overlay p {
+      font-size: 14px; color: #94a3b8;
+      text-align: center; max-width: 340px; line-height: 1.6;
+    }
+    #iframe-overlay .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #334155; border-top-color: #6366f1;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #iframe-overlay code {
+      background: #0f172a; padding: 2px 6px; border-radius: 4px;
+      font-size: 12px; color: #a5b4fc;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>PR #3373 — innerHTML Guard + data-action Fix</h1>
+  <span class="badge">iframe Test Harness</span>
+  <span class="spacer"></span>
+  <span class="origin-label" id="origin-label"></span>
+</header>
+
+<div id="panel">
+  <div id="panel-toolbar">
+    <button id="btn-run">▶ Run All Tests</button>
+    <button id="btn-clear">✕ Clear</button>
+    <span id="summary"></span>
+  </div>
+  <div id="results"></div>
+</div>
+
+<div id="iframe-container">
+  <div id="iframe-overlay">
+    <div class="spinner"></div>
+    <p id="overlay-msg">
+      Loading admin UI…<br>
+      If prompted, log in with your admin credentials inside the iframe.<br><br>
+      <small>Tip: set <code>X_FRAME_OPTIONS=SAMEORIGIN</code> in your <code>.env</code>
+      if the iframe shows a blank page.</small>
+    </p>
+  </div>
+  <iframe
+    id="admin-frame"
+    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+    title="ContextForge Admin UI (iframe test target)">
+  </iframe>
+</div>
+
+<script>
+'use strict';
+
+// ============================================================
+// Configuration — same origin as this page
+// ============================================================
+const ORIGIN = window.location.origin;                 // e.g. http://localhost:4444
+const ADMIN_URL = ORIGIN + '/admin/';
+const AUTO_RUN = new URLSearchParams(location.search).get('auto') === '1';
+
+document.getElementById('origin-label').textContent = ADMIN_URL;
+
+// ============================================================
+// iframe access helpers (same-origin)
+// ============================================================
+
+function getIframeWin() {
+  return document.getElementById('admin-frame').contentWindow;
+}
+
+function getIframeDoc() {
+  const frame = document.getElementById('admin-frame');
+  return frame.contentDocument || frame.contentWindow.document;
+}
+
+/**
+ * Evaluate an async function body inside the iframe's window context.
+ * Works because this page and the iframe are same-origin.
+ *
+ * @param {string} fnBody  JS statements; may use `return` to return a value.
+ * @returns {Promise<any>}
+ */
+async function iframeEval(fnBody) {
+  const win = getIframeWin();
+  // Inject a named function into the iframe window, call it, then clean up.
+  const key = '__harness_fn_' + Math.random().toString(36).slice(2);
+  try {
+    // eslint-disable-next-line no-new-func
+    win[key] = new win.Function(fnBody);
+    const result = await win[key]();
+    return result;
+  } finally {
+    try { delete win[key]; } catch (_) { /* ignore */ }
+  }
+}
+
+// ============================================================
+// Wait for iframe admin JS to be ready
+// ============================================================
+
+function waitForIframeReady(timeoutMs = 45000) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    function check() {
+      try {
+        const win = getIframeWin();
+        const doc = getIframeDoc();
+        if (doc.readyState === 'complete' && typeof win.showTab === 'function') {
+          resolve();
+          return;
+        }
+      } catch (_) { /* cross-origin not yet — shouldn't happen same-origin */ }
+      if (Date.now() > deadline) {
+        reject(new Error(
+          'Admin JS not ready after ' + (timeoutMs / 1000) + 's.\n' +
+          'Make sure the server is running and X_FRAME_OPTIONS=SAMEORIGIN is set.'
+        ));
+        return;
+      }
+      setTimeout(check, 400);
+    }
+    check();
+  });
+}
+
+// ============================================================
+// Test registry
+// ============================================================
+
+/** @type {Array<{group:string, name:string, fn:()=>Promise<{pass:boolean,detail?:string,skip?:boolean}>}>} */
+const TESTS = [];
+
+function test(group, name, fn) {
+  TESTS.push({ group, name, fn });
+}
+
+// ============================================================
+// TEST SUITE
+// ============================================================
+
+// ── Group A: innerHTML Guard Core ──────────────────────────
+
+test('A. innerHTML Guard', 'onclick is stripped; data-action and data-* survive', async () => {
+  const r = await iframeEval(`
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    div.innerHTML = '<button onclick="alert(1)" data-action="test" data-id="42">T</button>';
+    const btn = div.querySelector('button');
+    const result = {
+      hasOnclick: btn.hasAttribute('onclick'),
+      dataAction: btn.getAttribute('data-action'),
+      dataId: btn.getAttribute('data-id'),
+    };
+    div.remove();
+    return result;
+  `);
+  if (r.hasOnclick)           return { pass: false, detail: 'onclick was NOT stripped by innerHTML guard' };
+  if (r.dataAction !== 'test') return { pass: false, detail: 'data-action was stripped (should survive)' };
+  if (r.dataId !== '42')       return { pass: false, detail: 'data-id was stripped (should survive)' };
+  return { pass: true, detail: 'onclick stripped ✓  data-action survived ✓  data-id survived ✓' };
+});
+
+test('A. innerHTML Guard', '<script> tags are stripped and do not execute', async () => {
+  const r = await iframeEval(`
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    div.innerHTML = '<p>Hello</p><scr' + 'ipt>window.__xss_test=true;<\/scr' + 'ipt>';
+    const hasScript = !!div.querySelector('script');
+    const xssFired  = !!window.__xss_test;
+    div.remove();
+    delete window.__xss_test;
+    return { hasScript, xssFired };
+  `);
+  if (r.xssFired)   return { pass: false, detail: '<script> executed — XSS risk!' };
+  if (r.hasScript)  return { pass: false, detail: '<script> tag survived innerHTML guard' };
+  return { pass: true, detail: '<script> stripped ✓  XSS payload did not fire ✓' };
+});
+
+test('A. innerHTML Guard', 'javascript: href is stripped or neutralised', async () => {
+  const r = await iframeEval(`
+    const div = document.createElement('div');
+    document.body.appendChild(div);
+    div.innerHTML = '<a href="javascript:alert(1)">click</a>';
+    const a = div.querySelector('a');
+    const href = a ? a.getAttribute('href') : null;
+    div.remove();
+    return { href };
+  `);
+  const safe = !r.href || !r.href.toLowerCase().startsWith('javascript:');
+  return {
+    pass: safe,
+    detail: safe ? 'javascript: href stripped ✓' : `javascript: href survived: ${r.href}`,
+  };
+});
+
+// ── Group B: Team Selector ─────────────────────────────────
+
+test('B. Team Selector', 'team items have data-action="select-team" (onclick stripped)', async () => {
+  const r = await iframeEval(`
+    const container = document.getElementById('team-selector-items');
+    if (!container) return { skipped: true };
+    container.innerHTML = \`
+      <button class="team-selector-item"
+              data-action="select-team"
+              data-team-id="harness-1"
+              data-team-name="Harness Team"
+              data-is-personal="false"
+              onclick="selectTeamFromSelector(this)">Harness Team</button>
+    \`;
+    const btn = container.querySelector('.team-selector-item');
+    if (!btn) return { skipped: true };
+    const result = {
+      hasOnclick: btn.hasAttribute('onclick'),
+      dataAction: btn.getAttribute('data-action'),
+      dataTeamId: btn.getAttribute('data-team-id'),
+    };
+    container.innerHTML = '';
+    return result;
+  `);
+  if (r.skipped)                          return { skip: true, detail: '#team-selector-items not in DOM' };
+  if (r.hasOnclick)                       return { pass: false, detail: 'onclick survived innerHTML guard' };
+  if (r.dataAction !== 'select-team')     return { pass: false, detail: 'data-action="select-team" missing' };
+  if (r.dataTeamId !== 'harness-1')       return { pass: false, detail: 'data-team-id stripped' };
+  return { pass: true, detail: 'onclick stripped ✓  data-action="select-team" survived ✓' };
+});
+
+test('B. Team Selector', 'delegation listener calls selectTeamFromSelector on click', async () => {
+  const r = await iframeEval(`
+    const container = document.getElementById('team-selector-items');
+    if (!container) return { skipped: true };
+    container.innerHTML = \`
+      <button class="team-selector-item"
+              data-action="select-team"
+              data-team-id="harness-2"
+              data-team-name="Harness 2"
+              data-is-personal="false">Harness 2</button>
+    \`;
+    const btn = container.querySelector('.team-selector-item');
+    if (!btn) return { skipped: true };
+    let called = false, calledWith = null;
+    const orig = window.selectTeamFromSelector;
+    window.selectTeamFromSelector = (el) => {
+      called = true;
+      calledWith = el ? el.getAttribute('data-team-id') : null;
+    };
+    try {
+      btn.click();
+      return { called, calledWith };
+    } finally {
+      window.selectTeamFromSelector = orig;
+      container.innerHTML = '';
+    }
+  `);
+  if (r.skipped)                          return { skip: true, detail: '#team-selector-items not in DOM' };
+  if (!r.called)                          return { pass: false, detail: 'selectTeamFromSelector NOT called — delegation listener missing?' };
+  if (r.calledWith !== 'harness-2')       return { pass: false, detail: `Wrong team-id: ${r.calledWith}` };
+  return { pass: true, detail: 'selectTeamFromSelector("harness-2") called via delegation ✓' };
+});
+
+test('B. Team Selector', 'search error retry button has data-action (onclick stripped)', async () => {
+  const r = await iframeEval(`
+    const container = document.getElementById('team-selector-items');
+    if (!container) return { skipped: true };
+    container.innerHTML = \`
+      <div>
+        <p>Search failed</p>
+        <button data-action="retry-team-search"
+                onclick="searchTeamSelector('')">Try again</button>
+      </div>
+    \`;
+    const btn = container.querySelector('[data-action="retry-team-search"]');
+    if (!btn) return { skipped: true };
+    const result = {
+      hasOnclick: btn.hasAttribute('onclick'),
+      dataAction: btn.getAttribute('data-action'),
+    };
+    container.innerHTML = '';
+    return result;
+  `);
+  if (r.skipped)      return { skip: true, detail: '#team-selector-items not in DOM' };
+  if (r.hasOnclick)   return { pass: false, detail: 'onclick survived innerHTML guard on retry button' };
+  return { pass: true, detail: 'onclick stripped ✓  data-action="retry-team-search" survived ✓' };
+});
+
+// ── Group C: Tool Table ────────────────────────────────────
+
+test('C. Tool Table', 'all 5 action buttons have data-action (onclick stripped)', async () => {
+  const r = await iframeEval(`
+    let toolBody = document.getElementById('toolBody');
+    const created = !toolBody;
+    if (!toolBody) {
+      toolBody = document.createElement('tbody');
+      toolBody.id = 'toolBody';
+      document.body.appendChild(toolBody);
+    }
+    const actions = ['view-tool','edit-tool','enrich-tool','validate-tool','generate-tool-tests'];
+    toolBody.innerHTML = actions.map(a =>
+      '<tr><td><button data-action="' + a + '" data-tool-id="t1" onclick="' + a + '(\\'t1\\')">X</button></td></tr>'
+    ).join('');
+    const results = {};
+    for (const a of actions) {
+      const btn = toolBody.querySelector('[data-action="' + a + '"]');
+      results[a] = { found: !!btn, hasOnclick: btn ? btn.hasAttribute('onclick') : null };
+    }
+    if (created) toolBody.remove(); else toolBody.innerHTML = '';
+    return results;
+  `);
+  const failures = [];
+  for (const [action, v] of Object.entries(r)) {
+    if (!v.found)      failures.push(`${action}: button not found`);
+    else if (v.hasOnclick) failures.push(`${action}: onclick survived guard`);
+  }
+  if (failures.length) return { pass: false, detail: failures.join('\n') };
+  return { pass: true, detail: 'All 5 action buttons: onclick stripped ✓  data-action survived ✓' };
+});
+
+test('C. Tool Table', 'delegation listener dispatches view-tool click to viewTool()', async () => {
+  const r = await iframeEval(`
+    const wrapper = document.getElementById('tool-ops-main-content-wrapper');
+    let toolBody = document.getElementById('toolBody');
+    const delegationTarget = wrapper || toolBody;
+    if (!delegationTarget) return { skipped: true };
+    const created = !toolBody;
+    if (!toolBody) {
+      toolBody = document.createElement('tbody');
+      toolBody.id = 'toolBody';
+      delegationTarget.appendChild(toolBody);
+    }
+    toolBody.innerHTML = '<tr><td><button data-action="view-tool" data-tool-id="h1">View</button></td></tr>';
+    const btn = toolBody.querySelector('[data-action="view-tool"]');
+    if (!btn) return { skipped: true };
+    let called = false, calledWith = null;
+    const orig = window.viewTool;
+    window.viewTool = (id) => { called = true; calledWith = id; };
+    try {
+      btn.click();
+      return { called, calledWith };
+    } finally {
+      window.viewTool = orig;
+      toolBody.innerHTML = '';
+      if (created) toolBody.remove();
+    }
+  `);
+  if (r.skipped)                return { skip: true, detail: 'Tool table wrapper not in DOM' };
+  if (!r.called)                return { pass: false, detail: 'viewTool() NOT called — delegation listener missing?' };
+  if (r.calledWith !== 'h1')    return { pass: false, detail: `viewTool called with wrong id: ${r.calledWith}` };
+  return { pass: true, detail: 'viewTool("h1") called via delegation ✓' };
+});
+
+// ── Group D: Metrics Retry ─────────────────────────────────
+
+test('D. Metrics Retry', 'showMetricsError() retry button has data-action (onclick stripped)', async () => {
+  const r = await iframeEval(`
+    let c = document.getElementById('aggregated-metrics-content');
+    const created = !c;
+    if (!c) { c = document.createElement('div'); c.id = 'aggregated-metrics-content'; document.body.appendChild(c); }
+    try {
+      showMetricsError(new Error('harness error'));
+      const btn = c.querySelector('[data-action="retry-metrics"]');
+      if (!btn) return { found: false };
+      return { found: true, hasOnclick: btn.hasAttribute('onclick'), text: btn.textContent.trim() };
+    } finally {
+      if (created) c.remove(); else c.textContent = '';
+    }
+  `);
+  if (!r.found)       return { pass: false, detail: 'Retry button [data-action="retry-metrics"] not found' };
+  if (r.hasOnclick)   return { pass: false, detail: 'onclick survived innerHTML guard on retry button' };
+  return { pass: true, detail: `onclick stripped ✓  data-action="retry-metrics" survived ✓  text: "${r.text}"` };
+});
+
+test('D. Metrics Retry', 'showMetricsError() retry button click calls retryLoadMetrics()', async () => {
+  const r = await iframeEval(`
+    let c = document.getElementById('aggregated-metrics-content');
+    const created = !c;
+    if (!c) { c = document.createElement('div'); c.id = 'aggregated-metrics-content'; document.body.appendChild(c); }
+    let retryCalled = false;
+    const orig = window.retryLoadMetrics;
+    window.retryLoadMetrics = () => { retryCalled = true; };
+    try {
+      showMetricsError(new Error('harness retry'));
+      const btn = c.querySelector('[data-action="retry-metrics"]');
+      if (!btn) return { found: false };
+      btn.click();
+      return { found: true, retryCalled };
+    } finally {
+      window.retryLoadMetrics = orig;
+      if (created) c.remove(); else c.textContent = '';
+    }
+  `);
+  if (!r.found)         return { pass: false, detail: 'Retry button not found' };
+  if (!r.retryCalled)   return { pass: false, detail: 'retryLoadMetrics() NOT called on click' };
+  return { pass: true, detail: 'retryLoadMetrics() called on click ✓' };
+});
+
+test('D. Metrics Retry', 'displayMetrics({}) empty-state button has data-action (onclick stripped)', async () => {
+  const r = await iframeEval(`
+    let section = document.getElementById('aggregated-metrics-section');
+    const sCreated = !section;
+    if (!section) { section = document.createElement('div'); section.id = 'aggregated-metrics-section'; document.body.appendChild(section); }
+    let c = document.getElementById('aggregated-metrics-content');
+    const cCreated = !c;
+    if (!c) { c = document.createElement('div'); c.id = 'aggregated-metrics-content'; section.appendChild(c); }
+    try {
+      displayMetrics({});
+      const btn = c.querySelector('[data-action="retry-metrics"]');
+      if (!btn) return { found: false };
+      return { found: true, hasOnclick: btn.hasAttribute('onclick'), text: btn.textContent.trim() };
+    } finally {
+      if (sCreated) section.remove(); else c.textContent = '';
+    }
+  `);
+  if (!r.found)       return { pass: false, detail: 'Empty-state refresh button not found' };
+  if (r.hasOnclick)   return { pass: false, detail: 'onclick survived innerHTML guard on empty-state button' };
+  return { pass: true, detail: `onclick stripped ✓  data-action="retry-metrics" survived ✓  text: "${r.text}"` };
+});
+
+// ── Group E: Global Search ─────────────────────────────────
+
+test('E. Global Search', 'search result buttons have data-action (onclick stripped)', async () => {
+  const r = await iframeEval(`
+    let c = document.getElementById('global-search-results');
+    const created = !c;
+    if (!c) { c = document.createElement('div'); c.id = 'global-search-results'; document.body.appendChild(c); }
+    c.innerHTML = \`
+      <button data-action="navigate-search-result"
+              data-entity="tool" data-id="hs1"
+              onclick="navigateToSearchResult('tool','hs1')">Harness Tool</button>
+    \`;
+    const btn = c.querySelector('[data-action="navigate-search-result"]');
+    if (!btn) { if (created) c.remove(); return { found: false }; }
+    const result = {
+      found: true,
+      hasOnclick: btn.hasAttribute('onclick'),
+      dataAction: btn.getAttribute('data-action'),
+      dataEntity: btn.getAttribute('data-entity'),
+      dataId: btn.getAttribute('data-id'),
+    };
+    if (created) c.remove(); else c.innerHTML = '';
+    return result;
+  `);
+  if (!r.found)                                   return { pass: false, detail: 'Search result button not found' };
+  if (r.hasOnclick)                               return { pass: false, detail: 'onclick survived innerHTML guard' };
+  if (r.dataAction !== 'navigate-search-result')  return { pass: false, detail: 'data-action missing or stripped' };
+  return { pass: true, detail: 'onclick stripped ✓  data-action/data-entity/data-id all survived ✓' };
+});
+
+// ── Group F: XSS Prevention ────────────────────────────────
+
+test('F. XSS Prevention', 'error message in showMetricsError() is HTML-escaped', async () => {
+  const r = await iframeEval(`
+    let c = document.getElementById('aggregated-metrics-content');
+    const created = !c;
+    if (!c) { c = document.createElement('div'); c.id = 'aggregated-metrics-content'; document.body.appendChild(c); }
+    try {
+      showMetricsError(new Error('<scr' + 'ipt>window.__xss3=true;<\/scr' + 'ipt>'));
+      const html = c.innerHTML;
+      const xssFired = !!window.__xss3;
+      const hasRaw = html.includes('<script');
+      return { xssFired, hasRaw, snippet: html.slice(0, 120) };
+    } finally {
+      if (created) c.remove(); else c.textContent = '';
+      delete window.__xss3;
+    }
+  `);
+  if (r.xssFired)  return { pass: false, detail: 'XSS payload executed! window.__xss3 was set.' };
+  if (r.hasRaw)    return { pass: false, detail: '<script> tag found in rendered HTML — not escaped' };
+  return { pass: true, detail: 'XSS payload did not fire ✓  error message is HTML-escaped ✓' };
+});
+
+// ============================================================
+// Test runner UI
+// ============================================================
+
+const resultsEl  = document.getElementById('results');
+const summaryEl  = document.getElementById('summary');
+const btnRun     = document.getElementById('btn-run');
+const btnClear   = document.getElementById('btn-clear');
+
+/** @type {Map<number, HTMLElement>} */
+const itemEls = new Map();
+
+function esc(s) {
+  return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>');
+}
+
+function renderInitialList() {
+  resultsEl.innerHTML = '';
+  itemEls.clear();
+  TESTS.forEach((t, i) => {
+    const el = document.createElement('div');
+    el.className = 'test-item';
+    el.innerHTML = `
+      <div class="test-header">
+        <span class="test-badge pending">WAIT</span>
+        <div>
+          <div class="test-group">${esc(t.group)}</div>
+          <div class="test-name">${esc(t.name)}</div>
+        </div>
+      </div>`;
+    resultsEl.appendChild(el);
+    itemEls.set(i, el);
+  });
+  summaryEl.innerHTML = '';
+}
+
+function updateItem(i, state, detail) {
+  const el = itemEls.get(i);
+  if (!el) return;
+  const badge = el.querySelector('.test-badge');
+  badge.className = 'test-badge ' + state;
+  const labels = { pass:'PASS', fail:'FAIL', skip:'SKIP', running:'RUN…', pending:'WAIT' };
+  badge.textContent = labels[state] || state.toUpperCase();
+  const old = el.querySelector('.test-detail');
+  if (old) old.remove();
+  if (detail) {
+    const d = document.createElement('div');
+    d.className = 'test-detail' + (state === 'fail' ? ' error' : '');
+    d.textContent = detail;
+    el.appendChild(d);
+  }
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+function updateSummary(pass, fail, skip, total) {
+  summaryEl.innerHTML =
+    `<span class="pass">${pass} passed</span> / ` +
+    `<span class="fail">${fail} failed</span>` +
+    (skip ? ` / ${skip} skipped` : '') +
+    ` of ${total}`;
+}
+
+async function runAll() {
+  btnRun.disabled = true;
+  renderInitialList();
+
+  // Wait for iframe to be ready before running tests
+  try {
+    updateSummary(0, 0, 0, TESTS.length);
+    await waitForIframeReady();
+  } catch (err) {
+    // Mark all tests as failed with the readiness error
+    TESTS.forEach((_, i) => updateItem(i, 'fail', err.message));
+    updateSummary(0, TESTS.length, 0, TESTS.length);
+    btnRun.disabled = false;
+    return;
+  }
+
+  let pass = 0, fail = 0, skip = 0;
+
+  for (let i = 0; i < TESTS.length; i++) {
+    const t = TESTS[i];
+    updateItem(i, 'running');
+    try {
+      const result = await t.fn();
+      if (result.skip) {
+        skip++;
+        updateItem(i, 'skip', result.detail || 'Skipped — prerequisite not met');
+      } else if (result.pass) {
+        pass++;
+        updateItem(i, 'pass', result.detail || '');
+      } else {
+        fail++;
+        updateItem(i, 'fail', result.detail || 'Assertion failed');
+      }
+    } catch (err) {
+      fail++;
+      updateItem(i, 'fail', err.message);
+    }
+    updateSummary(pass, fail, skip, TESTS.length);
+  }
+
+  btnRun.disabled = false;
+}
+
+btnRun.addEventListener('click', runAll);
+btnClear.addEventListener('click', () => { renderInitialList(); summaryEl.innerHTML = ''; });
+
+// ============================================================
+// iframe lifecycle
+// ============================================================
+
+const overlay = document.getElementById('iframe-overlay');
+const frame   = document.getElementById('admin-frame');
+
+frame.addEventListener('load', () => {
+  // Give admin JS ~2s to initialise after load
+  setTimeout(() => {
+    overlay.classList.add('hidden');
+    if (AUTO_RUN) runAll();
+  }, 2000);
+});
+
+// Load the admin UI (same origin)
+frame.src = ADMIN_URL;
+
+// Initial render
+renderInitialList();
+</script>
+</body>
+</html>

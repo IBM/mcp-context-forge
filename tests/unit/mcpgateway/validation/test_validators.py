@@ -234,9 +234,9 @@ def test_validate_template_valid():
 
 
 def test_validate_template_too_long():
-    with pytest.raises(ValueError):
-        SecurityValidator.validate_template("a" * 101)
-    SecurityValidator.validate_template("a" * 100)
+    """Template length is now enforced at service layer, not schema validator."""
+    assert SecurityValidator.validate_template("a" * 101) == "a" * 101
+    assert SecurityValidator.validate_template("a" * 100) == "a" * 100
 
 
 def test_validate_template_dangerous_tag():
@@ -261,8 +261,8 @@ def test_validate_url_empty():
 def test_validate_url_too_long():
     # 50 is max, so 51 should fail
     with pytest.raises(ValueError):
-        SecurityValidator.validate_url("http://" + "a" * 44, "URL")
-    SecurityValidator.validate_url("http://" + "a" * 43, "URL")
+        SecurityValidator.validate_url("http://example.com/" + "a" * 32, "URL")
+    SecurityValidator.validate_url("http://example.com/" + "a" * 31, "URL")
 
 
 def test_validate_url_bad_scheme():

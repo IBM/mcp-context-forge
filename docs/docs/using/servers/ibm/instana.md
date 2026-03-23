@@ -89,11 +89,11 @@ This design ensures secure credential transmission where credentials are only se
 
 *TBD: Document monitoring scope setup.*
 
-## MCP Gateway Integration
+## ContextForge Integration
 
-### Registration with MCP Gateway
+### Registration with ContextForge
 
-*TBD: Document registration with MCP Gateway.*
+*TBD: Document registration with ContextForge.*
 
 ### Server configuration examples
 

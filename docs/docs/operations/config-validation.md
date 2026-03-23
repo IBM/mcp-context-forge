@@ -1,6 +1,6 @@
 # Configuration Validation
 
-MCP Gateway provides robust configuration validation tools to help operators catch misconfigurations early and ensure reliable deployments.
+ContextForge provides robust configuration validation tools to help operators catch misconfigurations early and ensure reliable deployments.
 
 ## JSON Schema Export
 

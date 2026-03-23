@@ -15,6 +15,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import math
@@ -26,14 +27,18 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import EmailApiToken, EmailUser, TokenRevocation, TokenUsageLog, utc_now
+from mcpgateway.db import EmailApiToken, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Strong references to background tasks to prevent GC before completion
+_background_tasks: set[asyncio.Task] = set()
 
 
 class TokenScope:
@@ -221,7 +226,7 @@ class TokenCatalogService:
 
         This internal method creates a properly formatted JWT token with all
         necessary claims including user identity, scopes, team membership,
-        and expiration. The token follows the MCP Gateway JWT structure.
+        and expiration. The token follows ContextForge JWT structure.
 
         Args:
             user_email: User's email address for the token subject
@@ -284,6 +289,14 @@ class TokenCatalogService:
                 "ip_restrictions": [],
                 "time_restrictions": {},
             }
+
+        # Auto-inject servers.use for tokens with explicit MCP-related permissions.
+        # Without servers.use, the token scoping middleware blocks /rpc and /mcp
+        # transport access, making MCP-method permissions useless.
+        permissions = scopes_dict["permissions"]
+        if permissions and "*" not in permissions and "servers.use" not in permissions:
+            if any(p.startswith(Permissions.MCP_METHOD_PREFIXES) for p in permissions):
+                scopes_dict["permissions"] = [*permissions, "servers.use"]
 
         # Generate JWT token using the centralized token creation utility
         # Pass structured data to the enhanced create_jwt_token function
@@ -449,13 +462,18 @@ class TokenCatalogService:
             if not membership:
                 raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
 
-        # Check for duplicate active token name for this user+team
-        existing_token = self.db.execute(
-            select(EmailApiToken).where(and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True)))
-        ).scalar_one_or_none()
+        # Check for duplicate active token name for this user within the same team scope,
+        # matching DB constraint uq_email_api_tokens_user_name_team (user_email, name, team_id).
+        # team_id=None tokens are scoped to the global (no-team) bucket.
+        if team_id:
+            name_check = and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True))
+        else:
+            name_check = and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id.is_(None), EmailApiToken.is_active.is_(True))
+        existing_token = self.db.execute(select(EmailApiToken).where(name_check)).scalar_one_or_none()
 
         if existing_token:
-            raise ValueError(f"Token with name '{name}' already exists for user {user_email} in team {team_id}. Please choose a different name.")
+            scope_label = f"team '{team_id}'" if team_id else "the global scope (no team)"
+            raise ValueError(f"Token with name '{name}' already exists for user {user_email} in {scope_label}. Token names must be unique per user per team. Please choose a different name.")
 
         # CALCULATE EXPIRATION DATE
         expires_at = None
@@ -501,7 +519,7 @@ class TokenCatalogService:
         self.db.refresh(api_token)
 
         token_type = f"team-scoped (team: {team_id})" if team_id else "public-only"
-        logger.info(f"Created {token_type} API token '{name}' for user {user_email}. Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
+        logger.info(f"Created {token_type} API token '{name}' for user {SecurityValidator.sanitize_log_message(user_email)}. Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
         return api_token, raw_token
 
     async def count_user_tokens(self, user_email: str, include_inactive: bool = False) -> int:
@@ -789,7 +807,7 @@ class TokenCatalogService:
         self.db.commit()
         self.db.refresh(token)
 
-        logger.info(f"Updated token '{token.name}' for user {user_email}")
+        logger.info(f"Updated token '{token.name}' for user {SecurityValidator.sanitize_log_message(user_email)}")
 
         return token
 
@@ -835,15 +853,14 @@ class TokenCatalogService:
         self.db.add(revocation)
         self.db.commit()
 
-        # Invalidate auth cache for revoked token
+        # Invalidate auth cache synchronously so revoked tokens are rejected immediately
+        # (fire-and-forget via create_task risks a race where the next request arrives
+        # before the invalidation task runs, allowing the revoked token through).
         try:
-            # Standard
-            import asyncio  # pylint: disable=import-outside-toplevel
-
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            await auth_cache.invalidate_revocation(token.jti)
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate auth cache for revoked token: {cache_error}")
 
@@ -880,13 +897,10 @@ class TokenCatalogService:
         self.db.commit()
 
         try:
-            # Standard
-            import asyncio  # pylint: disable=import-outside-toplevel
-
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            await auth_cache.invalidate_revocation(token.jti)
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate auth cache: {cache_error}")
 
@@ -956,13 +970,6 @@ class TokenCatalogService:
 
         self.db.add(usage_log)
         self.db.commit()
-
-        # Update token last_used timestamp
-        token = self.db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
-
-        if token:
-            token.last_used = utc_now()
-            self.db.commit()
 
     async def get_token_usage_stats(self, user_email: str, token_id: Optional[str] = None, days: int = 30) -> dict:
         """Get token usage statistics.

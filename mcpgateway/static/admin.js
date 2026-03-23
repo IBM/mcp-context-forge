@@ -1,5 +1,19 @@
 /* global marked, DOMPurify, safeReplaceState, _logRestrictedContext, getPaginationParams, buildTableUrl */
 const MASKED_AUTH_VALUE = "*****";
+let ADMIN_DEBUG_LOGGING_ENABLED = false;
+try {
+    ADMIN_DEBUG_LOGGING_ENABLED =
+        window.localStorage.getItem("MCPGATEWAY_ADMIN_DEBUG") === "1";
+} catch (_e) {
+    ADMIN_DEBUG_LOGGING_ENABLED = false;
+}
+
+window._originalConsoleLog = console.log;
+window._originalConsoleDebug = console.debug;
+if (!ADMIN_DEBUG_LOGGING_ENABLED) {
+    console.log = () => {};
+    console.debug = () => {};
+}
 
 // Runtime fallbacks when admin.js is loaded outside admin.html
 window._restrictedContextLogged = window._restrictedContextLogged || false;
@@ -111,7 +125,7 @@ function handleAddPassthrough() {
             queryDiv.className = "mb-4";
             queryDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Query Mapping (JSON)</label>
-                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-3 py-2 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
             `;
             passthroughContainer.appendChild(queryDiv);
         }
@@ -120,7 +134,7 @@ function handleAddPassthrough() {
             headerDiv.className = "mb-4";
             headerDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Header Mapping (JSON)</label>
-                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-3 py-2 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
             `;
             passthroughContainer.appendChild(headerDiv);
         }
@@ -129,7 +143,7 @@ function handleAddPassthrough() {
             timeoutDiv.className = "mb-4";
             timeoutDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">timeout_ms (number)</label>
-                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
+                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
             `;
             passthroughContainer.appendChild(timeoutDiv);
         }
@@ -138,7 +152,7 @@ function handleAddPassthrough() {
             exposeDiv.className = "mb-4";
             exposeDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Expose Passthrough</label>
-                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
                     <option value="true" selected>True</option>
                     <option value="false">False</option>
                 </select>
@@ -150,7 +164,7 @@ function handleAddPassthrough() {
             allowlistDiv.className = "mb-4";
             allowlistDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Allowlist (comma-separated hosts/schemes)</label>
-                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
+                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
             `;
             passthroughContainer.appendChild(allowlistDiv);
         }
@@ -159,7 +173,7 @@ function handleAddPassthrough() {
             pluginPreDiv.className = "mb-4";
             pluginPreDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Pre</label>
-                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
             `;
             passthroughContainer.appendChild(pluginPreDiv);
         }
@@ -168,7 +182,7 @@ function handleAddPassthrough() {
             pluginPostDiv.className = "mb-4";
             pluginPostDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Post (optional, override defaults)</label>
-                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
             `;
             passthroughContainer.appendChild(pluginPostDiv);
         }
@@ -190,11 +204,58 @@ function updateEditToolUrl() {
     }
 }
 
+function isTeamScopedView() {
+    const teamId = new URLSearchParams(window.location.search).get("team_id");
+    return Boolean(teamId && teamId.trim() !== "");
+}
+
+/**
+ * Apply visibility restrictions (disable/style public radio) without changing checked state.
+ * Use this for edit forms to preserve the entity's saved visibility.
+ * @param {string[]} prefixes - Array of visibility ID prefixes to process
+ */
+function applyVisibilityRestrictions(prefixes) {
+    const hasTeam = isTeamScopedView();
+
+    prefixes.forEach((prefix) => {
+        const publicId = `[id="${prefix}-public"]`;
+        const publicRadios = document.querySelectorAll(publicId);
+
+        // Disable public radio when flag is false AND we're in a team-scoped view.
+        const publicBlocked =
+            window.ALLOW_PUBLIC_VISIBILITY === false && hasTeam;
+        publicRadios.forEach((radio) => {
+            // Keep a checked public value enabled in edit forms so FormData
+            // includes visibility and we don't silently change saved state.
+            // This is intentionally one-way: once switched away from public in
+            // restricted team scope, public cannot be re-selected.
+            const shouldDisable = publicBlocked && !radio.checked;
+            radio.disabled = shouldDisable;
+            const wrapper = radio.closest(".flex.items-center");
+            if (wrapper) {
+                if (shouldDisable) {
+                    wrapper.classList.add("opacity-40", "cursor-not-allowed");
+                    wrapper.title =
+                        "Public visibility is disabled by platform configuration";
+                    const label = wrapper.querySelector("label");
+                    if (label) label.classList.add("line-through");
+                } else {
+                    wrapper.classList.remove(
+                        "opacity-40",
+                        "cursor-not-allowed",
+                    );
+                    wrapper.removeAttribute("title");
+                    const label = wrapper.querySelector("label");
+                    if (label) label.classList.remove("line-through");
+                }
+            }
+        });
+    });
+}
+
 // Function to update default visibility based on team_id in URL
 function updateDefaultVisibility() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const teamId = urlParams.get("team_id");
-    const hasTeam = teamId && teamId.trim() !== "";
+    const hasTeam = isTeamScopedView();
 
     // List of visibility prefixes to handle
     // These correspond to the "public", "team", "private" radio buttons
@@ -208,12 +269,12 @@ function updateDefaultVisibility() {
         "a2a-visibility", // Agents (Create)
     ];
 
+    // Set default checked state for add/create forms
     visibilityPrefixes.forEach((prefix) => {
         const publicId = `[id="${prefix}-public"]`;
         const teamIdStr = `[id="${prefix}-team"]`;
         const privateIdStr = `[id="${prefix}-private"]`;
 
-        // Handle potential duplicate IDs using querySelectorAll
         const publicRadios = document.querySelectorAll(publicId);
         const teamRadios = document.querySelectorAll(teamIdStr);
         const privateRadios = document.querySelectorAll(privateIdStr);
@@ -239,7 +300,7 @@ function updateDefaultVisibility() {
                 radio.defaultChecked = false;
             });
         } else {
-            // Default to Public
+            // Default to Public (always enabled outside team scope)
             publicRadios.forEach((radio) => {
                 if (!radio.checked) {
                     radio.checked = true;
@@ -256,6 +317,71 @@ function updateDefaultVisibility() {
             });
         }
     });
+
+    // Apply restrictions after defaults are set so initially checked public
+    // radios in create forms become disabled once switched to team/private.
+    applyVisibilityRestrictions(visibilityPrefixes);
+}
+
+/**
+ * Toggle "View Public" for server selectors.
+ * When checked, removes team_id from HTMX URLs so public items are included.
+ * When unchecked, re-adds team_id to filter to team-only items.
+ *
+ * @param {string} checkboxId - ID of the View Public checkbox
+ * @param {string[]} containerIds - IDs of the HTMX selector containers to update
+ * @param {string} teamId - The current team_id value
+ */
+function toggleViewPublic(checkboxId, containerIds, teamId) {
+    const checkbox = document.getElementById(checkboxId);
+    if (!checkbox || !teamId) return;
+
+    checkbox.onchange = function () {
+        const includePublic = this.checked;
+
+        // Capture current gateway selection so we can preserve it in reloaded URLs
+        const selectedGatewayIds =
+            typeof getSelectedGatewayIds === "function"
+                ? getSelectedGatewayIds()
+                : [];
+        const gatewayIdParam =
+            selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+        containerIds.forEach((containerId) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            let url = container.getAttribute("hx-get");
+            if (!url) return;
+
+            if (includePublic) {
+                // Keep team_id to maintain team scope, add include_public to also show public items
+                if (!url.includes("team_id=")) {
+                    url += `&team_id=${encodeURIComponent(teamId)}`;
+                }
+                url = url.replace(/&include_public=[^&]*/, "");
+                url += "&include_public=true";
+            } else {
+                // Remove include_public param and ensure team_id is set
+                url = url.replace(/&include_public=[^&]*/, "");
+                if (!url.includes("team_id=")) {
+                    url += `&team_id=${encodeURIComponent(teamId)}`;
+                }
+            }
+
+            // Preserve active gateway filter so toggling View Public
+            // does not drop the user's gateway selection
+            url = url.replace(/&gateway_id=[^&]*/, "");
+            if (gatewayIdParam) {
+                url += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+            }
+
+            container.setAttribute("hx-get", url);
+            // Re-process HTMX attributes and trigger re-fetch
+            htmx.process(container);
+            htmx.trigger(container, "load");
+        });
+    };
 }
 
 // Attach event listener after DOM is loaded or when modal opens
@@ -269,6 +395,23 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize default visibility based on URL team_id
     updateDefaultVisibility();
+
+    // Initialize View Public toggle for Add Server modal
+    const addServerTeamId = new URL(window.location.href).searchParams.get(
+        "team_id",
+    );
+    if (addServerTeamId) {
+        toggleViewPublic(
+            "add-server-view-public",
+            [
+                "associatedGateways",
+                "associatedTools",
+                "associatedResources",
+                "associatedPrompts",
+            ],
+            addServerTeamId,
+        );
+    }
 
     // Initialize CA certificate upload immediately
     initializeCACertUpload();
@@ -286,6 +429,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize search functionality for all entity types (immediate, no debounce)
     initializeSearchInputsMemoized();
+    initializeGlobalSearch();
     initializePasswordValidation();
     initializeAddMembersForms();
 
@@ -349,31 +493,33 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    const tableToEntityType = {
+        "servers-table": "catalog",
+        "tools-table": "tools",
+        "resources-table": "resources",
+        "prompts-table": "prompts",
+        "gateways-table": "gateways",
+        "agents-table": "a2a-agents",
+    };
+
     // Re-initialize search inputs when HTMX content loads
     // Only re-initialize if the swap affects search-related content
     document.body.addEventListener("htmx:afterSwap", function (event) {
-        const target = event.detail.target;
-        const relevantPanels = [
-            "catalog-panel",
-            "gateways-panel",
-            "tools-panel",
-            "resources-panel",
-            "prompts-panel",
-            "a2a-agents-panel",
-        ];
-
-        if (
-            target &&
-            relevantPanels.some(
-                (panelId) =>
-                    target.id === panelId || target.closest(`#${panelId}`),
-            )
-        ) {
+        const targetId = event.detail.target && event.detail.target.id;
+        if (targetId && tableToEntityType[targetId]) {
             console.log(
-                `📝 HTMX swap detected in ${target.id}, resetting search state`,
+                `📝 HTMX swap detected in ${targetId}, resetting search state`,
             );
             resetSearchInputsState();
             initializeSearchInputsDebounced();
+        }
+    });
+
+    document.body.addEventListener("htmx:afterSettle", function (event) {
+        const targetId = event.detail.target && event.detail.target.id;
+        const entityType = targetId && tableToEntityType[targetId];
+        if (entityType) {
+            updateAvailableTags(entityType);
         }
     });
 
@@ -426,6 +572,96 @@ function escapeHtml(unsafe) {
         .replace(/\//g, "&#x2F;"); // Extra protection against script injection
 }
 
+const INNER_HTML_DESCRIPTOR = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "innerHTML",
+);
+
+function hasUnsafeUrlProtocol(value) {
+    if (typeof value !== "string") {
+        return false;
+    }
+    const trimmed = value.trim().toLowerCase();
+    return (
+        trimmed.startsWith("javascript:") ||
+        trimmed.startsWith("vbscript:") ||
+        trimmed.startsWith("data:text/html")
+    );
+}
+
+function sanitizeHtmlForInsertion(rawHtml) {
+    if (rawHtml === null || rawHtml === undefined) {
+        return "";
+    }
+    const html = String(rawHtml);
+
+    if (
+        !INNER_HTML_DESCRIPTOR ||
+        typeof INNER_HTML_DESCRIPTOR.set !== "function" ||
+        typeof INNER_HTML_DESCRIPTOR.get !== "function"
+    ) {
+        return html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+    }
+
+    const template = document.createElement("template");
+    INNER_HTML_DESCRIPTOR.set.call(template, html);
+
+    template.content
+        .querySelectorAll("script,iframe,object,embed,meta,base")
+        .forEach((node) => node.remove());
+
+    template.content.querySelectorAll("*").forEach((element) => {
+        for (const attribute of Array.from(element.attributes)) {
+            const attrName = attribute.name.toLowerCase();
+            if (attrName.startsWith("on")) {
+                element.removeAttribute(attribute.name);
+                continue;
+            }
+
+            if (
+                (attrName === "href" ||
+                    attrName === "src" ||
+                    attrName === "xlink:href" ||
+                    attrName === "action" ||
+                    attrName === "formaction" ||
+                    attrName === "srcdoc") &&
+                hasUnsafeUrlProtocol(attribute.value)
+            ) {
+                element.removeAttribute(attribute.name);
+            }
+        }
+    });
+
+    return INNER_HTML_DESCRIPTOR.get.call(template);
+}
+
+function installInnerHtmlGuard() {
+    if (window.__mcpgatewayInnerHtmlGuardInstalled) {
+        return;
+    }
+    if (
+        !INNER_HTML_DESCRIPTOR ||
+        typeof INNER_HTML_DESCRIPTOR.set !== "function" ||
+        typeof INNER_HTML_DESCRIPTOR.get !== "function"
+    ) {
+        return;
+    }
+
+    Object.defineProperty(Element.prototype, "innerHTML", {
+        configurable: true,
+        enumerable: INNER_HTML_DESCRIPTOR.enumerable,
+        get: INNER_HTML_DESCRIPTOR.get,
+        set(value) {
+            const sanitized = sanitizeHtmlForInsertion(value);
+            INNER_HTML_DESCRIPTOR.set.call(this, sanitized);
+        },
+    });
+
+    window.__mcpgatewayInnerHtmlGuardInstalled = true;
+}
+
+installInnerHtmlGuard();
+
 /**
  * Decode HTML entities back to their original characters.
  * Used when populating form fields to prevent double-encoding.
@@ -439,6 +675,60 @@ function decodeHtml(html) {
     const txt = document.createElement("textarea");
     txt.innerHTML = html;
     return txt.value;
+}
+
+/**
+ * Create a copy-to-clipboard button for an ID value.
+ * Returns a <button> element that copies the given id string to the clipboard.
+ * @param {string|number} id - The ID value to copy
+ * @returns {HTMLButtonElement}
+ */
+function makeCopyIdButton(id) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.title = "Copy ID to clipboard";
+    btn.className =
+        "ml-2 inline-flex items-center px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors";
+    btn.textContent = "📋 Copy";
+    btn.addEventListener("click", () => {
+        const idStr = String(id);
+        const onSuccess = () => {
+            btn.textContent = "✅ Copied!";
+            setTimeout(() => {
+                btn.textContent = "📋 Copy";
+            }, 2000);
+        };
+        const onFailure = () => {
+            btn.textContent = "❌ Failed";
+            setTimeout(() => {
+                btn.textContent = "📋 Copy";
+            }, 2000);
+        };
+        if (
+            navigator.clipboard &&
+            typeof navigator.clipboard.writeText === "function"
+        ) {
+            navigator.clipboard
+                .writeText(idStr)
+                .then(onSuccess)
+                .catch(onFailure);
+        } else {
+            try {
+                const ta = document.createElement("textarea");
+                ta.value = idStr;
+                ta.style.position = "fixed";
+                ta.style.opacity = "0";
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                document.body.removeChild(ta);
+                onSuccess();
+            } catch (_e) {
+                onFailure();
+            }
+        }
+    });
+    return btn;
 }
 
 /**
@@ -535,6 +825,78 @@ async function safeParseJsonResponse(
     }
 
     return await response.json();
+}
+
+// ===================================================================
+// PROXY-AWARE ADMIN NAVIGATION
+// Derives admin base from window.location so that proxy-embedded
+// deployments (where window.ROOT_PATH may be empty) preserve the
+// proxy prefix in the navigated URL. Fixes #3321 and #3324.
+// ===================================================================
+
+/**
+ * Fragment names differ from entity type names for some entities.
+ * e.g. the "servers" toggle navigates to the #catalog tab.
+ */
+const _TOGGLE_FRAGMENT_MAP = {
+    servers: "catalog",
+};
+
+/**
+ * Navigate to an admin tab while preserving the proxy prefix in the URL.
+ *
+ * Derives the admin base path from window.location.pathname rather than
+ * window.ROOT_PATH, so that proxy-embedded deployments (where ASGI
+ * root_path is not forwarded and ROOT_PATH is empty) still navigate to
+ * the correct proxy-scoped URL.
+ *
+ * @param {string} fragment - Hash fragment without '#' (e.g. "tools", "catalog").
+ * @param {URLSearchParams} [searchParams] - Query params to include (team_id, include_inactive, etc.).
+ */
+function _navigateAdmin(fragment, searchParams) {
+    const currentPath = window.location.pathname;
+    // Find /admin in current path and use everything before it as the base.
+    // e.g. /api/proxy/mcp/admin → base is /api/proxy/mcp
+    // Use lastIndexOf so that path segments like /administrator don't match.
+    const adminIdx = currentPath.lastIndexOf("/admin");
+    const base =
+        adminIdx >= 0
+            ? window.location.origin + currentPath.slice(0, adminIdx)
+            : window.ROOT_PATH || window.location.origin;
+
+    // Preserve namespaced pagination state (*_page, *_size, *_inactive, *_q, *_tags)
+    // from the current URL so that editing an item on page 3 returns to page 3.
+    if (!searchParams) {
+        searchParams = new URLSearchParams();
+    }
+    const currentUrlParams = new URLSearchParams(window.location.search);
+    currentUrlParams.forEach((value, key) => {
+        const isPaginationParam =
+            key.endsWith("_page") ||
+            key.endsWith("_size") ||
+            (key.endsWith("_inactive") && key !== "include_inactive") ||
+            key.endsWith("_q") ||
+            key.endsWith("_tags");
+        if (isPaginationParam && !searchParams.has(key)) {
+            searchParams.set(key, value);
+        }
+    });
+
+    const qs = searchParams.toString();
+    const target = `${base}/admin${qs ? `?${qs}` : ""}#${fragment}`;
+
+    // When the target URL is identical to the current URL (same path, query,
+    // AND hash), browsers treat the assignment as an in-page anchor scroll
+    // and skip the network reload.  This happens in proxy/iframe deployments
+    // where the URL has no trailing slash (unlike direct mode where FastAPI
+    // redirects /admin → /admin/, creating a path difference).  Force a full
+    // reload so the UI always reflects the latest server state.
+    // Fixes #3351 (root cause of #3324).
+    if (window.location.href === target) {
+        window.location.reload();
+    } else {
+        window.location.href = target;
+    }
 }
 
 /**
@@ -721,7 +1083,7 @@ function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
         element.textContent = htmlContent; // Fallback to safe text
         return;
     }
-    element.innerHTML = htmlContent;
+    element.innerHTML = sanitizeHtmlForInsertion(htmlContent);
 }
 
 // ===================================================================
@@ -957,6 +1319,49 @@ function safeGetElement(id, suppressWarning = false) {
     }
 }
 
+/**
+ * Ensure a "no results" message element exists in the DOM for a search container.
+ * If the element already exists, returns { msg, span }. Otherwise creates it
+ * dynamically and inserts it right after the container so the feature works
+ * regardless of template-caching state.
+ *
+ * @param {string} containerId  - The id of the items container (e.g. "associatedTools")
+ * @param {string} msgId        - The id for the <p> message element (e.g. "noToolsMessage")
+ * @param {string} spanId       - The id for the inner <span> that shows the query text
+ * @param {string} entityLabel  - Human-readable label (e.g. "tool", "MCP server")
+ * @returns {{ msg: HTMLElement|null, span: HTMLElement|null }}
+ */
+function ensureNoResultsElement(containerId, msgId, spanId, entityLabel) {
+    let msg = document.getElementById(msgId);
+    let span = document.getElementById(spanId);
+    if (msg) {
+        // Element already in the DOM – just return references
+        if (!span) {
+            span = msg.querySelector("span");
+        }
+        return { msg, span };
+    }
+    // Create the message element dynamically
+    const container = document.getElementById(containerId);
+    if (!container) {
+        return { msg: null, span: null };
+    }
+    msg = document.createElement("p");
+    msg.id = msgId;
+    msg.className = "text-gray-700 dark:text-gray-300 mt-2";
+    msg.style.display = "none";
+    span = document.createElement("span");
+    span.id = spanId;
+    msg.appendChild(
+        document.createTextNode(`No ${entityLabel} found containing \u201C`),
+    );
+    msg.appendChild(span);
+    msg.appendChild(document.createTextNode("\u201D"));
+    // Insert right after the container
+    container.parentNode.insertBefore(msg, container.nextSibling);
+    return { msg, span };
+}
+
 // Enhanced error handler for fetch operations
 function handleFetchError(error, operation = "operation") {
     console.error(`Error during ${operation}:`, error);
@@ -1000,6 +1405,17 @@ function showErrorMessage(message, elementId = null) {
         }, 5000);
     }
 }
+
+// Handle HTMX after-request for user delete — extracts plain text from the
+// HTML error response and surfaces it via the toast notification system.
+// Exposed on window so inline hx-on::after-request handlers can call it.
+window.handleDeleteUserError = function (event) {
+    if (!event.detail.successful) {
+        const d = document.createElement("div");
+        d.innerHTML = event.detail.xhr.responseText;
+        showErrorMessage(d.textContent.trim() || "Error deleting user");
+    }
+};
 
 // Show success messages
 function showSuccessMessage(message) {
@@ -1169,19 +1585,26 @@ function closeModal(modalId, clearId = null) {
             }
         }
 
-        // Clean up specific modal types
-        if (modalId === "gateway-test-modal") {
-            cleanupGatewayTestModal();
-        } else if (modalId === "tool-test-modal") {
-            cleanupToolTestModal();
-        } else if (modalId === "prompt-test-modal") {
-            cleanupPromptTestModal();
-        } else if (modalId === "resource-test-modal") {
-            cleanupResourceTestModal();
-        } else if (modalId === "a2a-test-modal") {
-            cleanupA2ATestModal();
+        // Type-specific cleanup — isolated so failures don't block modal close
+        try {
+            if (modalId === "gateway-test-modal") {
+                cleanupGatewayTestModal();
+            } else if (modalId === "tool-test-modal") {
+                cleanupToolTestModal();
+            } else if (modalId === "prompt-test-modal") {
+                cleanupPromptTestModal();
+            } else if (modalId === "resource-test-modal") {
+                cleanupResourceTestModal();
+            } else if (modalId === "a2a-test-modal") {
+                cleanupA2ATestModal();
+            } else if (modalId === "server-edit-modal") {
+                resetEditSelections();
+            }
+        } catch (cleanupError) {
+            console.error(`Error during ${modalId} cleanup:`, cleanupError);
         }
 
+        // Always executes — modal hides even if cleanup failed
         modal.classList.add("hidden");
         AppState.setModalInactive(modalId);
 
@@ -1469,12 +1892,18 @@ function showMetricsError(error) {
                 <p class="text-sm mb-2">${escapeHtml(errorMessage)}</p>
                 <p class="text-xs text-gray-500 mb-4">${helpText}</p>
                 <button
-                    onclick="retryLoadMetrics()"
+                    data-action="retry-metrics"
                     class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Try Again
                 </button>
             </div>
         `;
+        const retryBtn = errorDiv.querySelector(
+            '[data-action="retry-metrics"]',
+        );
+        if (retryBtn) {
+            retryBtn.addEventListener("click", retryLoadMetrics);
+        }
 
         aggregatedSection.innerHTML = "";
         aggregatedSection.appendChild(errorDiv);
@@ -1576,10 +2005,16 @@ function displayMetrics(data, retryCount = 0) {
                 </svg>
                 <h3 class="text-lg font-medium mb-2">No Metrics Available</h3>
                 <p class="text-sm">Metrics data will appear here once tools, resources, or prompts are executed.</p>
-                <button onclick="retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
+                <button data-action="retry-metrics" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Refresh Metrics
                 </button>
             `;
+            const refreshBtn = emptyStateDiv.querySelector(
+                '[data-action="retry-metrics"]',
+            );
+            if (refreshBtn) {
+                refreshBtn.addEventListener("click", retryLoadMetrics);
+            }
             aggregatedContent.innerHTML = "";
             aggregatedContent.appendChild(emptyStateDiv);
             return;
@@ -3166,18 +3601,38 @@ async function editTool(toolId) {
             editForm.appendChild(hiddenInput);
         }
 
-        const visibility = tool.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = tool.visibility
+            ? tool.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-tool-visibility-public");
         const teamRadio = safeGetElement("edit-tool-visibility-team");
         const privateRadio = safeGetElement("edit-tool-visibility-private");
 
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
+
         if (visibility) {
-            // Check visibility and set the corresponding radio button
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -3467,11 +3922,31 @@ async function editTool(toolId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
+                    if (
+                        Array.isArray(tool.auth.authHeaders) &&
+                        tool.auth.authHeaders.length > 0
+                    ) {
+                        loadAuthHeaders(
+                            "edit-auth-headers-container",
+                            tool.auth.authHeaders,
+                            { maskValues: true },
+                        );
+                    } else {
+                        updateAuthHeadersJSON("edit-auth-headers-container");
+                    }
                     if (authHeaderKeyField) {
                         authHeaderKeyField.value =
                             tool.auth.authHeaderKey || "";
                     }
                     if (authHeaderValueField) {
+                        if (
+                            Array.isArray(tool.auth.authHeaders) &&
+                            tool.auth.authHeaders.length === 1
+                        ) {
+                            authHeaderValueField.dataset.isMasked = "true";
+                            authHeaderValueField.dataset.realValue =
+                                tool.auth.authHeaders[0].value ?? "";
+                        }
                         authHeaderValueField.value = "*****"; // masked
                     }
                 }
@@ -3484,6 +3959,7 @@ async function editTool(toolId) {
         }
 
         openModal("tool-edit-modal");
+        applyVisibilityRestrictions(["edit-tool-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Ensure editors are refreshed after modal display
         setTimeout(() => {
@@ -3529,6 +4005,18 @@ async function viewAgent(agentId) {
             const container = document.createElement("div");
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // ID field with copy button
+            const agentIdP = document.createElement("p");
+            const agentIdStrong = document.createElement("strong");
+            agentIdStrong.textContent = "Agent ID: ";
+            agentIdP.appendChild(agentIdStrong);
+            const agentIdSpan = document.createElement("span");
+            agentIdSpan.className = "font-mono text-sm";
+            agentIdSpan.textContent = agent.id;
+            agentIdP.appendChild(agentIdSpan);
+            agentIdP.appendChild(makeCopyIdButton(agent.id));
+            container.appendChild(agentIdP);
 
             const fields = [
                 { label: "Name", value: agent.name },
@@ -3835,9 +4323,9 @@ async function editA2AAgent(agentId) {
             ? agent.visibility.toLowerCase()
             : null;
 
-        const publicRadio = safeGetElement("a2a-visibility-public-edit");
-        const teamRadio = safeGetElement("a2a-visibility-team-edit");
-        const privateRadio = safeGetElement("a2a-visibility-private-edit");
+        const publicRadio = safeGetElement("edit-a2a-visibility-public");
+        const teamRadio = safeGetElement("edit-a2a-visibility-team");
+        const privateRadio = safeGetElement("edit-a2a-visibility-private");
 
         // Clear all first
         if (publicRadio) {
@@ -3851,12 +4339,19 @@ async function editA2AAgent(agentId) {
         }
 
         if (visibility) {
-            // Check visibility and set the corresponding radio button
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -3912,6 +4407,7 @@ async function editA2AAgent(agentId) {
         const oauthRedirectUriField = safeGetElement(
             "oauth-redirect-uri-a2a-edit",
         );
+        const oauthIssuerField = safeGetElement("oauth-issuer-a2a-edit");
         const oauthScopesField = safeGetElement("oauth-scopes-a2a-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-a2a-edit",
@@ -3971,6 +4467,14 @@ async function editA2AAgent(agentId) {
                     if (authHeaderValueField) {
                         authHeaderValueField.value = "*****"; // mask header value
                     }
+                    // Load existing auth_headers if present
+                    if (agent.authHeaders && Array.isArray(agent.authHeaders)) {
+                        loadAuthHeaders(
+                            "auth-headers-container-a2a-edit",
+                            agent.authHeaders,
+                            { maskValues: true },
+                        );
+                    }
                 }
                 break;
             case "oauth":
@@ -3980,8 +4484,11 @@ async function editA2AAgent(agentId) {
                 // Populate OAuth fields if available
                 if (agent.oauthConfig) {
                     const config = agent.oauthConfig;
-                    if (oauthGrantTypeField && config.grant_type) {
-                        oauthGrantTypeField.value = config.grant_type;
+                    if (oauthIssuerField) {
+                        oauthIssuerField.value = config.issuer || "";
+                    }
+                    if (oauthGrantTypeField) {
+                        oauthGrantTypeField.value = config.grant_type || "";
                         // Show/hide authorization code fields based on grant type
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
@@ -3990,27 +4497,26 @@ async function editA2AAgent(agentId) {
                                     : "none";
                         }
                     }
-                    if (oauthClientIdField && config.client_id) {
-                        oauthClientIdField.value = config.client_id;
+                    if (oauthClientIdField) {
+                        oauthClientIdField.value = config.client_id || "";
                     }
                     if (oauthClientSecretField) {
                         oauthClientSecretField.value = ""; // Don't populate secret for security
                     }
-                    if (oauthTokenUrlField && config.token_url) {
-                        oauthTokenUrlField.value = config.token_url;
+                    if (oauthTokenUrlField) {
+                        oauthTokenUrlField.value = config.token_url || "";
                     }
-                    if (oauthAuthUrlField && config.authorization_url) {
-                        oauthAuthUrlField.value = config.authorization_url;
+                    if (oauthAuthUrlField) {
+                        oauthAuthUrlField.value =
+                            config.authorization_url || "";
                     }
-                    if (oauthRedirectUriField && config.redirect_uri) {
-                        oauthRedirectUriField.value = config.redirect_uri;
+                    if (oauthRedirectUriField) {
+                        oauthRedirectUriField.value = config.redirect_uri || "";
                     }
-                    if (
-                        oauthScopesField &&
-                        config.scopes &&
-                        Array.isArray(config.scopes)
-                    ) {
-                        oauthScopesField.value = config.scopes.join(" ");
+                    if (oauthScopesField) {
+                        oauthScopesField.value = Array.isArray(config.scopes)
+                            ? config.scopes.join(" ")
+                            : "";
                     }
                 }
                 break;
@@ -4061,6 +4567,7 @@ async function editA2AAgent(agentId) {
         }
 
         openModal("a2a-edit-modal");
+        applyVisibilityRestrictions(["edit-a2a-visibility"]); // Disable public radio if restricted, preserve checked state
         console.log("✓ A2A Agent edit modal loaded successfully");
     } catch (err) {
         console.error("Error loading A2A agent:", err);
@@ -4266,6 +4773,7 @@ async function runResourceTest() {
 
     // Copy button
     const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
     copyBtn.textContent = "Copy";
     copyBtn.className =
         "text-xs px-2 py-1 rounded bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500";
@@ -4273,6 +4781,7 @@ async function runResourceTest() {
 
     // Fullscreen button
     const fullscreenBtn = document.createElement("button");
+    fullscreenBtn.type = "button";
     fullscreenBtn.textContent = "Fullscreen";
     fullscreenBtn.className =
         "text-xs px-2 py-1 rounded bg-blue-300 dark:bg-blue-600 hover:bg-blue-400 dark:hover:bg-blue-500";
@@ -4280,6 +4789,7 @@ async function runResourceTest() {
 
     // Download button
     const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
     downloadBtn.textContent = "Download";
     downloadBtn.className =
         "text-xs px-2 py-1 rounded bg-green-300 dark:bg-green-600 hover:bg-green-400 dark:hover:bg-green-500";
@@ -4337,7 +4847,7 @@ async function runResourceTest() {
             e.stopPropagation();
         };
         overlay.className =
-            "fixed inset-0 bg-black bg-opacity-70 z-[9999] flex items-center justify-center p-4";
+            "fixed inset-0 bg-black bg-opacity-70 z-40 flex items-center justify-center p-4";
 
         const box = document.createElement("div");
         box.onclick = (e) => {
@@ -4348,6 +4858,7 @@ async function runResourceTest() {
             "bg-white dark:bg-gray-900 rounded-lg w-full h-full p-4 overflow-auto";
 
         const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
         closeBtn.textContent = "Close";
         closeBtn.className =
             "text-xs px-3 py-1 mb-2 rounded bg-red-400 hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600";
@@ -4434,6 +4945,18 @@ async function viewResource(resourceId) {
             const container = document.createElement("div");
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // ID field with copy button
+            const resourceIdP = document.createElement("p");
+            const resourceIdStrong = document.createElement("strong");
+            resourceIdStrong.textContent = "Resource ID: ";
+            resourceIdP.appendChild(resourceIdStrong);
+            const resourceIdSpan = document.createElement("span");
+            resourceIdSpan.className = "font-mono text-sm";
+            resourceIdSpan.textContent = resource.id;
+            resourceIdP.appendChild(resourceIdSpan);
+            resourceIdP.appendChild(makeCopyIdButton(resource.id));
+            container.appendChild(resourceIdP);
 
             // Add each piece of information safely
             const fields = [
@@ -4755,11 +5278,22 @@ async function editResource(resourceId) {
         }
 
         if (visibility) {
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -4834,6 +5368,7 @@ async function editResource(resourceId) {
         // }
 
         openModal("resource-edit-modal");
+        applyVisibilityRestrictions(["edit-resource-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Refresh editor after modal display
         setTimeout(() => {
@@ -5036,6 +5571,11 @@ async function viewPrompt(promptName) {
             };
 
             setText(".prompt-id", prompt.id || "N/A");
+            // Inject copy button next to prompt ID
+            const promptIdEl = promptDetailsDiv.querySelector(".prompt-id");
+            if (promptIdEl && prompt.id) {
+                promptIdEl.appendChild(makeCopyIdButton(prompt.id));
+            }
             setText(".prompt-display-name", promptLabel);
             setText(".prompt-name", prompt.name || "N/A");
             setText(".prompt-original-name", prompt.originalName || "N/A");
@@ -5092,11 +5632,12 @@ async function viewPrompt(promptName) {
 
             const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
             if (argsEl) {
-                argsEl.textContent = JSON.stringify(
-                    prompt.arguments || {},
-                    null,
-                    2,
-                );
+                const args = prompt.arguments;
+                if (!args || args.length === 0) {
+                    argsEl.textContent = "No arguments";
+                } else {
+                    argsEl.textContent = JSON.stringify(args, null, 2);
+                }
             }
 
             if (prompt.metrics) {
@@ -5243,11 +5784,22 @@ async function editPrompt(promptId) {
         }
 
         if (visibility) {
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -5322,7 +5874,7 @@ async function editPrompt(promptId) {
 
         // Validate arguments JSON
         const argsValidation = validateJson(
-            JSON.stringify(prompt.arguments || {}),
+            JSON.stringify(prompt.arguments || []),
             "Arguments",
         );
         if (argsField && argsValidation.valid) {
@@ -5342,6 +5894,7 @@ async function editPrompt(promptId) {
         }
 
         openModal("prompt-edit-modal");
+        applyVisibilityRestrictions(["edit-prompt-visibility"]); // Disable public radio if restricted, preserve checked state
 
         // Refresh editors after modal display
         setTimeout(() => {
@@ -5383,6 +5936,18 @@ async function viewGateway(gatewayId) {
             const container = document.createElement("div");
             container.className =
                 "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // ID field with copy-to-clipboard button
+            const idP = document.createElement("p");
+            const idStrong = document.createElement("strong");
+            idStrong.textContent = "Gateway ID: ";
+            idP.appendChild(idStrong);
+            const idSpan = document.createElement("span");
+            idSpan.className = "font-mono text-sm";
+            idSpan.textContent = gateway.id;
+            idP.appendChild(idSpan);
+            idP.appendChild(makeCopyIdButton(gateway.id));
+            container.appendChild(idP);
 
             const fields = [
                 { label: "Name", value: gateway.name },
@@ -5651,18 +6216,38 @@ async function editGateway(gatewayId) {
             editForm.appendChild(hiddenInput);
         }
 
-        const visibility = gateway.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const visibility = gateway.visibility
+            ? gateway.visibility.toLowerCase()
+            : null;
         const publicRadio = safeGetElement("edit-gateway-visibility-public");
         const teamRadio = safeGetElement("edit-gateway-visibility-team");
         const privateRadio = safeGetElement("edit-gateway-visibility-private");
 
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
+
         if (visibility) {
-            // Check visibility and set the corresponding radio button
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -5720,6 +6305,7 @@ async function editGateway(gatewayId) {
         const oauthRedirectUriField = safeGetElement(
             "oauth-redirect-uri-gw-edit",
         );
+        const oauthIssuerField = safeGetElement("oauth-issuer-gw-edit");
         const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-gw-edit",
@@ -5782,18 +6368,13 @@ async function editGateway(gatewayId) {
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
-                    const unmaskedHeaders =
-                        Array.isArray(gateway.authHeadersUnmasked) &&
-                        gateway.authHeadersUnmasked.length > 0
-                            ? gateway.authHeadersUnmasked
-                            : gateway.authHeaders;
                     if (
-                        Array.isArray(unmaskedHeaders) &&
-                        unmaskedHeaders.length > 0
+                        Array.isArray(gateway.authHeaders) &&
+                        gateway.authHeaders.length > 0
                     ) {
                         loadAuthHeaders(
                             "auth-headers-container-gw-edit",
-                            unmaskedHeaders,
+                            gateway.authHeaders,
                             { maskValues: true },
                         );
                     } else {
@@ -5804,12 +6385,12 @@ async function editGateway(gatewayId) {
                     }
                     if (authHeaderValueField) {
                         if (
-                            Array.isArray(unmaskedHeaders) &&
-                            unmaskedHeaders.length === 1
+                            Array.isArray(gateway.authHeaders) &&
+                            gateway.authHeaders.length === 1
                         ) {
                             authHeaderValueField.dataset.isMasked = "true";
                             authHeaderValueField.dataset.realValue =
-                                unmaskedHeaders[0].value ?? "";
+                                gateway.authHeaders[0].value ?? "";
                         }
                         authHeaderValueField.value = MASKED_AUTH_VALUE;
                     }
@@ -5822,8 +6403,11 @@ async function editGateway(gatewayId) {
                 // Populate OAuth fields if available
                 if (gateway.oauthConfig) {
                     const config = gateway.oauthConfig;
-                    if (oauthGrantTypeField && config.grant_type) {
-                        oauthGrantTypeField.value = config.grant_type;
+                    if (oauthIssuerField) {
+                        oauthIssuerField.value = config.issuer || "";
+                    }
+                    if (oauthGrantTypeField) {
+                        oauthGrantTypeField.value = config.grant_type || "";
                         // Show/hide authorization code fields based on grant type
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
@@ -5832,27 +6416,26 @@ async function editGateway(gatewayId) {
                                     : "none";
                         }
                     }
-                    if (oauthClientIdField && config.client_id) {
-                        oauthClientIdField.value = config.client_id;
+                    if (oauthClientIdField) {
+                        oauthClientIdField.value = config.client_id || "";
                     }
                     if (oauthClientSecretField) {
                         oauthClientSecretField.value = ""; // Don't populate secret for security
                     }
-                    if (oauthTokenUrlField && config.token_url) {
-                        oauthTokenUrlField.value = config.token_url;
+                    if (oauthTokenUrlField) {
+                        oauthTokenUrlField.value = config.token_url || "";
                     }
-                    if (oauthAuthUrlField && config.authorization_url) {
-                        oauthAuthUrlField.value = config.authorization_url;
+                    if (oauthAuthUrlField) {
+                        oauthAuthUrlField.value =
+                            config.authorization_url || "";
                     }
-                    if (oauthRedirectUriField && config.redirect_uri) {
-                        oauthRedirectUriField.value = config.redirect_uri;
+                    if (oauthRedirectUriField) {
+                        oauthRedirectUriField.value = config.redirect_uri || "";
                     }
-                    if (
-                        oauthScopesField &&
-                        config.scopes &&
-                        Array.isArray(config.scopes)
-                    ) {
-                        oauthScopesField.value = config.scopes.join(" ");
+                    if (oauthScopesField) {
+                        oauthScopesField.value = Array.isArray(config.scopes)
+                            ? config.scopes.join(" ")
+                            : "";
                     }
                 }
                 break;
@@ -5908,6 +6491,7 @@ async function editGateway(gatewayId) {
         }
 
         openModal("gateway-edit-modal");
+        applyVisibilityRestrictions(["edit-gateway-visibility"]); // Disable public radio if restricted, preserve checked state
         console.log("✓ Gateway edit modal loaded successfully");
     } catch (error) {
         console.error("Error fetching gateway for editing:", error);
@@ -5986,8 +6570,19 @@ async function viewServer(serverId) {
                 "block text-gray-900 dark:text-gray-100 mb-3";
             basicInfoDiv.appendChild(basicInfoTitle);
 
+            // Server ID field with copy button
+            const serverIdP = document.createElement("p");
+            const serverIdStrong = document.createElement("strong");
+            serverIdStrong.textContent = "Server ID: ";
+            serverIdP.appendChild(serverIdStrong);
+            const serverIdSpan = document.createElement("span");
+            serverIdSpan.className = "font-mono text-sm";
+            serverIdSpan.textContent = server.id;
+            serverIdP.appendChild(serverIdSpan);
+            serverIdP.appendChild(makeCopyIdButton(server.id));
+            basicInfoDiv.appendChild(serverIdP);
+
             const fields = [
-                { label: "Server ID", value: server.id },
                 { label: "URL", value: getCatalogUrl(server) || "N/A" },
                 { label: "Type", value: "Virtual Server" },
                 { label: "Visibility", value: server.visibility || "private" },
@@ -6111,7 +6706,7 @@ async function viewServer(serverId) {
                     toolsList.appendChild(toolItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedTools.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6122,6 +6717,32 @@ async function viewServer(serverId) {
                     moreBadge.title = "Total tools associated";
                     const remaining = server.associatedTools.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    // Expand inline to show full list when clicked
+                    moreBadge.addEventListener("click", () => {
+                        toolsList.innerHTML = "";
+                        (server.associatedTools || []).forEach((toolId) => {
+                            const toolItem = document.createElement("div");
+                            toolItem.className = "flex items-center space-x-2";
+
+                            const toolBadge = document.createElement("span");
+                            toolBadge.className =
+                                "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
+                            toolBadge.textContent =
+                                window.toolMapping && window.toolMapping[toolId]
+                                    ? window.toolMapping[toolId]
+                                    : toolId;
+
+                            const toolIdSpan = document.createElement("span");
+                            toolIdSpan.className =
+                                "text-xs text-gray-500 dark:text-gray-400";
+                            toolIdSpan.textContent = `(${toolId})`;
+
+                            toolItem.appendChild(toolBadge);
+                            toolItem.appendChild(toolIdSpan);
+                            toolsList.appendChild(toolItem);
+                        });
+                    });
 
                     moreItem.appendChild(moreBadge);
                     toolsList.appendChild(moreItem);
@@ -6177,7 +6798,7 @@ async function viewServer(serverId) {
                     resourcesList.appendChild(resourceItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedResources.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6189,6 +6810,38 @@ async function viewServer(serverId) {
                     const remaining =
                         server.associatedResources.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    moreBadge.addEventListener("click", () => {
+                        resourcesList.innerHTML = "";
+                        (server.associatedResources || []).forEach(
+                            (resourceId) => {
+                                const resourceItem =
+                                    document.createElement("div");
+                                resourceItem.className =
+                                    "flex items-center space-x-2";
+
+                                const resourceBadge =
+                                    document.createElement("span");
+                                resourceBadge.className =
+                                    "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full dark:bg-blue-900 dark:text-blue-200";
+                                resourceBadge.textContent =
+                                    window.resourceMapping &&
+                                    window.resourceMapping[resourceId]
+                                        ? window.resourceMapping[resourceId]
+                                        : `Resource ${resourceId}`;
+
+                                const resourceIdSpan =
+                                    document.createElement("span");
+                                resourceIdSpan.className =
+                                    "text-xs text-gray-500 dark:text-gray-400";
+                                resourceIdSpan.textContent = `(${resourceId})`;
+
+                                resourceItem.appendChild(resourceBadge);
+                                resourceItem.appendChild(resourceIdSpan);
+                                resourcesList.appendChild(resourceItem);
+                            },
+                        );
+                    });
 
                     moreItem.appendChild(moreBadge);
                     resourcesList.appendChild(moreItem);
@@ -6243,7 +6896,7 @@ async function viewServer(serverId) {
                     promptsList.appendChild(promptItem);
                 });
 
-                // If more than maxToShow, add a summary badge
+                // If more than maxToShow, add a summary badge (clickable to expand)
                 if (server.associatedPrompts.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
@@ -6255,6 +6908,33 @@ async function viewServer(serverId) {
                     const remaining =
                         server.associatedPrompts.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
+
+                    moreBadge.addEventListener("click", () => {
+                        promptsList.innerHTML = "";
+                        (server.associatedPrompts || []).forEach((promptId) => {
+                            const promptItem = document.createElement("div");
+                            promptItem.className =
+                                "flex items-center space-x-2";
+
+                            const promptBadge = document.createElement("span");
+                            promptBadge.className =
+                                "inline-block bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full dark:bg-purple-900 dark:text-purple-200";
+                            promptBadge.textContent =
+                                window.promptMapping &&
+                                window.promptMapping[promptId]
+                                    ? window.promptMapping[promptId]
+                                    : `Prompt ${promptId}`;
+
+                            const promptIdSpan = document.createElement("span");
+                            promptIdSpan.className =
+                                "text-xs text-gray-500 dark:text-gray-400";
+                            promptIdSpan.textContent = `(${promptId})`;
+
+                            promptItem.appendChild(promptBadge);
+                            promptItem.appendChild(promptIdSpan);
+                            promptsList.appendChild(promptItem);
+                        });
+                    });
 
                     moreItem.appendChild(moreBadge);
                     promptsList.appendChild(moreItem);
@@ -6325,6 +7005,111 @@ async function viewServer(serverId) {
             }
 
             container.appendChild(associatedDiv);
+
+            // OAuth Configuration section
+            if (server.oauthEnabled) {
+                const oauthDiv = document.createElement("div");
+                oauthDiv.className = "mt-6 border-t pt-4";
+
+                const oauthTitle = document.createElement("strong");
+                oauthTitle.textContent = "OAuth 2.0 Configuration:";
+                oauthTitle.className =
+                    "block text-gray-900 dark:text-gray-100 mb-3";
+                oauthDiv.appendChild(oauthTitle);
+
+                // OAuth Config details
+                const oauthConfig = server.oauthConfig || server.oauth_config;
+                if (oauthConfig) {
+                    const oauthConfigDiv = document.createElement("div");
+                    oauthConfigDiv.className =
+                        "mt-3 space-y-2 bg-gray-50 dark:bg-gray-800 p-3 rounded-md";
+
+                    // Authorization Servers
+                    if (
+                        oauthConfig.authorization_servers &&
+                        oauthConfig.authorization_servers.length > 0
+                    ) {
+                        const authServersP = document.createElement("p");
+                        authServersP.className = "text-sm";
+                        const authServersStrong =
+                            document.createElement("strong");
+                        authServersStrong.textContent =
+                            "Authorization Servers: ";
+                        authServersStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        authServersP.appendChild(authServersStrong);
+
+                        const serversList = document.createElement("ul");
+                        serversList.className =
+                            "mt-1 ml-4 list-disc list-inside";
+                        oauthConfig.authorization_servers.forEach(
+                            (serverUrl) => {
+                                const li = document.createElement("li");
+                                li.className =
+                                    "text-gray-600 dark:text-gray-400 text-sm";
+                                li.textContent = serverUrl;
+                                serversList.appendChild(li);
+                            },
+                        );
+                        authServersP.appendChild(serversList);
+                        oauthConfigDiv.appendChild(authServersP);
+                    }
+
+                    // Token Endpoint
+                    if (oauthConfig.token_endpoint) {
+                        const tokenEndpointP = document.createElement("p");
+                        tokenEndpointP.className = "text-sm";
+                        const tokenEndpointStrong =
+                            document.createElement("strong");
+                        tokenEndpointStrong.textContent = "Token Endpoint: ";
+                        tokenEndpointStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        tokenEndpointP.appendChild(tokenEndpointStrong);
+
+                        const tokenEndpointSpan =
+                            document.createElement("span");
+                        tokenEndpointSpan.className =
+                            "text-gray-600 dark:text-gray-400 break-all";
+                        tokenEndpointSpan.textContent =
+                            oauthConfig.token_endpoint;
+                        tokenEndpointP.appendChild(tokenEndpointSpan);
+                        oauthConfigDiv.appendChild(tokenEndpointP);
+                    }
+
+                    // Scopes Supported
+                    if (
+                        oauthConfig.scopes_supported &&
+                        oauthConfig.scopes_supported.length > 0
+                    ) {
+                        const scopesP = document.createElement("p");
+                        scopesP.className = "text-sm";
+                        const scopesStrong = document.createElement("strong");
+                        scopesStrong.textContent = "Supported Scopes: ";
+                        scopesStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        scopesP.appendChild(scopesStrong);
+
+                        const scopesSpan = document.createElement("span");
+                        scopesSpan.className =
+                            "text-gray-600 dark:text-gray-400";
+                        scopesSpan.textContent =
+                            oauthConfig.scopes_supported.join(", ");
+                        scopesP.appendChild(scopesSpan);
+                        oauthConfigDiv.appendChild(scopesP);
+                    }
+
+                    oauthDiv.appendChild(oauthConfigDiv);
+                } else {
+                    const noConfigP = document.createElement("p");
+                    noConfigP.className =
+                        "mt-2 text-sm text-gray-500 dark:text-gray-400";
+                    noConfigP.textContent =
+                        "OAuth is enabled but no configuration details are available.";
+                    oauthDiv.appendChild(noConfigP);
+                }
+
+                container.appendChild(oauthDiv);
+            }
 
             // Add metadata section
             const metadataDiv = document.createElement("div");
@@ -6454,19 +7239,42 @@ async function editServer(serverId) {
         }
         hiddenField.value = isInactiveCheckedBool;
 
-        const visibility = server.visibility; // Ensure visibility is either 'public', 'team', or 'private'
-        const publicRadio = safeGetElement("edit-visibility-public");
-        const teamRadio = safeGetElement("edit-visibility-team");
-        const privateRadio = safeGetElement("edit-visibility-private");
+        const visibility = server.visibility
+            ? server.visibility.toLowerCase()
+            : null;
+        const publicRadio = safeGetElement("edit-server-visibility-public");
+        const teamRadio = safeGetElement("edit-server-visibility-team");
+        const privateRadio = safeGetElement("edit-server-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
 
         // Prepopulate visibility radio buttons based on the server data
         if (visibility) {
-            // Check visibility and set the corresponding radio button
-            if (visibility === "public" && publicRadio) {
+            // When public visibility is disabled and we're in a team-scoped view,
+            // coerce legacy-public records to team.
+            const _teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            const effectiveVisibility =
+                window.ALLOW_PUBLIC_VISIBILITY === false &&
+                visibility === "public" &&
+                _teamId
+                    ? "team"
+                    : visibility;
+            if (effectiveVisibility === "public" && publicRadio) {
                 publicRadio.checked = true;
-            } else if (visibility === "team" && teamRadio) {
+            } else if (effectiveVisibility === "team" && teamRadio) {
                 teamRadio.checked = true;
-            } else if (visibility === "private" && privateRadio) {
+            } else if (effectiveVisibility === "private" && privateRadio) {
                 privateRadio.checked = true;
             }
         }
@@ -6481,6 +7289,26 @@ async function editServer(serverId) {
             hiddenInput.name = "team_id";
             hiddenInput.value = teamId;
             editForm.appendChild(hiddenInput);
+        }
+
+        // Initialize View Public toggle for Edit Server modal
+        if (teamId) {
+            const viewPublicCheckbox = document.getElementById(
+                "edit-server-view-public",
+            );
+            if (viewPublicCheckbox) {
+                viewPublicCheckbox.checked = false; // Default unchecked
+            }
+            toggleViewPublic(
+                "edit-server-view-public",
+                [
+                    "associatedEditGateways",
+                    "edit-server-tools",
+                    "edit-server-resources",
+                    "edit-server-prompts",
+                ],
+                teamId,
+            );
         }
 
         // Set form action and populate fields with validation
@@ -6545,29 +7373,29 @@ async function editServer(serverId) {
         );
 
         if (oauthEnabledCheckbox) {
-            oauthEnabledCheckbox.checked = server.oauth_enabled || false;
+            oauthEnabledCheckbox.checked = server.oauthEnabled || false;
         }
 
-        // Show/hide OAuth config section based on oauth_enabled state
+        // Show/hide OAuth config section based on oauthEnabled state
         if (oauthConfigSection) {
-            if (server.oauth_enabled) {
+            if (server.oauthEnabled) {
                 oauthConfigSection.classList.remove("hidden");
             } else {
                 oauthConfigSection.classList.add("hidden");
             }
         }
 
-        // Populate OAuth config fields if oauth_config exists
-        if (server.oauth_config) {
+        // Populate OAuth config fields if oauthConfig exists
+        if (server.oauthConfig) {
             // Extract authorization server (may be in authorization_servers array or authorization_server string)
             let authServer = "";
             if (
-                server.oauth_config.authorization_servers &&
-                server.oauth_config.authorization_servers.length > 0
+                server.oauthConfig.authorization_servers &&
+                server.oauthConfig.authorization_servers.length > 0
             ) {
-                authServer = server.oauth_config.authorization_servers[0];
-            } else if (server.oauth_config.authorization_server) {
-                authServer = server.oauth_config.authorization_server;
+                authServer = server.oauthConfig.authorization_servers[0];
+            } else if (server.oauthConfig.authorization_server) {
+                authServer = server.oauthConfig.authorization_server;
             }
             if (oauthAuthServerField) {
                 oauthAuthServerField.value = authServer;
@@ -6575,8 +7403,8 @@ async function editServer(serverId) {
 
             // Extract scopes (may be scopes_supported array or scopes array)
             const scopes =
-                server.oauth_config.scopes_supported ||
-                server.oauth_config.scopes ||
+                server.oauthConfig.scopes_supported ||
+                server.oauthConfig.scopes ||
                 [];
             if (oauthScopesField) {
                 oauthScopesField.value = Array.isArray(scopes)
@@ -6587,7 +7415,7 @@ async function editServer(serverId) {
             // Extract token endpoint
             if (oauthTokenEndpointField) {
                 oauthTokenEndpointField.value =
-                    server.oauth_config.token_endpoint || "";
+                    server.oauthConfig.token_endpoint || "";
             }
         } else {
             // Clear OAuth config fields when no config exists
@@ -6630,7 +7458,24 @@ async function editServer(serverId) {
             );
         }
 
+        // Seed the persistent selection store with all associated item IDs
+        resetEditSelections();
+        if (server.associatedToolIds) {
+            const toolSel = getEditSelections("edit-server-tools");
+            server.associatedToolIds.forEach((id) => toolSel.add(String(id)));
+        }
+        if (server.associatedResources) {
+            const resSel = getEditSelections("edit-server-resources");
+            server.associatedResources.forEach((id) => resSel.add(String(id)));
+        }
+        if (server.associatedPrompts) {
+            const promptSel = getEditSelections("edit-server-prompts");
+            server.associatedPrompts.forEach((id) => promptSel.add(String(id)));
+        }
+        ensureEditStoreListeners();
+
         openModal("server-edit-modal");
+        applyVisibilityRestrictions(["edit-server-visibility"]); // Disable public radio if restricted, preserve checked state
         // Initialize the select handlers for gateways, resources and prompts in the edit modal
         // so that gateway changes will trigger filtering of associated items while editing.
         if (document.getElementById("associatedEditGateways")) {
@@ -6663,125 +7508,117 @@ async function editServer(serverId) {
             "clearAllEditPromptsBtn",
         );
 
-        // Use multiple approaches to ensure checkboxes get set
+        // Set checkboxes based on selection store (seeded above) and trigger pill updates
         setEditServerAssociations(server);
+        // Re-run after short delays to catch any HTMX-loaded content
         setTimeout(() => setEditServerAssociations(server), 100);
         setTimeout(() => setEditServerAssociations(server), 300);
-
-        // Set associated items after modal is opened
+        // Trigger pill updates after checkboxes are set
         setTimeout(() => {
-            // Set associated tools checkboxes (scope to edit modal container only)
-            const editToolContainer =
-                document.getElementById("edit-server-tools");
-            const toolCheckboxes = editToolContainer
-                ? editToolContainer.querySelectorAll(
-                      'input[name="associatedTools"]',
-                  )
-                : document.querySelectorAll('input[name="associatedTools"]');
-
-            toolCheckboxes.forEach((checkbox) => {
-                let isChecked = false;
-                if (server.associatedTools && window.toolMapping) {
-                    // Get the tool name for this checkbox UUID
-                    const toolName = window.toolMapping[checkbox.value];
-
-                    // Check if this tool name is in the associated tools array
-                    isChecked =
-                        toolName && server.associatedTools.includes(toolName);
-                }
-
-                checkbox.checked = isChecked;
-            });
-
-            // Set associated resources checkboxes (scope to edit modal container only)
-            const editResourceContainer = document.getElementById(
+            [
+                "edit-server-tools",
                 "edit-server-resources",
-            );
-            const resourceCheckboxes = editResourceContainer
-                ? editResourceContainer.querySelectorAll(
-                      'input[name="associatedResources"]',
-                  )
-                : document.querySelectorAll(
-                      'input[name="associatedResources"]',
-                  );
-
-            resourceCheckboxes.forEach((checkbox) => {
-                const checkboxValue = checkbox.value;
-                const isChecked =
-                    server.associatedResources &&
-                    server.associatedResources.includes(checkboxValue);
-                checkbox.checked = isChecked;
-            });
-
-            // Set associated prompts checkboxes (scope to edit modal container only)
-            const editPromptContainer = document.getElementById(
                 "edit-server-prompts",
-            );
-            const promptCheckboxes = editPromptContainer
-                ? editPromptContainer.querySelectorAll(
-                      'input[name="associatedPrompts"]',
-                  )
-                : document.querySelectorAll('input[name="associatedPrompts"]');
-
-            promptCheckboxes.forEach((checkbox) => {
-                const checkboxValue = checkbox.value;
-                const isChecked =
-                    server.associatedPrompts &&
-                    server.associatedPrompts.includes(checkboxValue);
-                checkbox.checked = isChecked;
-            });
-
-            // Manually trigger the selector update functions to refresh pills
-            setTimeout(() => {
-                // Find and trigger existing tool selector update
-                const toolContainer =
-                    document.getElementById("edit-server-tools");
-                if (toolContainer) {
-                    const firstToolCheckbox = toolContainer.querySelector(
+            ].forEach((containerId) => {
+                const container = document.getElementById(containerId);
+                if (container) {
+                    const firstCheckbox = container.querySelector(
                         'input[type="checkbox"]',
                     );
-                    if (firstToolCheckbox) {
-                        const changeEvent = new Event("change", {
-                            bubbles: true,
-                        });
-                        firstToolCheckbox.dispatchEvent(changeEvent);
-                    }
-                }
-
-                // Trigger resource selector update
-                const resourceContainer = document.getElementById(
-                    "edit-server-resources",
-                );
-                if (resourceContainer) {
-                    const firstResourceCheckbox =
-                        resourceContainer.querySelector(
-                            'input[type="checkbox"]',
+                    if (firstCheckbox) {
+                        firstCheckbox.dispatchEvent(
+                            new Event("change", { bubbles: true }),
                         );
-                    if (firstResourceCheckbox) {
-                        const changeEvent = new Event("change", {
-                            bubbles: true,
-                        });
-                        firstResourceCheckbox.dispatchEvent(changeEvent);
+                    }
+                }
+            });
+        }, 350);
+
+        // Auto-enable "View Public" if server has public associations not visible in team-filtered selectors
+        if (teamId) {
+            setTimeout(() => {
+                const viewPublicCheckbox = document.getElementById(
+                    "edit-server-view-public",
+                );
+                if (!viewPublicCheckbox || viewPublicCheckbox.checked) return;
+
+                let hasMissingItems = false;
+
+                // Check tools
+                const toolsContainer =
+                    document.getElementById("edit-server-tools");
+                if (toolsContainer && server.associatedToolIds) {
+                    const visibleToolIds = new Set(
+                        Array.from(
+                            toolsContainer.querySelectorAll(
+                                'input[name="associatedTools"]',
+                            ),
+                        ).map((cb) => String(cb.value)),
+                    );
+                    for (const id of server.associatedToolIds) {
+                        if (!visibleToolIds.has(String(id))) {
+                            hasMissingItems = true;
+                            break;
+                        }
                     }
                 }
 
-                // Trigger prompt selector update
-                const promptContainer = document.getElementById(
-                    "edit-server-prompts",
-                );
-                if (promptContainer) {
-                    const firstPromptCheckbox = promptContainer.querySelector(
-                        'input[type="checkbox"]',
+                // Check resources
+                if (!hasMissingItems) {
+                    const resourcesContainer = document.getElementById(
+                        "edit-server-resources",
                     );
-                    if (firstPromptCheckbox) {
-                        const changeEvent = new Event("change", {
-                            bubbles: true,
-                        });
-                        firstPromptCheckbox.dispatchEvent(changeEvent);
+                    if (resourcesContainer && server.associatedResources) {
+                        const visibleResourceIds = new Set(
+                            Array.from(
+                                resourcesContainer.querySelectorAll(
+                                    'input[name="associatedResources"]',
+                                ),
+                            ).map((cb) => String(cb.value)),
+                        );
+                        for (const id of server.associatedResources) {
+                            if (!visibleResourceIds.has(String(id))) {
+                                hasMissingItems = true;
+                                break;
+                            }
+                        }
                     }
                 }
-            }, 50);
-        }, 200);
+
+                // Check prompts
+                if (!hasMissingItems) {
+                    const promptsContainer = document.getElementById(
+                        "edit-server-prompts",
+                    );
+                    if (promptsContainer && server.associatedPrompts) {
+                        const visiblePromptIds = new Set(
+                            Array.from(
+                                promptsContainer.querySelectorAll(
+                                    'input[name="associatedPrompts"]',
+                                ),
+                            ).map((cb) => String(cb.value)),
+                        );
+                        for (const id of server.associatedPrompts) {
+                            if (!visiblePromptIds.has(String(id))) {
+                                hasMissingItems = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (hasMissingItems) {
+                    console.log(
+                        "Auto-enabling View Public: server has associations not visible in team-filtered selectors",
+                    );
+                    viewPublicCheckbox.checked = true;
+                    viewPublicCheckbox.dispatchEvent(new Event("change"));
+                    // Re-run association setting after the re-fetch completes
+                    setTimeout(() => setEditServerAssociations(server), 500);
+                    setTimeout(() => setEditServerAssociations(server), 1000);
+                }
+            }, 500); // Wait for HTMX selectors to finish loading
+        }
 
         console.log("✓ Server edit modal loaded successfully");
     } catch (error) {
@@ -6975,13 +7812,20 @@ function setEditServerAssociations(server) {
         return;
     }
 
+    // Get the selection store for tools (contains IDs)
+    const toolSel = getEditSelections("edit-server-tools");
+
     toolCheckboxes.forEach((checkbox) => {
         let isChecked = false;
-        if (server.associatedTools && window.toolMapping) {
-            // Get the tool name for this checkbox UUID
-            const toolName = window.toolMapping[checkbox.value];
+        const toolId = checkbox.value;
 
-            // Check if this tool name is in the associated tools array
+        // First check if the tool ID is in the selection store
+        if (toolSel.has(toolId)) {
+            isChecked = true;
+        }
+        // Fallback: check by tool name if available
+        else if (server.associatedTools && window.toolMapping) {
+            const toolName = window.toolMapping[toolId];
             isChecked = toolName && server.associatedTools.includes(toolName);
         }
 
@@ -6996,11 +7840,17 @@ function setEditServerAssociations(server) {
           )
         : document.querySelectorAll('input[name="associatedResources"]');
 
+    // Get the selection store for resources (contains IDs)
+    const resourceSel = getEditSelections("edit-server-resources");
+
     resourceCheckboxes.forEach((checkbox) => {
-        const checkboxValue = checkbox.value;
-        const isChecked =
-            server.associatedResources &&
-            server.associatedResources.includes(checkboxValue);
+        const resourceId = String(checkbox.value);
+        // Check if the resource ID is in the selection store first
+        let isChecked = resourceSel.has(resourceId);
+        // Fallback: check by server associations
+        if (!isChecked && server.associatedResources) {
+            isChecked = server.associatedResources.includes(resourceId);
+        }
         checkbox.checked = isChecked;
     });
 
@@ -7010,11 +7860,17 @@ function setEditServerAssociations(server) {
         ? promptContainer.querySelectorAll('input[name="associatedPrompts"]')
         : document.querySelectorAll('input[name="associatedPrompts"]');
 
+    // Get the selection store for prompts (contains IDs)
+    const promptSel = getEditSelections("edit-server-prompts");
+
     promptCheckboxes.forEach((checkbox) => {
-        const checkboxValue = checkbox.value;
-        const isChecked =
-            server.associatedPrompts &&
-            server.associatedPrompts.includes(checkboxValue);
+        const promptId = String(checkbox.value);
+        // Check if the prompt ID is in the selection store first
+        let isChecked = promptSel.has(promptId);
+        // Fallback: check by server associations
+        if (!isChecked && server.associatedPrompts) {
+            isChecked = server.associatedPrompts.includes(promptId);
+        }
         checkbox.checked = isChecked;
     });
 
@@ -7038,6 +7894,130 @@ function setEditServerAssociations(server) {
             }
         });
     }, 50);
+}
+
+// ===================================================================
+// PERSISTENT SELECTION STORE for edit-server modal
+// ===================================================================
+// Tracks selected UUIDs across infinite scroll pages and searches.
+// Keys: container IDs ("edit-server-tools", "edit-server-resources", "edit-server-prompts")
+// Values: Set of selected UUIDs
+window.editServerSelections = window.editServerSelections || {};
+
+function getEditSelections(containerId) {
+    if (!window.editServerSelections[containerId]) {
+        window.editServerSelections[containerId] = new Set();
+    }
+    return window.editServerSelections[containerId];
+}
+
+function resetEditSelections() {
+    [
+        "edit-server-tools",
+        "edit-server-resources",
+        "edit-server-prompts",
+    ].forEach((k) => {
+        delete window.editServerSelections[k];
+    });
+
+    // Remove stale "Select All" hidden inputs so they don't leak into the
+    // next edit session and override the persistent selection store on save.
+    const hiddenFields = [
+        {
+            container: "edit-server-tools",
+            names: ["selectAllTools", "allToolIds"],
+        },
+        {
+            container: "edit-server-resources",
+            names: ["selectAllResources", "allResourceIds"],
+        },
+        {
+            container: "edit-server-prompts",
+            names: ["selectAllPrompts", "allPromptIds"],
+        },
+    ];
+    hiddenFields.forEach(({ container, names }) => {
+        const el = document.getElementById(container);
+        if (!el) return;
+        names.forEach((n) => {
+            const input = el.querySelector(`input[name="${n}"]`);
+            if (input) input.remove();
+        });
+    });
+}
+
+function ensureEditStoreListeners() {
+    if (window._editStoreListenersAttached) return;
+    window._editStoreListenersAttached = true;
+
+    [
+        "edit-server-tools",
+        "edit-server-resources",
+        "edit-server-prompts",
+    ].forEach((containerId) => {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.addEventListener("change", function (e) {
+            const target = e.target;
+            if (
+                target.type === "checkbox" &&
+                (target.name === "associatedTools" ||
+                    target.name === "associatedResources" ||
+                    target.name === "associatedPrompts")
+            ) {
+                const sel = getEditSelections(containerId);
+                const value = String(target.value);
+                if (target.checked) {
+                    sel.add(value);
+                } else {
+                    sel.delete(value);
+                }
+            }
+        });
+    });
+}
+
+function ensureAddStoreListeners() {
+    if (window._addStoreListenersAttached) return;
+    window._addStoreListenersAttached = true;
+
+    ["associatedTools", "associatedResources", "associatedPrompts"].forEach(
+        (containerId) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.addEventListener("change", function (e) {
+                const target = e.target;
+                if (
+                    target.type === "checkbox" &&
+                    (target.name === "associatedTools" ||
+                        target.name === "associatedResources" ||
+                        target.name === "associatedPrompts")
+                ) {
+                    const sel = getEditSelections(containerId);
+                    const value = String(target.value);
+                    if (target.checked) {
+                        sel.add(value);
+                    } else {
+                        sel.delete(value);
+                    }
+                }
+            });
+        },
+    );
+
+    // Clear selections when the add-server form is reset
+    const form = document.getElementById("add-server-form");
+    if (form) {
+        form.addEventListener("reset", function () {
+            [
+                "associatedTools",
+                "associatedResources",
+                "associatedPrompts",
+            ].forEach((k) => {
+                delete window.editServerSelections[k];
+            });
+        });
+    }
 }
 
 // ===================================================================
@@ -7175,22 +8155,29 @@ if (window.htmx && !window._toolsHtmxHandlerAttached) {
                             }
                         }
 
-                        if (serverTools && serverTools.length > 0) {
+                        const editToolSel =
+                            getEditSelections("edit-server-tools");
+                        if (
+                            (serverTools && serverTools.length > 0) ||
+                            editToolSel.size > 0
+                        ) {
                             newCheckboxes.forEach((cb) => {
                                 const toolId = cb.value;
                                 const toolName =
-                                    cb.getAttribute("data-tool-name"); // Use the data attribute directly
+                                    cb.getAttribute("data-tool-name");
                                 if (toolId && toolName) {
-                                    // Check if this tool name exists in server associated tools
-                                    if (serverTools.includes(toolName)) {
+                                    if (
+                                        (serverTools &&
+                                            serverTools.includes(toolName)) ||
+                                        editToolSel.has(toolId)
+                                    ) {
                                         cb.checked = true;
+                                        editToolSel.add(toolId);
                                     }
                                 }
                                 cb.removeAttribute("data-auto-check");
                             });
 
-                            // Trigger an update to display the correct count based on server.associatedTools
-                            // This will make sure the pill counters reflect the total associated tools count
                             const event = new Event("change", {
                                 bubbles: true,
                             });
@@ -7199,34 +8186,19 @@ if (window.htmx && !window._toolsHtmxHandlerAttached) {
                     }
                     // If we're in the Add Server tools container, restore persisted selections
                     else if (container.id === "associatedTools") {
-                        try {
-                            const dataAttr = container.getAttribute(
-                                "data-selected-tools",
-                            );
-                            if (dataAttr) {
-                                const selectedIds = JSON.parse(dataAttr);
-                                if (
-                                    Array.isArray(selectedIds) &&
-                                    selectedIds.length > 0
-                                ) {
-                                    newCheckboxes.forEach((cb) => {
-                                        if (selectedIds.includes(cb.value)) {
-                                            cb.checked = true;
-                                        }
-                                        cb.removeAttribute("data-auto-check");
-                                    });
-
-                                    const event = new Event("change", {
-                                        bubbles: true,
-                                    });
-                                    container.dispatchEvent(event);
+                        const addToolSel = getEditSelections("associatedTools");
+                        if (addToolSel.size > 0) {
+                            newCheckboxes.forEach((cb) => {
+                                if (addToolSel.has(cb.value)) {
+                                    cb.checked = true;
                                 }
-                            }
-                        } catch (e) {
-                            console.warn(
-                                "Error restoring associatedTools selections:",
-                                e,
-                            );
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
                         }
                     }
                 }
@@ -7279,6 +8251,9 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                 }
 
                 if (container) {
+                    // Populate resource mapping for pill display names
+                    updateResourceMapping(container);
+
                     const newCheckboxes = container.querySelectorAll(
                         "input[data-auto-check=true]",
                     );
@@ -7303,30 +8278,16 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                     }
 
                     // Also check for edit mode: pre-select items based on server's associated resources
+                    const editResSel = getEditSelections(
+                        "edit-server-resources",
+                    );
                     const dataAttr = container.getAttribute(
                         "data-server-resources",
                     );
+                    let associatedResourceIds = [];
                     if (dataAttr) {
                         try {
-                            const associatedResourceIds = JSON.parse(dataAttr);
-                            newCheckboxes.forEach((cb) => {
-                                const checkboxValue = cb.value;
-                                if (
-                                    associatedResourceIds.includes(
-                                        checkboxValue,
-                                    )
-                                ) {
-                                    cb.checked = true;
-                                }
-                                cb.removeAttribute("data-auto-check");
-                            });
-
-                            if (newCheckboxes.length > 0) {
-                                const event = new Event("change", {
-                                    bubbles: true,
-                                });
-                                container.dispatchEvent(event);
-                            }
+                            associatedResourceIds = JSON.parse(dataAttr);
                         } catch (e) {
                             console.error(
                                 "Error parsing data-server-resources:",
@@ -7334,37 +8295,47 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                             );
                         }
                     }
+                    if (
+                        associatedResourceIds.length > 0 ||
+                        editResSel.size > 0
+                    ) {
+                        newCheckboxes.forEach((cb) => {
+                            const checkboxValue = cb.value;
+                            if (
+                                associatedResourceIds.includes(checkboxValue) ||
+                                editResSel.has(checkboxValue)
+                            ) {
+                                cb.checked = true;
+                                editResSel.add(checkboxValue);
+                            }
+                            cb.removeAttribute("data-auto-check");
+                        });
+
+                        if (newCheckboxes.length > 0) {
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
+                        }
+                    }
 
                     // If we're in the Add Server resources container, restore persisted selections
                     else if (container.id === "associatedResources") {
-                        try {
-                            const dataAttr = container.getAttribute(
-                                "data-selected-resources",
-                            );
-                            if (dataAttr) {
-                                const selectedIds = JSON.parse(dataAttr);
-                                if (
-                                    Array.isArray(selectedIds) &&
-                                    selectedIds.length > 0
-                                ) {
-                                    newCheckboxes.forEach((cb) => {
-                                        if (selectedIds.includes(cb.value)) {
-                                            cb.checked = true;
-                                        }
-                                        cb.removeAttribute("data-auto-check");
-                                    });
-
-                                    const event = new Event("change", {
-                                        bubbles: true,
-                                    });
-                                    container.dispatchEvent(event);
+                        const addResSel = getEditSelections(
+                            "associatedResources",
+                        );
+                        if (addResSel.size > 0) {
+                            newCheckboxes.forEach((cb) => {
+                                if (addResSel.has(cb.value)) {
+                                    cb.checked = true;
                                 }
-                            }
-                        } catch (e) {
-                            console.warn(
-                                "Error restoring associatedResources selections:",
-                                e,
-                            );
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
                         }
                     }
                 }
@@ -7416,6 +8387,9 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                 }
 
                 if (container) {
+                    // Populate prompt mapping for pill display names
+                    updatePromptMapping(container);
+
                     const newCheckboxes = container.querySelectorAll(
                         "input[data-auto-check=true]",
                     );
@@ -7440,28 +8414,16 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                     }
 
                     // Also check for edit mode: pre-select items based on server's associated prompts
+                    const editPromptSel = getEditSelections(
+                        "edit-server-prompts",
+                    );
                     const dataAttr = container.getAttribute(
                         "data-server-prompts",
                     );
+                    let associatedPromptIds = [];
                     if (dataAttr) {
                         try {
-                            const associatedPromptIds = JSON.parse(dataAttr);
-                            newCheckboxes.forEach((cb) => {
-                                const checkboxValue = cb.value;
-                                if (
-                                    associatedPromptIds.includes(checkboxValue)
-                                ) {
-                                    cb.checked = true;
-                                }
-                                cb.removeAttribute("data-auto-check");
-                            });
-
-                            if (newCheckboxes.length > 0) {
-                                const event = new Event("change", {
-                                    bubbles: true,
-                                });
-                                container.dispatchEvent(event);
-                            }
+                            associatedPromptIds = JSON.parse(dataAttr);
                         } catch (e) {
                             console.error(
                                 "Error parsing data-server-prompts:",
@@ -7469,37 +8431,46 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                             );
                         }
                     }
+                    if (
+                        associatedPromptIds.length > 0 ||
+                        editPromptSel.size > 0
+                    ) {
+                        newCheckboxes.forEach((cb) => {
+                            const checkboxValue = cb.value;
+                            if (
+                                associatedPromptIds.includes(checkboxValue) ||
+                                editPromptSel.has(checkboxValue)
+                            ) {
+                                cb.checked = true;
+                                editPromptSel.add(checkboxValue);
+                            }
+                            cb.removeAttribute("data-auto-check");
+                        });
+
+                        if (newCheckboxes.length > 0) {
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
+                        }
+                    }
 
                     // If we're in the Add Server prompts container, restore persisted selections
                     else if (container.id === "associatedPrompts") {
-                        try {
-                            const dataAttr = container.getAttribute(
-                                "data-selected-prompts",
-                            );
-                            if (dataAttr) {
-                                const selectedIds = JSON.parse(dataAttr);
-                                if (
-                                    Array.isArray(selectedIds) &&
-                                    selectedIds.length > 0
-                                ) {
-                                    newCheckboxes.forEach((cb) => {
-                                        if (selectedIds.includes(cb.value)) {
-                                            cb.checked = true;
-                                        }
-                                        cb.removeAttribute("data-auto-check");
-                                    });
-
-                                    const event = new Event("change", {
-                                        bubbles: true,
-                                    });
-                                    container.dispatchEvent(event);
+                        const addPromptSel =
+                            getEditSelections("associatedPrompts");
+                        if (addPromptSel.size > 0) {
+                            newCheckboxes.forEach((cb) => {
+                                if (addPromptSel.has(cb.value)) {
+                                    cb.checked = true;
                                 }
-                            }
-                        } catch (e) {
-                            console.warn(
-                                "Error restoring associatedPrompts selections:",
-                                e,
-                            );
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
                         }
                     }
                 }
@@ -7524,6 +8495,53 @@ const ADMIN_ONLY_TABS = new Set([
     "maintenance",
 ]);
 
+function normalizeTabName(tabName) {
+    if (!tabName || typeof tabName !== "string") {
+        return "";
+    }
+    return tabName
+        .replace(/^#/, "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "");
+}
+
+function getUiHiddenSections() {
+    const rawHiddenSections = Array.isArray(window.UI_HIDDEN_SECTIONS)
+        ? window.UI_HIDDEN_SECTIONS
+        : [];
+    const hiddenSections = new Set();
+    rawHiddenSections.forEach((section) => {
+        const normalizedSection = normalizeTabName(String(section));
+        if (normalizedSection) {
+            hiddenSections.add(normalizedSection);
+        }
+    });
+    return hiddenSections;
+}
+
+function getUiHiddenTabs() {
+    const rawHiddenTabs = Array.isArray(window.UI_HIDDEN_TABS)
+        ? window.UI_HIDDEN_TABS
+        : [];
+    const hiddenTabs = new Set();
+    rawHiddenTabs.forEach((tab) => {
+        const normalizedTab = normalizeTabName(String(tab));
+        if (normalizedTab) {
+            hiddenTabs.add(normalizedTab);
+        }
+    });
+    return hiddenTabs;
+}
+
+function isTabHidden(tabName) {
+    const normalizedTab = normalizeTabName(tabName);
+    if (!normalizedTab) {
+        return false;
+    }
+    return getUiHiddenTabs().has(normalizedTab);
+}
+
 function isAdminUser() {
     return Boolean(window.IS_ADMIN);
 }
@@ -7532,8 +8550,96 @@ function isAdminOnlyTab(tabName) {
     return ADMIN_ONLY_TABS.has(tabName);
 }
 
+function getVisibleSidebarTabs() {
+    const sidebarLinks = document.querySelectorAll('.sidebar-link[href^="#"]');
+    const visibleTabs = [];
+
+    sidebarLinks.forEach((link) => {
+        const href = link.getAttribute("href") || "";
+        const normalizedTab = normalizeTabName(href);
+        if (!normalizedTab) {
+            return;
+        }
+        visibleTabs.push(normalizedTab);
+    });
+
+    return Array.from(new Set(visibleTabs));
+}
+
+function isTabAvailable(tabName) {
+    const normalizedTab = normalizeTabName(tabName);
+    if (!normalizedTab) {
+        return false;
+    }
+
+    const panelExists = Boolean(safeGetElement(`${normalizedTab}-panel`, true));
+    const navExists = Boolean(
+        document.querySelector(`.sidebar-link[href="#${normalizedTab}"]`),
+    );
+
+    return panelExists && navExists;
+}
+
 function getDefaultTabName() {
-    return safeGetElement("overview-panel", true) ? "overview" : "gateways";
+    const visibleTabs = getVisibleSidebarTabs().filter((tabName) => {
+        if (isTabHidden(tabName)) {
+            return false;
+        }
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            return false;
+        }
+        return isTabAvailable(tabName);
+    });
+
+    if (visibleTabs.includes("overview")) {
+        return "overview";
+    }
+    if (visibleTabs.includes("gateways")) {
+        return "gateways";
+    }
+    if (visibleTabs.length > 0) {
+        return visibleTabs[0];
+    }
+
+    // Backwards-compatible fallback for minimal DOM states (unit tests, etc).
+    // Previously, the presence of overview-panel alone controlled the default.
+    if (!isTabHidden("overview") && safeGetElement("overview-panel", true)) {
+        return "overview";
+    }
+    return "gateways";
+}
+
+function resolveTabForNavigation(tabName) {
+    const normalizedTab = normalizeTabName(tabName);
+    if (!normalizedTab) {
+        return getDefaultTabName();
+    }
+    if (isTabHidden(normalizedTab)) {
+        return getDefaultTabName();
+    }
+    if (!isAdminUser() && isAdminOnlyTab(normalizedTab)) {
+        return getDefaultTabName();
+    }
+    if (!isTabAvailable(normalizedTab)) {
+        return getDefaultTabName();
+    }
+    return normalizedTab;
+}
+
+function updateHashForTab(tabName) {
+    const normalizedTab = normalizeTabName(tabName);
+    if (!normalizedTab) {
+        return;
+    }
+
+    const desiredHash = `#${normalizedTab}`;
+    if (window.location.hash === desiredHash) {
+        return;
+    }
+
+    const url = new URL(window.location.href);
+    url.hash = desiredHash;
+    safeReplaceState({}, "", url.toString());
 }
 
 let tabSwitchTimeout = null;
@@ -7606,14 +8712,54 @@ function cleanUpUrlParamsForTab(targetTabName) {
 
 function showTab(tabName) {
     try {
-        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
-            console.warn(`Blocked non-admin access to tab: ${tabName}`);
+        tabName = normalizeTabName(tabName);
+        if (!tabName) {
+            console.warn("showTab called without a valid tab name");
+            return;
+        }
+
+        if (isTabHidden(tabName)) {
             const fallbackTab = getDefaultTabName();
-            if (tabName !== fallbackTab) {
+            console.warn(
+                `Blocked navigation to hidden tab "${tabName}", redirecting to "${fallbackTab}"`,
+            );
+            if (fallbackTab && fallbackTab !== tabName) {
+                updateHashForTab(fallbackTab);
                 showTab(fallbackTab);
             }
             return;
         }
+
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            console.warn(`Blocked non-admin access to tab: ${tabName}`);
+            const fallbackTab = getDefaultTabName();
+            if (fallbackTab && tabName !== fallbackTab) {
+                updateHashForTab(fallbackTab);
+                showTab(fallbackTab);
+            }
+            return;
+        }
+
+        // Idempotency: a single click can trigger multiple navigation paths
+        // (inline onclick, hashchange, and JS click bindings). If the requested
+        // tab is already visible, do nothing to avoid duplicate loads/HTMX calls.
+        const existingPanel = safeGetElement(`${tabName}-panel`, true);
+        if (existingPanel && !existingPanel.classList.contains("hidden")) {
+            const visiblePanels = document.querySelectorAll(
+                ".tab-panel:not(.hidden)",
+            );
+            const existingNav = document.querySelector(
+                `.sidebar-link[href="#${tabName}"]`,
+            );
+            if (existingNav) {
+                existingNav.classList.add("active");
+            }
+            // If multiple panels are visible, continue to force a clean state.
+            if (visiblePanels.length <= 1) {
+                return;
+            }
+        }
+
         console.log(`Switching to tab: ${tabName}`);
 
         // Clear any pending tab switch
@@ -7660,6 +8806,11 @@ function showTab(tabName) {
             panel.classList.remove("hidden");
         } else {
             console.error(`Panel ${tabName}-panel not found`);
+            const fallbackTab = getDefaultTabName();
+            if (fallbackTab && fallbackTab !== tabName) {
+                updateHashForTab(fallbackTab);
+                showTab(fallbackTab);
+            }
             return;
         }
 
@@ -7770,7 +8921,6 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "catalog") {
-                    // Load servers list if not already loaded
                     const serversList = safeGetElement("servers-table");
                     if (serversList) {
                         const hasLoadingMessage =
@@ -7778,9 +8928,31 @@ function showTab(tabName) {
                                 "Loading servers...",
                             );
                         if (hasLoadingMessage) {
-                            // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
                                 window.htmx.trigger(serversList, "load");
+                            }
+                        } else {
+                            const catalogConfig =
+                                getPanelSearchConfig("catalog");
+                            if (catalogConfig) {
+                                const searchState = getPanelSearchStateFromUrl(
+                                    catalogConfig.tableName,
+                                );
+                                const tagInput = document.getElementById(
+                                    catalogConfig.tagInputId,
+                                );
+                                const searchInput = document.getElementById(
+                                    catalogConfig.searchInputId,
+                                );
+                                if (tagInput && searchState.tags) {
+                                    tagInput.value = searchState.tags;
+                                }
+                                if (searchInput && searchState.query) {
+                                    searchInput.value = searchState.query;
+                                }
+                                if (searchState.tags || searchState.query) {
+                                    queueSearchablePanelReload("catalog", 0);
+                                }
                             }
                         }
                     }
@@ -7929,6 +9101,7 @@ function showTab(tabName) {
                             {
                                 method: "GET",
                                 credentials: "same-origin",
+                                cache: "no-store",
                                 headers: {
                                     Accept: "text/html",
                                 },
@@ -8358,7 +9531,7 @@ function createParameterForm(parameterCount) {
     nameInput.name = `param_name_${parameterCount}`;
     nameInput.required = true;
     nameInput.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
 
     // Add validation to name input
     nameInput.addEventListener("blur", function () {
@@ -8385,7 +9558,7 @@ function createParameterForm(parameterCount) {
     const typeSelect = document.createElement("select");
     typeSelect.name = `param_type_${parameterCount}`;
     typeSelect.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
 
     const typeOptions = [
         { value: "string", text: "String" },
@@ -8421,7 +9594,7 @@ function createParameterForm(parameterCount) {
     const descTextarea = document.createElement("textarea");
     descTextarea.name = `param_description_${parameterCount}`;
     descTextarea.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
     descTextarea.rows = 2;
 
     descGroup.appendChild(descLabel);
@@ -8573,45 +9746,6 @@ function initToolSelect(
         return;
     }
 
-    // Instrument changes to the data-selected-tools attribute for debugging
-    if (!container.dataset.attrObserverAttached) {
-        try {
-            const attrObserver = new MutationObserver((mutationsList) => {
-                for (const mut of mutationsList) {
-                    if (
-                        mut.type === "attributes" &&
-                        mut.attributeName === "data-selected-tools"
-                    ) {
-                        const oldVal = mut.oldValue;
-                        const newVal = container.getAttribute(
-                            "data-selected-tools",
-                        );
-                        console.info(
-                            `[DATA-INSTRUMENT] ${selectId} data-selected-tools changed — old: ${oldVal} new: ${newVal}`,
-                        );
-                    }
-                }
-            });
-
-            // Observe attribute changes and capture previous value
-            attrObserver.observe(container, {
-                attributes: true,
-                attributeOldValue: true,
-                attributeFilter: ["data-selected-tools"],
-            });
-
-            // Prevent double attaching
-            container.dataset.attrObserverAttached = "true";
-            // Keep a reference so it doesn't get GC'd (and so we could disconnect if needed)
-            container._dbgAttrObserver = attrObserver;
-        } catch (e) {
-            console.error(
-                "[DATA-INSTRUMENT] failed to attach attribute observer:",
-                e,
-            );
-        }
-    }
-
     const pillClasses =
         "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
 
@@ -8632,37 +9766,18 @@ function initToolSelect(
 
             // Check if this is the edit server tools container
             const isEditServerMode = selectId === "edit-server-tools";
-            let serverTools = null;
 
-            if (isEditServerMode) {
-                const dataAttr = container.getAttribute("data-server-tools");
-                if (dataAttr) {
-                    try {
-                        serverTools = JSON.parse(dataAttr);
-                    } catch (e) {
-                        console.error("Error parsing data-server-tools:", e);
-                    }
-                }
-            }
-
-            // Get persisted selections for Add Server mode
+            // Get persisted selections for Add Server mode from the Map store
             let persistedToolIds = [];
             if (selectId === "associatedTools") {
-                const dataAttr = container.getAttribute("data-selected-tools");
-                if (dataAttr) {
-                    try {
-                        persistedToolIds = JSON.parse(dataAttr);
-                    } catch (e) {
-                        console.error("Error parsing data-selected-tools:", e);
-                    }
-                }
-                if (
-                    (!persistedToolIds || persistedToolIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedTools)
-                ) {
-                    persistedToolIds = window._selectedAssociatedTools.slice();
-                }
+                const addToolSel = getEditSelections("associatedTools");
+                persistedToolIds = Array.from(addToolSel);
             }
+
+            // Get edit server selection store for edit mode
+            const editToolSel = isEditServerMode
+                ? getEditSelections("edit-server-tools")
+                : null;
 
             let count = checked.length;
             const pillsData = [];
@@ -8680,13 +9795,29 @@ function initToolSelect(
                     console.error("Error parsing allToolIds:", e);
                 }
             }
-            // If in edit server mode and we have server tools data, use that count
-            else if (
-                isEditServerMode &&
-                serverTools &&
-                Array.isArray(serverTools)
-            ) {
-                count = serverTools.length;
+            // If in edit server mode, use the selection store count (includes new selections)
+            else if (isEditServerMode && editToolSel) {
+                // Sync current DOM state into store (update() may fire before store listener)
+                checkboxes.forEach((cb) => {
+                    if (cb.checked) {
+                        editToolSel.add(cb.value);
+                    } else {
+                        editToolSel.delete(cb.value);
+                    }
+                });
+                count = editToolSel.size;
+                // Build pills data from the selection store using toolMapping
+                if (editToolSel.size > 0) {
+                    editToolSel.forEach((id) => {
+                        const toolName = window.toolMapping
+                            ? window.toolMapping[id]
+                            : null;
+                        pillsData.push({
+                            id,
+                            name: toolName || id.substring(0, 8) + "...",
+                        });
+                    });
+                }
             }
             // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
             else if (
@@ -8696,14 +9827,16 @@ function initToolSelect(
             ) {
                 count = persistedToolIds.length;
                 // Build pill data from persisted IDs using toolMapping
-                if (window.toolMapping) {
-                    persistedToolIds.forEach((id) => {
-                        const toolName = window.toolMapping[id];
-                        if (toolName) {
-                            pillsData.push({ id, name: toolName });
-                        }
+                persistedToolIds.forEach((id) => {
+                    const toolName = window.toolMapping
+                        ? window.toolMapping[id]
+                        : null;
+                    // Use tool name if available, otherwise fallback to ID
+                    pillsData.push({
+                        id,
+                        name: toolName || id.substring(0, 8) + "...",
                     });
-                }
+                });
             }
 
             // Rebuild pills safely - show first 3, then summarize the rest
@@ -8711,32 +9844,13 @@ function initToolSelect(
             const maxPillsToShow = 3;
 
             // Determine which pills to display based on mode
-            if (selectId === "associatedTools" && pillsData.length > 0) {
-                // In Add Server mode with persisted data, show pills from persisted selections
+            if (pillsData.length > 0) {
+                // In Add Server or Edit Server mode with persisted/store data, show pills from selections
                 pillsData.slice(0, maxPillsToShow).forEach((item) => {
                     const span = document.createElement("span");
                     span.className = pillClasses;
                     span.textContent = item.name || "Unnamed";
                     span.title = item.name;
-                    pillsBox.appendChild(span);
-                });
-            } else if (
-                isEditServerMode &&
-                serverTools &&
-                Array.isArray(serverTools) &&
-                window.toolMapping
-            ) {
-                // In edit server mode, show the server tools rather than just currently checked ones
-                const allLoadedTools = Array.from(checkboxes);
-                const pillsToDisplay = allLoadedTools.filter((checkbox) => {
-                    const toolName = window.toolMapping[checkbox.value];
-                    return toolName && serverTools.includes(toolName);
-                });
-                pillsToDisplay.slice(0, maxPillsToShow).forEach((cb) => {
-                    const span = document.createElement("span");
-                    span.className = pillClasses;
-                    span.textContent =
-                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                     pillsBox.appendChild(span);
                 });
             } else {
@@ -8783,6 +9897,9 @@ function initToolSelect(
                 'input[type="checkbox"]',
             );
             checkboxes.forEach((cb) => (cb.checked = false));
+
+            getEditSelections(selectId).clear();
+            container.removeAttribute("data-server-tools");
 
             // Clear the "select all" flag
             const selectAllInput = container.querySelector(
@@ -8887,6 +10004,10 @@ function initToolSelect(
                     container.appendChild(allIdsInput);
                 }
                 allIdsInput.value = JSON.stringify(allToolIds);
+
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allToolIds.forEach((id) => editSel.add(String(id)));
 
                 update();
 
@@ -8993,75 +10114,17 @@ function initToolSelect(
                 // If we're in the Add Server tools container, persist selected IDs
                 else if (selectId === "associatedTools") {
                     try {
-                        // Incrementally update persisted selection instead of
-                        // replacing it wholesale. This preserves selections made
-                        // in previous filtered views where those checkboxes are
-                        // not present in the current DOM.
                         const changedEl = e.target;
-                        const changedId = changedEl.value;
-
-                        // Load existing persisted set: prefer container attribute,
-                        // fall back to the in-memory window variable.
-                        let persisted = [];
-                        const dataAttr = container.getAttribute(
-                            "data-selected-tools",
-                        );
-                        if (dataAttr) {
-                            try {
-                                const parsed = JSON.parse(dataAttr);
-                                if (Array.isArray(parsed)) {
-                                    persisted = parsed.slice();
-                                }
-                            } catch (parseErr) {
-                                console.error(
-                                    "Error parsing existing data-selected-tools:",
-                                    parseErr,
-                                );
-                            }
-                        } else if (
-                            Array.isArray(window._selectedAssociatedTools)
-                        ) {
-                            persisted = window._selectedAssociatedTools.slice();
-                        }
-
+                        const changedId = String(changedEl.value);
+                        const addToolSel = getEditSelections("associatedTools");
                         if (changedEl.checked) {
-                            if (!persisted.includes(changedId)) {
-                                persisted.push(changedId);
-                            }
+                            addToolSel.add(changedId);
                         } else {
-                            persisted = persisted.filter(
-                                (x) => x !== changedId,
-                            );
-                        }
-
-                        // Ensure any currently visible checked boxes are included
-                        const visibleChecked = Array.from(
-                            container.querySelectorAll(
-                                'input[type="checkbox"]:checked',
-                            ),
-                        ).map((cb) => cb.value);
-                        visibleChecked.forEach((id) => {
-                            if (!persisted.includes(id)) {
-                                persisted.push(id);
-                            }
-                        });
-
-                        // Persist back to both the container attribute and global fallback
-                        container.setAttribute(
-                            "data-selected-tools",
-                            JSON.stringify(persisted),
-                        );
-                        try {
-                            window._selectedAssociatedTools = persisted.slice();
-                        } catch (e) {
-                            console.error(
-                                "Error persisting window._selectedAssociatedTools:",
-                                e,
-                            );
+                            addToolSel.delete(changedId);
                         }
                     } catch (err) {
                         console.error(
-                            "Error updating data-selected-tools (incremental):",
+                            "Error updating associatedTools store (incremental):",
                             err,
                         );
                     }
@@ -9112,31 +10175,20 @@ function initResourceSelect(
                 'input[name="allResourceIds"]',
             );
 
-            // Get persisted selections for Add Server mode
+            // Check if this is the edit server resources container
+            const isEditServerMode = selectId === "edit-server-resources";
+
+            // Get persisted selections for Add Server mode from the Map store
             let persistedResourceIds = [];
             if (selectId === "associatedResources") {
-                const dataAttr = container.getAttribute(
-                    "data-selected-resources",
-                );
-                if (dataAttr) {
-                    try {
-                        persistedResourceIds = JSON.parse(dataAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing data-selected-resources:",
-                            e,
-                        );
-                    }
-                }
-                if (
-                    (!persistedResourceIds ||
-                        persistedResourceIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedResources)
-                ) {
-                    persistedResourceIds =
-                        window._selectedAssociatedResources.slice();
-                }
+                const addResSel = getEditSelections("associatedResources");
+                persistedResourceIds = Array.from(addResSel);
             }
+
+            // Get edit server selection store for edit mode
+            const editResourceSel = isEditServerMode
+                ? getEditSelections("edit-server-resources")
+                : null;
 
             let count = checked.length;
             const pillsData = [];
@@ -9151,6 +10203,44 @@ function initResourceSelect(
                     count = allIds.length;
                 } catch (e) {
                     console.error("Error parsing allResourceIds:", e);
+                }
+            }
+            // If in edit server mode, use the selection store count (includes new selections)
+            else if (isEditServerMode && editResourceSel) {
+                // Sync current DOM state into store (update() may fire before store listener)
+                checkboxes.forEach((cb) => {
+                    if (cb.checked) {
+                        editResourceSel.add(cb.value);
+                    } else {
+                        editResourceSel.delete(cb.value);
+                    }
+                });
+                count = editResourceSel.size;
+                // Build pills data from the selection store
+                if (editResourceSel.size > 0) {
+                    const checkboxMap = new Map();
+                    checkboxes.forEach((cb) => {
+                        checkboxMap.set(
+                            cb.value,
+                            cb.nextElementSibling?.textContent?.trim() ||
+                                cb.value,
+                        );
+                    });
+                    editResourceSel.forEach((id) => {
+                        // Check checkboxMap first (visible items), then resourceMapping, then fallback to ID
+                        let name = checkboxMap.get(id);
+                        if (
+                            !name &&
+                            window.resourceMapping &&
+                            window.resourceMapping[id]
+                        ) {
+                            name = window.resourceMapping[id];
+                        }
+                        if (!name) {
+                            name = id.substring(0, 8) + "...";
+                        }
+                        pillsData.push({ id, name });
+                    });
                 }
             }
             // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
@@ -9169,7 +10259,11 @@ function initResourceSelect(
                     );
                 });
                 persistedResourceIds.forEach((id) => {
-                    const name = checkboxMap.get(id) || id;
+                    const name =
+                        checkboxMap.get(id) ||
+                        (window.resourceMapping &&
+                            window.resourceMapping[id]) ||
+                        id;
                     pillsData.push({ id, name });
                 });
             }
@@ -9179,8 +10273,8 @@ function initResourceSelect(
             const maxPillsToShow = 3;
 
             // Determine which pills to display based on mode
-            if (selectId === "associatedResources" && pillsData.length > 0) {
-                // In Add Server mode with persisted data, show pills from persisted selections
+            if (pillsData.length > 0) {
+                // In Add Server or Edit Server mode with persisted/store data, show pills from selections
                 pillsData.slice(0, maxPillsToShow).forEach((item) => {
                     const span = document.createElement("span");
                     span.className = pillClasses;
@@ -9232,6 +10326,9 @@ function initResourceSelect(
                 'input[type="checkbox"]',
             );
             checkboxes.forEach((cb) => (cb.checked = false));
+
+            getEditSelections(selectId).clear();
+            container.removeAttribute("data-server-resources");
 
             // Remove any select-all hidden inputs
             const selectAllInput = container.querySelector(
@@ -9336,6 +10433,10 @@ function initResourceSelect(
                 }
                 allIdsInput.value = JSON.stringify(allIds);
 
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allIds.forEach((id) => editSel.add(String(id)));
+
                 update();
 
                 newSelectBtn.textContent = `✓ All ${allIds.length} resources selected`;
@@ -9385,12 +10486,7 @@ function initResourceSelect(
                     } catch (err) {
                         console.error("Error updating allResourceIds:", err);
                     }
-                }
-
-                // If we're in the edit-server-resources container, maintain the
-                // `data-server-resources` attribute so user selections persist
-                // across gateway-filtered reloads.
-                else if (selectId === "edit-server-resources") {
+                } else if (selectId === "edit-server-resources") {
                     try {
                         let serverResources = [];
                         const dataAttr = container.getAttribute(
@@ -9407,23 +10503,21 @@ function initResourceSelect(
                             }
                         }
 
-                        const idVal = e.target.value;
-                        if (!Number.isNaN(idVal)) {
-                            if (e.target.checked) {
-                                if (!serverResources.includes(idVal)) {
-                                    serverResources.push(idVal);
-                                }
-                            } else {
-                                serverResources = serverResources.filter(
-                                    (x) => x !== idVal,
-                                );
+                        const idVal = String(e.target.value);
+                        if (e.target.checked) {
+                            if (!serverResources.includes(idVal)) {
+                                serverResources.push(idVal);
                             }
-
-                            container.setAttribute(
-                                "data-server-resources",
-                                JSON.stringify(serverResources),
+                        } else {
+                            serverResources = serverResources.filter(
+                                (x) => String(x) !== idVal,
                             );
                         }
+
+                        container.setAttribute(
+                            "data-server-resources",
+                            JSON.stringify(serverResources),
+                        );
                     } catch (err) {
                         console.error(
                             "Error updating data-server-resources:",
@@ -9435,68 +10529,18 @@ function initResourceSelect(
                 else if (selectId === "associatedResources") {
                     try {
                         const changedEl = e.target;
-                        const changedId = changedEl.value;
-
-                        let persisted = [];
-                        const dataAttr = container.getAttribute(
-                            "data-selected-resources",
+                        const changedId = String(changedEl.value);
+                        const addResSel = getEditSelections(
+                            "associatedResources",
                         );
-                        if (dataAttr) {
-                            try {
-                                const parsed = JSON.parse(dataAttr);
-                                if (Array.isArray(parsed)) {
-                                    persisted = parsed.slice();
-                                }
-                            } catch (parseErr) {
-                                console.error(
-                                    "Error parsing existing data-selected-resources:",
-                                    parseErr,
-                                );
-                            }
-                        } else if (
-                            Array.isArray(window._selectedAssociatedResources)
-                        ) {
-                            persisted =
-                                window._selectedAssociatedResources.slice();
-                        }
-
                         if (changedEl.checked) {
-                            if (!persisted.includes(changedId)) {
-                                persisted.push(changedId);
-                            }
+                            addResSel.add(changedId);
                         } else {
-                            persisted = persisted.filter(
-                                (x) => x !== changedId,
-                            );
-                        }
-
-                        const visibleChecked = Array.from(
-                            container.querySelectorAll(
-                                'input[type="checkbox"]:checked',
-                            ),
-                        ).map((cb) => cb.value);
-                        visibleChecked.forEach((id) => {
-                            if (!persisted.includes(id)) {
-                                persisted.push(id);
-                            }
-                        });
-
-                        container.setAttribute(
-                            "data-selected-resources",
-                            JSON.stringify(persisted),
-                        );
-                        try {
-                            window._selectedAssociatedResources =
-                                persisted.slice();
-                        } catch (err) {
-                            console.error(
-                                "Error persisting window._selectedAssociatedResources:",
-                                err,
-                            );
+                            addResSel.delete(changedId);
                         }
                     } catch (err) {
                         console.error(
-                            "Error updating data-selected-resources (incremental):",
+                            "Error updating associatedResources store (incremental):",
                             err,
                         );
                     }
@@ -9547,30 +10591,20 @@ function initPromptSelect(
                 'input[name="allPromptIds"]',
             );
 
-            // Get persisted selections for Add Server mode
+            // Check if this is the edit server prompts container
+            const isEditServerMode = selectId === "edit-server-prompts";
+
+            // Get persisted selections for Add Server mode from the Map store
             let persistedPromptIds = [];
             if (selectId === "associatedPrompts") {
-                const dataAttr = container.getAttribute(
-                    "data-selected-prompts",
-                );
-                if (dataAttr) {
-                    try {
-                        persistedPromptIds = JSON.parse(dataAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing data-selected-prompts:",
-                            e,
-                        );
-                    }
-                }
-                if (
-                    (!persistedPromptIds || persistedPromptIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedPrompts)
-                ) {
-                    persistedPromptIds =
-                        window._selectedAssociatedPrompts.slice();
-                }
+                const addPromptSel = getEditSelections("associatedPrompts");
+                persistedPromptIds = Array.from(addPromptSel);
             }
+
+            // Get edit server selection store for edit mode
+            const editPromptSel = isEditServerMode
+                ? getEditSelections("edit-server-prompts")
+                : null;
 
             let count = checked.length;
             const pillsData = [];
@@ -9585,6 +10619,44 @@ function initPromptSelect(
                     count = allIds.length;
                 } catch (e) {
                     console.error("Error parsing allPromptIds:", e);
+                }
+            }
+            // If in edit server mode, use the selection store count (includes new selections)
+            else if (isEditServerMode && editPromptSel) {
+                // Sync current DOM state into store (update() may fire before store listener)
+                checkboxes.forEach((cb) => {
+                    if (cb.checked) {
+                        editPromptSel.add(cb.value);
+                    } else {
+                        editPromptSel.delete(cb.value);
+                    }
+                });
+                count = editPromptSel.size;
+                // Build pills data from the selection store
+                if (editPromptSel.size > 0) {
+                    const checkboxMap = new Map();
+                    checkboxes.forEach((cb) => {
+                        checkboxMap.set(
+                            cb.value,
+                            cb.nextElementSibling?.textContent?.trim() ||
+                                cb.value,
+                        );
+                    });
+                    editPromptSel.forEach((id) => {
+                        // Check checkboxMap first (visible items), then promptMapping, then fallback to ID
+                        let name = checkboxMap.get(id);
+                        if (
+                            !name &&
+                            window.promptMapping &&
+                            window.promptMapping[id]
+                        ) {
+                            name = window.promptMapping[id];
+                        }
+                        if (!name) {
+                            name = id.substring(0, 8) + "...";
+                        }
+                        pillsData.push({ id, name });
+                    });
                 }
             }
             // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
@@ -9603,7 +10675,10 @@ function initPromptSelect(
                     );
                 });
                 persistedPromptIds.forEach((id) => {
-                    const name = checkboxMap.get(id) || id;
+                    const name =
+                        checkboxMap.get(id) ||
+                        (window.promptMapping && window.promptMapping[id]) ||
+                        id;
                     pillsData.push({ id, name });
                 });
             }
@@ -9613,8 +10688,8 @@ function initPromptSelect(
             const maxPillsToShow = 3;
 
             // Determine which pills to display based on mode
-            if (selectId === "associatedPrompts" && pillsData.length > 0) {
-                // In Add Server mode with persisted data, show pills from persisted selections
+            if (pillsData.length > 0) {
+                // In Add Server or Edit Server mode with persisted/store data, show pills from selections
                 pillsData.slice(0, maxPillsToShow).forEach((item) => {
                     const span = document.createElement("span");
                     span.className = pillClasses;
@@ -9666,6 +10741,9 @@ function initPromptSelect(
                 'input[type="checkbox"]',
             );
             checkboxes.forEach((cb) => (cb.checked = false));
+
+            getEditSelections(selectId).clear();
+            container.removeAttribute("data-server-prompts");
 
             // Remove any select-all hidden inputs
             const selectAllInput = container.querySelector(
@@ -9769,6 +10847,10 @@ function initPromptSelect(
                 }
                 allIdsInput.value = JSON.stringify(allIds);
 
+                // Populate in-memory store so selections survive innerHTML replacement
+                const editSel = getEditSelections(selectId);
+                allIds.forEach((id) => editSel.add(String(id)));
+
                 update();
 
                 newSelectBtn.textContent = `✓ All ${allIds.length} prompts selected`;
@@ -9818,12 +10900,7 @@ function initPromptSelect(
                     } catch (err) {
                         console.error("Error updating allPromptIds:", err);
                     }
-                }
-
-                // If we're in the edit-server-prompts container, maintain the
-                // `data-server-prompts` attribute so user selections persist
-                // across gateway-filtered reloads.
-                else if (selectId === "edit-server-prompts") {
+                } else if (selectId === "edit-server-prompts") {
                     try {
                         let serverPrompts = [];
                         const dataAttr = container.getAttribute(
@@ -9840,23 +10917,21 @@ function initPromptSelect(
                             }
                         }
 
-                        const idVal = e.target.value;
-                        if (!Number.isNaN(idVal)) {
-                            if (e.target.checked) {
-                                if (!serverPrompts.includes(idVal)) {
-                                    serverPrompts.push(idVal);
-                                }
-                            } else {
-                                serverPrompts = serverPrompts.filter(
-                                    (x) => x !== idVal,
-                                );
+                        const idVal = String(e.target.value);
+                        if (e.target.checked) {
+                            if (!serverPrompts.includes(idVal)) {
+                                serverPrompts.push(idVal);
                             }
-
-                            container.setAttribute(
-                                "data-server-prompts",
-                                JSON.stringify(serverPrompts),
+                        } else {
+                            serverPrompts = serverPrompts.filter(
+                                (x) => String(x) !== idVal,
                             );
                         }
+
+                        container.setAttribute(
+                            "data-server-prompts",
+                            JSON.stringify(serverPrompts),
+                        );
                     } catch (err) {
                         console.error(
                             "Error updating data-server-prompts:",
@@ -9869,68 +10944,17 @@ function initPromptSelect(
                 else if (selectId === "associatedPrompts") {
                     try {
                         const changedEl = e.target;
-                        const changedId = changedEl.value;
-
-                        let persisted = [];
-                        const dataAttr = container.getAttribute(
-                            "data-selected-prompts",
-                        );
-                        if (dataAttr) {
-                            try {
-                                const parsed = JSON.parse(dataAttr);
-                                if (Array.isArray(parsed)) {
-                                    persisted = parsed.slice();
-                                }
-                            } catch (parseErr) {
-                                console.error(
-                                    "Error parsing existing data-selected-prompts:",
-                                    parseErr,
-                                );
-                            }
-                        } else if (
-                            Array.isArray(window._selectedAssociatedPrompts)
-                        ) {
-                            persisted =
-                                window._selectedAssociatedPrompts.slice();
-                        }
-
+                        const changedId = String(changedEl.value);
+                        const addPromptSel =
+                            getEditSelections("associatedPrompts");
                         if (changedEl.checked) {
-                            if (!persisted.includes(changedId)) {
-                                persisted.push(changedId);
-                            }
+                            addPromptSel.add(changedId);
                         } else {
-                            persisted = persisted.filter(
-                                (x) => x !== changedId,
-                            );
-                        }
-
-                        const visibleChecked = Array.from(
-                            container.querySelectorAll(
-                                'input[type="checkbox"]:checked',
-                            ),
-                        ).map((cb) => cb.value);
-                        visibleChecked.forEach((id) => {
-                            if (!persisted.includes(id)) {
-                                persisted.push(id);
-                            }
-                        });
-
-                        container.setAttribute(
-                            "data-selected-prompts",
-                            JSON.stringify(persisted),
-                        );
-                        try {
-                            window._selectedAssociatedPrompts =
-                                persisted.slice();
-                        } catch (err) {
-                            console.error(
-                                "Error persisting window._selectedAssociatedPrompts:",
-                                err,
-                            );
+                            addPromptSel.delete(changedId);
                         }
                     } catch (err) {
                         console.error(
-                            "Error updating data-selected-prompts (incremental):",
+                            "Error updating associatedPrompts store (incremental):",
                             err,
                         );
                     }
@@ -9994,18 +11018,33 @@ function initGatewaySelect(
                 }
             });
 
-            // Update "no results" message if it exists
-            const noMsg = document.getElementById("noGatewayMessage");
-            const searchQuerySpan =
-                document.getElementById("searchQueryServers");
+            // Update "no results" message – ensure element exists even if template is cached
+            // Use edit-modal message element when operating on the edit container
+            const noMsgId = selectId.includes("Edit")
+                ? "noEditGatewayMessage"
+                : "noGatewayMessage";
+            const searchQuerySpanId = selectId.includes("Edit")
+                ? "searchQueryEditServers"
+                : "searchQueryServers";
+            const { msg: noMsg, span: searchQuerySpan } =
+                ensureNoResultsElement(
+                    selectId,
+                    noMsgId,
+                    searchQuerySpanId,
+                    "MCP server",
+                );
 
-            if (noMsg) {
-                if (query && visibleCount === 0) {
+            if (query && visibleCount === 0) {
+                container.style.display = "none";
+                if (noMsg) {
                     noMsg.style.display = "block";
                     if (searchQuerySpan) {
                         searchQuerySpan.textContent = query;
                     }
-                } else {
+                }
+            } else {
+                container.style.display = "";
+                if (noMsg) {
                     noMsg.style.display = "none";
                 }
             }
@@ -10131,11 +11170,20 @@ function initGatewaySelect(
             newSelectBtn.textContent = "Selecting all gateways...";
 
             try {
-                // Fetch all gateway IDs from the server
+                // Fetch all gateway IDs from the server.
+                // Respect View Public checkbox: keep team_id, add include_public when checked.
+                // Use the correct checkbox for the active modal context.
                 const selectedTeamId = getCurrentTeamId();
+                const vpCbId = selectId.includes("Edit")
+                    ? "edit-server-view-public"
+                    : "add-server-view-public";
+                const vpCb = document.getElementById(vpCbId);
                 const params = new URLSearchParams();
                 if (selectedTeamId) {
                     params.set("team_id", selectedTeamId);
+                }
+                if (vpCb && vpCb.checked) {
+                    params.set("include_public", "true");
                 }
                 const queryString = params.toString();
                 const response = await fetch(
@@ -10440,12 +11488,27 @@ function reloadAssociatedItems() {
         ? "edit-server-prompts"
         : "associatedPrompts";
 
+    // Respect View Public checkbox: always include team_id, add include_public when checked
+    const vpCheckboxId = useEditContainers
+        ? "edit-server-view-public"
+        : "add-server-view-public";
+    const vpCheckbox = document.getElementById(vpCheckboxId);
+    const urlTeamId = getCurrentTeamId();
+    let teamIdSuffix = urlTeamId
+        ? `&team_id=${encodeURIComponent(urlTeamId)}`
+        : "";
+    if (vpCheckbox && vpCheckbox.checked) {
+        teamIdSuffix += "&include_public=true";
+    }
+
     // Reload tools
     const toolsContainer = document.getElementById(toolsContainerId);
     if (toolsContainer) {
-        const toolsUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+        let toolsUrl = `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            toolsUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        toolsUrl += teamIdSuffix;
 
         console.log(
             "[Filter Update DEBUG] Tools URL:",
@@ -10486,6 +11549,25 @@ function reloadAssociatedItems() {
                         selectBtn,
                         clearBtn,
                     );
+                    // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                    const toolSearchInput = document.getElementById(
+                        useEditContainers ? "searchEditTools" : "searchTools",
+                    );
+                    if (toolSearchInput && toolSearchInput.value.trim()) {
+                        if (useEditContainers) {
+                            serverSideEditToolSearch(
+                                toolSearchInput.value.trim(),
+                            );
+                        } else {
+                            serverSideToolSearch(toolSearchInput.value.trim());
+                        }
+                    } else if (toolSearchInput) {
+                        const toolContainer =
+                            document.getElementById(toolsContainerId);
+                        if (toolContainer) {
+                            toolContainer.style.display = "";
+                        }
+                    }
                 })
                 .catch((err) => {
                     console.error(
@@ -10508,9 +11590,11 @@ function reloadAssociatedItems() {
     // Reload resources - use fetch directly to avoid HTMX race conditions
     const resourcesContainer = document.getElementById(resourcesContainerId);
     if (resourcesContainer) {
-        const resourcesUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+        let resourcesUrl = `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            resourcesUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        resourcesUrl += teamIdSuffix;
 
         console.log("[Filter Update DEBUG] Resources URL:", resourcesUrl);
 
@@ -10535,59 +11619,23 @@ function reloadAssociatedItems() {
                     "[Filter Update DEBUG] Resources fetch successful, HTML length:",
                     html.length,
                 );
-                // Persist current selections to window fallback before replacing container
-                // AND preserve the data-selected-resources attribute
-                let persistedResourceIds = [];
-                try {
-                    // First, try to get from the container's data attribute
-                    const dataAttr = resourcesContainer.getAttribute(
-                        "data-selected-resources",
-                    );
-                    if (dataAttr) {
-                        try {
-                            const parsed = JSON.parse(dataAttr);
-                            if (Array.isArray(parsed)) {
-                                persistedResourceIds = parsed.slice();
+                // Flush current DOM state into the Map store before replacing container
+                if (resourcesContainerId === "associatedResources") {
+                    const addResSel = getEditSelections("associatedResources");
+                    resourcesContainer
+                        .querySelectorAll('input[name="associatedResources"]')
+                        .forEach((cb) => {
+                            const value = String(cb.value);
+                            if (cb.checked) {
+                                addResSel.add(value);
+                            } else {
+                                addResSel.delete(value);
                             }
-                        } catch (e) {
-                            console.error(
-                                "Error parsing data-selected-resources:",
-                                e,
-                            );
-                        }
-                    }
-
-                    // Merge with currently checked items
-                    const currentChecked = Array.from(
-                        resourcesContainer.querySelectorAll(
-                            'input[type="checkbox"]:checked',
-                        ),
-                    ).map((cb) => cb.value);
-                    const merged = new Set([
-                        ...persistedResourceIds,
-                        ...currentChecked,
-                    ]);
-                    persistedResourceIds = Array.from(merged);
-
-                    // Update window fallback
-                    window._selectedAssociatedResources =
-                        persistedResourceIds.slice();
-                } catch (e) {
-                    console.error(
-                        "Error capturing current resource selections before reload:",
-                        e,
-                    );
+                        });
                 }
 
                 resourcesContainer.innerHTML = html;
 
-                // Immediately restore the data-selected-resources attribute after innerHTML replacement
-                if (persistedResourceIds.length > 0) {
-                    resourcesContainer.setAttribute(
-                        "data-selected-resources",
-                        JSON.stringify(persistedResourceIds),
-                    );
-                }
                 // If HTMX is available, process the newly-inserted HTML so hx-*
                 // triggers (like the infinite-scroll 'intersect' trigger) are
                 // initialized. To avoid HTMX re-triggering the container's
@@ -10655,89 +11703,29 @@ function reloadAssociatedItems() {
                     ? "clearAllEditResourcesBtn"
                     : "clearAllResourcesBtn";
 
-                // The data-selected-resources attribute should already be restored above,
-                // but double-check and merge with window fallback if needed
-                try {
-                    const dataAttr = resourcesContainer.getAttribute(
-                        "data-selected-resources",
-                    );
-                    let selectedIds = [];
-                    if (dataAttr) {
-                        try {
-                            const parsed = JSON.parse(dataAttr);
-                            if (Array.isArray(parsed)) {
-                                selectedIds = parsed.slice();
-                            }
-                        } catch (e) {
-                            console.error(
-                                "Error parsing data-selected-resources:",
-                                e,
-                            );
-                        }
-                    }
-
-                    // Merge with window fallback if it has additional selections
-                    if (
-                        Array.isArray(window._selectedAssociatedResources) &&
-                        window._selectedAssociatedResources.length > 0
-                    ) {
-                        const merged = new Set([
-                            ...selectedIds,
-                            ...window._selectedAssociatedResources,
-                        ]);
-                        const mergedArray = Array.from(merged);
-                        if (mergedArray.length > selectedIds.length) {
-                            resourcesContainer.setAttribute(
-                                "data-selected-resources",
-                                JSON.stringify(mergedArray),
-                            );
-                            console.log(
-                                "[Filter Update DEBUG] Merged additional selections from window fallback",
-                            );
-                        }
-                    }
-                } catch (e) {
-                    console.error(
-                        "Error restoring data-selected-resources after fetch reload:",
-                        e,
-                    );
-                }
-
-                // First restore persisted selections from data-selected-resources (Add Server mode)
-                try {
-                    const dataAttr = resourcesContainer.getAttribute(
-                        "data-selected-resources",
-                    );
-                    if (
-                        dataAttr &&
-                        resourcesContainerId === "associatedResources"
-                    ) {
-                        const selectedIds = JSON.parse(dataAttr);
-                        if (
-                            Array.isArray(selectedIds) &&
-                            selectedIds.length > 0
-                        ) {
+                // Restore persisted selections from Map store (Add Server mode)
+                if (resourcesContainerId === "associatedResources") {
+                    try {
+                        const addResSel = getEditSelections(
+                            "associatedResources",
+                        );
+                        if (addResSel.size > 0) {
                             const resourceCheckboxes =
                                 resourcesContainer.querySelectorAll(
                                     'input[type="checkbox"][name="associatedResources"]',
                                 );
                             resourceCheckboxes.forEach((cb) => {
-                                if (selectedIds.includes(cb.value)) {
+                                if (addResSel.has(String(cb.value))) {
                                     cb.checked = true;
                                 }
                             });
-                            console.log(
-                                "[Filter Update DEBUG] Restored",
-                                selectedIds.length,
-                                "persisted resource selections",
-                            );
                         }
+                    } catch (e) {
+                        console.warn(
+                            "Error restoring persisted resource selections:",
+                            e,
+                        );
                     }
-                } catch (e) {
-                    console.warn(
-                        "Error restoring persisted resource selections:",
-                        e,
-                    );
                 }
 
                 initResourceSelect(
@@ -10788,6 +11776,25 @@ function reloadAssociatedItems() {
                 } catch (e) {
                     console.warn("Error restoring associated resources:", e);
                 }
+                // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                const resSearchInput = document.getElementById(
+                    useEditContainers
+                        ? "searchEditResources"
+                        : "searchResources",
+                );
+                if (resSearchInput && resSearchInput.value.trim()) {
+                    if (useEditContainers) {
+                        serverSideEditResourcesSearch(
+                            resSearchInput.value.trim(),
+                        );
+                    } else {
+                        serverSideResourceSearch(resSearchInput.value.trim());
+                    }
+                } else if (resSearchInput) {
+                    if (resourcesContainer) {
+                        resourcesContainer.style.display = "";
+                    }
+                }
                 console.log(
                     "[Filter Update DEBUG] Resources reloaded successfully via fetch",
                 );
@@ -10805,35 +11812,32 @@ function reloadAssociatedItems() {
     // Reload prompts
     const promptsContainer = document.getElementById(promptsContainerId);
     if (promptsContainer) {
-        const promptsUrl = gatewayIdParam
-            ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-            : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+        let promptsUrl = `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+        if (gatewayIdParam) {
+            promptsUrl += `&gateway_id=${encodeURIComponent(gatewayIdParam)}`;
+        }
+        promptsUrl += teamIdSuffix;
 
-        // Persist current prompt selections before HTMX replaces the container
-        try {
-            const currentCheckedPrompts = Array.from(
-                promptsContainer.querySelectorAll(
-                    'input[type="checkbox"]:checked',
-                ),
-            ).map((cb) => cb.value);
-            if (
-                !Array.isArray(window._selectedAssociatedPrompts) ||
-                window._selectedAssociatedPrompts.length === 0
-            ) {
-                window._selectedAssociatedPrompts =
-                    currentCheckedPrompts.slice();
-            } else {
-                const merged = new Set([
-                    ...(window._selectedAssociatedPrompts || []),
-                    ...currentCheckedPrompts,
-                ]);
-                window._selectedAssociatedPrompts = Array.from(merged);
+        // Flush current DOM state into the Map store before HTMX replaces the container
+        if (promptsContainerId === "associatedPrompts") {
+            try {
+                const addPromptSel = getEditSelections("associatedPrompts");
+                promptsContainer
+                    .querySelectorAll('input[name="associatedPrompts"]')
+                    .forEach((cb) => {
+                        const value = String(cb.value);
+                        if (cb.checked) {
+                            addPromptSel.add(value);
+                        } else {
+                            addPromptSel.delete(value);
+                        }
+                    });
+            } catch (e) {
+                console.error(
+                    "Error capturing current prompt selections before reload:",
+                    e,
+                );
             }
-        } catch (e) {
-            console.error(
-                "Error capturing current prompt selections before reload:",
-                e,
-            );
         }
 
         if (window.htmx) {
@@ -10841,58 +11845,30 @@ function reloadAssociatedItems() {
                 target: `#${promptsContainerId}`,
                 swap: "innerHTML",
             }).then(() => {
-                try {
-                    const containerEl =
-                        document.getElementById(promptsContainerId);
-                    if (containerEl) {
-                        const existingAttr = containerEl.getAttribute(
-                            "data-selected-prompts",
-                        );
-                        let existingIds = null;
-                        if (existingAttr) {
-                            try {
-                                existingIds = JSON.parse(existingAttr);
-                            } catch (e) {
-                                console.error(
-                                    "Error parsing existing data-selected-prompts after reload:",
-                                    e,
+                // Restore persisted selections from Map store (Add Server mode)
+                if (promptsContainerId === "associatedPrompts") {
+                    try {
+                        const addPromptSel =
+                            getEditSelections("associatedPrompts");
+                        const containerEl =
+                            document.getElementById(promptsContainerId);
+                        if (containerEl && addPromptSel.size > 0) {
+                            const promptCheckboxes =
+                                containerEl.querySelectorAll(
+                                    'input[type="checkbox"][name="associatedPrompts"]',
                                 );
-                            }
+                            promptCheckboxes.forEach((cb) => {
+                                if (addPromptSel.has(String(cb.value))) {
+                                    cb.checked = true;
+                                }
+                            });
                         }
-
-                        if (
-                            (!existingIds ||
-                                !Array.isArray(existingIds) ||
-                                existingIds.length === 0) &&
-                            Array.isArray(window._selectedAssociatedPrompts) &&
-                            window._selectedAssociatedPrompts.length > 0
-                        ) {
-                            containerEl.setAttribute(
-                                "data-selected-prompts",
-                                JSON.stringify(
-                                    window._selectedAssociatedPrompts.slice(),
-                                ),
-                            );
-                        } else if (
-                            Array.isArray(existingIds) &&
-                            Array.isArray(window._selectedAssociatedPrompts) &&
-                            window._selectedAssociatedPrompts.length > 0
-                        ) {
-                            const merged = new Set([
-                                ...(existingIds || []),
-                                ...window._selectedAssociatedPrompts,
-                            ]);
-                            containerEl.setAttribute(
-                                "data-selected-prompts",
-                                JSON.stringify(Array.from(merged)),
-                            );
-                        }
+                    } catch (e) {
+                        console.error(
+                            "Error restoring prompt selections after HTMX reload:",
+                            e,
+                        );
                     }
-                } catch (e) {
-                    console.error(
-                        "Error restoring data-selected-prompts after HTMX reload:",
-                        e,
-                    );
                 }
                 // Re-initialize the prompt select after content is loaded
                 const pPills = useEditContainers
@@ -10916,6 +11892,25 @@ function reloadAssociatedItems() {
                     pSelectBtn,
                     pClearBtn,
                 );
+                // Re-apply active search so a previously-hidden container is correctly shown/hidden
+                const promptSearchInput = document.getElementById(
+                    useEditContainers ? "searchEditPrompts" : "searchPrompts",
+                );
+                if (promptSearchInput && promptSearchInput.value.trim()) {
+                    if (useEditContainers) {
+                        serverSideEditPromptsSearch(
+                            promptSearchInput.value.trim(),
+                        );
+                    } else {
+                        serverSidePromptSearch(promptSearchInput.value.trim());
+                    }
+                } else if (promptSearchInput) {
+                    const promptContainer =
+                        document.getElementById(promptsContainerId);
+                    if (promptContainer) {
+                        promptContainer.style.display = "";
+                    }
+                }
             });
         }
     }
@@ -10941,18 +11936,52 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
-function handleToggleSubmit(event, type) {
+async function handleToggleSubmit(event, type) {
     event.preventDefault();
 
     const isInactiveCheckedBool = isInactiveChecked(type);
     const form = event.target;
-    const hiddenField = document.createElement("input");
-    hiddenField.type = "hidden";
-    hiddenField.name = "is_inactive_checked";
-    hiddenField.value = isInactiveCheckedBool;
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
 
-    form.appendChild(hiddenField);
-    form.submit();
+    // Build FormData from current form state (captures any fields already
+    // appended by handleDeleteSubmit such as purge_metrics).
+    const formData = new FormData(form);
+    formData.set("is_inactive_checked", String(isInactiveCheckedBool));
+    if (teamId && !formData.has("team_id")) {
+        formData.set("team_id", teamId);
+    }
+    const csrfToken =
+        typeof getCookie === "function"
+            ? getCookie("mcpgateway_csrf_token") || ""
+            : "";
+    if (csrfToken) {
+        formData.set("csrf_token", csrfToken);
+    }
+
+    try {
+        // Use redirect:'manual' so the browser does not follow the 303
+        // redirect to the backend-direct URL (which bypasses the proxy).
+        await fetch(form.action, {
+            method: "POST",
+            body: formData,
+            credentials: "include",
+            redirect: "manual",
+        });
+    } catch (e) {
+        // Network error — still navigate so the user sees refreshed state.
+        console.error("Toggle submit error:", e);
+    }
+
+    // Navigate using proxy-aware helper so proxy prefix is preserved.
+    const fragment = _TOGGLE_FRAGMENT_MAP[type] || type;
+    const params = new URLSearchParams();
+    if (isInactiveCheckedBool) {
+        params.set("include_inactive", "true");
+    }
+    if (teamId) {
+        params.set("team_id", teamId);
+    }
+    _navigateAdmin(fragment, params);
 }
 
 function handleSubmitWithConfirmation(event, type) {
@@ -10987,17 +12016,6 @@ function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
         purgeField.name = "purge_metrics";
         purgeField.value = "true";
         form.appendChild(purgeField);
-    }
-
-    // Inject team_id from URL for RBAC team context derivation (defense-in-depth)
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-    if (teamId) {
-        const form = event.target;
-        const teamField = document.createElement("input");
-        teamField.type = "hidden";
-        teamField.name = "team_id";
-        teamField.value = teamId;
-        form.appendChild(teamField);
     }
 
     const toggleType = inactiveType || type;
@@ -11217,7 +12235,7 @@ async function testTool(toolId) {
                         input.required =
                             schema.required && schema.required.includes(key);
                         input.className =
-                            "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                            "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                         const itemTypes = Array.isArray(prop.items?.anyOf)
                             ? prop.items.anyOf.map((t) => t.type)
@@ -11300,7 +12318,8 @@ async function testTool(toolId) {
                     // Input field with validation (with multiline support)
                     let fieldInput;
                     const isTextType = prop.type === "text";
-                    if (isTextType) {
+                    const isObjectType = prop.type === "object";
+                    if (isTextType || isObjectType) {
                         fieldInput = document.createElement("textarea");
                         fieldInput.rows = 4;
                     } else {
@@ -11322,7 +12341,7 @@ async function testTool(toolId) {
                     fieldInput.className =
                         prop.type === "boolean"
                             ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
-                            : "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                            : "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                     // Set default values here
                     if (prop.default !== undefined) {
@@ -11330,6 +12349,12 @@ async function testTool(toolId) {
                             fieldInput.checked = prop.default === true;
                         } else if (isTextType) {
                             fieldInput.value = prop.default;
+                        } else if (isObjectType) {
+                            // For object types, stringify the default value
+                            fieldInput.value =
+                                typeof prop.default === "object"
+                                    ? JSON.stringify(prop.default, null, 2)
+                                    : prop.default;
                         } else {
                             fieldInput.value = prop.default;
                         }
@@ -11349,6 +12374,16 @@ async function testTool(toolId) {
 
                 container.appendChild(fieldDiv);
             }
+        }
+
+        // Clear previous result before opening
+        const resultContainer = safeGetElement("tool-test-result");
+        if (resultContainer) {
+            resultContainer.textContent = "";
+        }
+        const loadingEl = safeGetElement("tool-test-loading");
+        if (loadingEl) {
+            loadingEl.style.display = "none";
         }
 
         openModal("tool-test-modal");
@@ -11396,6 +12431,9 @@ async function testTool(toolId) {
 }
 
 async function loadTools() {
+    if (getUiHiddenSections().has("tools")) {
+        return;
+    }
     const toolBody = document.getElementById("toolBody");
     console.log("Loading tools...");
     try {
@@ -11456,23 +12494,23 @@ async function loadTools() {
                     </td>
                     <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
                     <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-                        <button onclick="enrichTool('${id}')"
+                        <button data-action="enrich-tool" data-tool-id="${id}"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
                         Enrich
                         </button>
-                        <button onclick="generateToolTestCases('${id}')"
+                        <button data-action="generate-tool-tests" data-tool-id="${id}"
                         class="col-span-2 px-2 py-1 text-[11px] font-small rounded-md text-purple-600 hover:bg-purple-50">
                         Generate Test Cases
                         </button>
-                        <button onclick="validateTool('${id}')"
+                        <button data-action="validate-tool" data-tool-id="${id}"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
                         Validate
                         </button>
-                        <button onclick="viewTool('${id}')"
+                        <button data-action="view-tool" data-tool-id="${id}"
                         class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
                         View
                         </button>
-                        <button onclick="editTool('${id}')"
+                        <button data-action="edit-tool" data-tool-id="${id}"
                         class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
                         Edit
                         </button>
@@ -11498,6 +12536,40 @@ async function loadTools() {
 
 document.addEventListener("DOMContentLoaded", loadTools);
 
+// Event delegation for tool table action buttons (inline onclick stripped by innerHTML sanitizer).
+// Bind to #tool-ops-main-content-wrapper (exists in admin.html at DOMContentLoaded) rather than
+// #toolBody (injected later via HTMX partial) so the listener survives HTMX content swaps.
+document.addEventListener("DOMContentLoaded", function () {
+    const wrapper =
+        document.getElementById("tool-ops-main-content-wrapper") ||
+        document.getElementById("toolBody");
+    if (wrapper) {
+        wrapper.addEventListener("click", function (e) {
+            const btn = e.target.closest("[data-action]");
+            if (!btn) return;
+            const toolId = btn.dataset.toolId;
+            if (!toolId) return;
+            switch (btn.dataset.action) {
+                case "enrich-tool":
+                    enrichTool(toolId);
+                    break;
+                case "generate-tool-tests":
+                    generateToolTestCases(toolId);
+                    break;
+                case "validate-tool":
+                    validateTool(toolId);
+                    break;
+                case "view-tool":
+                    viewTool(toolId);
+                    break;
+                case "edit-tool":
+                    editTool(toolId);
+                    break;
+            }
+        });
+    }
+});
+
 async function enrichTool(toolId) {
     try {
         console.log(`Enriching tool ID: ${toolId}`);
@@ -11521,7 +12593,7 @@ async function enrichTool(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const enrichButton = document.querySelector(
-            `[onclick*="enrichTool('${toolId}')"]`,
+            `[data-action="enrich-tool"][data-tool-id="${toolId}"]`,
         );
         if (enrichButton) {
             if (enrichButton.disabled) {
@@ -11584,9 +12656,11 @@ async function enrichTool(toolId) {
         }
 
         const data = await response.json();
-        enrichButton.disabled = false;
-        enrichButton.textContent = "Enrich";
-        enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        if (enrichButton) {
+            enrichButton.disabled = false;
+            enrichButton.textContent = "Enrich";
+            enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
         console.log(`Tool ${toolId} enriched successfully`, data);
         // showSuccessMessage(`Tool ${toolId} enriched successfully`);
 
@@ -11608,7 +12682,7 @@ async function enrichTool(toolId) {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="enrichTool('${toolId}')"]`,
+            `[data-action="enrich-tool"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -11856,7 +12930,7 @@ async function generateToolTestCases(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const tcgButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (tcgButton) {
             if (tcgButton.disabled) {
@@ -11892,15 +12966,17 @@ async function generateToolTestCases(toolId) {
 
         openModal("testcase-gen-modal");
 
-        tcgButton.disabled = false;
-        tcgButton.textContent = "Generate Test Cases";
-        tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
+        if (tcgButton) {
+            tcgButton.disabled = false;
+            tcgButton.textContent = "Generate Test Cases";
+            tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
     } catch (error) {
         console.error("Error fetching tool details for testing:", error);
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -11968,7 +13044,7 @@ async function generateTestCases() {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="generateToolTestCases('${toolId}')"]`,
+            `[data-action="generate-tool-tests"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -12009,7 +13085,7 @@ async function validateTool(toolId) {
 
         // 3. BUTTON STATE: Immediate feedback with better state management
         const validateButton = document.querySelector(
-            `[onclick*="validateTool('${toolId}')"]`,
+            `[data-action="validate-tool"][data-tool-id="${toolId}"]`,
         );
         if (validateButton) {
             if (validateButton.disabled) {
@@ -12684,7 +13760,7 @@ async function validateTool(toolId) {
         showErrorMessage(error.message);
     } finally {
         const testButton = document.querySelector(
-            `[onclick*="validateTool('${toolId}')"]`,
+            `[data-action="validate-tool"][data-tool-id="${toolId}"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -13275,8 +14351,8 @@ async function runToolTest() {
                 } else {
                     value = formData.get(key);
                     if (value === null || value === undefined || value === "") {
-                        if (schema.required && schema.required.includes(key)) {
-                            params[keyValidation.value] = "";
+                        if (schema.required?.includes(key)) {
+                            throw new Error(`Field "${key}" is required`);
                         }
                         continue;
                     }
@@ -13288,6 +14364,23 @@ async function runToolTest() {
                     } else if (prop.enum) {
                         if (prop.enum.includes(value)) {
                             params[keyValidation.value] = value;
+                        }
+                    } else if (prop.type === "object") {
+                        try {
+                            const parsed = JSON.parse(value);
+                            if (
+                                parsed === null ||
+                                typeof parsed !== "object" ||
+                                Array.isArray(parsed)
+                            ) {
+                                throw new Error("Value must be an object");
+                            }
+                            params[keyValidation.value] = parsed;
+                        } catch (error) {
+                            showErrorMessage(
+                                `Invalid JSON object for ${key}: ${error.message}`,
+                            );
+                            throw error;
                         }
                     } else {
                         params[keyValidation.value] = value;
@@ -13596,6 +14689,22 @@ async function testPrompt(promptId) {
                 }
             }
 
+            // Clear previous result before opening
+            const resultContainer = safeGetElement("prompt-test-result");
+            if (resultContainer) {
+                resultContainer.textContent = "";
+                const placeholder = document.createElement("div");
+                placeholder.className =
+                    "text-gray-500 dark:text-gray-400 text-sm italic";
+                placeholder.textContent =
+                    'Click "Render Prompt" to see the rendered output';
+                resultContainer.appendChild(placeholder);
+            }
+            const promptLoading = safeGetElement("prompt-test-loading");
+            if (promptLoading) {
+                promptLoading.classList.add("hidden");
+            }
+
             // Build form fields based on prompt arguments
             buildPromptTestForm(prompt);
 
@@ -13670,7 +14779,7 @@ function buildPromptTestForm(prompt) {
         input.id = `prompt-arg-${index}`;
         input.name = `arg-${arg.name}`;
         input.className =
-            "mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
+            "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
 
         if (arg.description) {
             input.placeholder = arg.description;
@@ -13927,6 +15036,16 @@ async function testGateway(gatewayURL) {
 
         // Clean up any existing event listeners first
         cleanupGatewayTestModal();
+
+        // Clear previous result before opening
+        const responseDiv = safeGetElement("gateway-test-response-json");
+        const resultDiv = safeGetElement("gateway-test-result");
+        if (responseDiv) {
+            responseDiv.textContent = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
 
         // Open the modal
         openModal("gateway-test-modal");
@@ -14251,7 +15370,27 @@ async function viewTool(toolId) {
           <div class="mt-1">Token: <span class="font-medium">********</span></div>
         </div>
       `;
+        } else if (
+            tool.auth?.authHeaders &&
+            Array.isArray(tool.auth.authHeaders) &&
+            tool.auth.authHeaders.length > 0
+        ) {
+            // Multi-header format
+            const headerRows = tool.auth.authHeaders
+                .map(
+                    (header) =>
+                        `<div class="mt-1"><span class="font-medium">${escapeHtml(header.key)}:</span> ********</div>`,
+                )
+                .join("");
+            authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+          <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
+          ${headerRows}
+        </div>
+      `;
         } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
+            // Legacy single-header format (backward compatibility)
             authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">
@@ -14344,6 +15483,10 @@ async function viewTool(toolId) {
           <div class="grid grid-cols-2 gap-6 mb-6">
             <!-- Left Column -->
             <div class="space-y-3">
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Tool ID:</span>
+                <div class="mt-1 tool-id text-sm font-mono"></div>
+              </div>
               <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
                 <div class="mt-1 tool-display-name font-medium"></div>
@@ -14508,6 +15651,12 @@ async function viewTool(toolId) {
                 }
             };
 
+            setTextSafely(".tool-id", tool.id);
+            // Inject copy button next to tool ID
+            const toolIdEl = toolDetailsDiv.querySelector(".tool-id");
+            if (toolIdEl && tool.id) {
+                toolIdEl.appendChild(makeCopyIdButton(tool.id));
+            }
             setTextSafely(
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
@@ -14800,7 +15949,7 @@ async function handleGatewayFormSubmit(e) {
             formData.set("oauth_grant_type", "");
         }
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
 
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
@@ -14831,9 +15980,7 @@ async function handleGatewayFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("gateways", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -14889,7 +16036,7 @@ async function handleResourceFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -14916,9 +16063,7 @@ async function handleResourceFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("resources", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -14961,7 +16106,7 @@ async function handlePromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -14985,9 +16130,7 @@ async function handlePromptFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("prompts", searchParams);
     } catch (error) {
         console.error("Error:", error);
         if (status) {
@@ -15033,6 +16176,7 @@ async function handleEditPromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -15059,9 +16203,7 @@ async function handleEditPromptFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("prompts", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -15097,11 +16239,63 @@ async function handleServerFormSubmit(e) {
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
         teamId && formData.append("team_id", teamId);
+
+        // Build tools selection from Map (includes selections across pagination + search)
+        const toolsContainer = document.getElementById("associatedTools");
+        if (toolsContainer) {
+            const toolSel = getEditSelections("associatedTools");
+            // Also flush any currently visible checked boxes in case listeners missed something
+            toolsContainer
+                .querySelectorAll('input[name="associatedTools"]')
+                .forEach((cb) => {
+                    if (cb.checked) toolSel.add(String(cb.value));
+                });
+            if (toolSel.size > 0) {
+                formData.delete("associatedTools");
+                toolSel.forEach((id) => formData.append("associatedTools", id));
+            }
+        }
+
+        // Build resources selection from Map
+        const resourcesContainer = document.getElementById(
+            "associatedResources",
+        );
+        if (resourcesContainer) {
+            const resSel = getEditSelections("associatedResources");
+            resourcesContainer
+                .querySelectorAll('input[name="associatedResources"]')
+                .forEach((cb) => {
+                    if (cb.checked) resSel.add(String(cb.value));
+                });
+            if (resSel.size > 0) {
+                formData.delete("associatedResources");
+                resSel.forEach((id) =>
+                    formData.append("associatedResources", id),
+                );
+            }
+        }
+
+        // Build prompts selection from Map
+        const promptsContainer = document.getElementById("associatedPrompts");
+        if (promptsContainer) {
+            const promptSel = getEditSelections("associatedPrompts");
+            promptsContainer
+                .querySelectorAll('input[name="associatedPrompts"]')
+                .forEach((cb) => {
+                    if (cb.checked) promptSel.add(String(cb.value));
+                });
+            if (promptSel.size > 0) {
+                formData.delete("associatedPrompts");
+                promptSel.forEach((id) =>
+                    formData.append("associatedPrompts", id),
+                );
+            }
+        }
 
         const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
             method: "POST",
@@ -15127,9 +16321,7 @@ async function handleServerFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("catalog", searchParams);
         }
     } catch (error) {
         console.error("Add Server Error:", error);
@@ -15224,7 +16416,7 @@ async function handleA2AFormSubmit(e) {
 
         // ✅ Ensure visibility is captured from checked radio button
         // formData.set("visibility", visibility);
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15256,9 +16448,7 @@ async function handleA2AFormSubmit(e) {
                 searchParams.set("team_id", teamId);
             }
 
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("a2a-agents", searchParams);
         }
     } catch (error) {
         console.error("Add A2A Agent Error:", error);
@@ -15328,7 +16518,7 @@ async function handleToolFormSubmit(event) {
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        formData.append("visibility", formData.get("visibility"));
+        formData.set("visibility", formData.get("visibility"));
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
@@ -15356,9 +16546,7 @@ async function handleToolFormSubmit(event) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("tools", searchParams);
         }
     } catch (error) {
         console.error("Fetch error:", error);
@@ -15400,6 +16588,7 @@ async function handleEditToolFormSubmit(event) {
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -15426,9 +16615,7 @@ async function handleEditToolFormSubmit(event) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("tools", searchParams);
         }
     } catch (error) {
         console.error("Fetch error:", error);
@@ -15497,6 +16684,7 @@ async function handleEditGatewayFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -15521,9 +16709,7 @@ async function handleEditGatewayFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("gateways", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -15580,6 +16766,24 @@ async function handleEditA2AAgentFormSubmit(e) {
             JSON.stringify(passthroughHeaders),
         );
 
+        // Handle auth_headers JSON field
+        const authHeadersJson = formData.get("auth_headers");
+        if (authHeadersJson) {
+            try {
+                const authHeaders = JSON.parse(authHeadersJson);
+                if (Array.isArray(authHeaders) && authHeaders.length > 0) {
+                    // Remove the JSON string and add as parsed data for backend processing
+                    formData.delete("auth_headers");
+                    formData.append(
+                        "auth_headers",
+                        JSON.stringify(authHeaders),
+                    );
+                }
+            } catch (e) {
+                console.error("Invalid auth_headers JSON:", e);
+            }
+        }
+
         // Handle OAuth configuration
         // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
         // The backend assembles individual form fields into oauth_config with proper field names
@@ -15598,6 +16802,7 @@ async function handleEditA2AAgentFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -15622,9 +16827,7 @@ async function handleEditA2AAgentFormSubmit(e) {
         if (teamId) {
             searchParams.set("team_id", teamId);
         }
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("a2a-agents", searchParams);
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
@@ -15654,6 +16857,43 @@ async function handleEditServerFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
+
+        // Merge persistent selection store into FormData so off-screen selections are included
+        [
+            { containerId: "edit-server-tools", fieldName: "associatedTools" },
+            {
+                containerId: "edit-server-resources",
+                fieldName: "associatedResources",
+            },
+            {
+                containerId: "edit-server-prompts",
+                fieldName: "associatedPrompts",
+            },
+        ].forEach(({ containerId, fieldName }) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            const sel = getEditSelections(containerId);
+
+            // Sync current DOM state into the store
+            container
+                .querySelectorAll(`input[name="${fieldName}"]`)
+                .forEach((cb) => {
+                    const value = String(cb.value);
+                    if (cb.checked) {
+                        sel.add(value);
+                    } else {
+                        sel.delete(value);
+                    }
+                });
+
+            // Override FormData with the full store contents
+            formData.delete(fieldName);
+            if (sel.size > 0) {
+                sel.forEach((uuid) => formData.append(fieldName, uuid));
+            }
+        });
 
         // Submit via fetch
         const response = await fetch(form.action, {
@@ -15681,9 +16921,7 @@ async function handleEditServerFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("catalog", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
@@ -15729,6 +16967,7 @@ async function handleEditResFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+        formData.set("visibility", formData.get("visibility"));
         // Submit via fetch
         const response = await fetch(form.action, {
             method: "POST",
@@ -15756,14 +16995,48 @@ async function handleEditResFormSubmit(e) {
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
-            const queryString = searchParams.toString();
-            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
-            window.location.href = redirectUrl;
+            _navigateAdmin("resources", searchParams);
         }
     } catch (error) {
         console.error("Error:", error);
         showErrorMessage(error.message);
     }
+}
+
+function isUiResourceUri(uri) {
+    return (
+        typeof uri === "string" && uri.trim().toLowerCase().startsWith("ui://")
+    );
+}
+
+function bindMcpAppMimeHelper(uriInputId, mimeInputId, helperId) {
+    const uriField = safeGetElement(uriInputId, true);
+    const mimeField = safeGetElement(mimeInputId, true);
+    const helperText = safeGetElement(helperId, true);
+
+    if (!uriField || !mimeField || !helperText) {
+        return;
+    }
+
+    if (mimeField.dataset.mcpAppMimeHelperBound === "true") {
+        return;
+    }
+    mimeField.dataset.mcpAppMimeHelperBound = "true";
+
+    const updateHelperVisibility = () => {
+        const shouldShow =
+            document.activeElement === mimeField &&
+            isUiResourceUri(uriField.value);
+        helperText.classList.toggle("hidden", !shouldShow);
+    };
+
+    uriField.addEventListener("input", updateHelperVisibility);
+    mimeField.addEventListener("focus", updateHelperVisibility);
+    mimeField.addEventListener("blur", () => {
+        helperText.classList.add("hidden");
+    });
+
+    updateHelperVisibility();
 }
 
 async function handleGrpcServiceFormSubmit(e) {
@@ -15852,9 +17125,7 @@ async function handleGrpcServiceFormSubmit(e) {
             searchParams.set("team_id", teamId);
         }
 
-        const queryString = searchParams.toString();
-        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#grpc-services`;
-        window.location.href = redirectUrl;
+        _navigateAdmin("grpc-services", searchParams);
     } catch (error) {
         console.error("Add gRPC Service Error:", error);
         if (status) {
@@ -15884,9 +17155,20 @@ function setupFormValidation() {
 
     forms.forEach((form) => {
         // Add validation to name fields
-        const nameFields = form.querySelectorAll(
-            'input[name*="name"], input[name*="Name"]',
-        );
+        // Target only the actual technical name inputs (avoid matching displayName)
+        const nameFields = Array.from(
+            form.querySelectorAll(
+                'input[name="name"], input[name="customName"], input[name="custom_name"]',
+            ),
+        ).filter((f) => {
+            // Exclude hidden inputs and any display-name-like fields so
+            // display names remain optional and aren't validated here.
+            if (!f) return false;
+            if (f.type && f.type.toLowerCase() === "hidden") return false;
+            if (/display/i.test(f.name || "")) return false;
+            return true;
+        });
+
         nameFields.forEach((field) => {
             field.addEventListener("blur", function () {
                 const parentNode = this.parentNode;
@@ -16024,6 +17306,59 @@ function refreshEditors() {
     }, 100);
 }
 
+/**
+ * Load teams into the team selector dropdown.
+ *
+ * Called from the Alpine.js x-data component when the dropdown opens.
+ * This logic lives here (not inline in x-data) because the innerHTML
+ * strings contain double-quote characters that break HTML attribute parsing
+ * when embedded inside an x-data="..." attribute.
+ */
+function loadTeamSelectorDropdown() {
+    const container = document.getElementById("team-selector-items");
+    if (!container || container.dataset.loaded) {
+        return;
+    }
+    container.innerHTML =
+        '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading teams\u2026</div>';
+    const rootPath = window.ROOT_PATH || "";
+    fetch(
+        rootPath + "/admin/teams/partial?page=1&per_page=10&render=selector",
+        { credentials: "same-origin" },
+    )
+        .then(function (resp) {
+            if (!resp.ok) {
+                throw new Error("HTTP " + resp.status);
+            }
+            return resp.text();
+        })
+        .then(function (html) {
+            container.innerHTML = html;
+            container.dataset.loaded = "true";
+            if (window.htmx) {
+                window.htmx.process(container);
+            }
+        })
+        .catch(function () {
+            delete container.dataset.loaded;
+            container.innerHTML =
+                '<div class="px-4 py-2 text-sm text-red-600 dark:text-red-400">' +
+                "Failed to load teams. Backend may be temporarily unavailable. " +
+                '<button type="button" data-action="retry-load-teams" ' +
+                'class="underline font-medium">Retry</button></div>';
+            const retryBtn = container.querySelector(
+                '[data-action="retry-load-teams"]',
+            );
+            if (retryBtn) {
+                retryBtn.addEventListener("click", function () {
+                    delete container.dataset.loaded;
+                    searchTeamSelector("");
+                });
+            }
+        });
+}
+window.loadTeamSelectorDropdown = loadTeamSelectorDropdown;
+
 // ===================================================================
 // GLOBAL ERROR HANDLERS
 // ===================================================================
@@ -16104,7 +17439,7 @@ function setupTooltipsWithAlpine() {
                 tooltipEl.textContent = text;
                 tooltipEl.setAttribute("role", "tooltip");
                 tooltipEl.className =
-                    "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
+                    "fixed z-30 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
 
                 document.body.appendChild(tooltipEl);
 
@@ -16193,6 +17528,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // 2. Initialize tool selects
         initializeToolSelects();
+        ensureAddStoreListeners();
 
         // 3. Set up all event listeners
         initializeEventListeners();
@@ -16418,41 +17754,31 @@ function initializeEventListeners() {
 }
 
 function setupTabNavigation() {
-    const tabs = [
-        "catalog",
-        "tools",
-        "resources",
-        "prompts",
-        "gateways",
-        "a2a-agents",
-        "roots",
-        "metrics",
-        "plugins",
-        "logs",
-        "export-import",
-        "version-info",
-    ];
-
-    const visibleTabs = isAdminUser()
-        ? tabs
-        : tabs.filter((tabName) => !ADMIN_ONLY_TABS.has(tabName));
-
-    visibleTabs.forEach((tabName) => {
-        // Suppress warnings for optional tabs that might not be enabled
-        const optionalTabs = [
-            "roots",
-            "metrics",
-            "logs",
-            "export-import",
-            "version-info",
-            "plugins",
-        ];
-        const suppressWarning = optionalTabs.includes(tabName);
-
-        const tabElement = safeGetElement(`tab-${tabName}`, suppressWarning);
-        if (tabElement) {
-            tabElement.addEventListener("click", () => showTab(tabName));
+    const availableTabs = getVisibleSidebarTabs().filter((tabName) => {
+        if (isTabHidden(tabName)) {
+            return false;
         }
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            return false;
+        }
+        return isTabAvailable(tabName);
+    });
+
+    availableTabs.forEach((tabName) => {
+        const tabElement = safeGetElement(`tab-${tabName}`, true);
+        if (!tabElement) {
+            return;
+        }
+        // The sidebar anchors already have inline onclick handlers in admin.html.
+        // Avoid adding a second click handler that would call showTab twice.
+        if (tabElement.hasAttribute("onclick")) {
+            return;
+        }
+        if (tabElement.dataset.tabBound === "true") {
+            return;
+        }
+        tabElement.dataset.tabBound = "true";
+        tabElement.addEventListener("click", () => showTab(tabName));
     });
 }
 
@@ -16600,6 +17926,11 @@ function setupFormHandlers() {
     const resourceForm = safeGetElement("add-resource-form");
     if (resourceForm) {
         resourceForm.addEventListener("submit", handleResourceFormSubmit);
+        bindMcpAppMimeHelper(
+            "resource-uri",
+            "resource-mime-type",
+            "resource-mime-helper",
+        );
     }
 
     const promptForm = safeGetElement("add-prompt-form");
@@ -16677,6 +18008,11 @@ function setupFormHandlers() {
     const editResourceForm = safeGetElement("edit-resource-form");
     if (editResourceForm) {
         editResourceForm.addEventListener("submit", handleEditResFormSubmit);
+        bindMcpAppMimeHelper(
+            "edit-resource-uri",
+            "edit-resource-mime-type",
+            "edit-resource-mime-helper",
+        );
         editResourceForm.addEventListener("click", () => {
             if (getComputedStyle(editResourceForm).display !== "none") {
                 refreshEditors();
@@ -16993,10 +18329,10 @@ function filterToolsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and S.No. columns)
-            // Tools columns: Actions(0), S.No.(1), Source(2), Name(3), RequestType(4), Description(5), Annotations(6), Tags(7), Owner(8), Team(9), Status(10)
+            // Get text from searchable cells (exclude Actions, S.No., and Tool ID columns)
+            // Tools columns: Actions(0), S.No.(1), ToolID(2), Source(3), Name(4), RequestType(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Status(11)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude Actions(0) and S.No.(1)
+            const searchableColumns = [3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0), S.No.(1), ToolID(2)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -17123,10 +18459,10 @@ function filterA2AAgentsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and ID columns)
-            // A2A Agents columns: Actions(0), ID(1), Name(2), Description(3), Endpoint(4), Tags(5), Type(6), Status(7), Reachability(8), Owner(9), Team(10), Visibility(11)
+            // Get text from searchable cells (exclude Actions, S.No., and Agent ID columns)
+            // A2A Agents columns: Actions(0), S.No.(1), AgentID(2), Name(3), Description(4), Endpoint(5), Tags(6), Type(7), Status(8), Reachability(9), Owner(10), Team(11), Visibility(12)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0) and ID(1)
+            const searchableColumns = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude Actions(0), S.No.(1), AgentID(2)
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -17367,55 +18703,200 @@ window.testSearchInit = function () {
 /**
  * Clear search functionality for different entity types
  */
+const PANEL_SEARCH_CONFIG = {
+    catalog: {
+        tableName: "servers",
+        partialPath: "servers/partial",
+        targetSelector: "#servers-table",
+        indicatorSelector: "#servers-loading",
+        searchInputId: "servers-search-input",
+        tagInputId: "servers-tag-filter",
+        inactiveCheckboxId: "show-inactive-servers",
+        defaultPerPage: 50,
+    },
+    tools: {
+        tableName: "tools",
+        partialPath: "tools/partial",
+        targetSelector: "#tools-table",
+        indicatorSelector: "#tools-loading",
+        searchInputId: "tools-search-input",
+        tagInputId: "tools-tag-filter",
+        inactiveCheckboxId: "show-inactive-tools",
+        defaultPerPage: 50,
+    },
+    resources: {
+        tableName: "resources",
+        partialPath: "resources/partial",
+        targetSelector: "#resources-table",
+        indicatorSelector: "#resources-loading",
+        searchInputId: "resources-search-input",
+        tagInputId: "resources-tag-filter",
+        inactiveCheckboxId: "show-inactive-resources",
+        defaultPerPage: 50,
+    },
+    prompts: {
+        tableName: "prompts",
+        partialPath: "prompts/partial",
+        targetSelector: "#prompts-table",
+        indicatorSelector: "#prompts-loading",
+        searchInputId: "prompts-search-input",
+        tagInputId: "prompts-tag-filter",
+        inactiveCheckboxId: "show-inactive-prompts",
+        defaultPerPage: 50,
+    },
+    gateways: {
+        tableName: "gateways",
+        partialPath: "gateways/partial",
+        targetSelector: "#gateways-table",
+        indicatorSelector: "#gateways-loading",
+        searchInputId: "gateways-search-input",
+        tagInputId: "gateways-tag-filter",
+        inactiveCheckboxId: "show-inactive-gateways",
+        defaultPerPage: 50,
+    },
+    "a2a-agents": {
+        tableName: "agents",
+        partialPath: "a2a/partial",
+        targetSelector: "#agents-table",
+        indicatorSelector: "#agents-loading",
+        searchInputId: "a2a-agents-search-input",
+        tagInputId: "a2a-agents-tag-filter",
+        inactiveCheckboxId: "show-inactive-a2a-agents",
+        defaultPerPage: 50,
+    },
+};
+
+const panelSearchReloadTimers = {};
+
+function getPanelSearchConfig(entityType) {
+    return PANEL_SEARCH_CONFIG[entityType] || null;
+}
+
+function getPanelSearchStateFromUrl(tableName) {
+    const params = new URLSearchParams(window.location.search);
+    const prefix = `${tableName}_`;
+    return {
+        query: (params.get(prefix + "q") || "").trim(),
+        tags: (params.get(prefix + "tags") || "").trim(),
+    };
+}
+
+function updatePanelSearchStateInUrl(tableName, query, tags) {
+    const currentUrl = new URL(window.location.href);
+    const params = new URLSearchParams(currentUrl.searchParams);
+    const prefix = `${tableName}_`;
+    const normalizedQuery = (query || "").trim();
+    const normalizedTags = (tags || "").trim();
+
+    if (normalizedQuery) {
+        params.set(prefix + "q", normalizedQuery);
+    } else {
+        params.delete(prefix + "q");
+    }
+
+    if (normalizedTags) {
+        params.set(prefix + "tags", normalizedTags);
+    } else {
+        params.delete(prefix + "tags");
+    }
+
+    // Search/filter changes always reset to first page.
+    params.set(prefix + "page", "1");
+
+    const newUrl =
+        currentUrl.pathname +
+        (params.toString() ? `?${params.toString()}` : "") +
+        currentUrl.hash;
+    safeReplaceState({}, "", newUrl);
+}
+
+function getPanelPerPage(panelConfig) {
+    const selector = document.querySelector(
+        `#${panelConfig.tableName}-pagination-controls select`,
+    );
+    if (!selector) {
+        return panelConfig.defaultPerPage;
+    }
+    const parsed = parseInt(selector.value, 10);
+    return Number.isNaN(parsed) ? panelConfig.defaultPerPage : parsed;
+}
+
+function loadSearchablePanel(entityType) {
+    const panelConfig = getPanelSearchConfig(entityType);
+    if (!panelConfig) {
+        return;
+    }
+
+    const searchInput = document.getElementById(panelConfig.searchInputId);
+    const tagInput = document.getElementById(panelConfig.tagInputId);
+    const query = (searchInput?.value || "").trim();
+    const tags = (tagInput?.value || "").trim();
+
+    // Persist search state in namespaced URL params for pagination/shareability.
+    updatePanelSearchStateInUrl(panelConfig.tableName, query, tags);
+
+    const includeInactive = Boolean(
+        document.getElementById(panelConfig.inactiveCheckboxId)?.checked,
+    );
+    const params = new URLSearchParams();
+    params.set("page", "1");
+    params.set("per_page", String(getPanelPerPage(panelConfig)));
+    params.set("include_inactive", includeInactive ? "true" : "false");
+    if (query) {
+        params.set("q", query);
+    }
+    if (tags) {
+        params.set("tags", tags);
+    }
+    const currentTeamId = getCurrentTeamId();
+    if (currentTeamId) {
+        params.set("team_id", currentTeamId);
+    }
+
+    const url = `${window.ROOT_PATH}/admin/${panelConfig.partialPath}?${params.toString()}`;
+    if (window.htmx && window.htmx.ajax) {
+        window.htmx.ajax("GET", url, {
+            target: panelConfig.targetSelector,
+            swap: "outerHTML",
+            indicator: panelConfig.indicatorSelector,
+        });
+    }
+}
+
+function queueSearchablePanelReload(entityType, delayMs = 250) {
+    if (panelSearchReloadTimers[entityType]) {
+        clearTimeout(panelSearchReloadTimers[entityType]);
+    }
+    panelSearchReloadTimers[entityType] = setTimeout(() => {
+        loadSearchablePanel(entityType);
+    }, delayMs);
+}
+
 function clearSearch(entityType) {
     try {
-        if (entityType === "catalog") {
-            const searchInput = document.getElementById("catalog-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterServerTable(""); // Clear the filter
-            }
-        } else if (entityType === "tools") {
-            const searchInput = document.getElementById("tools-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterToolsTable(""); // Clear the filter
-            }
-        } else if (entityType === "resources") {
+        const panelConfig = getPanelSearchConfig(entityType);
+        if (panelConfig) {
             const searchInput = document.getElementById(
-                "resources-search-input",
+                panelConfig.searchInputId,
             );
             if (searchInput) {
                 searchInput.value = "";
-                filterResourcesTable(""); // Clear the filter
             }
-        } else if (entityType === "prompts") {
-            const searchInput = document.getElementById("prompts-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterPromptsTable(""); // Clear the filter
+            const tagInput = document.getElementById(panelConfig.tagInputId);
+            if (tagInput) {
+                tagInput.value = "";
             }
-        } else if (entityType === "a2a-agents") {
-            const searchInput = document.getElementById(
-                "a2a-agents-search-input",
-            );
-            if (searchInput) {
-                searchInput.value = "";
-                filterA2AAgentsTable(""); // Clear the filter
-            }
-        } else if (entityType === "gateways") {
-            const searchInput = document.getElementById(
-                "gateways-search-input",
-            );
-            if (searchInput) {
-                searchInput.value = "";
-                filterGatewaysTable(""); // Clear the filter
-            }
-        } else if (entityType === "tokens") {
+            // Trigger server-side reload to show all results (fixes #3128)
+            // Removed client-side DOM filtering as it only filters visible page
+            loadSearchablePanel(entityType);
+            return;
+        }
+
+        if (entityType === "tokens") {
             const searchInput = document.getElementById("tokens-search-input");
             if (searchInput) {
                 searchInput.value = "";
-                performTokenSearch(""); // Clear the search and reload
+                performTokenSearch("");
             }
         }
     } catch (error) {
@@ -17433,135 +18914,56 @@ window.clearSearch = clearSearch;
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
 
-    // Clone inputs to remove existing event listeners before re-adding.
-    // This prevents duplicate listeners when re-initializing after reset.
-    const searchInputIds = [
-        "catalog-search-input",
-        "gateways-search-input",
-        "tools-search-input",
-        "resources-search-input",
-        "prompts-search-input",
-        "a2a-agents-search-input",
-        "tokens-search-input",
-    ];
-
-    searchInputIds.forEach((inputId) => {
-        const input = document.getElementById(inputId);
+    // Clone inputs to remove existing listeners from previous initialization runs.
+    Object.values(PANEL_SEARCH_CONFIG).forEach((panelConfig) => {
+        const input = document.getElementById(panelConfig.searchInputId);
         if (input) {
-            const newInput = input.cloneNode(true);
-            input.parentNode.replaceChild(newInput, input);
+            const clonedInput = input.cloneNode(true);
+            clonedInput.removeAttribute("oninput");
+            input.parentNode.replaceChild(clonedInput, input);
         }
     });
 
-    // Virtual Servers search
-    const catalogSearchInput = document.getElementById("catalog-search-input");
-    if (catalogSearchInput) {
-        catalogSearchInput.addEventListener("input", function () {
-            filterServerTable(this.value);
-        });
-        console.log("✅ Virtual Servers search initialized");
-        // Reapply current search term if any (preserves search after HTMX swap)
-        const currentSearch = catalogSearchInput.value || "";
-        if (currentSearch) {
-            filterServerTable(currentSearch);
+    Object.entries(PANEL_SEARCH_CONFIG).forEach(([entityType, panelConfig]) => {
+        const searchInput = document.getElementById(panelConfig.searchInputId);
+        const tagInput = document.getElementById(panelConfig.tagInputId);
+        if (!searchInput) {
+            return;
         }
-    }
 
-    // MCP Servers (Gateways) search
-    const gatewaysSearchInput = document.getElementById(
-        "gateways-search-input",
-    );
-    if (gatewaysSearchInput) {
-        console.log("✅ Found MCP Servers search input");
-
-        // Use addEventListener instead of direct assignment
-        gatewaysSearchInput.addEventListener("input", function (e) {
-            const searchValue = e.target.value;
-            console.log("🔍 MCP Servers search triggered:", searchValue);
-            filterGatewaysTable(searchValue);
-        });
-
-        // Add keyup as backup
-        gatewaysSearchInput.addEventListener("keyup", function (e) {
-            const searchValue = e.target.value;
-            filterGatewaysTable(searchValue);
-        });
-
-        // Add change as backup
-        gatewaysSearchInput.addEventListener("change", function (e) {
-            const searchValue = e.target.value;
-            filterGatewaysTable(searchValue);
-        });
-
-        console.log("✅ MCP Servers search events attached");
-
-        // Reapply current search term if any (preserves search after HTMX swap)
-        const currentSearch = gatewaysSearchInput.value || "";
-        if (currentSearch) {
-            filterGatewaysTable(currentSearch);
+        const searchState = getPanelSearchStateFromUrl(panelConfig.tableName);
+        if (searchState.query) {
+            searchInput.value = searchState.query;
         }
-    } else {
-        console.error("❌ MCP Servers search input not found!");
+        if (tagInput && searchState.tags) {
+            tagInput.value = searchState.tags;
+        }
 
-        // Debug available inputs
-        const allInputs = document.querySelectorAll('input[type="text"]');
-        console.log(
-            "Available text inputs:",
-            Array.from(allInputs).map((input) => ({
-                id: input.id,
-                placeholder: input.placeholder,
-                className: input.className,
-            })),
-        );
-    }
-
-    // Tools search
-    const toolsSearchInput = document.getElementById("tools-search-input");
-    if (toolsSearchInput) {
-        toolsSearchInput.addEventListener("input", function () {
-            filterToolsTable(this.value);
+        searchInput.addEventListener("input", () => {
+            queueSearchablePanelReload(entityType, 250);
         });
-        console.log("✅ Tools search initialized");
-    }
 
-    // Resources search
-    const resourcesSearchInput = document.getElementById(
-        "resources-search-input",
-    );
-    if (resourcesSearchInput) {
-        resourcesSearchInput.addEventListener("input", function () {
-            filterResourcesTable(this.value);
-        });
-        console.log("✅ Resources search initialized");
-    }
+        const panel = document.getElementById(`${entityType}-panel`);
+        const isVisible = Boolean(panel && !panel.classList.contains("hidden"));
+        if (isVisible && (searchState.query || searchState.tags)) {
+            queueSearchablePanelReload(entityType, 0);
+        }
+    });
 
-    // Prompts search
-    const promptsSearchInput = document.getElementById("prompts-search-input");
-    if (promptsSearchInput) {
-        promptsSearchInput.addEventListener("input", function () {
-            filterPromptsTable(this.value);
-        });
-        console.log("✅ Prompts search initialized");
-    }
-
-    // A2A Agents search
-    const agentsSearchInput = document.getElementById(
-        "a2a-agents-search-input",
-    );
-    if (agentsSearchInput) {
-        agentsSearchInput.addEventListener("input", function () {
-            filterA2AAgentsTable(this.value);
-        });
-        console.log("✅ A2A Agents search initialized");
-    }
-
-    // Tokens search
+    // Tokens search (server-side, not part of PANEL_SEARCH_CONFIG)
     const tokensSearchInput = document.getElementById("tokens-search-input");
     if (tokensSearchInput) {
-        tokensSearchInput.addEventListener("input", function () {
-            debouncedServerSideTokenSearch(this.value);
-        });
-        console.log("✅ Tokens search initialized");
+        const clonedTokensInput = tokensSearchInput.cloneNode(true);
+        tokensSearchInput.parentNode.replaceChild(
+            clonedTokensInput,
+            tokensSearchInput,
+        );
+        const freshTokensInput = document.getElementById("tokens-search-input");
+        if (freshTokensInput) {
+            freshTokensInput.addEventListener("input", function () {
+                debouncedServerSideTokenSearch(this.value);
+            });
+        }
     }
 }
 
@@ -17574,6 +18976,339 @@ const {
     debouncedInit: initializeSearchInputsDebounced,
     reset: resetSearchInputsState,
 } = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
+
+/**
+ * Update visible filter-status text for each table panel.
+ * Shows "Filters active" when any filter (search, tags, inactive) is active.
+ */
+function updateFilterStatus() {
+    Object.values(PANEL_SEARCH_CONFIG).forEach((config) => {
+        const statusEl = document.getElementById(
+            config.tableName + "-filter-status",
+        );
+        if (!statusEl) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const prefix = config.tableName + "_";
+        const hasQuery = Boolean(params.get(prefix + "q"));
+        const hasTags = Boolean(params.get(prefix + "tags"));
+        const hasInactive = params.get(prefix + "inactive") === "true";
+
+        statusEl.textContent =
+            hasQuery || hasTags || hasInactive ? "Filters active" : "";
+    });
+}
+window.updateFilterStatus = updateFilterStatus;
+
+/**
+ * Rehydrate search inputs and filter status after HTMX content swaps.
+ * This ensures that search/tag values from the URL are restored into the
+ * input elements after pagination or partial refresh replaces table content.
+ */
+document.addEventListener("htmx:afterSettle", function (evt) {
+    const target = evt.detail?.target;
+    if (!target || !target.id) return;
+
+    // Only rehydrate when a table partial or pagination was swapped
+    const isTableSwap =
+        target.id.endsWith("-table") ||
+        target.id.endsWith("-table-body") ||
+        target.id.endsWith("-list-container");
+    const isPaginationSwap = target.id.endsWith("-pagination-controls");
+
+    if (isTableSwap || isPaginationSwap) {
+        resetSearchInputsState();
+        initializeSearchInputsMemoized();
+        updateFilterStatus();
+    }
+});
+
+const GLOBAL_SEARCH_ENTITY_CONFIG = {
+    servers: { label: "Servers", tab: "catalog", viewFunction: "viewServer" },
+    gateways: {
+        label: "Gateways",
+        tab: "gateways",
+        viewFunction: "viewGateway",
+    },
+    tools: { label: "Tools", tab: "tools", viewFunction: "viewTool" },
+    resources: {
+        label: "Resources",
+        tab: "resources",
+        viewFunction: "viewResource",
+    },
+    prompts: { label: "Prompts", tab: "prompts", viewFunction: "viewPrompt" },
+    agents: {
+        label: "A2A Agents",
+        tab: "a2a-agents",
+        viewFunction: "viewAgent",
+    },
+    teams: { label: "Teams", tab: "teams", viewFunction: "showTeamEditModal" },
+    users: { label: "Users", tab: "users", viewFunction: "showUserEditModal" },
+};
+
+let globalSearchDebounceTimer = null;
+let globalSearchRequestId = 0;
+
+function renderGlobalSearchMessage(message) {
+    const container = document.getElementById("global-search-results");
+    if (!container) {
+        return;
+    }
+    container.innerHTML = `<div class="p-4 text-sm text-gray-500 dark:text-gray-400">${escapeHtml(message)}</div>`;
+}
+
+function renderGlobalSearchResults(payload) {
+    const container = document.getElementById("global-search-results");
+    if (!container) {
+        return;
+    }
+
+    const groups = Array.isArray(payload?.groups) ? payload.groups : [];
+    const hiddenSections = getUiHiddenSections();
+    const visibleGroups = groups.filter(
+        (group) =>
+            Array.isArray(group.items) &&
+            group.items.length > 0 &&
+            !hiddenSections.has(group.entity_type),
+    );
+
+    if (visibleGroups.length === 0) {
+        renderGlobalSearchMessage("No matching results.");
+        return;
+    }
+
+    let html = "";
+    visibleGroups.forEach((group) => {
+        const entityType = group.entity_type;
+        const config = GLOBAL_SEARCH_ENTITY_CONFIG[entityType] || {
+            label: entityType,
+        };
+        html += `<div class="border-b border-gray-200 dark:border-gray-700">`;
+        html += `<div class="px-4 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">${escapeHtml(config.label)} (${group.items.length})</div>`;
+
+        group.items.forEach((item) => {
+            const itemId = item.id || item.email || item.slug || "";
+            const name =
+                item.display_name ||
+                item.original_name ||
+                item.name ||
+                item.full_name ||
+                item.email ||
+                item.slug ||
+                item.id ||
+                "Unnamed";
+            const summary =
+                item.description ||
+                item.email ||
+                item.slug ||
+                item.url ||
+                item.endpoint_url ||
+                item.original_name ||
+                item.id ||
+                "";
+            html += `
+                <button
+                  type="button"
+                  class="global-search-result-item w-full text-left px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  data-entity="${escapeHtml(entityType)}"
+                  data-id="${escapeHtml(itemId)}"
+                  data-action="navigate-search-result"
+                >
+                  <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(name)}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400 truncate">${escapeHtml(summary)}</div>
+                </button>
+            `;
+        });
+        html += "</div>";
+    });
+
+    container.innerHTML = html;
+
+    // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+    container
+        .querySelectorAll('[data-action="navigate-search-result"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () =>
+                navigateToGlobalSearchResult(btn),
+            );
+        });
+}
+
+async function runGlobalSearch(query) {
+    const normalizedQuery = (query || "").trim();
+    const requestId = ++globalSearchRequestId;
+
+    if (!normalizedQuery) {
+        renderGlobalSearchMessage("Start typing to search all entities.");
+        return;
+    }
+
+    renderGlobalSearchMessage("Searching...");
+    const params = new URLSearchParams();
+    params.set("q", normalizedQuery);
+    params.set("limit_per_type", "8");
+    const searchableEntityTypes = [
+        "servers",
+        "gateways",
+        "tools",
+        "resources",
+        "prompts",
+        "agents",
+        "teams",
+        "users",
+    ];
+    const visibleEntityTypes = searchableEntityTypes.filter((entityType) => {
+        if (entityType === "users" && !isAdminUser()) {
+            return false;
+        }
+        return !getUiHiddenSections().has(entityType);
+    });
+    if (visibleEntityTypes.length === 0) {
+        renderGlobalSearchMessage("No searchable sections are visible.");
+        return;
+    }
+    params.set("entity_types", visibleEntityTypes.join(","));
+
+    const currentTeamId = getCurrentTeamId();
+    if (currentTeamId) {
+        params.set("team_id", currentTeamId);
+    }
+
+    try {
+        const response = await fetchWithAuth(
+            `${window.ROOT_PATH}/admin/search?${params.toString()}`,
+        );
+        if (!response.ok) {
+            throw new Error(
+                `Search request failed (${response.status} ${response.statusText})`,
+            );
+        }
+
+        const payload = await response.json();
+        // Ignore out-of-order responses.
+        if (requestId !== globalSearchRequestId) {
+            return;
+        }
+        renderGlobalSearchResults(payload);
+    } catch (error) {
+        if (requestId !== globalSearchRequestId) {
+            return;
+        }
+        console.error("Error running global search:", error);
+        renderGlobalSearchMessage("Search failed. Please try again.");
+    }
+}
+
+function openGlobalSearchModal() {
+    const modal = document.getElementById("global-search-modal");
+    const input = document.getElementById("global-search-input");
+    if (!modal || !input) {
+        return;
+    }
+
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    input.focus();
+    if (input.value.trim()) {
+        runGlobalSearch(input.value);
+    } else {
+        renderGlobalSearchMessage("Start typing to search all entities.");
+    }
+}
+
+function closeGlobalSearchModal() {
+    const modal = document.getElementById("global-search-modal");
+    if (!modal) {
+        return;
+    }
+
+    modal.classList.add("hidden");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+function navigateToGlobalSearchResult(button) {
+    if (!button) {
+        return;
+    }
+
+    const entityType = button.dataset.entity;
+    const entityId = button.dataset.id;
+    if (!entityType || !entityId) {
+        return;
+    }
+
+    const config = GLOBAL_SEARCH_ENTITY_CONFIG[entityType];
+    closeGlobalSearchModal();
+    if (!config) {
+        return;
+    }
+
+    showTab(config.tab);
+    const viewFunction = window[config.viewFunction];
+    if (typeof viewFunction === "function") {
+        setTimeout(() => {
+            viewFunction(entityId);
+        }, 120);
+    }
+}
+
+function initializeGlobalSearch() {
+    const input = document.getElementById("global-search-input");
+    if (input && !input.dataset.listenerAttached) {
+        input.dataset.listenerAttached = "true";
+        input.addEventListener("input", (event) => {
+            const value = event.target?.value || "";
+            if (globalSearchDebounceTimer) {
+                clearTimeout(globalSearchDebounceTimer);
+            }
+            globalSearchDebounceTimer = setTimeout(() => {
+                runGlobalSearch(value);
+            }, 220);
+        });
+
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                closeGlobalSearchModal();
+                event.preventDefault();
+                return;
+            }
+            if (event.key === "Enter") {
+                const firstResult = document.querySelector(
+                    "#global-search-results .global-search-result-item",
+                );
+                if (firstResult) {
+                    navigateToGlobalSearchResult(firstResult);
+                    event.preventDefault();
+                }
+            }
+        });
+    }
+
+    if (!window.__globalSearchHotkeysBound) {
+        window.__globalSearchHotkeysBound = true;
+        document.addEventListener("keydown", (event) => {
+            const isShortcut =
+                (event.ctrlKey || event.metaKey) &&
+                event.key.toLowerCase() === "k";
+            if (isShortcut) {
+                event.preventDefault();
+                openGlobalSearchModal();
+                return;
+            }
+            if (event.key === "Escape") {
+                const modal = document.getElementById("global-search-modal");
+                if (modal && !modal.classList.contains("hidden")) {
+                    closeGlobalSearchModal();
+                    event.preventDefault();
+                }
+            }
+        });
+    }
+}
+
+window.openGlobalSearchModal = openGlobalSearchModal;
+window.closeGlobalSearchModal = closeGlobalSearchModal;
+window.navigateToGlobalSearchResult = navigateToGlobalSearchResult;
 
 function handleAuthTypeChange() {
     const authType = this.value;
@@ -17826,18 +19561,45 @@ function setupIntegrationTypeHandlers() {
     }
 }
 
+let tabHashChangeListenerRegistered = false;
+
 function initializeTabState() {
     console.log("Initializing tab state...");
 
-    const hash = window.location.hash;
-    if (hash) {
-        showTab(hash.slice(1));
+    const initialHashTab = normalizeTabName(window.location.hash);
+    const initialRequestedTab = initialHashTab || getDefaultTabName();
+    const initialTab = resolveTabForNavigation(initialRequestedTab);
+
+    if (initialTab) {
+        if (initialHashTab && initialHashTab !== initialTab) {
+            updateHashForTab(initialTab);
+        }
+        showTab(initialTab);
     } else {
-        showTab("gateways");
+        console.warn("No available tabs found during initialization");
+    }
+
+    if (!tabHashChangeListenerRegistered) {
+        window.addEventListener("hashchange", () => {
+            const hashTab = normalizeTabName(window.location.hash);
+            const requestedTab = hashTab || getDefaultTabName();
+            const resolvedTab = resolveTabForNavigation(requestedTab);
+
+            if (!resolvedTab) {
+                return;
+            }
+
+            if (hashTab && hashTab !== resolvedTab) {
+                updateHashForTab(resolvedTab);
+            }
+
+            showTab(resolvedTab);
+        });
+        tabHashChangeListenerRegistered = true;
     }
 
     // Pre-load version info if that's the initial tab
-    if (isAdminUser() && window.location.hash === "#version-info") {
+    if (isAdminUser() && initialTab === "version-info") {
         setTimeout(() => {
             const panel = safeGetElement("version-info-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -17864,7 +19626,7 @@ function initializeTabState() {
     }
 
     // Pre-load maintenance panel if that's the initial tab
-    if (isAdminUser() && window.location.hash === "#maintenance") {
+    if (isAdminUser() && initialTab === "maintenance") {
         setTimeout(() => {
             const panel = safeGetElement("maintenance-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -17918,11 +19680,12 @@ function initializeTabState() {
     Object.entries(checkboxTableMap).forEach(([id, tableName]) => {
         const checkbox = safeGetElement(id);
         if (checkbox) {
-            // Prefer namespaced param, fall back to legacy for backwards compatibility
+            // Prefer namespaced param, fall back to legacy if present,
+            // otherwise preserve the HTML default (checked attribute)
             const namespacedValue = urlParams.get(tableName + "_inactive");
             if (namespacedValue !== null) {
                 checkbox.checked = namespacedValue === "true";
-            } else {
+            } else if (urlParams.has("include_inactive")) {
                 checkbox.checked = legacyIncludeInactive;
             }
         }
@@ -17940,7 +19703,8 @@ function initializeTabState() {
         }
     });
 
-    // Enable toggles after HTMX swaps complete
+    // Enable toggles after HTMX swaps complete and re-initialize Alpine.js
+    // components on OOB-swapped pagination controls.
     document.body.addEventListener("htmx:afterSettle", (event) => {
         document
             .querySelectorAll(".show-inactive-toggle[disabled]")
@@ -17950,6 +19714,27 @@ function initializeTabState() {
                     checkbox.disabled = false;
                 }
             });
+
+        // Re-initialize Alpine.js components on pagination controls after
+        // HTMX OOB swaps.  When htmx.ajax() swaps a table partial that
+        // includes an out-of-band pagination-controls div, Alpine may not
+        // automatically detect the new x-data element (race with
+        // MutationObserver).  This ensures the page-info text, navigation
+        // buttons and per-page selector all render correctly after every
+        // settle.
+        if (window.Alpine && typeof window.Alpine.initTree === "function") {
+            document
+                .querySelectorAll('[id*="-pagination-controls"]')
+                .forEach(function (el) {
+                    // Only act on elements that contain an uninitialised
+                    // Alpine component (i.e. x-data present but no
+                    // _x_dataStack yet).
+                    const xDataEl = el.querySelector("[x-data]");
+                    if (xDataEl && !xDataEl._x_dataStack) {
+                        window.Alpine.initTree(el);
+                    }
+                });
+        }
     });
 }
 
@@ -18330,14 +20115,20 @@ window.goBackToSelection = goBackToSelection;
  */
 function extractAvailableTags(entityType) {
     const tags = new Set();
+
+    if (entityType === "catalog") {
+        document
+            .querySelectorAll("#servers-table-body [data-tag]")
+            .forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
+            });
+        return Array.from(tags).sort();
+    }
+
     const tableSelector = `#${entityType}-panel tbody tr:not(.inactive-row)`;
     const rows = document.querySelectorAll(tableSelector);
 
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Found ${rows.length} rows`,
-    );
-
-    // Find the Tags column index by examining the table header
     const tableHeaderSelector = `#${entityType}-panel thead tr th`;
     const headerCells = document.querySelectorAll(tableHeaderSelector);
     let tagsColumnIndex = -1;
@@ -18346,67 +20137,25 @@ function extractAvailableTags(entityType) {
         const headerText = header.textContent.trim().toLowerCase();
         if (headerText === "tags") {
             tagsColumnIndex = index;
-            console.log(
-                `[DEBUG] Found Tags column at index ${index} for ${entityType}`,
-            );
         }
     });
 
     if (tagsColumnIndex === -1) {
-        console.log(`[DEBUG] Could not find Tags column for ${entityType}`);
         return [];
     }
 
-    rows.forEach((row, index) => {
+    rows.forEach((row) => {
         const cells = row.querySelectorAll("td");
-
         if (tagsColumnIndex < cells.length) {
             const tagsCell = cells[tagsColumnIndex];
-
-            // Look for tag badges ONLY within the Tags column
-            const tagElements = tagsCell.querySelectorAll(`
-                span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-                span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
-            `);
-
-            console.log(
-                `[DEBUG] Row ${index}: Found ${tagElements.length} tag elements in Tags column`,
-            );
-
-            tagElements.forEach((tagEl) => {
-                const tagText = tagEl.textContent.trim();
-                console.log(
-                    `[DEBUG] Row ${index}: Tag element text: "${tagText}"`,
-                );
-
-                // Basic validation for tag content
-                if (
-                    tagText &&
-                    tagText !== "No tags" &&
-                    tagText !== "None" &&
-                    tagText !== "N/A" &&
-                    tagText.length >= 2 &&
-                    tagText.length <= 50
-                ) {
-                    tags.add(tagText);
-                    console.log(
-                        `[DEBUG] Row ${index}: Added tag: "${tagText}"`,
-                    );
-                } else {
-                    console.log(
-                        `[DEBUG] Row ${index}: Filtered out: "${tagText}"`,
-                    );
-                }
+            tagsCell.querySelectorAll("[data-tag]").forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
             });
         }
     });
 
-    const result = Array.from(tags).sort();
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Final result:`,
-        result,
-    );
-    return result;
+    return Array.from(tags).sort();
 }
 
 /**
@@ -18448,7 +20197,11 @@ function updateAvailableTags(entityType) {
  * @param {string} tag - The tag to add
  */
 function addTagToFilter(entityType, tag) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (!filterInput) {
         return;
     }
@@ -18460,7 +20213,19 @@ function addTagToFilter(entityType, tag) {
     if (!currentTags.includes(tag)) {
         currentTags.push(tag);
         filterInput.value = currentTags.join(", ");
-        filterEntitiesByTags(entityType, filterInput.value);
+        if (panelConfig) {
+            const searchInput = document.getElementById(
+                panelConfig.searchInputId,
+            );
+            updatePanelSearchStateInUrl(
+                panelConfig.tableName,
+                searchInput?.value || "",
+                filterInput.value,
+            );
+            queueSearchablePanelReload(entityType, 0);
+        } else {
+            filterEntitiesByTags(entityType, filterInput.value);
+        }
     }
 }
 
@@ -18488,34 +20253,11 @@ function filterEntitiesByTags(entityType, tagsInput) {
             return;
         }
 
-        // Extract tags from this row using specific tag selectors (not status badges)
+        // Extract tags from this row using data-tag attributes
         const rowTags = new Set();
-
-        const tagElements = row.querySelectorAll(`
-            /* Gateways */
-            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full,
-            /* A2A Agents */
-            span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700,
-            /* Prompts & Resources */
-            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-            /* Gray tags for A2A agent metadata */
-            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700
-        `);
-
-        tagElements.forEach((tagEl) => {
-            const tagText = tagEl.textContent.trim().toLowerCase();
-            // Filter out any remaining non-tag content
-            if (
-                tagText &&
-                tagText !== "no tags" &&
-                tagText !== "none" &&
-                tagText !== "active" &&
-                tagText !== "inactive" &&
-                tagText !== "online" &&
-                tagText !== "offline"
-            ) {
-                rowTags.add(tagText);
-            }
+        row.querySelectorAll("[data-tag]").forEach((el) => {
+            const t = el.getAttribute("data-tag").trim().toLowerCase();
+            if (t) rowTags.add(t);
         });
 
         // Check if any of the filter tags match any of the row tags (OR logic)
@@ -18567,9 +20309,17 @@ function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
                     <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No matching ${entityType}</h3>
-                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button onclick="clearTagFilter('${entityType}')" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
+                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button data-action="clear-tag-filter" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
                 </div>
             `;
+            const clearBtn = emptyMessage.querySelector(
+                '[data-action="clear-tag-filter"]',
+            );
+            if (clearBtn) {
+                clearBtn.addEventListener("click", () =>
+                    clearTagFilter(entityType),
+                );
+            }
             tableContainer.appendChild(emptyMessage);
         }
         emptyMessage.style.display = "block";
@@ -18583,10 +20333,18 @@ function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
  * @param {string} entityType - The entity type
  */
 function clearTagFilter(entityType) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (filterInput) {
         filterInput.value = "";
+        // Apply immediate local reset for responsive UX and test compatibility.
         filterEntitiesByTags(entityType, "");
+        if (panelConfig) {
+            loadSearchablePanel(entityType);
+        }
     }
 }
 
@@ -18730,8 +20488,7 @@ function addAuthHeader(containerId, options = {}) {
             <input
                 type="text"
                 placeholder="Header Key (e.g., X-API-Key)"
-                class="auth-header-key block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
-                oninput="updateAuthHeadersJSON('${containerId}')"
+                class="auth-header-key block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
             />
         </div>
         <div class="flex-1">
@@ -18741,13 +20498,12 @@ function addAuthHeader(containerId, options = {}) {
                     id="${valueInputId}"
                     placeholder="Header Value"
                     data-sensitive-label="header value"
-                    class="auth-header-value block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
-                    oninput="updateAuthHeadersJSON('${containerId}')"
+                    class="auth-header-value block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
                 />
                 <button
                     type="button"
                     class="absolute inset-y-0 right-0 flex items-center px-2 text-xs font-medium text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-indigo-300"
-                    onclick="toggleInputMask('${valueInputId}', this)"
+                    data-action="toggle-mask"
                     aria-pressed="false"
                     aria-label="Show header value"
                 >
@@ -18757,7 +20513,7 @@ function addAuthHeader(containerId, options = {}) {
         </div>
         <button
             type="button"
-            onclick="removeAuthHeader('${headerId}', '${containerId}')"
+            data-action="remove-header"
             class="inline-flex items-center px-2 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
             title="Remove header"
         >
@@ -18766,6 +20522,18 @@ function addAuthHeader(containerId, options = {}) {
             </svg>
         </button>
     `;
+    const toggleBtn = headerRow.querySelector('[data-action="toggle-mask"]');
+    if (toggleBtn) {
+        toggleBtn.addEventListener("click", function () {
+            toggleInputMask(valueInputId, this);
+        });
+    }
+    const removeBtn = headerRow.querySelector('[data-action="remove-header"]');
+    if (removeBtn) {
+        removeBtn.addEventListener("click", () =>
+            removeAuthHeader(headerId, containerId),
+        );
+    }
 
     container.appendChild(headerRow);
 
@@ -18773,6 +20541,10 @@ function addAuthHeader(containerId, options = {}) {
     const valueInput = headerRow.querySelector(".auth-header-value");
     if (keyInput) {
         keyInput.value = options.key ?? "";
+        // Attach event listener programmatically
+        keyInput.addEventListener("input", () =>
+            updateAuthHeadersJSON(containerId),
+        );
     }
     if (valueInput) {
         if (options.isMasked) {
@@ -18786,6 +20558,10 @@ function addAuthHeader(containerId, options = {}) {
                 delete valueInput.dataset.realValue;
             }
         }
+        // Attach event listener programmatically
+        valueInput.addEventListener("input", () =>
+            updateAuthHeadersJSON(containerId),
+        );
     }
 
     updateAuthHeadersJSON(containerId);
@@ -19010,7 +20786,7 @@ async function fetchToolsForGateway(gatewayId, gatewayName) {
     try {
         const response = await fetch(
             `${window.ROOT_PATH}/oauth/fetch-tools/${gatewayId}`,
-            { method: "POST" },
+            { method: "POST", credentials: "include" },
         );
 
         const result = await response.json();
@@ -19053,7 +20829,7 @@ async function fetchToolsForGateway(gatewayId, gatewayName) {
 // Expose fetch tools function to global scope
 window.fetchToolsForGateway = fetchToolsForGateway;
 
-console.log("🛡️ ContextForge MCP Gateway admin.js initialized");
+console.log("🛡️ ContextForge AI Gateway admin.js initialized");
 
 // ===================================================================
 // BULK IMPORT TOOLS — MODAL WIRING
@@ -19601,11 +21377,15 @@ function updateDropZoneStatus(fileName, importData) {
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                     ${totalEntities} entities • Version ${escapeHtml(importData.version || "unknown")}
                 </div>
-                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" onclick="resetImportFile()">
+                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" data-action="reset-import">
                     Choose different file
                 </button>
             </div>
         `;
+        const resetBtn = dropZone.querySelector('[data-action="reset-import"]');
+        if (resetBtn) {
+            resetBtn.addEventListener("click", resetImportFile);
+        }
     }
 }
 
@@ -20001,7 +21781,7 @@ function showCopyableModal(title, message, type = "info") {
     const overlay = document.createElement("div");
     overlay.id = "copyable-modal-overlay";
     overlay.className =
-        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40";
     overlay.onclick = (e) => {
         if (e.target === overlay) {
             overlay.remove();
@@ -20024,13 +21804,13 @@ function showCopyableModal(title, message, type = "info") {
                         <pre id="copyable-modal-content" class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-600 max-h-64 overflow-auto select-all cursor-text">${escapeHtml(message)}</pre>
                     </div>
                     <div class="mt-4 flex justify-end space-x-3">
-                        <button id="copyable-modal-copy" class="inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        <button id="copyable-modal-copy" class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                             <svg class="h-4 w-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
                             </svg>
                             Copy
                         </button>
-                        <button id="copyable-modal-close" class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        <button id="copyable-modal-close" class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                             Close
                         </button>
                     </div>
@@ -20137,7 +21917,7 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
         }
         if (queryInput) {
             // Reset to default value
-            queryInput.value = "Hello from MCP Gateway Admin UI test!";
+            queryInput.value = "Hello from ContextForge Admin UI test!";
         }
         if (resultDiv) {
             resultDiv.classList.add("hidden");
@@ -20194,7 +21974,7 @@ async function handleA2ATestSubmit(e) {
         const agentId = safeGetElement("a2a-test-agent-id")?.value;
         const query =
             safeGetElement("a2a-test-query")?.value ||
-            "Hello from MCP Gateway Admin UI test!";
+            "Hello from ContextForge Admin UI test!";
 
         if (!agentId) {
             throw new Error("Agent ID is missing");
@@ -20222,11 +22002,15 @@ async function handleA2ATestSubmit(e) {
             window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
         );
 
-        if (!response.ok) {
+        // Parse the JSON body for all responses — the backend returns
+        // structured {success, error, error_type} even for non-2xx status
+        // codes, and the display logic below already handles both cases.
+        let result;
+        try {
+            result = await response.json();
+        } catch {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
-        const result = await response.json();
 
         // Display result
         const isSuccess = result.success && !result.error;
@@ -20503,6 +22287,25 @@ function setupTokenListEventHandlers(container) {
  * Get the currently selected team ID from the team selector
  */
 function getCurrentTeamId() {
+    const isKnownTeamId = (teamId) => {
+        if (!teamId) {
+            return false;
+        }
+
+        const teamsData = Array.isArray(window.USER_TEAMS_DATA)
+            ? window.USER_TEAMS_DATA
+            : Array.isArray(window.USER_TEAMS)
+              ? window.USER_TEAMS
+              : [];
+
+        // If team data is unavailable, do not block existing behavior.
+        if (teamsData.length === 0) {
+            return true;
+        }
+
+        return teamsData.some((team) => team && team.id === teamId);
+    };
+
     // First, try to get from Alpine.js component (most reliable)
     const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
     if (
@@ -20518,7 +22321,7 @@ function getCurrentTeamId() {
             return null;
         }
 
-        return selectedTeam;
+        return isKnownTeamId(selectedTeam) ? selectedTeam : null;
     }
 
     // Fallback: check URL parameters
@@ -20529,7 +22332,7 @@ function getCurrentTeamId() {
         return null;
     }
 
-    return teamId;
+    return isKnownTeamId(teamId) ? teamId : null;
 }
 
 /**
@@ -20666,6 +22469,54 @@ function setupCreateTokenForm() {
         // User can create public-only tokens in that context
         await createToken(form);
     });
+
+    // Attach HTMX error handlers to the tokens panel so that a transient backend
+    // failure (e.g. DB pool exhaustion / idle transaction timeout) shows an
+    // actionable error with a retry button instead of leaving the table stale.
+    const tokensPanel = document.getElementById("tokens-panel");
+    if (tokensPanel && !tokensPanel.dataset.htmxErrorHandlerAttached) {
+        tokensPanel.dataset.htmxErrorHandlerAttached = "true";
+        tokensPanel.addEventListener("htmx:responseError", function (evt) {
+            const tokensTable = document.getElementById("tokens-table");
+            if (tokensTable) {
+                const status =
+                    evt.detail && evt.detail.xhr
+                        ? evt.detail.xhr.status
+                        : "error";
+                tokensTable.innerHTML =
+                    '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                    "<strong>Failed to load tokens.</strong> The backend may be temporarily unavailable (HTTP " +
+                    status +
+                    "). " +
+                    '<button type="button" data-action="retry-tokens" class="underline font-medium">Retry</button></div>';
+                const retryBtn = tokensTable.querySelector(
+                    '[data-action="retry-tokens"]',
+                );
+                if (retryBtn) {
+                    retryBtn.addEventListener("click", () =>
+                        loadTokensList(true),
+                    );
+                }
+            }
+        });
+        tokensPanel.addEventListener("htmx:sendError", function () {
+            const tokensTable = document.getElementById("tokens-table");
+            if (tokensTable) {
+                tokensTable.innerHTML =
+                    '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                    "<strong>Failed to load tokens.</strong> Network error — check your connection and " +
+                    '<button type="button" data-action="retry-tokens" class="underline font-medium">retry</button>.</div>';
+                const retryBtn = tokensTable.querySelector(
+                    '[data-action="retry-tokens"]',
+                );
+                if (retryBtn) {
+                    retryBtn.addEventListener("click", () =>
+                        loadTokensList(true),
+                    );
+                }
+            }
+        });
+    }
 }
 
 /**
@@ -20819,20 +22670,40 @@ async function createToken(form) {
         scope.usage_limits = {};
         payload.scope = scope;
 
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
             method: "POST",
-            headers: {
-                Authorization: `Bearer ${await getAuthToken()}`,
-                "Content-Type": "application/json",
-            },
+            headers: requestHeaders,
             body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
-            const errorMsg = await parseErrorResponse(
+            let errorMsg = await parseErrorResponse(
                 response,
                 `Failed to create token (${response.status})`,
             );
+
+            // Common conflict path: duplicate token name (same user + same team scope).
+            const genericCreateTokenError =
+                "Unable to complete the operation. Please try again.";
+            if (
+                response.status === 409 &&
+                errorMsg === genericCreateTokenError
+            ) {
+                const scopeLabel = currentTeamId
+                    ? "the selected team"
+                    : "All Teams (public-only)";
+                errorMsg = `Token name already exists in ${scopeLabel}. Choose a different token name.`;
+            }
+            if (
+                response.status === 400 &&
+                typeof errorMsg === "string" &&
+                errorMsg.startsWith("Team not found:")
+            ) {
+                errorMsg =
+                    "Selected team is no longer available. Switch the header selector to All Teams and try again.";
+            }
+
             throw new Error(errorMsg);
         }
 
@@ -20840,12 +22711,34 @@ async function createToken(form) {
         showTokenCreatedModal(result);
         form.reset();
 
+        // Clear any lingering inline error
+        const inlineMessagesSuccess = document.getElementById(
+            "token-creation-messages",
+        );
+        if (inlineMessagesSuccess) {
+            inlineMessagesSuccess.innerHTML = "";
+        }
+
         // Show appropriate success message
         const tokenType = currentTeamId ? "team-scoped" : "public-only";
         showNotification(`${tokenType} token created successfully!`, "success");
     } catch (error) {
         console.error("Error creating token:", error);
         showNotification(`Error creating token: ${error.message}`, "error");
+        // Also show inline near the form — the toast may be missed if the user scrolled
+        const inlineMessages = document.getElementById(
+            "token-creation-messages",
+        );
+        if (inlineMessages) {
+            inlineMessages.innerHTML =
+                '<div class="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded dark:bg-red-900 dark:border-red-600 dark:text-red-200">' +
+                "<strong>Failed to create token:</strong> " +
+                escapeHtml(error.message) +
+                "</div>";
+            setTimeout(function () {
+                inlineMessages.innerHTML = "";
+            }, 15000);
+        }
     } finally {
         submitButton.textContent = originalText;
         submitButton.disabled = false;
@@ -20858,7 +22751,7 @@ async function createToken(form) {
 function showTokenCreatedModal(tokenData) {
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-lg shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="mt-3">
@@ -20902,7 +22795,7 @@ function showTokenCreatedModal(tokenData) {
                             id="new-token-value"
                         />
                         <button
-                            onclick="copyToClipboard('new-token-value')"
+                            data-copy-token-target="new-token-value"
                             class="px-3 py-2 bg-indigo-600 text-white text-sm rounded-r-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
                             Copy
@@ -20939,6 +22832,22 @@ function showTokenCreatedModal(tokenData) {
             });
         });
 
+    // Bind copy action without relying on inline handlers
+    const copyTokenButton = modal.querySelector("[data-copy-token-target]");
+    if (copyTokenButton) {
+        copyTokenButton.addEventListener("click", function (event) {
+            event.preventDefault();
+            const elementId = event.currentTarget.getAttribute(
+                "data-copy-token-target",
+            );
+            if (elementId) {
+                copyToClipboard(elementId).catch((error) => {
+                    console.warn("Copy token action failed", error);
+                });
+            }
+        });
+    }
+
     // Focus the token input for easy selection
     const tokenInput = modal.querySelector("#new-token-value");
     tokenInput.focus();
@@ -20948,13 +22857,65 @@ function showTokenCreatedModal(tokenData) {
 /**
  * Copy text to clipboard
  */
-function copyToClipboard(elementId) {
+async function copyToClipboard(elementId) {
     const element = document.getElementById(elementId);
-    if (element) {
-        element.select();
-        document.execCommand("copy");
-        showNotification("Token copied to clipboard", "success");
+    if (!element) {
+        return;
     }
+
+    const textToCopy =
+        typeof element.value === "string"
+            ? element.value
+            : (element.textContent || "").trim();
+
+    const fallbackCopy = () => {
+        if (typeof element.focus === "function") {
+            element.focus();
+        }
+        if (typeof element.select === "function") {
+            element.select();
+        }
+        if (typeof element.setSelectionRange === "function") {
+            element.setSelectionRange(0, textToCopy.length);
+        }
+
+        if (typeof document.execCommand !== "function") {
+            return false;
+        }
+        try {
+            return document.execCommand("copy");
+        } catch (error) {
+            console.warn("Fallback copy failed", error);
+            return false;
+        }
+    };
+
+    if (!textToCopy) {
+        showNotification("No token available to copy", "error");
+        return;
+    }
+
+    const hasClipboardApi =
+        typeof navigator !== "undefined" &&
+        navigator.clipboard &&
+        typeof navigator.clipboard.writeText === "function";
+
+    if (hasClipboardApi) {
+        try {
+            await navigator.clipboard.writeText(textToCopy);
+            showNotification("Token copied to clipboard", "success");
+            return;
+        } catch (error) {
+            console.warn("Clipboard API copy failed, trying fallback", error);
+        }
+    }
+
+    if (fallbackCopy()) {
+        showNotification("Token copied to clipboard", "success");
+        return;
+    }
+
+    showNotification("Failed to copy token. Please copy it manually.", "error");
 }
 
 /**
@@ -20970,14 +22931,12 @@ async function revokeToken(tokenId, tokenName) {
     }
 
     try {
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/tokens/${tokenId}`,
             {
                 method: "DELETE",
-                headers: {
-                    Authorization: `Bearer ${await getAuthToken()}`,
-                    "Content-Type": "application/json",
-                },
+                headers: requestHeaders,
                 body: JSON.stringify({
                     reason: "Revoked by user via admin interface",
                 }),
@@ -21005,13 +22964,11 @@ async function revokeToken(tokenId, tokenName) {
  */
 async function viewTokenUsage(tokenId) {
     try {
+        const requestHeaders = await getAuthHeaders(true);
         const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/tokens/${tokenId}/usage`,
             {
-                headers: {
-                    Authorization: `Bearer ${await getAuthToken()}`,
-                    "Content-Type": "application/json",
-                },
+                headers: requestHeaders,
             },
         );
 
@@ -21036,12 +22993,12 @@ async function viewTokenUsage(tokenId) {
 function showUsageStatsModal(stats) {
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Usage Statistics (Last ${stats.period_days} Days)</h3>
-                <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                <button data-action="close-stats-modal" class="text-gray-400 hover:text-gray-600">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
@@ -21096,7 +23053,7 @@ function showUsageStatsModal(stats) {
 
             <div class="flex justify-end">
                 <button
-                    onclick="this.closest('.fixed').remove()"
+                    data-action="close-stats-modal"
                     class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500"
                 >
                     Close
@@ -21104,6 +23061,13 @@ function showUsageStatsModal(stats) {
             </div>
         </div>
     `;
+
+    // Attach close listeners (inline onclick is stripped by innerHTML sanitizer)
+    modal
+        .querySelectorAll('[data-action="close-stats-modal"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () => modal.remove());
+        });
 
     document.body.appendChild(modal);
 }
@@ -21182,7 +23146,7 @@ function showTokenDetailsModal(token) {
 
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-10 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800 mb-10">
             <div class="flex items-center justify-between mb-4">
@@ -21387,6 +23351,24 @@ async function getAuthToken() {
 }
 
 /**
+ * Build auth headers for API requests.
+ * Avoids sending an empty Bearer header when token is not JS-readable (e.g., HttpOnly cookie auth).
+ */
+async function getAuthHeaders(includeJsonContentType = false) {
+    const headers = {};
+    if (includeJsonContentType) {
+        headers["Content-Type"] = "application/json";
+    }
+
+    const token = await getAuthToken();
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
+
+    return headers;
+}
+
+/**
  * Fetch helper that always includes auth context.
  * Ensures HTTP-only cookies are sent even when JS cannot read them.
  */
@@ -21421,11 +23403,51 @@ window.copyToClipboard = copyToClipboard;
 /**
  * Show user edit modal and load edit form
  */
-function showUserEditModal(userEmail) {
+async function showUserEditModal(userEmail) {
     const modal = document.getElementById("user-edit-modal");
+    const modalContent = document.getElementById("user-edit-modal-content");
+    if (!modal || !modalContent || !userEmail) {
+        return;
+    }
+
+    modalContent.innerHTML = `
+        <div class="flex items-center justify-center py-8 text-sm text-gray-500 dark:text-gray-400">
+            Loading user details...
+        </div>
+    `;
+
     if (modal) {
         modal.style.display = "block";
         modal.classList.remove("hidden");
+    }
+
+    const rootPath = window.ROOT_PATH || "";
+    const url = `${rootPath}/admin/users/${encodeURIComponent(userEmail)}/edit`;
+
+    try {
+        if (window.htmx && typeof window.htmx.ajax === "function") {
+            await window.htmx.ajax("GET", url, {
+                target: "#user-edit-modal-content",
+                swap: "innerHTML",
+            });
+            return;
+        }
+
+        const response = await fetchWithAuth(url, { method: "GET" });
+        if (!response.ok) {
+            throw new Error(
+                `Failed to load user edit form (${response.status} ${response.statusText})`,
+            );
+        }
+
+        modalContent.innerHTML = await response.text();
+    } catch (error) {
+        console.error("Error loading user edit form:", error);
+        modalContent.innerHTML = `
+            <div class="p-4 text-sm text-red-600 dark:text-red-400">
+                Failed to load user details.
+            </div>
+        `;
     }
 }
 
@@ -22399,7 +24421,7 @@ function displayPublicTeams(teams) {
                     ${team.member_count} members
                 </div>
                 <button
-                    onclick="requestToJoinTeam('${escapeHtml(team.id)}')"
+                    data-action="request-join" data-team-id="${escapeHtml(team.id)}"
                     class="px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                     Request to Join
@@ -22415,6 +24437,15 @@ function displayPublicTeams(teams) {
             ${teamsHtml}
         </div>
     `;
+
+    // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+    container
+        .querySelectorAll('[data-action="request-join"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", () =>
+                requestToJoinTeam(btn.dataset.teamId),
+            );
+        });
 }
 
 /**
@@ -22825,15 +24856,15 @@ function displayImportPreview(preview) {
         <!-- Selection Controls -->
         <div class="flex justify-between items-center mb-4">
             <div class="space-x-4">
-                <button onclick="selectAllItems()"
+                <button data-action="select-all"
                         class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline">
                     Select All
                 </button>
-                <button onclick="selectNoneItems()"
+                <button data-action="select-none"
                         class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300 underline">
                     Select None
                 </button>
-                <button onclick="selectOnlyCustom()"
+                <button data-action="select-custom"
                         class="text-sm text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 underline">
                     Custom Items Only
                 </button>
@@ -22861,7 +24892,7 @@ function displayImportPreview(preview) {
                                 <input type="checkbox"
                                        class="gateway-checkbox mt-1 mr-3"
                                        data-gateway="${gatewayName}"
-                                       onchange="updateSelectionCount()">
+                                       data-action="update-count">
                                 <div class="flex-1">
                                     <div class="font-medium text-gray-900 dark:text-white">
                                         ${bundle.gateway.name}
@@ -22914,7 +24945,7 @@ function displayImportPreview(preview) {
                                            class="item-checkbox mt-1 mr-3"
                                            data-type="${entityType}"
                                            data-id="${item.id}"
-                                           onchange="updateSelectionCount()">
+                                           data-action="update-count">
                                     <div class="flex-1">
                                         <div class="text-sm font-medium text-gray-900 dark:text-white">
                                             ${item.name}
@@ -22969,23 +25000,48 @@ function displayImportPreview(preview) {
 
         <!-- Action Buttons -->
         <div class="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
-            <button onclick="resetImportSelection()"
+            <button data-action="reset-selection"
                     class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                 🔄 Reset Selection
             </button>
 
             <div class="space-x-3">
-                <button onclick="handleSelectiveImport(true)"
+                <button data-action="preview-selected"
                         class="px-4 py-2 text-sm font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-800 rounded-md hover:bg-blue-100 dark:hover:bg-blue-800">
                     🧪 Preview Selected
                 </button>
-                <button onclick="handleSelectiveImport(false)"
+                <button data-action="import-selected"
                         class="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700">
                     ✅ Import Selected Items
                 </button>
             </div>
         </div>
     `;
+
+    // Attach event listeners (inline onclick/onchange is stripped by innerHTML sanitizer)
+    previewContainer
+        .querySelector('[data-action="select-all"]')
+        ?.addEventListener("click", () => selectAllItems());
+    previewContainer
+        .querySelector('[data-action="select-none"]')
+        ?.addEventListener("click", () => selectNoneItems());
+    previewContainer
+        .querySelector('[data-action="select-custom"]')
+        ?.addEventListener("click", () => selectOnlyCustom());
+    previewContainer
+        .querySelector('[data-action="reset-selection"]')
+        ?.addEventListener("click", () => resetImportSelection());
+    previewContainer
+        .querySelector('[data-action="preview-selected"]')
+        ?.addEventListener("click", () => handleSelectiveImport(true));
+    previewContainer
+        .querySelector('[data-action="import-selected"]')
+        ?.addEventListener("click", () => handleSelectiveImport(false));
+    previewContainer
+        .querySelectorAll('[data-action="update-count"]')
+        .forEach((cb) => {
+            cb.addEventListener("change", () => updateSelectionCount());
+        });
 
     // Store preview data and show preview section
     window.currentImportPreview = preview;
@@ -23188,11 +25244,22 @@ function resetImportSelection() {
         "gateways",
         "catalog",
     ];
+    const SECTION_HIDE_KEY_OVERRIDES = {
+        catalog: "servers",
+    };
+
+    function isSectionHidden(sectionName) {
+        const hideKey = SECTION_HIDE_KEY_OVERRIDES[sectionName] || sectionName;
+        return getUiHiddenSections().has(hideKey);
+    }
 
     // Save initial markup on first full load so we can restore exactly if needed
     document.addEventListener("DOMContentLoaded", () => {
         window.__initialSectionMarkup = window.__initialSectionMarkup || {};
         SECTION_NAMES.forEach((s) => {
+            if (isSectionHidden(s)) {
+                return;
+            }
             const el = document.getElementById(`${s}-section`);
             if (el && !(s in window.__initialSectionMarkup)) {
                 // store the exact innerHTML produced by the server initially
@@ -23372,7 +25439,7 @@ function resetImportSelection() {
             "prompts",
             "servers",
             "gateways",
-        ];
+        ].filter((sectionName) => !isSectionHidden(sectionName));
 
         sections.forEach((section) => {
             const header = document.querySelector(
@@ -23424,7 +25491,7 @@ function resetImportSelection() {
             "prompts",
             "servers",
             "gateways",
-        ];
+        ].filter((sectionName) => !isSectionHidden(sectionName));
 
         // ensure there is a ROOT_PATH set
         if (!window.ROOT_PATH) {
@@ -23724,9 +25791,9 @@ function initializePluginFunctions() {
     function updateBadgeHighlighting(type, value) {
         // Define selectors for each type
         const selectors = {
-            hook: "[onclick^='filterByHook']",
-            tag: "[onclick^='filterByTag']",
-            author: "[onclick^='filterByAuthor']",
+            hook: "[data-filter-hook]",
+            tag: "[data-filter-tag]",
+            author: "[data-filter-author]",
         };
 
         const selector = selectors[type];
@@ -23739,12 +25806,16 @@ function initializePluginFunctions() {
 
         badges.forEach((badge) => {
             // Check if this is the "All" badge (empty value)
-            const isAllBadge = badge.getAttribute("onclick").includes("('')");
+            const isAllBadge =
+                badge.dataset.filterHook === "" ||
+                badge.dataset.filterTag === "" ||
+                badge.dataset.filterAuthor === "";
 
             // Check if this badge matches the selected value
-            const badgeValue = badge
-                .getAttribute("onclick")
-                .match(/'([^']*)'/)?.[1];
+            const badgeValue =
+                badge.dataset.filterHook ??
+                badge.dataset.filterTag ??
+                badge.dataset.filterAuthor;
             const isSelected =
                 value === ""
                     ? isAllBadge
@@ -23862,7 +25933,8 @@ function initializePluginFunctions() {
                             <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
                             <p class="mt-1">
                                 <span class="px-2 py-1 text-xs rounded-full ${
-                                    plugin.mode === "enforce"
+                                    plugin.mode === "enforce" ||
+                                    plugin.mode === "enforce_ignore_error"
                                         ? "bg-red-100 text-red-800"
                                         : plugin.mode === "permissive"
                                           ? "bg-yellow-100 text-yellow-800"
@@ -23932,6 +26004,44 @@ function initializePluginFunctions() {
             modal.classList.add("hidden");
         }
     };
+
+    // Single listener on the filter section — catches input/change from all child controls
+    const filtersSection = document.getElementById("plugin-filters");
+    if (filtersSection) {
+        filtersSection.addEventListener("input", () => window.filterPlugins());
+        filtersSection.addEventListener("change", () => window.filterPlugins());
+    }
+
+    // Single delegated click/keydown listener for badges, View Details, and modal close.
+    // Returns true if an action was dispatched, false otherwise.
+    function dispatchPluginAction(target) {
+        const hookEl = target.closest("[data-filter-hook]");
+        const tagEl = target.closest("[data-filter-tag]");
+        const authorEl = target.closest("[data-filter-author]");
+        const detailEl = target.closest("[data-show-plugin]");
+        const closeEl = target.closest("[data-close-plugin-modal]");
+
+        if (hookEl) window.filterByHook(hookEl.dataset.filterHook);
+        else if (tagEl) window.filterByTag(tagEl.dataset.filterTag);
+        else if (authorEl) window.filterByAuthor(authorEl.dataset.filterAuthor);
+        else if (detailEl) {
+            window.showPluginDetails(detailEl.dataset.showPlugin);
+        } else if (closeEl) window.closePluginDetails();
+        else return false;
+        return true;
+    }
+
+    const pluginsPanel = document.getElementById("plugins-panel");
+    if (pluginsPanel) {
+        pluginsPanel.addEventListener("click", (e) =>
+            dispatchPluginAction(e.target),
+        );
+        pluginsPanel.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            if (!dispatchPluginAction(e.target)) return;
+            e.preventDefault();
+        });
+    }
 }
 
 // Initialize plugin functions if plugins panel exists
@@ -24283,22 +26393,17 @@ async function loadVirtualServersForChat() {
                 <div class="server-item relative p-3 border rounded-lg cursor-pointer transition-colors
                     ${llmChatState.selectedServerId === server.id ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900" : "border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600"}
                     ${!isActive ? "opacity-50" : ""}"
-                    onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
+                    data-action="select-server" data-server-id="${server.id}" data-server-name="${escapeHtml(server.name)}" data-is-active="${isActive}" data-requires-token="${requiresToken}" data-visibility="${visibility}"
                     style="position: relative;">
 
                     ${
                         requiresToken
                             ? `
-                        <div class="tooltip"
-                        style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px;
-                                background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px;
-                                padding: 4px 20px; /* More horizontal width */
-                                opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in;
-                                z-index: 1000;"> <!-- Added higher z-index to ensure it's above other elements -->
+                        <div data-role="tooltip"
+                             class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 bg-gray-500 text-white text-[10px] rounded py-1 px-5 z-30 transition-opacity duration-200 ease-in pointer-events-none"
+                             style="opacity: 0; visibility: hidden;">
                         ${tooltipMessage}
-                        <div style="position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%);
-                                    width: 0; height: 0; border-left: 5px solid transparent;
-                                    border-right: 5px solid transparent; border-top: 5px solid #6B7280;"></div>
+                        <div class="absolute left-1/2 -translate-x-1/2 -bottom-[5px] w-0 h-0 border-l-[5px] border-r-[5px] border-t-[5px] border-l-transparent border-r-transparent border-t-gray-500"></div>
                         </div>`
                             : ""
                     }
@@ -24322,7 +26427,7 @@ async function loadVirtualServersForChat() {
         // Add hover event to show tooltip immediately on hover
         const serverItems = document.querySelectorAll(".server-item");
         serverItems.forEach((item) => {
-            const tooltip = item.querySelector(".tooltip");
+            const tooltip = item.querySelector('[data-role="tooltip"]');
             item.addEventListener("mouseenter", () => {
                 if (tooltip) {
                     tooltip.style.opacity = "1"; // Make tooltip visible
@@ -24336,6 +26441,21 @@ async function loadVirtualServersForChat() {
                 }
             });
         });
+
+        // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+        serversList
+            .querySelectorAll('[data-action="select-server"]')
+            .forEach((item) => {
+                item.addEventListener("click", () => {
+                    selectServerForChat(
+                        item.dataset.serverId,
+                        item.dataset.serverName,
+                        item.dataset.isActive === "true",
+                        item.dataset.requiresToken === "true",
+                        item.dataset.visibility,
+                    );
+                });
+            });
     } catch (error) {
         console.error("Error loading servers for chat:", error);
         serversList.innerHTML =
@@ -24348,7 +26468,7 @@ async function loadVirtualServersForChat() {
 /**
  * Select a server for chat
  */
-// eslint-disable-next-line no-unused-vars
+
 async function selectServerForChat(
     serverId,
     serverName,
@@ -24409,7 +26529,7 @@ async function selectServerForChat(
     // Update UI to show selected server in dropdown list
     const serverItems = document.querySelectorAll(".server-item");
     serverItems.forEach((item) => {
-        if (item.onclick.toString().includes(serverId)) {
+        if (item.dataset.serverId === serverId) {
             item.classList.add(
                 "border-indigo-500",
                 "bg-indigo-50",
@@ -25077,7 +27197,7 @@ function showConnectionSuccess() {
             tools.forEach((toolName, index) => {
                 const pill = document.createElement("span");
                 pill.className =
-                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105";
+                    "inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105";
 
                 // Tool icon
                 const icon = document.createElementNS(
@@ -26160,13 +28280,21 @@ function initializeChatInputResize() {
  */
 async function serverSideToolSearch(searchTerm) {
     const container = document.getElementById("associatedTools");
-    const noResultsMessage = safeGetElement("noToolsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryTools", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedTools",
+            "noToolsMessage",
+            "searchQueryTools",
+            "tool",
+        );
 
     if (!container) {
         console.error("associatedTools container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -26175,101 +28303,18 @@ async function serverSideToolSearch(searchTerm) {
     const gatewayIdParam =
         selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
 
-    console.log(
-        `[Tool Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
-    );
-
-    // --- DOM instrumentation for debugging replacement during searches ---
-    // Assign a stable debug id to the container (persists through innerHTML swaps
-    // but will change if the element is replaced). Observe the parent node for
-    // childList mutations and log if the container is removed or replaced.
-    let _domInstrObserver = null;
-    let _domInstrId = null;
-    try {
-        if (!container.dataset.debugNodeId) {
-            container.dataset.debugNodeId = `dbg-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-        }
-        _domInstrId = container.dataset.debugNodeId;
-        console.info(
-            `[DOM-INSTRUMENT] serverSideToolSearch start for #associatedTools debugId=${_domInstrId} searchTerm='${searchTerm}'`,
-        );
-
-        const parentNode = container.parentNode;
-        if (parentNode) {
-            _domInstrObserver = new MutationObserver((mutationsList) => {
-                for (const mut of mutationsList) {
-                    if (mut.type === "childList") {
-                        const current =
-                            document.getElementById("associatedTools");
-                        if (!current) {
-                            console.warn(
-                                `[DOM-INSTRUMENT] associatedTools element REMOVED during search (original debugId=${_domInstrId})`,
-                                mut,
-                            );
-                        } else {
-                            const curId = current.dataset.debugNodeId || null;
-                            if (curId !== _domInstrId) {
-                                console.warn(
-                                    `[DOM-INSTRUMENT] associatedTools element REPLACED during search. original=${_domInstrId} current=${curId}`,
-                                    mut,
-                                );
-                            }
-                        }
-                    }
-                }
-            });
-            try {
-                _domInstrObserver.observe(parentNode, { childList: true });
-            } catch (e) {
-                console.error(
-                    "[DOM-INSTRUMENT] Failed to observe parent node for associatedTools:",
-                    e,
-                );
+    // Flush current DOM state into the persistent selection store before clearing the container
+    const toolSel = getEditSelections("associatedTools");
+    container
+        .querySelectorAll('input[name="associatedTools"]')
+        .forEach((cb) => {
+            const value = String(cb.value);
+            if (cb.checked) {
+                toolSel.add(value);
+            } else {
+                toolSel.delete(value);
             }
-        }
-    } catch (e) {
-        console.error("[DOM-INSTRUMENT] setup error:", e);
-    }
-
-    // Persist current selections to window fallback AND data attribute before we replace/clear the container
-    let persistedToolIds = [];
-    try {
-        // First get from data attribute if it exists
-        const dataAttr = container.getAttribute("data-selected-tools");
-        if (dataAttr) {
-            try {
-                const parsed = JSON.parse(dataAttr);
-                if (Array.isArray(parsed)) {
-                    persistedToolIds = parsed.slice();
-                }
-            } catch (e) {
-                console.error("Error parsing data-selected-tools:", e);
-            }
-        }
-
-        // Then merge with currently checked items (important for search results)
-        const currentChecked = Array.from(
-            container.querySelectorAll('input[type="checkbox"]:checked'),
-        ).map((cb) => cb.value);
-        const merged = new Set([...persistedToolIds, ...currentChecked]);
-        persistedToolIds = Array.from(merged);
-
-        // Update both the window fallback and the container attribute
-        window._selectedAssociatedTools = persistedToolIds.slice();
-        if (persistedToolIds.length > 0) {
-            container.setAttribute(
-                "data-selected-tools",
-                JSON.stringify(persistedToolIds),
-            );
-        }
-
-        console.log(
-            `[Tool Search] Persisted ${persistedToolIds.length} tool selections before search:`,
-            persistedToolIds,
-        );
-    } catch (e) {
-        console.error("Error capturing current selections before search:", e);
-    }
+        });
 
     // Show loading state
     container.innerHTML = `
@@ -26285,9 +28330,21 @@ async function serverSideToolSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default tool list with gateway filter
         try {
-            const toolsUrl = gatewayIdParam
+            let toolsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
+            const viewPublicCb = document.getElementById(
+                "add-server-view-public",
+            );
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
+                toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                toolsUrl += "&include_public=true";
+            }
 
             console.log(
                 `[Tool Search] Loading default tools with URL: ${toolsUrl}`,
@@ -26297,60 +28354,8 @@ async function serverSideToolSearch(searchTerm) {
             if (response.ok) {
                 const html = await response.text();
 
-                // Preserve the data-selected-tools attribute before replacing innerHTML
-                let persistedToolIds = [];
-                try {
-                    const dataAttr = container.getAttribute(
-                        "data-selected-tools",
-                    );
-                    if (dataAttr) {
-                        try {
-                            const parsed = JSON.parse(dataAttr);
-                            if (Array.isArray(parsed)) {
-                                persistedToolIds = parsed.slice();
-                            }
-                        } catch (e) {
-                            console.error(
-                                "Error parsing data-selected-tools before clearing search:",
-                                e,
-                            );
-                        }
-                    }
-
-                    // Merge with currently checked items
-                    const currentChecked = Array.from(
-                        container.querySelectorAll(
-                            'input[type="checkbox"]:checked',
-                        ),
-                    ).map((cb) => cb.value);
-                    const merged = new Set([
-                        ...persistedToolIds,
-                        ...currentChecked,
-                    ]);
-                    persistedToolIds = Array.from(merged);
-
-                    // Update window fallback
-                    window._selectedAssociatedTools = persistedToolIds.slice();
-                } catch (e) {
-                    console.error(
-                        "Error capturing current tool selections before clearing search:",
-                        e,
-                    );
-                }
-
                 container.innerHTML = html;
 
-                // Immediately restore the data-selected-tools attribute after innerHTML replacement
-                if (persistedToolIds.length > 0) {
-                    container.setAttribute(
-                        "data-selected-tools",
-                        JSON.stringify(persistedToolIds),
-                    );
-                }
-
-                // If the container has been re-rendered server-side and our
-                // `data-selected-tools` attribute was lost, restore from the
-                // global fallback `window._selectedAssociatedTools`.
                 try {
                     updateToolMapping(container);
 
@@ -26364,40 +28369,15 @@ async function serverSideToolSearch(searchTerm) {
                         "clearAllToolsBtn",
                     );
 
-                    const dataAttr = container.getAttribute(
-                        "data-selected-tools",
-                    );
-                    let selectedIds = null;
-                    if (dataAttr) {
-                        try {
-                            selectedIds = JSON.parse(dataAttr);
-                        } catch (e) {
-                            console.error(
-                                "Error parsing server data-selected-tools:",
-                                e,
-                            );
-                        }
-                    }
-
-                    if (
-                        (!selectedIds ||
-                            !Array.isArray(selectedIds) ||
-                            selectedIds.length === 0) &&
-                        Array.isArray(window._selectedAssociatedTools)
-                    ) {
-                        selectedIds = window._selectedAssociatedTools.slice();
-                    }
-
-                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                    if (toolSel.size > 0) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedTools"]',
                         );
                         checkboxes.forEach((cb) => {
-                            if (selectedIds.includes(cb.value)) {
+                            if (toolSel.has(String(cb.value))) {
                                 cb.checked = true;
                             }
                         });
-
                         const firstCb = container.querySelector(
                             'input[type="checkbox"]',
                         );
@@ -26439,8 +28419,15 @@ async function serverSideToolSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
+        const addViewPublicCb = document.getElementById(
+            "add-server-view-public",
+        );
         if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
@@ -26484,59 +28471,6 @@ async function serverSideToolSearch(searchTerm) {
             });
 
             container.innerHTML = searchResultsHtml;
-            // If server-side didn't provide `data-selected-tools` (or provided
-            // an empty array), restore/merge from the in-memory fallback so
-            // the attribute isn't left empty and selectors can pick it up.
-            try {
-                const existingAttr = container.getAttribute(
-                    "data-selected-tools",
-                );
-                let existingIds = null;
-                if (existingAttr) {
-                    try {
-                        existingIds = JSON.parse(existingAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing existing data-selected-tools after search insert:",
-                            e,
-                        );
-                    }
-                }
-
-                if (
-                    (!existingIds ||
-                        !Array.isArray(existingIds) ||
-                        existingIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedTools) &&
-                    window._selectedAssociatedTools.length > 0
-                ) {
-                    // Write a merged view back to the container attribute so
-                    // subsequent init/observers see the selection
-                    container.setAttribute(
-                        "data-selected-tools",
-                        JSON.stringify(window._selectedAssociatedTools.slice()),
-                    );
-                } else if (
-                    Array.isArray(existingIds) &&
-                    Array.isArray(window._selectedAssociatedTools) &&
-                    window._selectedAssociatedTools.length > 0
-                ) {
-                    // Merge the two sets to avoid losing either
-                    const merged = new Set([
-                        ...(existingIds || []),
-                        ...window._selectedAssociatedTools,
-                    ]);
-                    container.setAttribute(
-                        "data-selected-tools",
-                        JSON.stringify(Array.from(merged)),
-                    );
-                }
-            } catch (e) {
-                console.error(
-                    "Error restoring data-selected-tools attribute after inserting search results:",
-                    e,
-                );
-            }
 
             // Update tool mapping with search results
             updateToolMapping(container);
@@ -26552,59 +28486,23 @@ async function serverSideToolSearch(searchTerm) {
                     "clearAllToolsBtn",
                 );
 
-                // Restore any previously selected tool IDs stored on the container
-                try {
-                    const dataAttr = container.getAttribute(
-                        "data-selected-tools",
+                if (toolSel.size > 0) {
+                    const checkboxes = container.querySelectorAll(
+                        'input[name="associatedTools"]',
                     );
-                    let selectedIds = null;
-                    if (dataAttr) {
-                        try {
-                            selectedIds = JSON.parse(dataAttr);
-                        } catch (e) {
-                            console.error(
-                                "Error parsing data-selected-tools:",
-                                e,
-                            );
+                    checkboxes.forEach((cb) => {
+                        if (toolSel.has(String(cb.value))) {
+                            cb.checked = true;
                         }
-                    }
-
-                    // If parsed attribute is missing or an empty array, fall back
-                    // to the in-memory `window._selectedAssociatedTools` saved earlier.
-                    if (
-                        (!selectedIds ||
-                            !Array.isArray(selectedIds) ||
-                            selectedIds.length === 0) &&
-                        Array.isArray(window._selectedAssociatedTools)
-                    ) {
-                        selectedIds = window._selectedAssociatedTools.slice();
-                    }
-
-                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
-                        const checkboxes = container.querySelectorAll(
-                            'input[name="associatedTools"]',
-                        );
-                        checkboxes.forEach((cb) => {
-                            if (selectedIds.includes(cb.value)) {
-                                cb.checked = true;
-                            }
-                        });
-
-                        // Trigger update so pills/counts refresh
-                        const firstCb = container.querySelector(
-                            'input[type="checkbox"]',
-                        );
-                        if (firstCb) {
-                            firstCb.dispatchEvent(
-                                new Event("change", { bubbles: true }),
-                            );
-                        }
-                    }
-                } catch (e) {
-                    console.error(
-                        "Error restoring data-selected-tools after search:",
-                        e,
+                    });
+                    const firstCb = container.querySelector(
+                        'input[type="checkbox"]',
                     );
+                    if (firstCb) {
+                        firstCb.dispatchEvent(
+                            new Event("change", { bubbles: true }),
+                        );
+                    }
                 }
             } catch (e) {
                 console.error(
@@ -26620,6 +28518,7 @@ async function serverSideToolSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -26710,13 +28609,21 @@ function updateResourceMapping(container) {
  */
 async function serverSidePromptSearch(searchTerm) {
     const container = document.getElementById("associatedPrompts");
-    const noResultsMessage = safeGetElement("noPromptsMessage", true);
-    const searchQuerySpan = safeGetElement("searchPromptsQuery", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedPrompts",
+            "noPromptsMessage",
+            "searchPromptsQuery",
+            "prompt",
+        );
 
     if (!container) {
         console.error("associatedPrompts container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -26725,33 +28632,18 @@ async function serverSidePromptSearch(searchTerm) {
     const gatewayIdParam =
         selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
 
-    console.log(
-        `[Prompt Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
-    );
-
-    // Persist current selections to window fallback before we replace/clear the container
-    try {
-        const currentChecked = Array.from(
-            container.querySelectorAll('input[type="checkbox"]:checked'),
-        ).map((cb) => cb.value);
-        if (
-            !Array.isArray(window._selectedAssociatedPrompts) ||
-            window._selectedAssociatedPrompts.length === 0
-        ) {
-            window._selectedAssociatedPrompts = currentChecked.slice();
-        } else {
-            const merged = new Set([
-                ...(window._selectedAssociatedPrompts || []),
-                ...currentChecked,
-            ]);
-            window._selectedAssociatedPrompts = Array.from(merged);
-        }
-    } catch (e) {
-        console.error(
-            "Error capturing current prompt selections before search:",
-            e,
-        );
-    }
+    // Flush current DOM state into the persistent selection store before clearing the container
+    const promptSel = getEditSelections("associatedPrompts");
+    container
+        .querySelectorAll('input[name="associatedPrompts"]')
+        .forEach((cb) => {
+            const value = String(cb.value);
+            if (cb.checked) {
+                promptSel.add(value);
+            } else {
+                promptSel.delete(value);
+            }
+        });
 
     // Show loading state
     container.innerHTML = `
@@ -26767,9 +28659,21 @@ async function serverSidePromptSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompt selector with gateway filter
         try {
-            const promptsUrl = gatewayIdParam
+            let promptsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
+            const viewPublicCb = document.getElementById(
+                "add-server-view-public",
+            );
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
+                promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                promptsUrl += "&include_public=true";
+            }
 
             console.log(
                 `[Prompt Search] Loading default prompts with URL: ${promptsUrl}`,
@@ -26780,39 +28684,15 @@ async function serverSidePromptSearch(searchTerm) {
                 const html = await response.text();
                 container.innerHTML = html;
 
+                // Populate prompt mapping for pill display names
+                updatePromptMapping(container);
+
                 // Hide no results message
                 if (noResultsMessage) {
                     noResultsMessage.style.display = "none";
                 }
 
                 try {
-                    // Update mapping and ensure persisted selections are applied
-                    // Initialize prompt mapping if needed
-                    // If the server did not supply `data-selected-prompts`, restore from fallback
-                    const dataAttr = container.getAttribute(
-                        "data-selected-prompts",
-                    );
-                    let selectedIds = null;
-                    if (dataAttr) {
-                        try {
-                            selectedIds = JSON.parse(dataAttr);
-                        } catch (e) {
-                            console.error(
-                                "Error parsing server data-selected-prompts:",
-                                e,
-                            );
-                        }
-                    }
-
-                    if (
-                        (!selectedIds ||
-                            !Array.isArray(selectedIds) ||
-                            selectedIds.length === 0) &&
-                        Array.isArray(window._selectedAssociatedPrompts)
-                    ) {
-                        selectedIds = window._selectedAssociatedPrompts.slice();
-                    }
-
                     initPromptSelect(
                         "associatedPrompts",
                         "selectedPromptsPills",
@@ -26822,12 +28702,12 @@ async function serverSidePromptSearch(searchTerm) {
                         "clearAllPromptsBtn",
                     );
 
-                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                    if (promptSel.size > 0) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedPrompts"]',
                         );
                         checkboxes.forEach((cb) => {
-                            if (selectedIds.includes(cb.value)) {
+                            if (promptSel.has(String(cb.value))) {
                                 cb.checked = true;
                             }
                         });
@@ -26867,8 +28747,15 @@ async function serverSidePromptSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
+        const addViewPublicCb = document.getElementById(
+            "add-server-view-public",
+        );
         if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
@@ -26908,58 +28795,10 @@ async function serverSidePromptSearch(searchTerm) {
                 `;
             });
 
-            // Before initializing, ensure any persisted selections are merged into the container
-            try {
-                const existingAttr = container.getAttribute(
-                    "data-selected-prompts",
-                );
-                let existingIds = null;
-                if (existingAttr) {
-                    try {
-                        existingIds = JSON.parse(existingAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing existing data-selected-prompts after search insert:",
-                            e,
-                        );
-                    }
-                }
-
-                if (
-                    (!existingIds ||
-                        !Array.isArray(existingIds) ||
-                        existingIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedPrompts) &&
-                    window._selectedAssociatedPrompts.length > 0
-                ) {
-                    container.setAttribute(
-                        "data-selected-prompts",
-                        JSON.stringify(
-                            window._selectedAssociatedPrompts.slice(),
-                        ),
-                    );
-                } else if (
-                    Array.isArray(existingIds) &&
-                    Array.isArray(window._selectedAssociatedPrompts) &&
-                    window._selectedAssociatedPrompts.length > 0
-                ) {
-                    const merged = new Set([
-                        ...(existingIds || []),
-                        ...window._selectedAssociatedPrompts,
-                    ]);
-                    container.setAttribute(
-                        "data-selected-prompts",
-                        JSON.stringify(Array.from(merged)),
-                    );
-                }
-            } catch (e) {
-                console.error(
-                    "Error restoring data-selected-prompts attribute after inserting search results:",
-                    e,
-                );
-            }
-
             container.innerHTML = searchResultsHtml;
+
+            // Populate prompt mapping for pill display names
+            updatePromptMapping(container);
 
             // Initialize prompt select mapping
             initPromptSelect(
@@ -26971,11 +28810,31 @@ async function serverSidePromptSearch(searchTerm) {
                 "clearAllPromptsBtn",
             );
 
+            if (promptSel.size > 0) {
+                const checkboxes = container.querySelectorAll(
+                    'input[name="associatedPrompts"]',
+                );
+                checkboxes.forEach((cb) => {
+                    if (promptSel.has(String(cb.value))) {
+                        cb.checked = true;
+                    }
+                });
+                const firstCb = container.querySelector(
+                    'input[type="checkbox"]',
+                );
+                if (firstCb) {
+                    firstCb.dispatchEvent(
+                        new Event("change", { bubbles: true }),
+                    );
+                }
+            }
+
             if (noResultsMessage) {
                 noResultsMessage.style.display = "none";
             }
         } else {
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -26998,13 +28857,21 @@ async function serverSidePromptSearch(searchTerm) {
  */
 async function serverSideResourceSearch(searchTerm) {
     const container = document.getElementById("associatedResources");
-    const noResultsMessage = safeGetElement("noResourcesMessage", true);
-    const searchQuerySpan = safeGetElement("searchResourcesQuery", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "associatedResources",
+            "noResourcesMessage",
+            "searchResourcesQuery",
+            "resource",
+        );
 
     if (!container) {
         console.error("associatedResources container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27013,33 +28880,18 @@ async function serverSideResourceSearch(searchTerm) {
     const gatewayIdParam =
         selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
 
-    console.log(
-        `[Resource Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
-    );
-
-    // Persist current selections to window fallback before we replace/clear the container
-    try {
-        const currentChecked = Array.from(
-            container.querySelectorAll('input[type="checkbox"]:checked'),
-        ).map((cb) => cb.value);
-        if (
-            !Array.isArray(window._selectedAssociatedResources) ||
-            window._selectedAssociatedResources.length === 0
-        ) {
-            window._selectedAssociatedResources = currentChecked.slice();
-        } else {
-            const merged = new Set([
-                ...(window._selectedAssociatedResources || []),
-                ...currentChecked,
-            ]);
-            window._selectedAssociatedResources = Array.from(merged);
-        }
-    } catch (e) {
-        console.error(
-            "Error capturing current resource selections before search:",
-            e,
-        );
-    }
+    // Flush current DOM state into the persistent selection store before clearing the container
+    const resSel = getEditSelections("associatedResources");
+    container
+        .querySelectorAll('input[name="associatedResources"]')
+        .forEach((cb) => {
+            const value = String(cb.value);
+            if (cb.checked) {
+                resSel.add(value);
+            } else {
+                resSel.delete(value);
+            }
+        });
 
     // Show loading state
     container.innerHTML = `
@@ -27055,9 +28907,21 @@ async function serverSideResourceSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default resource selector with gateway filter
         try {
-            const resourcesUrl = gatewayIdParam
+            let resourcesUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
+            const viewPublicCb = document.getElementById(
+                "add-server-view-public",
+            );
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
+                resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                resourcesUrl += "&include_public=true";
+            }
 
             console.log(
                 `[Resource Search] Loading default resources with URL: ${resourcesUrl}`,
@@ -27067,41 +28931,12 @@ async function serverSideResourceSearch(searchTerm) {
             if (response.ok) {
                 const html = await response.text();
 
-                // Persist current selections to window fallback before we replace/clear the container
-                try {
-                    const currentChecked = Array.from(
-                        container.querySelectorAll(
-                            'input[type="checkbox"]:checked',
-                        ),
-                    ).map((cb) => cb.value);
-                    if (
-                        !Array.isArray(window._selectedAssociatedResources) ||
-                        window._selectedAssociatedResources.length === 0
-                    ) {
-                        window._selectedAssociatedResources =
-                            currentChecked.slice();
-                    } else {
-                        const merged = new Set([
-                            ...(window._selectedAssociatedResources || []),
-                            ...currentChecked,
-                        ]);
-                        window._selectedAssociatedResources =
-                            Array.from(merged);
-                    }
-                } catch (e) {
-                    console.error(
-                        "Error capturing current resource selections before search:",
-                        e,
-                    );
-                }
-
                 container.innerHTML = html;
 
-                // If the container has been re-rendered server-side and our
-                // `data-selected-resources` attribute was lost, restore from the
-                // global fallback `window._selectedAssociatedResources`.
+                // Populate resource mapping for pill display names
+                updateResourceMapping(container);
+
                 try {
-                    // Initialize resource mapping if needed
                     initResourceSelect(
                         "associatedResources",
                         "selectedResourcesPills",
@@ -27111,41 +28946,15 @@ async function serverSideResourceSearch(searchTerm) {
                         "clearAllResourcesBtn",
                     );
 
-                    const dataAttr = container.getAttribute(
-                        "data-selected-resources",
-                    );
-                    let selectedIds = null;
-                    if (dataAttr) {
-                        try {
-                            selectedIds = JSON.parse(dataAttr);
-                        } catch (e) {
-                            console.error(
-                                "Error parsing server data-selected-resources:",
-                                e,
-                            );
-                        }
-                    }
-
-                    if (
-                        (!selectedIds ||
-                            !Array.isArray(selectedIds) ||
-                            selectedIds.length === 0) &&
-                        Array.isArray(window._selectedAssociatedResources)
-                    ) {
-                        selectedIds =
-                            window._selectedAssociatedResources.slice();
-                    }
-
-                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                    if (resSel.size > 0) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedResources"]',
                         );
                         checkboxes.forEach((cb) => {
-                            if (selectedIds.includes(cb.value)) {
+                            if (resSel.has(String(cb.value))) {
                                 cb.checked = true;
                             }
                         });
-
                         const firstCb = container.querySelector(
                             'input[type="checkbox"]',
                         );
@@ -27182,8 +28991,15 @@ async function serverSideResourceSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
+        const addViewPublicCb = document.getElementById(
+            "add-server-view-public",
+        );
         if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (addViewPublicCb && addViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
@@ -27221,58 +29037,8 @@ async function serverSideResourceSearch(searchTerm) {
 
             container.innerHTML = searchResultsHtml;
 
-            // Before initializing, ensure any persisted selections are merged into the container
-            try {
-                const existingAttr = container.getAttribute(
-                    "data-selected-resources",
-                );
-                let existingIds = null;
-                if (existingAttr) {
-                    try {
-                        existingIds = JSON.parse(existingAttr);
-                    } catch (e) {
-                        console.error(
-                            "Error parsing existing data-selected-resources after search insert:",
-                            e,
-                        );
-                    }
-                }
-
-                if (
-                    (!existingIds ||
-                        !Array.isArray(existingIds) ||
-                        existingIds.length === 0) &&
-                    Array.isArray(window._selectedAssociatedResources) &&
-                    window._selectedAssociatedResources.length > 0
-                ) {
-                    container.setAttribute(
-                        "data-selected-resources",
-                        JSON.stringify(
-                            window._selectedAssociatedResources.slice(),
-                        ),
-                    );
-                } else if (
-                    Array.isArray(existingIds) &&
-                    Array.isArray(window._selectedAssociatedResources) &&
-                    window._selectedAssociatedResources.length > 0
-                ) {
-                    const merged = new Set([
-                        ...(existingIds || []),
-                        ...window._selectedAssociatedResources,
-                    ]);
-                    container.setAttribute(
-                        "data-selected-resources",
-                        JSON.stringify(Array.from(merged)),
-                    );
-                }
-            } catch (e) {
-                console.error(
-                    "Error restoring data-selected-resources attribute after inserting search results:",
-                    e,
-                );
-            }
-
-            container.innerHTML = searchResultsHtml;
+            // Populate resource mapping for pill display names
+            updateResourceMapping(container);
 
             // Initialize Resource select mapping
             initResourceSelect(
@@ -27284,11 +29050,31 @@ async function serverSideResourceSearch(searchTerm) {
                 "clearAllResourcesBtn",
             );
 
+            if (resSel.size > 0) {
+                const checkboxes = container.querySelectorAll(
+                    'input[name="associatedResources"]',
+                );
+                checkboxes.forEach((cb) => {
+                    if (resSel.has(String(cb.value))) {
+                        cb.checked = true;
+                    }
+                });
+                const firstCb = container.querySelector(
+                    'input[type="checkbox"]',
+                );
+                if (firstCb) {
+                    firstCb.dispatchEvent(
+                        new Event("change", { bubbles: true }),
+                    );
+                }
+            }
+
             if (noResultsMessage) {
                 noResultsMessage.style.display = "none";
             }
         } else {
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27311,13 +29097,21 @@ async function serverSideResourceSearch(searchTerm) {
  */
 async function serverSideEditToolSearch(searchTerm) {
     const container = document.getElementById("edit-server-tools");
-    const noResultsMessage = safeGetElement("noEditToolsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditTools", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-tools",
+            "noEditToolsMessage",
+            "searchQueryEditTools",
+            "tool",
+        );
 
     if (!container) {
         console.error("edit-server-tools container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27325,10 +29119,6 @@ async function serverSideEditToolSearch(searchTerm) {
         : [];
     const gatewayIdParam =
         selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
-
-    console.log(
-        `[Edit Tool Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
-    );
 
     // Persist current selections before we replace/clear the container
     let serverToolsData = null;
@@ -27340,15 +29130,21 @@ async function serverSideEditToolSearch(searchTerm) {
             serverToolsData = dataAttr;
         }
 
-        // Also capture currently checked items (important for search results)
+        // Flush DOM state into the persistent store (add-only — unchecks are
+        // handled by ensureEditStoreListeners() event delegation)
+        const toolSel = getEditSelections("edit-server-tools");
+        container
+            .querySelectorAll('input[name="associatedTools"]')
+            .forEach((cb) => {
+                if (cb.checked) {
+                    toolSel.add(String(cb.value));
+                }
+            });
+
+        // Also capture currently checked items (for backward compat with clear-search path)
         currentCheckedTools = Array.from(
             container.querySelectorAll('input[type="checkbox"]:checked'),
         ).map((cb) => cb.value);
-
-        console.log(
-            `[Edit Tool Search] Persisted ${currentCheckedTools.length} checked tools before search:`,
-            currentCheckedTools,
-        );
     } catch (e) {
         console.error(
             "Error preserving selections before edit tool search:",
@@ -27370,13 +29166,21 @@ async function serverSideEditToolSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default tool selector partial with gateway filter
         try {
-            const toolsUrl = gatewayIdParam
+            let toolsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-            console.log(
-                `[Edit Tool Search] Loading default tools with URL: ${toolsUrl}`,
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
+            const viewPublicCb = document.getElementById(
+                "edit-server-view-public",
             );
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
+                toolsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                toolsUrl += "&include_public=true";
+            }
 
             const response = await fetch(toolsUrl);
             if (response.ok) {
@@ -27400,40 +29204,34 @@ async function serverSideEditToolSearch(searchTerm) {
                 // Update tool mapping
                 updateToolMapping(container);
 
-                // Restore checked state for any tools already associated with the server
-                // PLUS any tools that were checked during the search
+                // Restore checked state from persistent store + data-server-tools + search-checked
                 try {
+                    const persistedToolIds =
+                        getEditSelections("edit-server-tools");
                     const dataAttr =
                         container.getAttribute("data-server-tools");
-                    const toolsToCheck = new Set();
+                    const serverToolNames = new Set();
 
-                    // Add server-associated tools
                     if (dataAttr) {
                         const serverTools = JSON.parse(dataAttr);
-                        if (
-                            Array.isArray(serverTools) &&
-                            serverTools.length > 0
-                        ) {
+                        if (Array.isArray(serverTools)) {
                             serverTools.forEach((t) =>
-                                toolsToCheck.add(String(t)),
+                                serverToolNames.add(String(t)),
                             );
                         }
                     }
 
-                    // Add tools that were checked during search
+                    // Also include tools checked during search (backward compat)
                     if (
                         Array.isArray(currentCheckedTools) &&
                         currentCheckedTools.length > 0
                     ) {
                         currentCheckedTools.forEach((t) =>
-                            toolsToCheck.add(String(t)),
-                        );
-                        console.log(
-                            `[Edit Tool Search] Restoring ${currentCheckedTools.length} tools checked during search`,
+                            persistedToolIds.add(String(t)),
                         );
                     }
 
-                    if (toolsToCheck.size > 0) {
+                    if (persistedToolIds.size > 0 || serverToolNames.size > 0) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedTools"]',
                         );
@@ -27444,10 +29242,12 @@ async function serverSideEditToolSearch(searchTerm) {
                                 (window.toolMapping &&
                                     window.toolMapping[cb.value]);
                             if (
-                                toolsToCheck.has(toolId) ||
-                                (toolName && toolsToCheck.has(String(toolName)))
+                                persistedToolIds.has(toolId) ||
+                                (toolName &&
+                                    serverToolNames.has(String(toolName)))
                             ) {
                                 cb.checked = true;
+                                persistedToolIds.add(toolId);
                             }
                         });
 
@@ -27498,14 +29298,17 @@ async function serverSideEditToolSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
+        const editViewPublicCb = document.getElementById(
+            "edit-server-view-public",
+        );
         if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
         }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
+        }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
-
-        console.log(
-            `[Edit Tool Search] Searching tools with URL: ${searchUrl}`,
-        );
 
         const response = await fetch(searchUrl);
 
@@ -27547,43 +29350,47 @@ async function serverSideEditToolSearch(searchTerm) {
             // Update mapping
             updateToolMapping(container);
 
-            // Restore checked state for any tools already associated with the server
+            // Restore checked state from persistent store + data-server-tools
             try {
+                const persistedToolIds = getEditSelections("edit-server-tools");
                 const dataAttr = container.getAttribute("data-server-tools");
+                const serverToolNames = new Set();
+
                 if (dataAttr) {
                     const serverTools = JSON.parse(dataAttr);
-                    if (Array.isArray(serverTools) && serverTools.length > 0) {
-                        // Normalize serverTools to a set of strings for robust comparison
-                        const serverToolSet = new Set(
-                            serverTools.map((s) => String(s)),
+                    if (Array.isArray(serverTools)) {
+                        serverTools.forEach((t) =>
+                            serverToolNames.add(String(t)),
                         );
-                        const checkboxes = container.querySelectorAll(
-                            'input[name="associatedTools"]',
-                        );
-                        checkboxes.forEach((cb) => {
-                            const toolId = cb.value;
-                            const toolName =
-                                cb.getAttribute("data-tool-name") ||
-                                (window.toolMapping &&
-                                    window.toolMapping[cb.value]);
-                            if (
-                                serverToolSet.has(toolId) ||
-                                (toolName &&
-                                    serverToolSet.has(String(toolName)))
-                            ) {
-                                cb.checked = true;
-                            }
-                        });
+                    }
+                }
 
-                        // Trigger update so pills/counts refresh
-                        const firstCb = container.querySelector(
-                            'input[type="checkbox"]',
-                        );
-                        if (firstCb) {
-                            firstCb.dispatchEvent(
-                                new Event("change", { bubbles: true }),
-                            );
+                if (persistedToolIds.size > 0 || serverToolNames.size > 0) {
+                    const checkboxes = container.querySelectorAll(
+                        'input[name="associatedTools"]',
+                    );
+                    checkboxes.forEach((cb) => {
+                        const toolId = String(cb.value);
+                        const toolName =
+                            cb.getAttribute("data-tool-name") ||
+                            (window.toolMapping && window.toolMapping[toolId]);
+                        const shouldCheck =
+                            persistedToolIds.has(toolId) ||
+                            (toolName && serverToolNames.has(String(toolName)));
+                        if (shouldCheck) {
+                            cb.checked = true;
+                            persistedToolIds.add(toolId);
                         }
+                    });
+
+                    // Trigger update so pills/counts refresh
+                    const firstCb = container.querySelector(
+                        'input[type="checkbox"]',
+                    );
+                    if (firstCb) {
+                        firstCb.dispatchEvent(
+                            new Event("change", { bubbles: true }),
+                        );
                     }
                 }
             } catch (e) {
@@ -27610,6 +29417,7 @@ async function serverSideEditToolSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27633,13 +29441,21 @@ async function serverSideEditToolSearch(searchTerm) {
  */
 async function serverSideEditPromptsSearch(searchTerm) {
     const container = document.getElementById("edit-server-prompts");
-    const noResultsMessage = safeGetElement("noEditPromptsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditPrompts", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-prompts",
+            "noEditPromptsMessage",
+            "searchQueryEditPrompts",
+            "prompt",
+        );
 
     if (!container) {
         console.error("edit-server-prompts container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27652,14 +29468,24 @@ async function serverSideEditPromptsSearch(searchTerm) {
         `[Edit Prompt Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
     );
 
-    // Capture currently checked prompts BEFORE clearing the container
+    // Flush DOM state into persistent store BEFORE clearing the container
+    // (add-only — unchecks are handled by ensureEditStoreListeners() event delegation)
+    const promptSel = getEditSelections("edit-server-prompts");
+    container
+        .querySelectorAll('input[name="associatedPrompts"]')
+        .forEach((cb) => {
+            if (cb.checked) {
+                promptSel.add(String(cb.value));
+            }
+        });
+
+    // Also capture for backward compat
     const currentlyCheckedPrompts = new Set();
-    const existingCheckboxes = container.querySelectorAll(
-        'input[name="associatedPrompts"]:checked',
-    );
-    existingCheckboxes.forEach((cb) => {
-        currentlyCheckedPrompts.add(cb.value);
-    });
+    container
+        .querySelectorAll('input[name="associatedPrompts"]:checked')
+        .forEach((cb) => {
+            currentlyCheckedPrompts.add(String(cb.value));
+        });
 
     // Show loading state
     container.innerHTML = `
@@ -27675,9 +29501,21 @@ async function serverSideEditPromptsSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompts selector partial with gateway filter
         try {
-            const promptsUrl = gatewayIdParam
+            let promptsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
+            const viewPublicCb = document.getElementById(
+                "edit-server-view-public",
+            );
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
+                promptsUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                promptsUrl += "&include_public=true";
+            }
 
             console.log(
                 `[Edit Prompt Search] Loading default prompts with URL: ${promptsUrl}`,
@@ -27696,45 +29534,47 @@ async function serverSideEditPromptsSearch(searchTerm) {
                 // Update prompt mapping
                 updatePromptMapping(container);
 
-                // Restore checked state for prompts (both original server associations AND newly selected ones)
+                // Restore checked state from persistent store + data-server-prompts
                 try {
-                    // Combine original server prompts with currently checked prompts
-                    const allSelectedPrompts = new Set(currentlyCheckedPrompts);
+                    const persistedPromptIds = getEditSelections(
+                        "edit-server-prompts",
+                    );
+                    // Also merge currently checked prompts
+                    currentlyCheckedPrompts.forEach((id) =>
+                        persistedPromptIds.add(String(id)),
+                    );
 
                     const dataAttr = container.getAttribute(
                         "data-server-prompts",
                     );
+                    const serverPromptIds = new Set();
                     if (dataAttr) {
                         const serverPrompts = JSON.parse(dataAttr);
                         if (Array.isArray(serverPrompts)) {
                             serverPrompts.forEach((p) =>
-                                allSelectedPrompts.add(String(p)),
+                                serverPromptIds.add(String(p)),
                             );
                         }
                     }
 
-                    if (allSelectedPrompts.size > 0) {
+                    if (
+                        persistedPromptIds.size > 0 ||
+                        serverPromptIds.size > 0
+                    ) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedPrompts"]',
                         );
                         checkboxes.forEach((cb) => {
-                            const promptId = cb.value;
-                            const promptName =
-                                cb.getAttribute("data-prompt-name") ||
-                                (window.promptMapping &&
-                                    window.promptMapping[cb.value]);
-
-                            // Check by id first (string), then by name as a fallback
+                            const promptId = String(cb.value);
                             if (
-                                allSelectedPrompts.has(promptId) ||
-                                (promptName &&
-                                    allSelectedPrompts.has(String(promptName)))
+                                persistedPromptIds.has(promptId) ||
+                                serverPromptIds.has(promptId)
                             ) {
                                 cb.checked = true;
+                                persistedPromptIds.add(promptId);
                             }
                         });
 
-                        // Trigger update so pills/counts refresh
                         const firstCb = container.querySelector(
                             'input[type="checkbox"]',
                         );
@@ -27781,8 +29621,15 @@ async function serverSideEditPromptsSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
+        const editViewPublicCb = document.getElementById(
+            "edit-server-view-public",
+        );
         if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/prompts/search?${params.toString()}`;
 
@@ -27832,48 +29679,44 @@ async function serverSideEditPromptsSearch(searchTerm) {
             // Update mapping
             updatePromptMapping(container);
 
-            // Restore checked state for any prompts already associated with the server
+            // Restore checked state from persistent store + data-server-prompts
             try {
+                const persistedPromptIds = getEditSelections(
+                    "edit-server-prompts",
+                );
                 const dataAttr = container.getAttribute("data-server-prompts");
+                const serverPromptIds = new Set();
                 if (dataAttr) {
                     const serverPrompts = JSON.parse(dataAttr);
-                    if (
-                        Array.isArray(serverPrompts) &&
-                        serverPrompts.length > 0
-                    ) {
-                        // Normalize serverPrompts to a set of strings for robust comparison
-                        const serverPromptSet = new Set(
-                            serverPrompts.map((s) => String(s)),
+                    if (Array.isArray(serverPrompts)) {
+                        serverPrompts.forEach((p) =>
+                            serverPromptIds.add(String(p)),
                         );
+                    }
+                }
 
-                        const checkboxes = container.querySelectorAll(
-                            'input[name="associatedPrompts"]',
-                        );
-                        checkboxes.forEach((cb) => {
-                            const promptId = cb.value;
-                            const promptName =
-                                cb.getAttribute("data-prompt-name") ||
-                                (window.promptMapping &&
-                                    window.promptMapping[cb.value]);
-
-                            if (
-                                serverPromptSet.has(promptId) ||
-                                (promptName &&
-                                    serverPromptSet.has(String(promptName)))
-                            ) {
-                                cb.checked = true;
-                            }
-                        });
-
-                        // Trigger update so pills/counts refresh
-                        const firstCb = container.querySelector(
-                            'input[type="checkbox"]',
-                        );
-                        if (firstCb) {
-                            firstCb.dispatchEvent(
-                                new Event("change", { bubbles: true }),
-                            );
+                if (persistedPromptIds.size > 0 || serverPromptIds.size > 0) {
+                    const checkboxes = container.querySelectorAll(
+                        'input[name="associatedPrompts"]',
+                    );
+                    checkboxes.forEach((cb) => {
+                        const promptId = cb.value;
+                        if (
+                            persistedPromptIds.has(promptId) ||
+                            serverPromptIds.has(promptId)
+                        ) {
+                            cb.checked = true;
+                            persistedPromptIds.add(promptId);
                         }
+                    });
+
+                    const firstCb = container.querySelector(
+                        'input[type="checkbox"]',
+                    );
+                    if (firstCb) {
+                        firstCb.dispatchEvent(
+                            new Event("change", { bubbles: true }),
+                        );
                     }
                 }
             } catch (e) {
@@ -27900,6 +29743,7 @@ async function serverSideEditPromptsSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -27922,13 +29766,21 @@ async function serverSideEditPromptsSearch(searchTerm) {
  */
 async function serverSideEditResourcesSearch(searchTerm) {
     const container = document.getElementById("edit-server-resources");
-    const noResultsMessage = safeGetElement("noEditResourcesMessage", true);
-    const searchQuerySpan = safeGetElement("searchQueryEditResources", true);
+    const { msg: noResultsMessage, span: searchQuerySpan } =
+        ensureNoResultsElement(
+            "edit-server-resources",
+            "noEditResourcesMessage",
+            "searchQueryEditResources",
+            "resource",
+        );
 
     if (!container) {
         console.error("edit-server-resources container not found");
         return;
     }
+
+    // Ensure container is visible (may have been hidden by a previous no-results search)
+    container.style.display = "";
 
     // Get selected gateway IDs to maintain filtering
     const selectedGatewayIds = getSelectedGatewayIds
@@ -27941,14 +29793,24 @@ async function serverSideEditResourcesSearch(searchTerm) {
         `[Edit Resource Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
     );
 
-    // Capture currently checked resources BEFORE clearing the container
+    // Flush DOM state into persistent store BEFORE clearing the container
+    // (add-only — unchecks are handled by ensureEditStoreListeners() event delegation)
+    const resSel = getEditSelections("edit-server-resources");
+    container
+        .querySelectorAll('input[name="associatedResources"]')
+        .forEach((cb) => {
+            if (cb.checked) {
+                resSel.add(String(cb.value));
+            }
+        });
+
+    // Also capture for backward compat
     const currentlyCheckedResources = new Set();
-    const existingCheckboxes = container.querySelectorAll(
-        'input[name="associatedResources"]:checked',
-    );
-    existingCheckboxes.forEach((cb) => {
-        currentlyCheckedResources.add(cb.value);
-    });
+    container
+        .querySelectorAll('input[name="associatedResources"]:checked')
+        .forEach((cb) => {
+            currentlyCheckedResources.add(String(cb.value));
+        });
 
     // Show loading state
     container.innerHTML = `
@@ -27964,9 +29826,21 @@ async function serverSideEditResourcesSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default resources selector partial with gateway filter
         try {
-            const resourcesUrl = gatewayIdParam
+            let resourcesUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+
+            // Respect View Public checkbox state: always include team_id, add include_public when checked
+            const viewPublicCb = document.getElementById(
+                "edit-server-view-public",
+            );
+            const urlTeamId = getCurrentTeamId();
+            if (urlTeamId) {
+                resourcesUrl += `&team_id=${encodeURIComponent(urlTeamId)}`;
+            }
+            if (viewPublicCb && viewPublicCb.checked) {
+                resourcesUrl += "&include_public=true";
+            }
 
             console.log(
                 `[Edit Resource Search] Loading default resources with URL: ${resourcesUrl}`,
@@ -27985,47 +29859,44 @@ async function serverSideEditResourcesSearch(searchTerm) {
                 // Update resource mapping
                 updateResourceMapping(container);
 
-                // Restore checked state for resources (both original server associations AND newly selected ones)
+                // Restore checked state from persistent store + data-server-resources
                 try {
-                    // Combine original server resources with currently checked resources
-                    const allSelectedResources = new Set(
-                        currentlyCheckedResources,
+                    const persistedResIds = getEditSelections(
+                        "edit-server-resources",
+                    );
+                    // Also merge currently checked resources
+                    currentlyCheckedResources.forEach((id) =>
+                        persistedResIds.add(String(id)),
                     );
 
                     const dataAttr = container.getAttribute(
                         "data-server-resources",
                     );
+                    const serverResIds = new Set();
                     if (dataAttr) {
                         const serverResources = JSON.parse(dataAttr);
                         if (Array.isArray(serverResources)) {
                             serverResources.forEach((r) =>
-                                allSelectedResources.add(String(r)),
+                                serverResIds.add(String(r)),
                             );
                         }
                     }
 
-                    if (allSelectedResources.size > 0) {
+                    if (persistedResIds.size > 0 || serverResIds.size > 0) {
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedResources"]',
                         );
                         checkboxes.forEach((cb) => {
-                            const resourceId = cb.value;
-                            const resourceName =
-                                cb.getAttribute("data-resource-name") ||
-                                (window.resourceMapping &&
-                                    window.resourceMapping[cb.value]);
+                            const resourceId = String(cb.value);
                             if (
-                                allSelectedResources.has(resourceId) ||
-                                (resourceName &&
-                                    allSelectedResources.has(
-                                        String(resourceName),
-                                    ))
+                                persistedResIds.has(resourceId) ||
+                                serverResIds.has(resourceId)
                             ) {
                                 cb.checked = true;
+                                persistedResIds.add(resourceId);
                             }
                         });
 
-                        // Trigger update so pills/counts refresh
                         const firstCb = container.querySelector(
                             'input[type="checkbox"]',
                         );
@@ -28072,8 +29943,15 @@ async function serverSideEditResourcesSearch(searchTerm) {
         if (gatewayIdParam) {
             params.set("gateway_id", gatewayIdParam);
         }
+        // Respect View Public checkbox state: always include team_id, add include_public when checked
+        const editViewPublicCb = document.getElementById(
+            "edit-server-view-public",
+        );
         if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+        }
+        if (editViewPublicCb && editViewPublicCb.checked) {
+            params.set("include_public", "true");
         }
         const searchUrl = `${window.ROOT_PATH}/admin/resources/search?${params.toString()}`;
 
@@ -28117,50 +29995,46 @@ async function serverSideEditResourcesSearch(searchTerm) {
             // Update mapping
             updateResourceMapping(container);
 
-            // Restore checked state for any resources already associated with the server
+            // Restore checked state from persistent store + data-server-resources
             try {
+                const persistedResIds = getEditSelections(
+                    "edit-server-resources",
+                );
                 const dataAttr = container.getAttribute(
                     "data-server-resources",
                 );
+                const serverResIds = new Set();
                 if (dataAttr) {
                     const serverResources = JSON.parse(dataAttr);
-                    if (
-                        Array.isArray(serverResources) &&
-                        serverResources.length > 0
-                    ) {
-                        // Normalize serverResources to a set of strings for robust comparison
-                        const serverResourceSet = new Set(
-                            serverResources.map((s) => String(s)),
+                    if (Array.isArray(serverResources)) {
+                        serverResources.forEach((r) =>
+                            serverResIds.add(String(r)),
                         );
+                    }
+                }
 
-                        const checkboxes = container.querySelectorAll(
-                            'input[name="associatedResources"]',
-                        );
-                        checkboxes.forEach((cb) => {
-                            const resourceId = cb.value;
-                            const resourceName =
-                                cb.getAttribute("data-resource-name") ||
-                                (window.resourceMapping &&
-                                    window.resourceMapping[cb.value]);
-                            // Check by id first (string), then by name as a fallback
-                            if (
-                                serverResourceSet.has(resourceId) ||
-                                (resourceName &&
-                                    serverResourceSet.has(String(resourceName)))
-                            ) {
-                                cb.checked = true;
-                            }
-                        });
-
-                        // Trigger update so pills/counts refresh
-                        const firstCb = container.querySelector(
-                            'input[type="checkbox"]',
-                        );
-                        if (firstCb) {
-                            firstCb.dispatchEvent(
-                                new Event("change", { bubbles: true }),
-                            );
+                if (persistedResIds.size > 0 || serverResIds.size > 0) {
+                    const checkboxes = container.querySelectorAll(
+                        'input[name="associatedResources"]',
+                    );
+                    checkboxes.forEach((cb) => {
+                        const resourceId = cb.value;
+                        if (
+                            persistedResIds.has(resourceId) ||
+                            serverResIds.has(resourceId)
+                        ) {
+                            cb.checked = true;
+                            persistedResIds.add(resourceId);
                         }
+                    });
+
+                    const firstCb = container.querySelector(
+                        'input[type="checkbox"]',
+                    );
+                    if (firstCb) {
+                        firstCb.dispatchEvent(
+                            new Event("change", { bubbles: true }),
+                        );
                     }
                 }
             } catch (e) {
@@ -28187,6 +30061,7 @@ async function serverSideEditResourcesSearch(searchTerm) {
         } else {
             // Show no results message
             container.innerHTML = "";
+            container.style.display = "none";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
@@ -29004,7 +30879,7 @@ function displayLogResults(data) {
 
             return `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                onclick="showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
+                data-action="show-log" data-log-id="${log.id}" data-correlation-id="${escapeHtml(log.correlation_id || "")}">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(log.timestamp)}
                 </td>
@@ -29030,7 +30905,7 @@ function displayLogResults(data) {
                     ${
                         correlationId !== "-"
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(correlationId)}')"
+                        <button data-action="show-correlation" data-correlation-id="${escapeHtml(correlationId)}"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(correlationId, 12))}
                         </button>
@@ -29042,6 +30917,31 @@ function displayLogResults(data) {
         `;
         })
         .join("");
+
+    // Attach click listeners via event delegation (inline onclick stripped by innerHTML sanitizer).
+    // Abort previous controller to remove stale handler on repeated calls.
+    if (tbody._logClickAC) {
+        tbody._logClickAC.abort();
+    }
+    tbody._logClickAC = new AbortController();
+    tbody.addEventListener(
+        "click",
+        function (e) {
+            const corrBtn = e.target.closest(
+                '[data-action="show-correlation"]',
+            );
+            if (corrBtn) {
+                e.stopPropagation();
+                showCorrelationTrace(corrBtn.dataset.correlationId);
+                return;
+            }
+            const row = e.target.closest('[data-action="show-log"]');
+            if (row) {
+                showLogDetails(row.dataset.logId, row.dataset.correlationId);
+            }
+        },
+        { signal: tbody._logClickAC.signal },
+    );
 }
 
 /**
@@ -29188,7 +31088,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Inactive
                 <svg class="ml-1 h-4 w-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
         </div>`;
     } else if (!reachable) {
         // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
@@ -29198,7 +31098,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Offline
                 <svg class="ml-1 h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
         </div>`;
     } else {
         // CASE 3: Active (Enabled and Reachable) -> GREEN
@@ -29208,7 +31108,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Active
                 <svg class="ml-1 h-4 w-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Active</div>
         </div>`;
     }
 }
@@ -29672,7 +31572,7 @@ function displaySecurityEvents(events) {
                     ${
                         event.correlation_id
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(event.correlation_id)}')"
+                        <button data-action="show-correlation" data-correlation-id="${escapeHtml(event.correlation_id)}"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(event.correlation_id, 12))}
                         </button>
@@ -29684,6 +31584,16 @@ function displaySecurityEvents(events) {
         `;
         })
         .join("");
+
+    // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+    tbody
+        .querySelectorAll('[data-action="show-correlation"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showCorrelationTrace(btn.dataset.correlationId);
+            });
+        });
 }
 
 /**
@@ -29838,7 +31748,7 @@ function displayAuditTrail(trails) {
                     ${
                         trail.correlation_id
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(trail.correlation_id)}')"
+                        <button data-action="show-correlation" data-correlation-id="${escapeHtml(trail.correlation_id)}"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(trail.correlation_id, 12))}
                         </button>
@@ -29850,6 +31760,16 @@ function displayAuditTrail(trails) {
         `;
         })
         .join("");
+
+    // Attach click listeners (inline onclick stripped by innerHTML sanitizer)
+    tbody
+        .querySelectorAll('[data-action="show-correlation"]')
+        .forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showCorrelationTrace(btn.dataset.correlationId);
+            });
+        });
 }
 
 /**
@@ -31316,273 +33236,214 @@ window.refreshLLMModels = refreshLLMModels;
 window.filterModelsByProvider = filterModelsByProvider;
 window.llmApiInfoApp = llmApiInfoApp;
 
-// Debounce helper for search
-const searchDebounceTimers = {};
-function debouncedServerSideUserSearch(teamId, searchTerm, delay = 300) {
-    if (searchDebounceTimers[teamId]) {
-        clearTimeout(searchDebounceTimers[teamId]);
-    }
-    searchDebounceTimers[teamId] = setTimeout(() => {
-        serverSideUserSearch(teamId, searchTerm);
-    }, delay);
-}
-window.debouncedServerSideUserSearch = debouncedServerSideUserSearch;
+// Debounce timers for member and non-member search
+const memberSearchTimers = {};
+const nonMemberSearchTimers = {};
 
-// Team user search function - searches all users and splits into members/non-members
-async function serverSideUserSearch(teamId, searchTerm) {
-    const membersContainer = document.getElementById(
-        `team-members-container-${teamId}`,
-    );
-    const nonMembersContainer = document.getElementById(
+// Selection caches to preserve state across searches
+// nonMemberSelectionsCache: teamId -> {email: role}
+const nonMemberSelectionsCache = {};
+// memberOverridesCache: teamId -> {email: {checked: bool, role: string}}
+const memberOverridesCache = {};
+
+function captureNonMemberSelections(teamId) {
+    const container = document.getElementById(
         `team-non-members-container-${teamId}`,
     );
+    if (!container) return;
+    if (!nonMemberSelectionsCache[teamId]) {
+        nonMemberSelectionsCache[teamId] = {};
+    }
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb && cb.checked && !cb.getAttribute("data-auto-check")) {
+            nonMemberSelectionsCache[teamId][email] = roleSelect
+                ? roleSelect.value
+                : "member";
+        } else if (cb && !cb.checked && !cb.getAttribute("data-auto-check")) {
+            delete nonMemberSelectionsCache[teamId][email];
+        }
+    });
+}
 
-    if (!membersContainer || !nonMembersContainer) {
-        console.error("Team containers not found");
+function restoreNonMemberSelections(teamId) {
+    const container = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+    if (!container || !nonMemberSelectionsCache[teamId]) return;
+    const cache = nonMemberSelectionsCache[teamId];
+    const visibleEmails = new Set();
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        visibleEmails.add(email);
+        if (cache[email] !== undefined) {
+            const cb = item.querySelector('input[name="associatedUsers"]');
+            const roleSelect = item.querySelector(".role-select");
+            if (cb) cb.checked = true;
+            if (roleSelect) roleSelect.value = cache[email];
+        }
+    });
+    container
+        .querySelectorAll(".cached-selection")
+        .forEach((el) => el.remove());
+    for (const [email, role] of Object.entries(cache)) {
+        if (!visibleEmails.has(email)) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "cached-selection hidden";
+            const cbHidden = document.createElement("input");
+            cbHidden.type = "checkbox";
+            cbHidden.name = "associatedUsers";
+            cbHidden.value = email;
+            cbHidden.checked = true;
+            cbHidden.className = "hidden";
+            const roleHidden = document.createElement("input");
+            roleHidden.type = "hidden";
+            roleHidden.name = "role_" + encodeURIComponent(email);
+            roleHidden.value = role;
+            wrapper.appendChild(cbHidden);
+            wrapper.appendChild(roleHidden);
+            container.appendChild(wrapper);
+        }
+    }
+}
+
+function captureMemberOverrides(teamId) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container) return;
+    if (!memberOverridesCache[teamId]) {
+        memberOverridesCache[teamId] = {};
+    }
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb && cb.getAttribute("data-auto-check") === "true") {
+            if (!cb.checked || (roleSelect && roleSelect.value)) {
+                memberOverridesCache[teamId][email] = {
+                    checked: cb.checked,
+                    role: roleSelect ? roleSelect.value : "member",
+                };
+            }
+        }
+    });
+}
+
+function restoreMemberOverrides(teamId) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container || !memberOverridesCache[teamId]) return;
+    const cache = memberOverridesCache[teamId];
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email || !cache[email]) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb) cb.checked = cache[email].checked;
+        if (roleSelect) roleSelect.value = cache[email].role;
+    });
+}
+
+function debouncedMemberSearch(teamId, searchTerm, delay = 300) {
+    if (memberSearchTimers[teamId]) {
+        clearTimeout(memberSearchTimers[teamId]);
+    }
+    memberSearchTimers[teamId] = setTimeout(() => {
+        serverSideMemberSearch(teamId, searchTerm);
+    }, delay);
+}
+window.debouncedMemberSearch = debouncedMemberSearch;
+
+function debouncedNonMemberSearch(teamId, searchTerm, delay = 300) {
+    if (nonMemberSearchTimers[teamId]) {
+        clearTimeout(nonMemberSearchTimers[teamId]);
+    }
+    nonMemberSearchTimers[teamId] = setTimeout(() => {
+        serverSideNonMemberSearch(teamId, searchTerm);
+    }, delay);
+}
+window.debouncedNonMemberSearch = debouncedNonMemberSearch;
+
+// Search current team members via server-side filtering
+async function serverSideMemberSearch(teamId, searchTerm) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container) {
+        return;
+    }
+    captureMemberOverrides(teamId);
+    const perPage =
+        container.dataset.perPage ||
+        container.getAttribute("data-per-page") ||
+        50;
+    try {
+        const searchParam =
+            searchTerm && searchTerm.trim() !== ""
+                ? `&search=${encodeURIComponent(searchTerm.trim())}`
+                : "";
+        const response = await fetchWithAuth(
+            `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${perPage}${searchParam}`,
+        );
+        if (response.ok) {
+            container.innerHTML = await response.text();
+            if (typeof htmx !== "undefined") {
+                htmx.process(container);
+            }
+            restoreMemberOverrides(teamId);
+        }
+    } catch (error) {
+        console.error("Error searching members:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching members</div>';
+    }
+}
+window.serverSideMemberSearch = serverSideMemberSearch;
+
+// Search non-members (users not in team) via server-side filtering
+async function serverSideNonMemberSearch(teamId, searchTerm) {
+    const container = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+    if (!container) {
         return;
     }
 
-    // Read per_page from data attributes (set server-side), fallback to 20
-    const membersPerPage =
-        membersContainer.dataset.perPage ||
-        membersContainer.getAttribute("data-per-page") ||
-        20;
-    const nonMembersPerPage =
-        nonMembersContainer.dataset.perPage ||
-        nonMembersContainer.getAttribute("data-per-page") ||
-        20;
+    captureNonMemberSelections(teamId);
 
-    // If search is empty, reload both sections with full data
-    if (!searchTerm || searchTerm.trim() === "") {
-        try {
-            // Reload members - use fetchWithAuth for bearer token support
-            const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
-            );
-            if (membersResponse.ok) {
-                membersContainer.innerHTML = await membersResponse.text();
-                // Re-initialize HTMX on new content for infinite scroll triggers
-                if (typeof htmx !== "undefined") {
-                    htmx.process(membersContainer);
-                }
-            }
-
-            // Reload non-members
-            const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
-            );
-            if (nonMembersResponse.ok) {
-                nonMembersContainer.innerHTML = await nonMembersResponse.text();
-                // Re-initialize HTMX on new content for infinite scroll triggers
-                if (typeof htmx !== "undefined") {
-                    htmx.process(nonMembersContainer);
-                }
-            }
-        } catch (error) {
-            console.error("Error reloading user lists:", error);
-        }
+    // Require at least 2 characters for non-member search
+    if (!searchTerm || searchTerm.trim().length < 2) {
+        container.innerHTML =
+            '<div class="text-center py-4 text-gray-500 dark:text-gray-400">Type at least 2 characters to search for users.</div>';
+        restoreNonMemberSelections(teamId);
         return;
     }
 
     try {
-        // First, collect member data AND checkbox states from DOM (before search replaces content)
-        const memberDataFromDom = {};
-        const checkboxStates = {}; // Track checkbox states for all visible users
-        const existingMemberItems = document.querySelectorAll(
-            `#team-members-container-${teamId} .user-item`,
+        const response = await fetchWithAuth(
+            `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=50&search=${encodeURIComponent(searchTerm.trim())}`,
         );
-        existingMemberItems.forEach((item) => {
-            const email = item.dataset.userEmail;
-            if (email) {
-                const roleSelect = item.querySelector(".role-select");
-                const checkbox = item.querySelector(".user-checkbox");
-                memberDataFromDom[email] = {
-                    role: roleSelect ? roleSelect.value : "member",
-                };
-                if (checkbox) {
-                    checkboxStates[email] = checkbox.checked;
-                }
+        if (response.ok) {
+            container.innerHTML = await response.text();
+            if (typeof htmx !== "undefined") {
+                htmx.process(container);
             }
-        });
-
-        // Also collect checkbox states from non-members section
-        const existingNonMemberItems = document.querySelectorAll(
-            `#team-non-members-container-${teamId} .user-item`,
-        );
-        existingNonMemberItems.forEach((item) => {
-            const email = item.dataset.userEmail;
-            if (email) {
-                const checkbox = item.querySelector(".user-checkbox");
-                const roleSelect = item.querySelector(".role-select");
-                if (checkbox) {
-                    checkboxStates[email] = checkbox.checked;
-                    // Also preserve role selection for users being added
-                    if (checkbox.checked && roleSelect) {
-                        memberDataFromDom[email] = {
-                            role: roleSelect.value,
-                            pendingAdd: true, // Flag that this is a pending addition
-                        };
-                    }
-                }
-            }
-        });
-
-        // If no members found in DOM yet, fetch from server to get membership data with roles
-        if (Object.keys(memberDataFromDom).length === 0) {
-            try {
-                const membersResp = await fetchWithAuth(
-                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
-                );
-                if (membersResp.ok) {
-                    const tempDiv = document.createElement("div");
-                    tempDiv.innerHTML = await membersResp.text();
-                    tempDiv.querySelectorAll(".user-item").forEach((item) => {
-                        const email = item.dataset.userEmail;
-                        if (email) {
-                            const roleSelect =
-                                item.querySelector(".role-select");
-                            memberDataFromDom[email] = {
-                                role: roleSelect ? roleSelect.value : "member",
-                            };
-                        }
-                    });
-                }
-            } catch (e) {
-                console.error("Error fetching member data:", e);
-            }
-        }
-
-        // Search all users - use fetchWithAuth for bearer token support
-        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
-        const response = await fetchWithAuth(searchUrl);
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.users && data.users.length > 0) {
-            // Split users into members and non-members based on collected data
-            const members = [];
-            const nonMembers = [];
-
-            data.users.forEach((user) => {
-                if (memberDataFromDom[user.email]) {
-                    members.push({
-                        ...user,
-                        role: memberDataFromDom[user.email].role,
-                    });
-                } else {
-                    nonMembers.push(user);
-                }
-            });
-
-            // Helper to escape HTML
-            function escapeHtml(text) {
-                const div = document.createElement("div");
-                div.textContent = text;
-                return div.innerHTML;
-            }
-
-            // Render members with preserved roles, checkbox states, and loadedMembers hidden input
-            let membersHtml = "";
-            members.forEach((user) => {
-                const fullName = escapeHtml(user.full_name || user.email);
-                const email = escapeHtml(user.email);
-                const role = user.role || "member";
-                const isOwner = role === "owner";
-                // Preserve checkbox state if available, otherwise default to checked for existing members
-                const isChecked =
-                    checkboxStates[user.email] !== undefined
-                        ? checkboxStates[user.email]
-                        : true;
-                membersHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20" data-user-email="${email}">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                            </div>
-                        </div>
-                        <input type="hidden" name="loadedMembers" value="${email}" />
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} data-auto-check="true" />
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                                ${isOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-                        </div>
-                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            // Render non-members with preserved checkbox states and roles
-            let nonMembersHtml = "";
-            nonMembers.forEach((user) => {
-                const fullName = escapeHtml(user.full_name || user.email);
-                const email = escapeHtml(user.email);
-                // Preserve checkbox state if available, otherwise default to unchecked for non-members
-                const isChecked =
-                    checkboxStates[user.email] !== undefined
-                        ? checkboxStates[user.email]
-                        : false;
-                // Preserve role selection for users being added
-                const pendingData = memberDataFromDom[user.email];
-                const role =
-                    pendingData && pendingData.pendingAdd
-                        ? pendingData.role
-                        : "member";
-                const isOwner = role === "owner";
-                nonMembersHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-transparent" data-user-email="${email}" data-is-member="false">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                            </div>
-                        </div>
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} />
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-                        </div>
-                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            membersContainer.innerHTML =
-                membersHtml ||
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML =
-                nonMembersHtml ||
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
-        } else {
-            // No results
-            membersContainer.innerHTML =
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML =
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
+            restoreNonMemberSelections(teamId);
         }
     } catch (error) {
-        console.error("Error searching users:", error);
-        membersContainer.innerHTML =
-            '<div class="text-center py-4 text-red-600">Error searching users</div>';
-        nonMembersContainer.innerHTML =
+        console.error("Error searching non-members:", error);
+        container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching users</div>';
     }
 }
-
-window.serverSideUserSearch = serverSideUserSearch;
+window.serverSideNonMemberSearch = serverSideNonMemberSearch;
 
 // ============================================================================ //
 //                         TEAM SEARCH AND FILTER FUNCTIONS                      //
@@ -31827,13 +33688,47 @@ function performTeamSelectorSearch(searchTerm) {
 
     const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
 
-    // Use HTMX to load results
-    if (window.htmx) {
-        window.htmx.ajax("GET", url, {
-            target: "#team-selector-items",
-            swap: "innerHTML",
-        });
+    // Load results via fetch for reliable error handling; htmx.ajax() does not
+    // reject on HTTP 5xx so we cannot detect backend failures with it.
+    if (container) {
+        container.innerHTML =
+            '<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Loading\u2026</div>';
     }
+    fetch(url, { credentials: "same-origin" })
+        .then(function (resp) {
+            if (!resp.ok) {
+                throw new Error("HTTP " + resp.status);
+            }
+            return resp.text();
+        })
+        .then(function (html) {
+            if (container) {
+                container.innerHTML = html;
+                container.dataset.loaded = "true";
+                if (window.htmx) {
+                    window.htmx.process(container);
+                }
+            }
+        })
+        .catch(function () {
+            if (container) {
+                delete container.dataset.loaded;
+                container.innerHTML =
+                    '<div class="px-4 py-2 text-sm text-red-600 dark:text-red-400">' +
+                    "Failed to load teams. " +
+                    '<button type="button" data-action="retry-team-search" ' +
+                    'class="underline font-medium">Retry</button></div>';
+                const retryBtn = container.querySelector(
+                    '[data-action="retry-team-search"]',
+                );
+                if (retryBtn) {
+                    retryBtn.addEventListener("click", function () {
+                        delete container.dataset.loaded;
+                        searchTeamSelector("");
+                    });
+                }
+            }
+        });
 }
 
 /**
@@ -31871,6 +33766,21 @@ function selectTeamFromSelector(button) {
         window.updateTeamContext(teamId);
     }
 }
+
+// Event delegation for team selector items.
+// Inline onclick attributes are stripped by the innerHTML sanitizer guard,
+// so we use a delegated click listener on the container instead.
+document.addEventListener("DOMContentLoaded", function () {
+    const container = document.getElementById("team-selector-items");
+    if (container) {
+        container.addEventListener("click", function (event) {
+            const button = event.target.closest(".team-selector-item");
+            if (button) {
+                selectTeamFromSelector(button);
+            }
+        });
+    }
+});
 
 // Make team functions globally available
 window.serverSideTeamSearch = serverSideTeamSearch;
@@ -31954,9 +33864,12 @@ document.addEventListener("htmx:afterSettle", function (_evt) {
             }
 
             if (!canModify) {
-                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate
+                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate.
+                // Match both data-action (tool-ops converted buttons) and inline onclick
+                // (other entity tables that still use server-rendered handlers).
                 const buttons = row.querySelectorAll(
-                    "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
+                    "[data-action='edit-tool'], [data-action='enrich-tool'], [data-action='validate-tool'], [data-action='generate-tool-tests'], " +
+                        "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
                 );
                 for (let b = 0; b < buttons.length; b++) {
                     buttons[b].remove();

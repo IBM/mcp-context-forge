@@ -1,6 +1,6 @@
 # CPU Spin Loop Mitigation Guide
 
-This guide documents the CPU spin loop issue affecting MCP Gateway and the multi-layered mitigation strategy implemented to address it.
+This guide documents the CPU spin loop issue affecting ContextForge and the multi-layered mitigation strategy implemented to address it.
 
 ## Overview
 

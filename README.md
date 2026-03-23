@@ -1,8 +1,8 @@
-# MCP Gateway
+# ContextForge
 
-> Model Context Protocol gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
+> An open source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability. Optimizes Agent & Tool calling, and supports plugins.
 
-![](docs/docs/images/contextforge-banner.png)
+![ContextForge Banner](docs/docs/images/contextforge-logo_horizontal_black.png)
 
 <!-- === CI / Security / Build Badges === -->
 [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
@@ -10,7 +10,6 @@
 [![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
 [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
 [![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
-[![Coverage %](docs/docs/images/coverage.svg)](https://ibm.github.io/mcp-context-forge/coverage/)&nbsp;
 [![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
 
 <!-- === Container Build & Deploy === -->
@@ -23,9 +22,17 @@
 [![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
 
 
-ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+**ContextForge** is an open source registry and proxy that federates tools, agents, and APIs into one clean endpoint for your AI clients. It provides centralized governance, discovery, and observability across your AI infrastructure:
 
-![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
+- **Tools Gateway** — MCP, REST, gRPC-to-MCP translation, and TOON compression
+- **Agent Gateway** — A2A protocol, OpenAI-compatible and Anthropic agent routing
+- **API Gateway** — Rate limiting, auth, retries, and reverse proxy for REST services
+- **Plugin Extensibility** — 40+ plugins for additional transports, protocols, and integrations
+- **Observability** — OpenTelemetry tracing with Phoenix, Jaeger, Zipkin, and other OTLP backends
+
+It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
+
+![ContextForge](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
 
 <!-- vscode-markdown-toc -->
@@ -62,7 +69,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 ## Overview & Goals
 
-**ContextForge** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server or REST API-exposing a unified endpoint for all your AI clients. See the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for more details.
+**ContextForge** is an open source registry and proxy that federates any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server, or REST/gRPC API, providing centralized governance, discovery, and observability. It optimizes agent and tool calling, and supports plugins. See the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for more details.
 
 It currently supports:
 
@@ -76,7 +83,7 @@ It currently supports:
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
 
-![MCP Gateway Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
+![ContextForge Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
 
 For a list of upcoming features, check out the [ContextForge Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/)
 
@@ -85,7 +92,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 <details>
 <summary><strong>🔌 Gateway Layer with Protocol Flexibility</strong></summary>
 
-* Sits in front of any MCP server or REST API
+* Federates any MCP server or REST API
 * Lets you choose your MCP protocol version (e.g., `2025-06-18`)
 * Exposes a single, unified interface for diverse backends
 
@@ -393,19 +400,15 @@ Please note: Currently, arm64 is not supported on production. If you are e.g. ru
 
 ### 🚀 Quick Start - Docker Compose
 
-Get a full stack running with MariaDB and Redis in under 30 seconds:
+Get a full stack running with PostgreSQL and Redis in under 30 seconds:
 
 ```bash
 # Clone and start the stack
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge
 
-# Start with MariaDB (recommended for production)
+# Start with PostgreSQL (recommended for production)
 docker compose up -d
-
-# Or start with PostgreSQL
-# Uncomment postgres in docker-compose.yml and comment mariadb section
-# docker compose up -d
 
 # Check status
 docker compose ps
@@ -420,8 +423,8 @@ docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
 ```
 
 **What you get:**
-- 🗄️ **MariaDB 10.6** - Production-ready database with 36+ tables
-- 🚀 **MCP Gateway** - Full-featured gateway with Admin UI
+- 🗄️ **PostgreSQL** - Production-ready database with 36+ tables
+- 🚀 **ContextForge** - Full-featured gateway with Admin UI
 - 📊 **Redis** - High-performance caching and session storage
 - 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
 - 🌐 **Nginx Proxy** - Caching reverse proxy (optional)
@@ -459,15 +462,7 @@ Deploy to Kubernetes with enterprise-grade features:
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge/charts/mcp-stack
 
-# Install with MariaDB
-helm install mcp-gateway . \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
-  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key \
-  --set postgres.enabled=false \
-  --set mariadb.enabled=true
-
-# Or install with PostgreSQL (default)
+# Install with PostgreSQL (default)
 helm install mcp-gateway . \
   --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
   --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
@@ -486,9 +481,15 @@ kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
   --username admin@yourcompany.com --exp 10080 --secret your-secret-key
 ```
 
+> SSRF note: Helm defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`).
+> If you register in-cluster tool URLs (for example fast-time or fast-test services),
+> allow only your cluster CIDRs via `mcpContextForge.config.SSRF_ALLOWED_NETWORKS` or,
+> for local-only benchmark setups, temporarily set `SSRF_ALLOW_PRIVATE_NETWORKS=true`.
+> See `docs/docs/manage/configuration.md#ssrf-protection` and `docs/docs/deployment/helm.md`.
+
 **Enterprise Features:**
 - 🔄 **Auto-scaling** - HPA with CPU/memory targets
-- 🗄️ **Database Choice** - PostgreSQL, MariaDB, or MySQL
+- 🗄️ **Database Choice** - PostgreSQL (prod), SQLite (dev)
 - 📊 **Observability** - Prometheus metrics, OpenTelemetry tracing
 - 🔒 **Security** - RBAC, network policies, secret management
 - 🚀 **High Availability** - Multi-replica deployments with Redis clustering
@@ -511,11 +512,11 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 
 # Tail logs and generate API key
 docker logs -f mcpgateway
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
 ```
 
@@ -533,7 +534,7 @@ docker run -d --name mcpgateway --restart unless-stopped \
   -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=changeme \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 **Host networking** (access local MCP servers):
@@ -541,7 +542,7 @@ docker run -d --name mcpgateway --restart unless-stopped \
 docker run -d --name mcpgateway --network=host \
   -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
   -e MCPGATEWAY_UI_ENABLED=true -e HOST=0.0.0.0 -e PORT=4444 \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 **Airgapped deployment** (no internet):
@@ -562,7 +563,7 @@ docker run -d --name mcpgateway -p 4444:4444 \
 ```bash
 podman run -d --name mcpgateway \
   -p 4444:4444 -e HOST=0.0.0.0 -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 <details>
@@ -574,14 +575,14 @@ mkdir -p $(pwd)/data && chmod 777 $(pwd)/data
 podman run -d --name mcpgateway --restart=on-failure \
   -p 4444:4444 -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 **Host networking:**
 ```bash
 podman run -d --name mcpgateway --network=host \
   -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
 
 </details>
@@ -592,7 +593,7 @@ podman run -d --name mcpgateway --network=host \
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `1.0.0-RC-1`) instead of `latest` for reproducible builds.
+* **Pinned tags** - Use an explicit version (e.g. `1.0.0-RC-2`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
@@ -621,7 +622,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ---
 
 <details>
-<summary><strong>🖧 Running the MCP Gateway stdio wrapper</strong></summary>
+<summary><strong>🖧 Running ContextForge stdio wrapper</strong></summary>
 
 The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
 
@@ -638,7 +639,7 @@ docker run --rm -i \
   -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -747,6 +748,17 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
 
+### 🛡️ Content Security
+
+Content size limits prevent DoS attacks and ensure system stability:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONTENT_MAX_RESOURCE_SIZE` | Maximum resource content size (bytes) | `102400` (100KB) |
+| `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
+
+**Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated.
+
 ### ⚙️ Project Defaults (Dev Setup)
 
 These values differ from code defaults to provide a working local/dev setup:
@@ -825,7 +837,7 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ## Cloud Deployment
 
-MCP Gateway can be deployed to any major cloud platform:
+ContextForge can be deployed to any major cloud platform:
 
 | Platform | Guide |
 |----------|-------|
@@ -891,7 +903,21 @@ tests/               # Test suite (400+ tests)
 docs/docs/           # Full documentation (MkDocs)
 charts/              # Kubernetes/Helm charts
 plugins/             # Plugin framework and implementations
+mcp-servers/         # Sample/test MCP servers (see note below)
 ```
+
+> **Note:** The `mcp-servers/` directory contains **unsupported sample and test servers**,
+> most originating from community contributions, provided for demonstration and integration
+> testing purposes only. They generally lack session management, persistent state,
+> multi-tenancy, authentication, and other production concerns. They do not go through
+> the same review, testing, and security rigor as the core ContextForge codebase and
+> **should not be run in production**.
+>
+> **Security:** Never run untrusted MCP servers directly on your local filesystem.
+> Always use a sandbox, container, or microVM (e.g. gVisor, Firecracker) with
+> restricted capabilities. Exercise caution when registering any remote MCP server,
+> including servers from public catalogs — perform your own security evaluation
+> before granting access to your gateway.
 
 For complete structure, see [CONTRIBUTING.md](./CONTRIBUTING.md) or run `tree -L 2`.
 
@@ -956,7 +982,7 @@ Licensed under the **Apache License 2.0** - see [LICENSE](./LICENSE)
 Special thanks to our contributors for helping us improve ContextForge:
 
 <a href="https://github.com/ibm/mcp-context-forge/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" />
+  <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" alt="Contributors to the mcp-context-forge repository" />
 </a>
 
 ## Star History and Project Activity

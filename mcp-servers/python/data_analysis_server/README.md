@@ -1,8 +1,14 @@
 # MCP Data Analysis Server
 
-> Author: Vipul Mahajan
+> Authors: Vipul Mahajan, Jonathan Springer
 
 A comprehensive Model Context Protocol (MCP) server providing advanced data analysis, statistical testing, visualization, and transformation capabilities. This server enables AI applications to perform sophisticated data science workflows through a standardized interface.
+
+> **Warning:** This is an unsupported sample server for demonstration and testing only.
+> Never run untrusted MCP servers directly on your local filesystem — always use a
+> sandbox, container, or microVM (e.g. Docker, gVisor, Firecracker) with restricted
+> capabilities. Perform your own security evaluation before registering any remote MCP
+> server, including servers from public catalogs.
 
 ## 🚀 Features
 

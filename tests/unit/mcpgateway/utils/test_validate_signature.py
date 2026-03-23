@@ -112,7 +112,7 @@ def test_resign_data_no_old_signature(ed25519_keys):
     assert len(new_signature) > 0
 
 def test_resign_data_invalid_old_signature(ed25519_keys, caplog):
-    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.WARNING, logger="mcpgateway.utils.validate_signature")
     private_pem, public_pem, _, _ = ed25519_keys
     data = b"data"
     result = resign_data(data, public_pem, b"invalidsig", private_pem)

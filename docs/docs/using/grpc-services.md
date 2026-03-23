@@ -3,7 +3,7 @@
 !!! warning "Experimental Feature"
     gRPC support is an **experimental opt-in feature** that is disabled by default. It requires additional dependencies and explicit enablement.
 
-MCP Gateway supports automatic translation of gRPC services into MCP tools via the gRPC Server Reflection Protocol. This enables seamless integration of gRPC microservices into your MCP ecosystem without manual schema definition.
+ContextForge supports automatic translation of gRPC services into MCP tools via the gRPC Server Reflection Protocol. This enables seamless integration of gRPC microservices into your MCP ecosystem without manual schema definition.
 
 ## Installation & Setup
 
@@ -47,7 +47,7 @@ environment:
 
 ### 3. Restart the Gateway
 
-After installing dependencies and enabling the feature, restart MCP Gateway:
+After installing dependencies and enabling the feature, restart ContextForge:
 
 ```bash
 # Development mode
@@ -155,7 +155,7 @@ The gateway translates between protocols automatically:
 
 ```
 ┌─────────────┐         ┌──────────────┐         ┌─────────────┐
-│  MCP Client │────────▶│  MCP Gateway │────────▶│ gRPC Server │
+│  MCP Client │────────▶│  ContextForge │────────▶│ gRPC Server │
 │  (JSON)     │  HTTP   │  (Translate) │  gRPC   │ (Protobuf)  │
 └─────────────┘         └──────────────┘         └─────────────┘
                               │
@@ -478,7 +478,7 @@ Use gRPC metadata for authentication:
 # Start a test gRPC server on localhost:50051
 # (Assuming it has reflection enabled)
 
-# Expose via MCP Gateway CLI
+# Expose via ContextForge CLI
 python3 -m mcpgateway.translate \
   --grpc localhost:50051 \
   --port 9000

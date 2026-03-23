@@ -29,7 +29,6 @@ import uuid
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.gateway_service import GatewayNameConflictError
@@ -156,7 +155,7 @@ class ImportStatus:
 
 
 class ImportService:
-    """Service for importing MCP Gateway configuration and data.
+    """Service for importing ContextForge configuration and data.
 
     This service provides comprehensive import functionality including:
     - Import file validation and schema compliance
@@ -351,9 +350,9 @@ class ImportService:
                     if not dry_run:
                         db.flush()
 
-            # Assign all imported items to user's team with public visibility (after all entities processed)
+            # Assign all imported items to user's team with team visibility (after all entities processed)
             if not dry_run:
-                await self._assign_imported_items_to_team(db, imported_by)
+                await self._assign_imported_items_to_team(db, imported_by, imported_after=status.started_at)
 
             # Mark as completed
             status.status = "completed"
@@ -497,6 +496,9 @@ class ImportService:
             if rekey_secret and self._has_auth_data(entity_data):
                 entity_data = self._rekey_auth_data(entity_data, rekey_secret)
 
+            # Never trust imported ownership/team fields from payload.
+            entity_data = self._sanitize_import_scope_fields(entity_type, entity_data)
+
             filtered_entities.append(entity_data)
 
         if not filtered_entities:
@@ -550,6 +552,30 @@ class ImportService:
         """
         return "auth_value" in entity_data and entity_data.get("auth_value")
 
+    def _sanitize_import_scope_fields(self, entity_type: str, entity_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Drop untrusted ownership scope fields from imported entity payloads.
+
+        Import ownership/team assignment is derived from the authenticated
+        importer context, not from import file metadata.
+
+        Args:
+            entity_type: Entity family being imported.
+            entity_data: Source entity payload from import file.
+
+        Returns:
+            Sanitized entity payload copy.
+        """
+        scoped_entity_types = {"tools", "gateways", "servers", "resources", "prompts", "a2a_agents"}
+        if entity_type not in scoped_entity_types:
+            return entity_data
+
+        sanitized = dict(entity_data)
+        sanitized.pop("team_id", None)
+        sanitized.pop("owner_email", None)
+        sanitized.pop("visibility", None)
+        sanitized.pop("team", None)
+        return sanitized
+
     def _rekey_auth_data(self, entity_data: Dict[str, Any], new_secret: str) -> Dict[str, Any]:
         """Re-encrypt authentication data with a new secret key.
 
@@ -584,18 +610,13 @@ class ImportService:
             return entity_data
 
         try:
-            # Decrypt with old key
+            # Decrypt with current key, re-encrypt with new key.
+            # Pass secrets explicitly to avoid mutating global settings state,
+            # which would corrupt concurrent encode/decode operations.
             old_auth_value = entity_data["auth_value"]
             decrypted_auth = decode_auth(old_auth_value)
-
-            # Re-encrypt with new key (temporarily change settings)
-            old_secret = settings.auth_encryption_secret
-            settings.auth_encryption_secret = new_secret
-            try:
-                new_auth_value = encode_auth(decrypted_auth)
-                entity_data["auth_value"] = new_auth_value
-            finally:
-                settings.auth_encryption_secret = old_secret
+            new_auth_value = encode_auth(decrypted_auth, secret=new_secret)
+            entity_data["auth_value"] = new_auth_value
 
             logger.debug("Successfully re-keyed authentication data")
             return entity_data
@@ -624,7 +645,7 @@ class ImportService:
             if entity_type == "tools":
                 await self._process_tool(db, entity_data, conflict_strategy, dry_run, status)
             elif entity_type == "gateways":
-                await self._process_gateway(db, entity_data, conflict_strategy, dry_run, status)
+                await self._process_gateway(db, entity_data, conflict_strategy, dry_run, status, imported_by)
             elif entity_type == "servers":
                 await self._process_server(db, entity_data, conflict_strategy, dry_run, status, imported_by)
             elif entity_type == "prompts":
@@ -704,7 +725,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process tool {tool_name}: {str(e)}")
 
-    async def _process_gateway(self, db: Session, gateway_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
+    async def _process_gateway(self, db: Session, gateway_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process a gateway entity.
 
         Args:
@@ -713,6 +734,7 @@ class ImportService:
             conflict_strategy: How to handle conflicts
             dry_run: Whether this is a dry run
             status: Import status tracker
+            imported_by: Username of the person performing the import
 
         Raises:
             ImportError: If processing fails
@@ -729,7 +751,7 @@ class ImportService:
             create_data = self._convert_to_gateway_create(gateway_data)
 
             try:
-                await self.gateway_service.register_gateway(db, create_data)
+                await self.gateway_service.register_gateway(db, create_data, created_by=imported_by, created_via="import")
                 status.created_entities += 1
                 logger.debug(f"Created gateway: {gateway_name}")
 
@@ -757,7 +779,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.RENAME:
                     new_name = f"{gateway_name}_imported_{int(datetime.now().timestamp())}"
                     create_data.name = new_name
-                    await self.gateway_service.register_gateway(db, create_data)
+                    await self.gateway_service.register_gateway(db, create_data, created_by=imported_by, created_via="import")
                     status.created_entities += 1
                     status.warnings.append(f"Renamed gateway {gateway_name} to {new_name}")
                 elif conflict_strategy == ConflictStrategy.FAIL:
@@ -791,7 +813,7 @@ class ImportService:
             create_data = await self._convert_to_server_create(db, server_data)
 
             try:
-                await self.server_service.register_server(db, create_data)
+                await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
                 status.created_entities += 1
                 logger.debug(f"Created server: {server_name}")
 
@@ -819,7 +841,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.RENAME:
                     new_name = f"{server_name}_imported_{int(datetime.now().timestamp())}"
                     create_data.name = new_name
-                    await self.server_service.register_server(db, create_data)
+                    await self.server_service.register_server(db, create_data, created_by=imported_by, created_via="import")
                     status.created_entities += 1
                     status.warnings.append(f"Renamed server {server_name} to {new_name}")
                 elif conflict_strategy == ConflictStrategy.FAIL:
@@ -1806,10 +1828,10 @@ class ImportService:
         if not enhanced_data.get("owner_email"):
             enhanced_data["owner_email"] = user_context["user_email"]
 
-        # Set visibility: use export value if present, otherwise default to 'public'
+        # Set visibility: use export value if present, otherwise default to 'team'
         # This supports pre-0.7.0 exports that don't have visibility field
         if not enhanced_data.get("visibility"):
-            enhanced_data["visibility"] = "public"  # Default to public for backward compatibility
+            enhanced_data["visibility"] = "team"
 
         # Add import tracking
         if not enhanced_data.get("federation_source"):
@@ -1818,12 +1840,13 @@ class ImportService:
         logger.debug(f"Enhanced entity with multitenancy: team_id={enhanced_data['team_id']}, visibility={enhanced_data['visibility']}")
         return enhanced_data
 
-    async def _assign_imported_items_to_team(self, db: Session, imported_by: str) -> None:
+    async def _assign_imported_items_to_team(self, db: Session, imported_by: str, imported_after: Optional[datetime] = None) -> None:
         """Assign imported items without team assignment to the importer's personal team.
 
         Args:
             db: Database session
             imported_by: Email of user who performed the import
+            imported_after: Optional lower bound timestamp for this import run
         """
         try:
             # Find the importing user and their personal team
@@ -1837,7 +1860,7 @@ class ImportService:
                 logger.warning(f"User {imported_by} has no personal team - skipping team assignment")
                 return
 
-            logger.info(f"Assigning orphaned imported items to {imported_by}'s team: {personal_team.name}")
+            logger.info(f"Assigning imported items to {imported_by}'s team: {personal_team.name}")
 
             # Resource types to check
             resource_types = [("servers", Server), ("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("gateways", Gateway), ("a2a_agents", A2AAgent)]
@@ -1846,21 +1869,37 @@ class ImportService:
 
             for resource_name, resource_model in resource_types:
                 try:
-                    # Find items without team assignment (recently imported)
-                    unassigned = db.query(resource_model).filter((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None))).all()
+                    query = db.query(resource_model).filter(resource_model.created_by == imported_by, resource_model.created_via == "import")
+                    if imported_after is not None:
+                        query = query.filter(resource_model.created_at >= imported_after)
 
-                    if unassigned:
-                        logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to user team")
+                    recently_imported = query.all()
+                    if not recently_imported:
+                        continue
 
-                        for item in unassigned:
+                    assigned_for_type = 0
+                    for item in recently_imported:
+                        changed = False
+                        if not item.team_id:
                             item.team_id = personal_team.id
+                            changed = True
+                        if not item.owner_email:
                             item.owner_email = user.email
-                            # Set imported items to public for better visibility
-                            item.visibility = "public"
-                            if hasattr(item, "federation_source") and not item.federation_source:
-                                item.federation_source = f"imported-by-{imported_by}"
+                            changed = True
+                        if getattr(item, "visibility", None) != "team":
+                            # Assign a secure default visibility when import payload omits it.
+                            item.visibility = "team"
+                            changed = True
+                        if hasattr(item, "federation_source") and not item.federation_source:
+                            item.federation_source = f"imported-by-{imported_by}"
+                            changed = True
 
-                        total_assigned += len(unassigned)
+                        if changed:
+                            assigned_for_type += 1
+
+                    if assigned_for_type:
+                        logger.info(f"Assigned {assigned_for_type} imported {resource_name} to user team")
+                        total_assigned += assigned_for_type
 
                 except Exception as e:
                     logger.error(f"Failed to assign {resource_name} to team: {e}")
@@ -1868,7 +1907,7 @@ class ImportService:
 
             if total_assigned > 0:
                 db.commit()
-                logger.info(f"Assigned {total_assigned} imported items to {personal_team.name} with public visibility")
+                logger.info(f"Assigned {total_assigned} imported items to {personal_team.name} with team visibility")
             else:
                 logger.debug("No orphaned imported items found")
 

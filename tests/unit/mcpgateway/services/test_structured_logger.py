@@ -208,16 +208,20 @@ def test_log_to_python_logger_no_component():
 
 
 def test_persist_to_database_success():
-    mock_db = MagicMock()
+    mock_session = MagicMock()
     router = LogRouter.__new__(LogRouter)
     router.database_enabled = True
     router.external_enabled = False
-    with patch("mcpgateway.services.structured_logger.settings") as mock_settings:
+    with (
+        patch("mcpgateway.services.structured_logger.fresh_db_session") as mock_fresh,
+        patch("mcpgateway.services.structured_logger.settings") as mock_settings,
+    ):
         mock_settings.environment = "test"
         mock_settings.version = "1.0"
-        router._persist_to_database({"level": "INFO", "message": "test"}, db=mock_db)
-    mock_db.add.assert_called_once()
-    mock_db.commit.assert_called_once()
+        mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
+        router._persist_to_database({"level": "INFO", "message": "test"})
+    mock_session.add.assert_called_once()
 
 
 def test_persist_to_database_creates_session_when_none():
@@ -226,23 +230,28 @@ def test_persist_to_database_creates_session_when_none():
     router.database_enabled = True
     router.external_enabled = False
     with (
-        patch("mcpgateway.services.structured_logger.SessionLocal", return_value=mock_session),
+        patch("mcpgateway.services.structured_logger.fresh_db_session") as mock_fresh,
         patch("mcpgateway.services.structured_logger.settings") as mock_settings,
     ):
         mock_settings.environment = "test"
         mock_settings.version = "1.0"
-        router._persist_to_database({"level": "INFO", "message": "test"}, db=None)
+        mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
+        router._persist_to_database({"level": "INFO", "message": "test"})
     mock_session.add.assert_called_once()
-    mock_session.commit.assert_called_once()
-    mock_session.close.assert_called_once()
 
 
 def test_persist_to_database_with_error_details():
-    mock_db = MagicMock()
+    mock_session = MagicMock()
     router = LogRouter.__new__(LogRouter)
-    with patch("mcpgateway.services.structured_logger.settings") as mock_settings:
+    with (
+        patch("mcpgateway.services.structured_logger.fresh_db_session") as mock_fresh,
+        patch("mcpgateway.services.structured_logger.settings") as mock_settings,
+    ):
         mock_settings.environment = "test"
         mock_settings.version = "1.0"
+        mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
         router._persist_to_database(
             {
                 "level": "ERROR",
@@ -250,62 +259,74 @@ def test_persist_to_database_with_error_details():
                 "error_type": "ValueError",
                 "error_message": "bad value",
                 "error_stack_trace": "traceback...",
-            },
-            db=mock_db,
+            }
         )
-    mock_db.add.assert_called_once()
+    mock_session.add.assert_called_once()
 
 
 def test_persist_to_database_with_performance_metrics():
-    mock_db = MagicMock()
-    router = LogRouter.__new__(LogRouter)
-    with patch("mcpgateway.services.structured_logger.settings") as mock_settings:
-        mock_settings.environment = "test"
-        mock_settings.version = "1.0"
-        router._persist_to_database(
-            {"level": "INFO", "message": "perf", "database_query_count": 5, "cache_hits": 10},
-            db=mock_db,
-        )
-    mock_db.add.assert_called_once()
-
-
-def test_persist_to_database_with_security_fields():
-    mock_db = MagicMock()
-    router = LogRouter.__new__(LogRouter)
-    with patch("mcpgateway.services.structured_logger.settings") as mock_settings:
-        mock_settings.environment = "test"
-        mock_settings.version = "1.0"
-        router._persist_to_database(
-            {"level": "WARNING", "message": "sec", "security_event_type": "intrusion", "is_security_event": True, "security_severity": "HIGH"},
-            db=mock_db,
-        )
-    mock_db.add.assert_called_once()
-
-
-def test_persist_to_database_exception_rollback():
-    mock_db = MagicMock()
-    mock_db.add.side_effect = Exception("DB error")
-    router = LogRouter.__new__(LogRouter)
-    with patch("mcpgateway.services.structured_logger.settings") as mock_settings:
-        mock_settings.environment = "test"
-        mock_settings.version = "1.0"
-        router._persist_to_database({"level": "INFO", "message": "test"}, db=mock_db)
-    mock_db.rollback.assert_called_once()
-
-
-def test_persist_to_database_exception_closes_own_session():
     mock_session = MagicMock()
-    mock_session.add.side_effect = Exception("DB error")
     router = LogRouter.__new__(LogRouter)
     with (
-        patch("mcpgateway.services.structured_logger.SessionLocal", return_value=mock_session),
+        patch("mcpgateway.services.structured_logger.fresh_db_session") as mock_fresh,
         patch("mcpgateway.services.structured_logger.settings") as mock_settings,
     ):
         mock_settings.environment = "test"
         mock_settings.version = "1.0"
-        router._persist_to_database({"level": "INFO", "message": "test"}, db=None)
-    mock_session.rollback.assert_called_once()
-    mock_session.close.assert_called_once()
+        mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
+        router._persist_to_database(
+            {"level": "INFO", "message": "perf", "database_query_count": 5, "cache_hits": 10}
+        )
+    mock_session.add.assert_called_once()
+
+
+def test_persist_to_database_with_security_fields():
+    mock_session = MagicMock()
+    router = LogRouter.__new__(LogRouter)
+    with (
+        patch("mcpgateway.services.structured_logger.fresh_db_session") as mock_fresh,
+        patch("mcpgateway.services.structured_logger.settings") as mock_settings,
+    ):
+        mock_settings.environment = "test"
+        mock_settings.version = "1.0"
+        mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
+        router._persist_to_database(
+            {"level": "WARNING", "message": "sec", "security_event_type": "intrusion", "is_security_event": True, "security_severity": "HIGH"}
+        )
+    mock_session.add.assert_called_once()
+
+
+def test_persist_to_database_exception_does_not_raise():
+    """Verify that database persistence errors are caught and logged, not propagated."""
+    router = LogRouter.__new__(LogRouter)
+    with (
+        patch("mcpgateway.services.structured_logger.fresh_db_session") as mock_fresh,
+        patch("mcpgateway.services.structured_logger.settings") as mock_settings,
+    ):
+        mock_settings.environment = "test"
+        mock_settings.version = "1.0"
+        mock_fresh.side_effect = Exception("DB connection error")
+        # Should not raise
+        router._persist_to_database({"level": "INFO", "message": "test"})
+
+
+def test_persist_to_database_uses_fresh_session():
+    """Verify that _persist_to_database always uses a fresh session."""
+    mock_session = MagicMock()
+    router = LogRouter.__new__(LogRouter)
+    with (
+        patch("mcpgateway.services.structured_logger.fresh_db_session") as mock_fresh,
+        patch("mcpgateway.services.structured_logger.settings") as mock_settings,
+    ):
+        mock_settings.environment = "test"
+        mock_settings.version = "1.0"
+        mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
+        router._persist_to_database({"level": "INFO", "message": "test"})
+    mock_fresh.assert_called_once()
+    mock_session.add.assert_called_once()
 
 
 def test_route_with_database_and_external():
@@ -519,11 +540,16 @@ def test_get_structured_logger_custom():
 
 
 def test_persist_to_database_with_context_fields():
-    mock_db = MagicMock()
+    mock_session = MagicMock()
     router = LogRouter.__new__(LogRouter)
-    with patch("mcpgateway.services.structured_logger.settings") as mock_settings:
+    with (
+        patch("mcpgateway.services.structured_logger.fresh_db_session") as mock_fresh,
+        patch("mcpgateway.services.structured_logger.settings") as mock_settings,
+    ):
         mock_settings.environment = "test"
         mock_settings.version = "1.0"
+        mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
         router._persist_to_database(
             {
                 "level": "INFO",
@@ -532,7 +558,6 @@ def test_persist_to_database_with_context_fields():
                 "request_query": "q=1",
                 "business_event_type": "login",
                 "resource_type": "tool",
-            },
-            db=mock_db,
+            }
         )
-    mock_db.add.assert_called_once()
+    mock_session.add.assert_called_once()

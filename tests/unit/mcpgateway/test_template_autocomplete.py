@@ -168,3 +168,30 @@ class TestPasswordAutocompleteAttributes:
             "Commented-out password fields without autocomplete attribute:\n  "
             + "\n  ".join(missing)
         )
+
+
+class TestOAuthCallbackUrlNotHardcoded:
+    """Regression: OAuth callback URL hints must use dynamic base_url, not hardcoded localhost."""
+
+    def test_no_hardcoded_localhost_oauth_callback_in_hints(self) -> None:
+        """Ensure <code> hint blocks use {{ request.base_url }} instead of hardcoded URLs.
+
+        Regression test for https://github.com/context-forge/mcp-context-forge/issues/3285
+        """
+        tpl_path = TEMPLATES_DIR / "admin.html"
+        raw = tpl_path.read_text(encoding="utf-8")
+        clean = _strip_html_comments(raw)
+
+        # Find all <code>...</code> blocks containing oauth/callback
+        matches = re.findall(r"<code[^>]*>(.*?)</code", clean, flags=re.DOTALL)
+        hardcoded = [
+            m.strip()
+            for m in matches
+            if "oauth/callback" in m and "localhost" in m
+        ]
+
+        assert not hardcoded, (
+            "Found hardcoded localhost OAuth callback URLs in <code> hints "
+            "(should use {{ request.base_url }}):\n  "
+            + "\n  ".join(hardcoded)
+        )

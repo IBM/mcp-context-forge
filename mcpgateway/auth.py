@@ -15,6 +15,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import logging
+import threading
 from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
 
@@ -22,8 +23,10 @@ import uuid
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
@@ -32,6 +35,15 @@ from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
+
+# Module-level sync Redis client for rate-limiting (lazy-initialized)
+_SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
+_SYNC_REDIS_LOCK = threading.Lock()
+_SYNC_REDIS_FAILURE_TIME: Optional[float] = None  # Backoff after connection failures
+
+# Module-level in-memory cache for last_used rate-limiting (fallback when Redis unavailable)
+_LAST_USED_CACHE: dict = {}
+_LAST_USED_CACHE_LOCK = threading.Lock()
 
 
 def _log_auth_event(
@@ -442,28 +454,171 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         result = db.execute(select(EmailApiToken).where(EmailApiToken.token_hash == token_hash, EmailApiToken.is_active.is_(True)))
         api_token = result.scalar_one_or_none()
 
-        if api_token:
-            # Check expiration
-            if api_token.expires_at and api_token.expires_at < datetime.now(timezone.utc):
+        if not api_token:
+            return None
+
+        # Check expiration
+        if api_token.expires_at:
+            expires_at = api_token.expires_at.replace(tzinfo=timezone.utc) if api_token.expires_at.tzinfo is None else api_token.expires_at
+            if utc_now() > expires_at:
                 return {"expired": True}
 
-            # Check revocation
-            # First-Party
-            from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
+        # Check revocation
+        # First-Party
+        from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
 
-            revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == api_token.jti))
-            if revoke_result.scalar_one_or_none() is not None:
-                return {"revoked": True}
+        revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == api_token.jti))
+        if revoke_result.scalar_one_or_none() is not None:
+            return {"revoked": True}
 
-            # Update last_used timestamp
+        # Update last_used timestamp
+        api_token.last_used = utc_now()
+        db.commit()
+
+        return {
+            "user_email": api_token.user_email,
+            "jti": api_token.jti,
+        }
+
+
+def _get_sync_redis_client():
+    """Get or create module-level synchronous Redis client for rate-limiting.
+
+    Returns:
+        Redis client or None if Redis is unavailable/disabled.
+    """
+    global _SYNC_REDIS_CLIENT, _SYNC_REDIS_FAILURE_TIME  # pylint: disable=global-statement
+
+    # Standard
+    import logging as log  # pylint: disable=import-outside-toplevel,reimported
+    import time  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
+
+    # Quick check without lock
+    if _SYNC_REDIS_CLIENT is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
+        return _SYNC_REDIS_CLIENT
+
+    # Backoff after recent failure (30 seconds)
+    if _SYNC_REDIS_FAILURE_TIME and (time.time() - _SYNC_REDIS_FAILURE_TIME < 30):
+        return None
+
+    # Lazy initialization with lock
+    with _SYNC_REDIS_LOCK:
+        # Double-check after acquiring lock
+        if _SYNC_REDIS_CLIENT is not None:
+            return _SYNC_REDIS_CLIENT
+
+        try:
+            # Third-Party
+            import redis  # pylint: disable=import-outside-toplevel
+
+            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+            # Test connection
+            _SYNC_REDIS_CLIENT.ping()
+            _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
+            log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
+        except Exception as e:
+            log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
+            _SYNC_REDIS_CLIENT = None
+            _SYNC_REDIS_FAILURE_TIME = time.time()
+
+    return _SYNC_REDIS_CLIENT
+
+
+def _update_api_token_last_used_sync(jti: str) -> None:
+    """Update last_used timestamp for an API token with rate-limiting.
+
+    This function is called when an API token is successfully validated via JWT,
+    ensuring the last_used field stays current for monitoring and security audits.
+
+    Rate-limiting: Uses Redis cache (or in-memory fallback) to track the last
+    update time and only writes to the database if the configured interval has
+    elapsed. This prevents excessive DB writes on high-traffic tokens.
+
+    Args:
+        jti: JWT ID of the API token
+
+    Note:
+        Called via asyncio.to_thread() to avoid blocking the event loop.
+        Uses fresh_db_session() for thread-safe database access.
+    """
+    # Standard
+    import time  # pylint: disable=import-outside-toplevel,redefined-outer-name
+
+    # First-Party
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
+
+    # Rate-limiting cache key
+    cache_key = f"api_token_last_used:{jti}"
+    update_interval_seconds = config_settings.token_last_used_update_interval_minutes * 60
+
+    # Try Redis rate-limiting first (if available)
+    redis_client = _get_sync_redis_client()
+    if redis_client:
+        try:
+            last_update = redis_client.get(cache_key)
+            if last_update:
+                # Check if enough time has elapsed
+                time_since_update = time.time() - float(last_update)
+                if time_since_update < update_interval_seconds:
+                    return  # Skip update - too soon
+
+            # Update DB and cache
+            with fresh_db_session() as db:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
+
+                result = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti))
+                api_token = result.scalar_one_or_none()
+                if api_token:
+                    api_token.last_used = utc_now()
+                    db.commit()
+                    # Update Redis cache with current timestamp
+                    redis_client.setex(cache_key, update_interval_seconds * 2, str(time.time()))
+            return
+        except Exception as exc:
+            # Redis failed, fall through to in-memory cache
+            logger = logging.getLogger(__name__)
+            logger.debug("Redis unavailable for API token rate-limiting, using in-memory fallback: %s", exc)
+
+    # Fallback: In-memory cache (module-level dict with threading.Lock for thread-safety)
+    # Note: This is per-process and won't work in multi-worker deployments
+    # but provides basic rate-limiting when Redis is unavailable
+    max_cache_size = 1024  # Prevent unbounded growth
+
+    with _LAST_USED_CACHE_LOCK:
+        last_update = _LAST_USED_CACHE.get(jti)
+        if last_update:
+            time_since_update = time.time() - last_update
+            if time_since_update < update_interval_seconds:
+                return  # Skip update - too soon
+
+    # Update DB and cache
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti))
+        api_token = result.scalar_one_or_none()
+        if api_token:
             api_token.last_used = utc_now()
             db.commit()
-
-            return {
-                "user_email": api_token.user_email,
-                "jti": api_token.jti,
-            }
-        return None
+            # Update in-memory cache (with lock for thread-safety)
+            with _LAST_USED_CACHE_LOCK:
+                if len(_LAST_USED_CACHE) >= max_cache_size:
+                    # Evict oldest entries (by timestamp value)
+                    sorted_keys = sorted(_LAST_USED_CACHE, key=_LAST_USED_CACHE.get)  # type: ignore[arg-type]
+                    for k in sorted_keys[: len(_LAST_USED_CACHE) // 2]:
+                        del _LAST_USED_CACHE[k]
+                _LAST_USED_CACHE[jti] = time.time()
 
 
 def _is_api_token_jti_sync(jti: str) -> bool:
@@ -529,6 +684,49 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
                 updated_at=user.updated_at,
             )
         return None
+
+
+def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Optional[EmailUser]:
+    """Resolve plugin-authenticated user against database-backed identity state.
+
+    Plugin hooks may authenticate a request and return identity claims. This
+    helper enforces that admin status is always derived from the database record.
+
+    Behavior:
+    - Existing DB user: return DB user (authoritative for is_admin/is_active).
+    - Missing DB user and REQUIRE_USER_IN_DB=true: reject (None).
+    - Missing DB user and REQUIRE_USER_IN_DB=false: allow a non-admin virtual
+      user built from non-privileged plugin claims.
+
+    Args:
+        user_dict: Identity claims returned by plugin auth hook.
+
+    Returns:
+        EmailUser when identity is accepted, otherwise None.
+    """
+    email = str(user_dict.get("email") or "").strip()
+    if not email:
+        return None
+
+    db_user = _get_user_by_email_sync(email)
+    if db_user:
+        return db_user
+
+    if settings.require_user_in_db:
+        return None
+
+    return EmailUser(
+        email=email,
+        password_hash=user_dict.get("password_hash", ""),
+        full_name=user_dict.get("full_name"),
+        is_admin=False,
+        is_active=user_dict.get("is_active", True),
+        auth_provider=user_dict.get("auth_provider", "local"),
+        password_change_required=user_dict.get("password_change_required", False),
+        email_verified_at=user_dict.get("email_verified_at"),
+        created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
+        updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
+    )
 
 
 def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dict[str, Any]:
@@ -643,7 +841,7 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    request: Optional[object] = None,
+    request: Request = None,  # type: ignore[assignment]
 ) -> EmailUser:
     """Get current authenticated user from JWT token with revocation checking.
 
@@ -677,6 +875,14 @@ async def get_current_user(
 
         if auth_provider == "api_token":
             request.state.auth_method = "api_token"
+            jti = payload.get("jti")
+            if jti:
+                request.state.jti = jti
+                try:
+                    await asyncio.to_thread(_update_api_token_last_used_sync, jti)
+                except Exception as e:
+                    logger.debug(f"Failed to update API token last_used: {e}")
+                    # Continue authentication - last_used update is not critical
             return
 
         if auth_provider:
@@ -691,7 +897,13 @@ async def get_current_user(
             is_legacy_api_token = await asyncio.to_thread(_is_api_token_jti_sync, jti_for_check)
             if is_legacy_api_token:
                 request.state.auth_method = "api_token"
+                request.state.jti = jti_for_check
                 logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
+                try:
+                    await asyncio.to_thread(_update_api_token_last_used_sync, jti_for_check)
+                except Exception as e:
+                    logger.debug(f"Failed to update legacy API token last_used: {e}")
+                    # Continue authentication - last_used update is not critical
             else:
                 request.state.auth_method = "jwt"
         else:
@@ -767,20 +979,24 @@ async def get_current_user(
             # If plugin successfully authenticated user, return it
             if auth_result.modified_payload and isinstance(auth_result.modified_payload, dict):
                 logger.info("User authenticated via plugin hook")
-                # Create EmailUser from dict returned by plugin
+                # Resolve plugin claims against DB state so admin flags are authoritative.
                 user_dict = auth_result.modified_payload
-                user = EmailUser(
-                    email=user_dict.get("email"),
-                    password_hash=user_dict.get("password_hash", ""),
-                    full_name=user_dict.get("full_name"),
-                    is_admin=user_dict.get("is_admin", False),
-                    is_active=user_dict.get("is_active", True),
-                    auth_provider=user_dict.get("auth_provider", "local"),
-                    password_change_required=user_dict.get("password_change_required", False),
-                    email_verified_at=user_dict.get("email_verified_at"),
-                    created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
-                    updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
-                )
+                user = await asyncio.to_thread(_resolve_plugin_authenticated_user_sync, user_dict)
+
+                if user is None:
+                    logger.warning("Plugin auth rejected: user identity could not be resolved against DB policy")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User not found in database",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                if not user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Account disabled",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
 
                 # Store auth_method in request.state so it can be accessed by RBAC middleware
                 if request and auth_result.metadata:
@@ -803,7 +1019,7 @@ async def get_current_user(
 
     except PluginViolationError as e:
         # Plugin explicitly denied authentication with custom message
-        logger.warning(f"Authentication denied by plugin: {e.message}")
+        logger.warning(f"Authentication denied by plugin: {SecurityValidator.sanitize_log_message(e.message)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=e.message,  # Use plugin's custom error message
@@ -814,7 +1030,7 @@ async def get_current_user(
         raise
     except Exception as e:
         # Log but don't fail on plugin errors - fall back to standard auth
-        logger.warning(f"HTTP_AUTH_RESOLVE_USER hook failed, falling back to standard auth: {e}")
+        logger.warning(f"HTTP_AUTH_RESOLVE_USER hook failed, falling back to standard auth: {SecurityValidator.sanitize_log_message(str(e))}")
 
     # EXISTING: Standard authentication (JWT, API tokens)
     if not credentials:
@@ -825,7 +1041,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    logger.debug("Attempting authentication with token: %s...", credentials.credentials[:20])
+    logger.debug("Attempting authentication with bearer credentials")
     email = None
 
     try:
@@ -1074,8 +1290,17 @@ async def get_current_user(
             except HTTPException:
                 raise
             except Exception as revoke_check_error:
-                # Log the error but don't fail authentication for admin tokens
-                logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
+                # Fail-secure: if the revocation check itself errors, reject the token.
+                # Allowing through on error would let revoked tokens bypass enforcement
+                # when the DB is unreachable or the table is missing.
+                logger.warning(
+                    f"Token revocation check failed for JTI {SecurityValidator.sanitize_log_message(jti)} — denying access (fail-secure): {SecurityValidator.sanitize_log_message(str(revoke_check_error))}"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token validation failed",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
 
         # Resolve teams based on token_use
         token_use = payload.get("token_use")
@@ -1099,6 +1324,9 @@ async def get_current_user(
             request.state.token_teams = normalized_teams
             request.state.team_id = team_id
             request.state.token_use = token_use
+            # Store JTI for use in middleware (e.g., token usage logging)
+            if jti:
+                request.state.jti = jti
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
@@ -1110,7 +1338,6 @@ async def get_current_user(
         logger.debug("JWT validation failed with error: %s, trying database API token", jwt_error)
         try:
             token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
-            logger.debug("Generated token hash: %s", token_hash)
 
             # Lookup API token using fresh session in thread pool
             api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
@@ -1139,6 +1366,10 @@ async def get_current_user(
                 # Set auth_method for database API tokens
                 if request:
                     request.state.auth_method = "api_token"
+                    request.state.user_email = api_token_info["user_email"]
+                    # Store JTI for use in middleware
+                    if "jti" in api_token_info:
+                        request.state.jti = api_token_info["jti"]
             else:
                 logger.debug("API token not found in database")
                 logger.debug("No valid authentication method found")
@@ -1153,7 +1384,7 @@ async def get_current_user(
             raise
         except Exception as e:
             # Neither JWT nor API token validation worked
-            logger.debug(f"Database API token validation failed with exception: {e}")
+            logger.debug(f"Database API token validation failed with exception: {SecurityValidator.sanitize_log_message(str(e))}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication credentials",

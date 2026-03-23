@@ -1,4 +1,4 @@
-# 🧪 MCP Gateway Testing Guide
+# 🧪 ContextForge Testing Guide
 
 This repository includes a comprehensive test suite organized by test type and purpose:
 

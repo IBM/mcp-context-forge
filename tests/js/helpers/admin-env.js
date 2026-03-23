@@ -34,7 +34,7 @@ let instrumentedCode = null;
  * intended mechanism for loading such scripts in a test environment.
  * This is NOT evaluating untrusted input — the source is our own static asset.
  */
-export function loadAdminJs() {
+export function loadAdminJs(options = {}) {
     if (!instrumentedCode) {
         const adminJsContent = fs.readFileSync(adminJsPath, "utf8");
         const instrumenter = createInstrumenter({
@@ -60,6 +60,10 @@ export function loadAdminJs() {
         warn: () => {},
         error: () => {},
     };
+
+    if (typeof options.beforeEval === "function") {
+        options.beforeEval(dom.window);
+    }
 
     // Execute the instrumented script in JSDOM's sandbox — safe eval of our
     // own source file, required because admin.js is not an ES module.

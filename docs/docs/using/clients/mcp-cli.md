@@ -1,10 +1,10 @@
-# 🖥️ MCP CLI + MCP Context Forge Gateway
+# 🖥️ MCP CLI + ContextForge Gateway
 
-A powerful, feature-rich command-line interface for interacting with Model Context Protocol servers through **IBM's MCP Context Forge Gateway**. The mcp-cli provides multiple operational modes including chat, interactive shell, and scriptable automation, with support for multiple LLM providers.
+A powerful, feature-rich command-line interface for interacting with Model Context Protocol servers through **IBM's ContextForge Gateway**. The mcp-cli provides multiple operational modes including chat, interactive shell, and scriptable automation, with support for multiple LLM providers.
 
-With mcp-cli → MCP Context Forge Gateway you can:
+With mcp-cli → ContextForge Gateway you can:
 
-* 🔧 **Auto-discover tools** from your MCP Context Forge Gateway and use them seamlessly
+* 🔧 **Auto-discover tools** from your ContextForge Gateway and use them seamlessly
 * 🔄 **Switch between providers** (OpenAI, Anthropic, Ollama) during sessions
 * 📊 **Export conversation history** to JSON for analysis and debugging
 * 🤖 **Chat with LLMs** that automatically invoke Gateway tools and resources
@@ -23,7 +23,7 @@ The mcp-cli supports **stdio** connections out-of-the-box through the bundled **
 
 * **Python ≥ 3.11**
 * **uv** (recommended) or pip for dependency management
-* **MCP Context Forge Gateway** running locally or remotely (default: http://localhost:4444)
+* **ContextForge Gateway** running locally or remotely (default: http://localhost:4444)
 * **JWT or Basic Auth credentials** for Gateway access
 * **LLM Provider API keys** (optional, for chat mode):
 
@@ -58,10 +58,10 @@ uv sync --reinstall
 uv run mcp-cli --help
 ```
 
-### Install MCP Context Forge Gateway
+### Install ContextForge Gateway
 
 ```bash
-# Clone the MCP Context Forge repository
+# Clone ContextForge repository
 git clone https://github.com/IBM/mcp-context-forge
 cd mcp-context-forge
 
@@ -74,7 +74,7 @@ make venv install serve
 
 ## ⚙️ Configuring Your Server
 
-Create a `server_config.json` file to define your MCP Context Forge Gateway connection:
+Create a `server_config.json` file to define your ContextForge Gateway connection:
 
 ### Basic Configuration (Local Development)
 
@@ -111,7 +111,7 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
         "MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}",
         "--entrypoint",
         "uv",
-        "ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1",
+        "ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2",
         "run",
         "--directory",
         "mcpgateway-wrapper",
@@ -134,7 +134,7 @@ python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --
 
 > **⚠️ Important Notes**
 > - Use the **full path** to your virtual environment's Python to avoid import errors
-> - Make sure your MCP Context Forge Gateway is running on the correct port (default: 4444)
+> - Make sure your ContextForge Gateway is running on the correct port (default: 4444)
 > - The wrapper requires `MCP_SERVER_URL` environment variable
 
 ---
@@ -203,7 +203,7 @@ mcp-cli resources list --server mcpgateway-wrapper
 
 ## 🧪 Verify Tool Discovery
 
-Once connected to your MCP Context Forge Gateway, mcp-cli automatically discovers all available tools:
+Once connected to your ContextForge Gateway, mcp-cli automatically discovers all available tools:
 
 1. **Test connection:** `mcp-cli ping --server mcpgateway-wrapper`
 2. **List tools:** `mcp-cli tools list --server mcpgateway-wrapper`
@@ -225,7 +225,7 @@ export OPENAI_API_KEY="sk-your-api-key-here"
 mcp-cli chat --server mcpgateway-wrapper --provider openai --model gpt-4o-mini
 ```
 
-**⚠️ Known Issue:** OpenAI has a 64-character limit for tool names, but some MCP Context Forge tools exceed this limit (e.g., `github-server-add-pull-request-review-comment-to-pending-review` is 69 characters).
+**⚠️ Known Issue:** OpenAI has a 64-character limit for tool names, but some ContextForge tools exceed this limit (e.g., `github-server-add-pull-request-review-comment-to-pending-review` is 69 characters).
 
 ### Ollama (Recommended - No tool name limitations)
 
@@ -324,7 +324,7 @@ In interactive mode, use these commands:
 ### Environment Variables
 
 ```bash
-# MCP Context Forge Gateway connection
+# ContextForge Gateway connection
 export MCP_AUTH="Bearer your-jwt-token"
 export MCP_SERVER_URL="http://localhost:4444"
 
@@ -446,9 +446,9 @@ mcp-cli cmd --server mcpgateway-wrapper --tool time-server-convert-time \
 
 ---
 
-## 🔗 Integration with MCP Context Forge Gateway
+## 🔗 Integration with ContextForge Gateway
 
-The mcp-cli integrates with MCP Context Forge Gateway through multiple connection methods:
+The mcp-cli integrates with ContextForge Gateway through multiple connection methods:
 
 ### Local Development Setup
 
@@ -494,7 +494,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 
 # Generate token
 export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-secret-key)
@@ -507,7 +507,7 @@ curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/t
 
 ## 📝 Available Tool Categories
 
-Your MCP Context Forge Gateway provides these tool categories:
+Your ContextForge Gateway provides these tool categories:
 
 ### 🗂️ Filesystem Tools
 - **Downloads & Documents:** Read, write, edit, search files
@@ -551,7 +551,7 @@ Your MCP Context Forge Gateway provides these tool categories:
 
 * **mcp-cli GitHub** → [https://github.com/chrishayuk/mcp-cli](https://github.com/chrishayuk/mcp-cli)
 * **CHUK-MCP Protocol** → [https://github.com/chrishayuk/chuk-mcp](https://github.com/chrishayuk/chuk-mcp)
-* **MCP Context Forge Gateway** → [https://github.com/IBM/mcp-context-forge](https://github.com/IBM/mcp-context-forge)
+* **ContextForge Gateway** → [https://github.com/IBM/mcp-context-forge](https://github.com/IBM/mcp-context-forge)
 * **MCP Specification** → [https://modelcontextprotocol.io/](https://modelcontextprotocol.io/)
 
 ---
@@ -559,7 +559,7 @@ Your MCP Context Forge Gateway provides these tool categories:
 ## 🎯 Quick Start Checklist
 
 - [ ] Install mcp-cli: `pip install -e ".[cli,dev]"`
-- [ ] Install MCP Context Forge Gateway
+- [ ] Install ContextForge Gateway
 - [ ] Start gateway: `make serve` (runs on localhost:4444)
 - [ ] Create `server_config.json` with correct Python path
 - [ ] Generate JWT token for authentication

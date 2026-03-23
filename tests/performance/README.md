@@ -1,6 +1,6 @@
-# MCP Gateway Performance Testing
+# ContextForge Performance Testing
 
-Comprehensive performance testing suite for MCP Gateway with load testing, server profiling, infrastructure testing, and baseline comparison.
+Comprehensive performance testing suite for ContextForge with load testing, server profiling, infrastructure testing, and baseline comparison.
 
 ## Quick Start
 

@@ -143,16 +143,18 @@ A new `MCP_REQUIRE_AUTH` configuration option provides fine-grained control over
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `MCP_REQUIRE_AUTH` | `false` | When `true`, all `/mcp` requests must include a valid Bearer token. When `false`, unauthenticated requests are allowed but can only access public tools, resources, and prompts. |
+| `MCP_REQUIRE_AUTH` | `false` | When `true`, all `/mcp` requests must include a valid Bearer token. When `false`, unauthenticated requests are allowed but can only access public tools, resources, and prompts — except for servers with `oauth_enabled=True`, which always require authentication. |
 
 ### Behavior Matrix
 
 | `AUTH_REQUIRED` | `MCP_REQUIRE_AUTH` | REST API | MCP Endpoints |
 |-----------------|-------------------|----------|---------------|
-| `true` | `false` (default) | Auth required | Public-only access without token |
+| `true` | `false` (default) | Auth required | Public-only access without token* |
 | `true` | `true` | Auth required | Auth required |
-| `false` | `false` | No auth | Public-only access without token |
+| `false` | `false` | No auth | Public-only access without token* |
 | `false` | `true` | No auth | Auth required |
+
+*\*Per-server override: virtual servers with `oauth_enabled=True` always require authentication, even when `MCP_REQUIRE_AUTH=false`. Unauthenticated requests to these servers receive a 401 with a `WWW-Authenticate` header containing the RFC 9728 resource metadata URL.*
 
 ### Use Cases
 
@@ -161,6 +163,7 @@ A new `MCP_REQUIRE_AUTH` configuration option provides fine-grained control over
 - Suitable for public MCP services offering public tools
 - Unauthenticated clients can discover and invoke public tools only
 - Team-scoped and private tools require authentication
+- Servers with `oauth_enabled=True` require authentication regardless (per-server override)
 
 **Strict Mode (`MCP_REQUIRE_AUTH=true`):**
 
@@ -171,6 +174,8 @@ A new `MCP_REQUIRE_AUTH` configuration option provides fine-grained control over
 ### Security Considerations
 
 - When `MCP_REQUIRE_AUTH=false`, unauthenticated requests receive an empty team list (`teams=[]`), restricting access to `visibility=public` items only
+- **Per-server OAuth enforcement**: servers with `oauth_enabled=True` reject unauthenticated requests with 401 even in permissive mode, with a `WWW-Authenticate` header pointing to the RFC 9728 resource metadata URL for OAuth discovery
+- **Fail-closed on infrastructure errors**: if the database is unavailable during per-server OAuth enforcement, the request is rejected with 503 rather than silently allowed
 - Private and team-scoped tools, resources, and prompts are never exposed to unauthenticated users
 - The service layer enforces access control regardless of this setting
 

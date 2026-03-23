@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Security Cookie Utilities for MCP Gateway.
+Security Cookie Utilities for ContextForge.
 
 This module provides utilities for setting secure authentication cookies with proper
 security attributes to prevent common cookie-based attacks.

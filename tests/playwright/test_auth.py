@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
-Authentication tests for MCP Gateway Admin UI.
+Authentication tests for ContextForge Admin UI.
 """
 
 # Standard
@@ -16,15 +16,18 @@ from playwright.sync_api import expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
+# First-Party
+from mcpgateway.config import Settings
+
 # Local
-from .conftest import ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, ADMIN_NEW_PASSWORD, BASE_URL
+from .conftest import _attempt_admin_login_with_password, _candidate_admin_passwords, ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, BASE_URL
 from .pages.admin_page import AdminPage
 from .pages.login_page import LoginPage
 
 
 @pytest.mark.auth
 class TestAuthentication:
-    """Authentication tests for MCP Gateway Admin UI.
+    """Authentication tests for ContextForge Admin UI.
 
     Tests email/password authentication flow for the admin interface.
 
@@ -45,16 +48,15 @@ class TestAuthentication:
 
         # Perform login with optional password change
         if allow_password_change:
-            success = login_page.login(email, password, ADMIN_NEW_PASSWORD)
-            if success and login_page.is_on_change_password_page():
-                # Password was changed
-                ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
-            elif not success and ADMIN_NEW_PASSWORD != password:
-                # Try with new password
-                success = login_page.login(email, ADMIN_NEW_PASSWORD)
-                if success:
-                    ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
-            return success
+            settings = Settings()
+            if _attempt_admin_login_with_password(page, login_page, email, password):
+                return True
+            for candidate in _candidate_admin_passwords(settings, password):
+                if candidate == password:
+                    continue
+                if _attempt_admin_login_with_password(page, login_page, email, candidate):
+                    return True
+            return False
 
         login_page.submit_login(email, password)
         return not login_page.has_invalid_credentials_error()
@@ -118,7 +120,7 @@ class TestAuthentication:
         if re.search(r"/admin/change-password-required", page.url):
             pytest.skip("Admin password change required; configure a final password and retry.")
         expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
-        expect(page.locator("h1")).to_contain_text("Gateway Administration")
+        expect(page).to_have_title(re.compile(r".*Gateway Administration.*"))
 
         # Check that we can see admin tabs
         admin_ui = AdminPage(page, BASE_URL)
@@ -148,24 +150,28 @@ class TestAuthentication:
         if not login_page.is_login_form_available(timeout=3000):
             pytest.fail("Admin login form not available. Email auth may be disabled.")
 
-        # Attempt login with correct credentials
-        login_page.submit_login(ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0])
+        # Attempt login with all candidate passwords (the active password
+        # may have been rotated by a prior test session).
+        settings = Settings()
+        logged_in = _attempt_admin_login_with_password(page, login_page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0])
+        if not logged_in:
+            for candidate in _candidate_admin_passwords(settings, ADMIN_ACTIVE_PASSWORD[0]):
+                if candidate == ADMIN_ACTIVE_PASSWORD[0]:
+                    continue
+                if _attempt_admin_login_with_password(page, login_page, ADMIN_EMAIL, candidate):
+                    logged_in = True
+                    break
 
-        # Check for invalid credentials error
-        if login_page.has_invalid_credentials_error():
+        if not logged_in:
             error_msg = (
-                f"Login FAILED with correct credentials!\n"
+                f"Login FAILED with all candidate credentials!\n"
                 f"Email: {ADMIN_EMAIL}\n"
                 f"Password source: {'ENV VAR' if env_password else 'DEFAULT'}\n"
-                f"\nPossible causes:\n"
-                f"1. The password in the environment variable doesn't match the server's expected password\n"
-                f"2. The server may be using a different password than what's configured\n"
-                f"3. The password may have been changed on the server but not updated in the env var\n"
                 f"\nTo fix: Verify the correct password on the server and update PLATFORM_ADMIN_PASSWORD"
             )
             pytest.fail(error_msg)
 
-        # Verify successful login by checking URL
+        # Verify successful login by checking URL (allow change-password page as a valid post-login destination)
         try:
             expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=5000)
         except PlaywrightTimeoutError:
@@ -179,3 +185,38 @@ class TestAuthentication:
             pytest.fail("Login succeeded but JWT token cookie was not set. Authentication may be incomplete.")
 
         assert jwt_cookie["httpOnly"] is True, "JWT cookie should be httpOnly for security"
+
+    def test_logged_in_user_redirected_from_login_page(self, context):
+        """Test that already logged-in users are redirected to dashboard when accessing login page.
+
+        This test verifies the fix for the issue where logged-in users could still
+        access the login page instead of being redirected to the dashboard.
+        """
+        page = context.new_page()
+
+        # First, log in successfully
+        page.goto("/admin")
+        if re.search(r"/admin/login", page.url):
+            if not self._login(page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0], allow_password_change=True):
+                pytest.skip("Admin credentials invalid. Set PLATFORM_ADMIN_PASSWORD/PLATFORM_ADMIN_NEW_PASSWORD to match the running gateway.")
+
+        # Verify we're logged in and on the admin page
+        expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+
+        # Verify JWT cookie is set (user is authenticated)
+        cookies = page.context.cookies()
+        jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
+        if not jwt_cookie:
+            pytest.skip("JWT cookie not set after login. Cannot test redirect behavior.")
+
+        # Now try to access the login page while already logged in
+        page.goto("/admin/login")
+
+        # Verify that we were redirected to the admin dashboard, not the login page
+        expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+        login_page = LoginPage(page, BASE_URL)
+        assert not login_page.is_on_login_page(), "Should have been redirected away from login page"
+
+        # Verify we can see admin interface elements instead
+        admin_ui = AdminPage(page, BASE_URL)
+        expect(admin_ui.servers_tab).to_be_visible()

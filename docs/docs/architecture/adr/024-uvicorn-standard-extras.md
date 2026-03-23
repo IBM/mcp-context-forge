@@ -6,7 +6,7 @@
 
 ## Context
 
-MCP Gateway uses Gunicorn with Uvicorn workers (`uvicorn.workers.UvicornWorker`) as its production ASGI server stack. The base `uvicorn` package provides functional async HTTP serving, but lacks optional performance-enhancing components that can provide 15-30% throughput improvements with zero code changes.
+ContextForge uses Gunicorn with Uvicorn workers (`uvicorn.workers.UvicornWorker`) as its production ASGI server stack. The base `uvicorn` package provides functional async HTTP serving, but lacks optional performance-enhancing components that can provide 15-30% throughput improvements with zero code changes.
 
 The uvicorn package offers a `[standard]` extras bundle that includes:
 
@@ -54,7 +54,7 @@ We will adopt **uvicorn[standard]** as the default uvicorn installation to enabl
 - **15-30% higher throughput** - Faster event loop and HTTP parsing reduce per-request overhead
 - **Lower latency** - uvloop provides 20-40% lower event loop latency
 - **Zero code changes** - Drop-in enhancement, automatically detected by Uvicorn
-- **Consistency** - Matches other projects in the repository (langchain_agent, mcp_eval_server)
+- **Consistency** - Matches other projects in the repository (mcp_eval_server)
 - **Better development experience** - watchfiles provides faster, more reliable `--reload`
 - **Production-ready** - Used by major deployments (Microsoft, Mozilla, Sentry)
 

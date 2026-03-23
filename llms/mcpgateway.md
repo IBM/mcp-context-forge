@@ -1,10 +1,10 @@
-MCP Gateway: Full Project Overview
+ContextForge: Full Project Overview
 
-- Purpose: One-stop guidance for LLMs to develop, run, test, document, and deploy the MCP Context Forge gateway.
+- Purpose: One-stop guidance for LLMs to develop, run, test, document, and deploy ContextForge gateway.
 - Tech: FastAPI + Pydantic + SQLAlchemy; optional Redis; Alembic migrations; hybrid plugin framework (native + external MCP).
 
 **Core Capabilities**
-- Unified gateway for MCP servers: tools, prompts, and resources via HTTP/SSE/WebSocket/STDIO/streamable HTTP.
+- AI gateway, registry, and proxy exposing a unified control plane for MCP servers: tools, prompts, and resources via HTTP/SSE/WebSocket/STDIO/streamable HTTP.
 - Plugin framework: AI safety, content filtering, policy enforcement, and transformations with pre/post hooks (42 built-in plugins).
 - Federation and administration: register servers, list tools/prompts/resources, manage teams/tokens, admin UI.
 - Agent-to-Agent (A2A) communication between MCP agents.
@@ -18,6 +18,7 @@ MCP Gateway: Full Project Overview
 - MCP Servers: `mcp-servers/` (5 Go servers, 20 Python servers, scaffolding templates)
 - Docs: `docs/` (MkDocs site + docs Makefile)
 - Charts: `charts/` (Helm chart `mcp-stack`)
+- Rust MCP Runtime: `tools_rust/mcp_runtime/` (optional Rust sidecar/edge runtime; see `DEVELOPING.md` for workflows)
 - Tests: `tests/{unit,integration,e2e,performance,security,fuzz,playwright}`
 - Infrastructure: `infra/` (PostgreSQL, Redis, monitoring Docker Compose)
 - Deployment: `deployment/` (k8s, knative, terraform, ansible)
@@ -45,7 +46,7 @@ MCP Gateway: Full Project Overview
 
 **Configuration**
 - Copy `.env.example` → `.env`; verify with `make check-env`.
-- Plugin config path via `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
+- Plugin config path via `PLUGINS_CONFIG_FILE=plugins/config.yaml`.
 - Enable plugin framework: `PLUGINS_ENABLED=true` in `.env`.
 - Prefer environment variables for security-sensitive settings.
 

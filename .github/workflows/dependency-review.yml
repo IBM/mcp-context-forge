@@ -26,12 +26,29 @@ name: Dependency Review
 on:
   push:
     branches: ["main"]
+    paths:
+      - "pyproject.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
+      - "requirements*.txt"
+      - ".github/workflows/dependency-review.yml"
   pull_request:
+    types: [opened, synchronize, ready_for_review]
     branches: ["main"]
+    paths:
+      - "pyproject.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
+      - "requirements*.txt"
+      - ".github/workflows/dependency-review.yml"
   # Weekly safety-net run - useful for catching newly-disclosed CVEs
   # or upstream license changes even when no PR is open.
-  schedule:
-    - cron: "31 12 * * 6" # Saturday @ 12:31 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # -----------------------------------------------------------------
 # Minimal permissions - principle of least privilege
@@ -43,7 +60,9 @@ permissions:
 
 jobs:
   dependency-review:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       # -----------------------------------------------------------

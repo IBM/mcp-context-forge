@@ -139,6 +139,34 @@ async def test_x_frame_options_none():
 
 
 @pytest.mark.asyncio
+async def test_x_frame_options_raw_empty_string():
+    """Test that raw empty string (bypassing config validator) is treated as None."""
+    mock, settings = _mock_settings()
+    settings.x_frame_options = ""
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        response = await middleware.dispatch(_make_request(), _call_next)
+        assert "X-Frame-Options" not in response.headers
+        assert "frame-ancestors" not in response.headers.get("Content-Security-Policy", "")
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_x_frame_options_raw_whitespace_string():
+    """Test that raw whitespace string (bypassing config validator) is treated as None."""
+    mock, settings = _mock_settings()
+    settings.x_frame_options = "   "
+    try:
+        middleware = SecurityHeadersMiddleware(app=None)
+        response = await middleware.dispatch(_make_request(), _call_next)
+        assert "X-Frame-Options" not in response.headers
+        assert "frame-ancestors" not in response.headers.get("Content-Security-Policy", "")
+    finally:
+        mock.stop()
+
+
+@pytest.mark.asyncio
 async def test_x_xss_protection():
     """Test X-XSS-Protection."""
     mock, settings = _mock_settings()

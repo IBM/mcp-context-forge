@@ -124,7 +124,7 @@ class TestAuthEmailNotificationService:
 
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.smtp_from_email = "noreply@example.com"
-            mock_settings.smtp_from_name = "MCP Gateway"
+            mock_settings.smtp_from_name = "ContextForge"
             mock_settings.smtp_user = "smtp-user"
             mock_settings.smtp_password = "smtp-pass"
             mock_settings.smtp_host = "smtp.example.com"
@@ -149,7 +149,7 @@ class TestAuthEmailNotificationService:
 
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.smtp_from_email = "noreply@example.com"
-            mock_settings.smtp_from_name = "MCP Gateway"
+            mock_settings.smtp_from_name = "ContextForge"
             mock_settings.smtp_user = "smtp-user"
             mock_settings.smtp_password = "smtp-pass"
             mock_settings.smtp_host = "smtp.example.com"
@@ -173,7 +173,7 @@ class TestAuthEmailNotificationService:
         """_send_email_sync returns False on SMTP exception."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.smtp_from_email = "noreply@example.com"
-            mock_settings.smtp_from_name = "MCP Gateway"
+            mock_settings.smtp_from_name = "ContextForge"
             mock_settings.smtp_user = None
             mock_settings.smtp_password = None
             mock_settings.smtp_host = "smtp.example.com"
@@ -196,7 +196,7 @@ class TestAuthEmailNotificationService:
         assert result is True
         call_args = send_mock.await_args[0]
         assert call_args[0] == "alice@example.com"
-        assert "Reset your MCP Gateway password" == call_args[1]
+        assert "Reset your ContextForge password" == call_args[1]
         assert "alice" in call_args[2]
 
     @pytest.mark.asyncio

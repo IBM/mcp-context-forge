@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
 Observability Service Implementation.
-This module provides OpenTelemetry-style observability for MCP Gateway,
+This module provides OpenTelemetry-style observability for ContextForge,
 capturing traces, spans, events, and metrics for all operations.
 
 It includes:
@@ -49,7 +49,11 @@ logger = logging.getLogger(__name__)
 # Format: version-trace_id-parent_id-trace_flags
 _TRACEPARENT_RE: Pattern[str] = re.compile(r"^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 
-# Context variable for tracking the current trace_id across async calls
+# Context variable for tracking the current trace_id across async calls.
+# NOTE: The plugin framework maintains a separate ContextVar in
+# mcpgateway.plugins.framework.observability.current_trace_id.
+# ObservabilityMiddleware bridges both — any new code path that sets this
+# variable must also set the framework copy to keep plugin tracing in sync.
 current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
 
 
@@ -1052,7 +1056,7 @@ class ObservabilityService:
     # ==============================
 
     # pylint: disable=too-many-positional-arguments,too-many-arguments,too-many-locals
-    def query_traces(
+    def query_traces(  # noqa: PLR0917
         self,
         db: Session,
         start_time: Optional[datetime] = None,
@@ -1226,7 +1230,7 @@ class ObservabilityService:
         return query.all()
 
     # pylint: disable=too-many-positional-arguments,too-many-arguments,too-many-locals
-    def query_spans(
+    def query_spans(  # noqa: PLR0917
         self,
         db: Session,
         trace_id: Optional[str] = None,

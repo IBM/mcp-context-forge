@@ -88,7 +88,7 @@ class TestSecurityTxtValidation:
         assert result is not None
         assert "Contact: security@example.com" in result
         assert "Expires:" in result
-        assert "# Security contact information for MCP Gateway" in result
+        assert "# Security contact information for ContextForge" in result
 
     def test_validate_security_txt_preserves_expires(self):
         """Test that validation preserves existing Expires field."""

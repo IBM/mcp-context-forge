@@ -4,8 +4,8 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway Centralized for Pydantic validation error, SQL exception.
-This module provides centralized error formatting for the MCP Gateway,
+ContextForge Centralized for Pydantic validation error, SQL exception.
+This module provides centralized error formatting for ContextForge,
 transforming technical Pydantic validation errors and SQLAlchemy database
 exceptions into user-friendly messages suitable for API responses.
 
@@ -296,6 +296,19 @@ class ErrorFormatter:
 
         # Map common database errors
         if isinstance(error, IntegrityError):
+            # Token name uniqueness: check before generic UNIQUE handler so the specific message
+            # takes priority. PostgreSQL reports the constraint name (either the db.py name or the
+            # Alembic migration name); SQLite reports the column paths.
+            if (
+                "uq_email_api_tokens_user_name_team" in error_str
+                or "uq_email_api_tokens_user_name" in error_str
+                or "uq_email_api_tokens_user_email_name" in error_str
+                or ("email_api_tokens.user_email" in error_str and "email_api_tokens.name" in error_str)
+            ):
+                return {
+                    "message": "A token with this name already exists for this user in the same team scope. Token names must be unique per user per team. Please choose a different name.",
+                    "success": False,
+                }
             if "UNIQUE constraint failed" in error_str:
                 if "gateways.url" in error_str:
                     return {"message": "A gateway with this URL already exists", "success": False}

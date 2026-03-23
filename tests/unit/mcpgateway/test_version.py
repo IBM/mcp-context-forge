@@ -97,7 +97,7 @@ def _build_app(monkeypatch: pytest.MonkeyPatch, auth_ok: bool = True) -> FastAPI
 
     app = FastAPI()
     app.include_router(ver_mod.router)
-    app.dependency_overrides[ver_mod.require_auth] = _allow if auth_ok else _deny
+    app.dependency_overrides[ver_mod.require_admin_auth] = _allow if auth_ok else _deny
     return app
 
 
@@ -117,6 +117,9 @@ def test_version_json_ok(client: TestClient) -> None:
     payload: Dict[str, Any] = rsp.json()
     assert payload["database"]["server_version"] == "db-vX"
     assert payload["system"] == {"stub": True}
+    assert "mcp_runtime" in payload
+    assert "mode" in payload["mcp_runtime"]
+    assert "mounted" in payload["mcp_runtime"]
 
 
 def test_version_html_query_param(client: TestClient) -> None:
@@ -135,14 +138,15 @@ def test_version_html_accept_header(client: TestClient) -> None:
 
 def test_version_html_all_sections(client: TestClient) -> None:
     html = client.get("/version?fmt=html").text
-    for sec in ["App", "Platform", "Database", "Redis", "Settings", "System", "Environment"]:
+    for sec in ["App", "Platform", "Database", "Redis", "Settings", "MCP Runtime", "System", "Environment"]:
         assert re.search(rf"<h2[^>]*>{sec}</h2>", html)
 
 
 # --------------------------------------------------------------------------- #
 # Authentication                                                              #
 # --------------------------------------------------------------------------- #
-def test_version_requires_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_version_requires_admin_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-admin users must be denied access to /version diagnostics."""
     unauth_client = TestClient(_build_app(monkeypatch, auth_ok=False))
     rsp = unauth_client.get("/version")
     assert rsp.status_code == 401
@@ -155,10 +159,21 @@ def test_is_secret_and_public_env(monkeypatch: pytest.MonkeyPatch) -> None:
     # First-Party
     from mcpgateway import version as ver_mod
 
-    monkeypatch.setenv("PLAIN", "1")
+    monkeypatch.setenv("MCPGATEWAY_TEST_VAR", "visible")
+    monkeypatch.setenv("MCP_ANOTHER_VAR", "also_visible")
+    monkeypatch.setenv("PORT", "8080")
+    monkeypatch.setenv("HOME", "/home/user")
     monkeypatch.setenv("X_SECRET", "bad")
-    assert "PLAIN" in ver_mod._public_env()
-    assert "X_SECRET" not in ver_mod._public_env()
+    env = ver_mod._public_env()
+    # App-prefixed vars included
+    assert "MCPGATEWAY_TEST_VAR" in env
+    assert "MCP_ANOTHER_VAR" in env
+    # Allowlisted vars included
+    assert "PORT" in env
+    # System vars excluded (not in prefix or allowlist)
+    assert "HOME" not in env
+    # Secrets still excluded
+    assert "X_SECRET" not in env
 
 
 def test_sanitize_url() -> None:
@@ -490,6 +505,7 @@ def test_version_partial_html_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert rsp.status_code == 200
     assert rsp.headers["content-type"].startswith("text/html")
     assert "Application Information" in rsp.text
+    assert "MCP Runtime" in rsp.text
 
 
 def test_version_partial_html_uses_existing_app_templates(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-SSE-Aware Compression Middleware for MCP Gateway.
+SSE-Aware Compression Middleware for ContextForge.
 
 This module wraps starlette-compress to skip compression for Server-Sent Events (SSE)
 responses, which should not be compressed as it can break streaming behavior.
@@ -104,7 +104,7 @@ class SSEAwareCompressMiddleware:
         Returns:
             True if the path is an MCP endpoint, False otherwise.
         """
-        return path == "/mcp" or path == "/mcp/" or path.endswith("/mcp") or path.endswith("/mcp/")
+        return path in {"/mcp", "/mcp/"} or path.endswith("/mcp") or path.endswith("/mcp/")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """

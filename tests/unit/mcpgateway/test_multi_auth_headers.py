@@ -9,6 +9,7 @@ Test multi-header authentication functionality.
 
 # Standard
 import base64
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -213,6 +214,7 @@ class TestMultiAuthHeaders:
     @pytest.mark.asyncio
     async def test_gateway_create_duplicate_keys_with_warning(self, caplog):
         """Test creating gateway with duplicate header keys logs warning."""
+        caplog.set_level(logging.WARNING, logger="mcpgateway.schemas")
         auth_headers = [
             {"key": "X-API-Key", "value": "first_value"},
             {"key": "X-API-Key", "value": "second_value"},  # Duplicate
@@ -327,8 +329,6 @@ class TestMultiAuthHeaders:
         monkeypatch.setattr(service, "_update_or_create_resources", MagicMock(return_value=[]))
         monkeypatch.setattr(service, "_update_or_create_prompts", MagicMock(return_value=[]))
         monkeypatch.setattr(service, "_notify_gateway_updated", AsyncMock())
-
-        monkeypatch.setattr(service, "_prepare_gateway_for_read", lambda value: value)
 
         # Mock model_validate to return a mock that returns itself when masked() is called
         mock_gateway_read = MagicMock()

@@ -29,10 +29,10 @@ Semgrep MCP provides static analysis and security scanning capabilities through 
 - 🎯 Custom rule support
 - 🌐 Multi-language support (30+ languages)
 
-#### Integration with MCP Gateway
+#### Integration with ContextForge
 
 ```bash
-# Register Semgrep with MCP Gateway
+# Register Semgrep with ContextForge
 curl -X POST http://localhost:4444/gateways \
   -H "Content-Type: application/json" \
   -d '{
@@ -144,10 +144,10 @@ The Javadocs MCP server provides access to Java documentation, API references, a
 - 🏷️ Annotation details
 - 🌳 Inheritance hierarchy
 
-#### Integration with MCP Gateway
+#### Integration with ContextForge
 
 ```bash
-# Register Javadocs with MCP Gateway
+# Register Javadocs with ContextForge
 curl -X POST http://localhost:4444/gateways \
   -H "Content-Type: application/json" \
   -d '{
@@ -272,7 +272,7 @@ print(f"Method signature: {method_docs['result']['signature']}")
 print(f"Description: {method_docs['result']['description']}")
 ```
 
-## Using Open Servers with MCP Gateway
+## Using Open Servers with ContextForge
 
 ### Direct Connection
 
@@ -472,7 +472,7 @@ class RateLimitedClient:
 3. **Community Driven**: Often open-source and community maintained
 4. **Always Available**: Public endpoints with high availability
 5. **Standard Compliance**: Full MCP protocol implementation
-6. **Easy Integration**: Simple to add to any MCP Gateway
+6. **Easy Integration**: Simple to add to any ContextForge
 
 ## Limitations
 
@@ -494,4 +494,4 @@ Many open MCP servers accept contributions:
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
 - [Semgrep Documentation](https://semgrep.dev/docs/)
 - [Javadocs.dev API](https://javadocs.dev/api)
-- [MCP Gateway Documentation](../../index.md)
+- [ContextForge Documentation](../../index.md)

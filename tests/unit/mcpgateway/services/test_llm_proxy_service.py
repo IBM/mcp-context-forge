@@ -112,9 +112,17 @@ def test_build_openai_request(service):
     assert body["model"] == "gpt-4"
 
 
-def test_build_azure_request(service):
+def test_build_azure_request(service, monkeypatch: pytest.MonkeyPatch):
     request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
-    provider = _make_provider(provider_type=LLMProviderType.AZURE_OPENAI, api_base=None, config={"resource_name": "res", "deployment_name": "dep"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"value": "res"})
+    provider = _make_provider(
+        provider_type=LLMProviderType.AZURE_OPENAI,
+        api_base=None,
+        config={
+            "resource_name": {"_mcpgateway_encrypted_value_v1": "enc-res"},
+            "deployment_name": "dep",
+        },
+    )
     model = _make_model(model_id="gpt-4")
 
     url, headers, body = service._build_azure_request(request, provider, model)
@@ -169,7 +177,7 @@ async def test_chat_completion_http_error(service):
         await service.chat_completion(MagicMock(), request)
 
 
-def test_build_anthropic_request_with_system_message(service):
+def test_build_anthropic_request_with_system_message(service, monkeypatch: pytest.MonkeyPatch):
     request = ChatCompletionRequest(
         model="claude-3",
         messages=[
@@ -178,7 +186,14 @@ def test_build_anthropic_request_with_system_message(service):
         ],
         stream=True,
     )
-    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="http://anthropic", config={"anthropic_version": "2024-01-01"}, default_max_tokens=123, default_temperature=0.2)
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"value": "2024-01-01"})
+    provider = _make_provider(
+        provider_type=LLMProviderType.ANTHROPIC,
+        api_base="http://anthropic",
+        config={"anthropic_version": {"_mcpgateway_encrypted_value_v1": "enc-version"}},
+        default_max_tokens=123,
+        default_temperature=0.2,
+    )
     model = _make_model(model_id="claude-3")
 
     url, headers, body = service._build_anthropic_request(request, provider, model)
@@ -691,6 +706,64 @@ async def test_chat_completion_request_error(service):
         await service.chat_completion(MagicMock(), request)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://169.254.169.254",
+        "http://0.0.0.0",
+    ],
+    ids=["cloud-metadata", "bind-all"],
+)
+async def test_chat_completion_ssrf_blocked(service, api_base):
+    """chat_completion rejects SSRF-risky provider URLs."""
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
+    model = _make_model()
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
+
+    service._client = AsyncMock()
+
+    with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
+        await service.chat_completion(MagicMock(), request)
+
+    service._client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://127.0.0.1",
+        "http://10.0.0.1",
+    ],
+    ids=["localhost", "private-rfc1918"],
+)
+async def test_chat_completion_ssrf_blocked_private(service, api_base):
+    """chat_completion rejects localhost/private IPs when SSRF protection is strict."""
+    from mcpgateway.config import settings
+
+    settings.ssrf_allow_localhost = False
+    settings.ssrf_allow_private_networks = False
+    try:
+        provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
+        model = _make_model()
+        service._resolve_model = MagicMock(return_value=(provider, model))
+
+        request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
+
+        service._client = AsyncMock()
+
+        with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
+            await service.chat_completion(MagicMock(), request)
+
+        service._client.post.assert_not_called()
+    finally:
+        settings.ssrf_allow_localhost = True
+        settings.ssrf_allow_private_networks = True
+
+
 class DummyStreamResponse:
     """Reusable mock for streaming responses."""
 
@@ -882,6 +955,67 @@ async def test_chat_completion_stream_request_error(service):
         chunks.append(chunk)
 
     assert any("proxy_error" in c for c in chunks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://169.254.169.254",
+        "http://0.0.0.0",
+    ],
+    ids=["cloud-metadata", "bind-all"],
+)
+async def test_chat_completion_stream_ssrf_blocked(service, api_base):
+    """chat_completion_stream rejects SSRF-risky provider URLs."""
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
+    model = _make_model(model_id="gpt-4")
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")], stream=True)
+
+    service._client = MagicMock()
+
+    with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
+        chunks = []
+        async for chunk in service.chat_completion_stream(MagicMock(), request):
+            chunks.append(chunk)
+
+    service._client.stream.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "http://127.0.0.1",
+        "http://10.0.0.1",
+    ],
+    ids=["localhost", "private-rfc1918"],
+)
+async def test_chat_completion_stream_ssrf_blocked_private(service, api_base):
+    """chat_completion_stream rejects localhost/private IPs when SSRF protection is strict."""
+    from mcpgateway.config import settings
+
+    settings.ssrf_allow_localhost = False
+    settings.ssrf_allow_private_networks = False
+    try:
+        provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base=api_base)
+        model = _make_model(model_id="gpt-4")
+        service._resolve_model = MagicMock(return_value=(provider, model))
+
+        request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")], stream=True)
+
+        service._client = MagicMock()
+
+        with pytest.raises(LLMProxyRequestError, match="Invalid LLM provider URL"):
+            async for chunk in service.chat_completion_stream(MagicMock(), request):
+                pass
+
+        service._client.stream.assert_not_called()
+    finally:
+        settings.ssrf_allow_localhost = True
+        settings.ssrf_allow_private_networks = True
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,34 @@
+plugins:
+  - name: "{{ cookiecutter.plugin_name }}"
+    {% set class_parts = cookiecutter.plugin_name.replace(' ', '_').replace('-','_').split('_') -%}
+    {% if class_parts|length > 1 -%}
+    {% set class_name = class_parts|map('capitalize')|join -%}
+    {% else -%}
+    {% set class_name = class_parts|join -%}
+    {% endif -%}
+    kind: "{{ cookiecutter.plugin_slug }}.plugin.{{ class_name }}"
+    description: "{{ cookiecutter.description }}"
+    version: "{{ cookiecutter.version }}"
+    author: "{{ cookiecutter.author }}"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    tags: ["plugin"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 150
+    conditions:
+      # Apply to specific tools/servers
+      - server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      # Plugin config dict passed to the plugin constructor
+
+# Plugin directories to scan
+plugin_dirs:
+  - "{{ cookiecutter.plugin_slug }}"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

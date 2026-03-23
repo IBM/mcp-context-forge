@@ -237,8 +237,9 @@ class TestGrpcExternalPluginInitialize:
                 "mcpgateway.plugins.framework.external.grpc.client.plugin_service_pb2_grpc.PluginServiceStub",
                 return_value=mock_stub,
             ):
-                with pytest.raises(PluginError, match="connection failed"):
-                    await plugin.initialize()
+                with patch("asyncio.sleep", new_callable=AsyncMock):
+                    with pytest.raises(PluginError, match="connection failed"):
+                        await plugin.initialize()
 
 
 class TestGrpcExternalPluginInvokeHook:

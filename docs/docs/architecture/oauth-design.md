@@ -1,4 +1,4 @@
-# OAuth 2.0 Integration Design for MCP Gateway
+# OAuth 2.0 Integration Design for ContextForge
 
 **Version**: 1.2
 **Status**: Design + implementation notes
@@ -10,9 +10,9 @@
 This document describes the design for the Admin UI initiated OAuth 2.0 Authorization Code flow for MCP gateways and how the backend stores and uses user-delegated tokens.
 
 !!! note "Scope of This Document"
-    This document covers **gateway OAuth token delegation** - how MCP Gateway obtains and uses OAuth tokens to authenticate with upstream MCP servers on behalf of users.
+    This document covers **gateway OAuth token delegation** - how ContextForge obtains and uses OAuth tokens to authenticate with upstream MCP servers on behalf of users.
 
-    For information about **user authentication to MCP Gateway** (SSO, JWT tokens, RBAC), see:
+    For information about **user authentication to ContextForge** (SSO, JWT tokens, RBAC), see:
 
     - [RBAC Configuration](../manage/rbac.md) - Token scoping, permissions, and access control
     - [Multi-Tenancy Architecture](./multitenancy.md) - User authentication flows and team management
@@ -112,7 +112,7 @@ The gateway configuration form maps user inputs to the OAuth configuration struc
 ## Security and Operational Notes
 
 -   **Encryption**: Tokens are encrypted at rest using a configured encryption secret.
--   **State Security**: State is HMAC-signed, single-use, and has a short expiration (300 seconds).
+-   **State Security**: State is an opaque random token (`secrets.token_urlsafe`), stored server-side with associated metadata, single-use, and has a short expiration (300 seconds).
 -   **Scoping**: Tokens are scoped per gateway and app user (email) to prevent cross-user reuse.
 -   **Resource Indicator**: The gateway derives a resource value from the gateway URL if not explicitly configured.
 -   **Transport**: HTTPS is recommended in production.
@@ -126,11 +126,14 @@ OAuth tokens obtained through the Authorization Code flow are used to authentica
 1. **Stored encrypted**: Using `AUTH_ENCRYPTION_SECRET`
 2. **Scoped per user**: Each user's token is stored separately per gateway
 3. **Automatically refreshed**: When access tokens expire and refresh tokens are available
-4. **Not validated locally**: The gateway trusts the upstream OAuth provider's token response
+4. **Forwarded as-is**: The stored token is sent directly to the upstream MCP server as a `Bearer` header. The MCP server is responsible for validating the token's audience, scopes, and issuer.
+
+!!! note "Known Gap: No local audience/scope pre-validation"
+    The gateway does not currently inspect the token's `aud` or `scope` claims before forwarding it to the MCP server. In multi-tenant Entra ID setups with multiple app registrations, a misconfigured resource parameter could produce a token scoped for the wrong audience; the MCP server will return a 401 but the error message will not identify the root cause. Tracked for a future hardening pass.
 
 ### Relationship to Gateway Authentication
 
-This OAuth flow is **separate** from user authentication to the MCP Gateway itself:
+This OAuth flow is **separate** from user authentication to ContextForge itself:
 
 | Aspect | Gateway OAuth (this doc) | User Auth to Gateway |
 |--------|-------------------------|---------------------|
