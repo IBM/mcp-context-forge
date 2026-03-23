@@ -582,6 +582,20 @@ class TestOktaNormalization:
 
         assert normalized["groups"] == ["admin"]
 
+    def test_okta_roles_single_string(self, sso_service):
+        """A single string roles value is included in groups for Okta."""
+        okta_provider = SSOProvider(id="okta", name="okta", display_name="Okta", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "okta-user-id",
+            "roles": "admin",
+        }
+
+        normalized = sso_service._normalize_user_info(okta_provider, user_data)
+
+        assert normalized["groups"] == ["admin"]
+
     def test_okta_groups_deduplicated(self, sso_service):
         """Duplicate entries between groups and roles are deduplicated."""
         okta_provider = SSOProvider(id="okta", name="okta", display_name="Okta", provider_type="oidc")
@@ -705,6 +719,20 @@ class TestIBMVerifyNormalization:
         normalized = sso_service._normalize_user_info(ibm_provider, user_data)
 
         assert sorted(normalized["groups"]) == ["Engineering", "Platform"]
+
+    def test_ibm_verify_roles_single_string(self, sso_service):
+        """A single string roles value is included in groups for IBM Verify."""
+        ibm_provider = SSOProvider(id="ibm_verify", name="ibm_verify", display_name="IBM Security Verify", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "ibm-user-id",
+            "roles": "operator",
+        }
+
+        normalized = sso_service._normalize_user_info(ibm_provider, user_data)
+
+        assert normalized["groups"] == ["operator"]
 
 
 class TestKeycloakNormalization:
@@ -1172,6 +1200,20 @@ class TestGenericOIDCNormalization:
         normalized = sso_service._normalize_user_info(provider, user_data)
 
         assert sorted(normalized["groups"]) == ["editor", "viewer"]
+
+    def test_generic_oidc_roles_single_string(self, sso_service):
+        """A single string roles value is included in groups."""
+        provider = SSOProvider(id="custom_oidc", name="custom_oidc", display_name="Custom OIDC", provider_type="oidc")
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "user-123",
+            "roles": "viewer",
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert normalized["groups"] == ["viewer"]
 
     def test_generic_oidc_roles_non_string_filtered(self, sso_service):
         """Non-string elements in roles list are filtered out."""

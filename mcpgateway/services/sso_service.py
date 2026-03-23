@@ -1348,6 +1348,8 @@ class SSOService:
                 roles_value = user_data.get("roles", [])
                 if isinstance(roles_value, list):
                     groups.extend(r for r in roles_value if isinstance(r, str))
+                elif isinstance(roles_value, str):
+                    groups.append(roles_value)
 
             ibm_normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
@@ -1380,6 +1382,8 @@ class SSOService:
                 roles_value = user_data.get("roles", [])
                 if isinstance(roles_value, list):
                     groups.extend(r for r in roles_value if isinstance(r, str))
+                elif isinstance(roles_value, str):
+                    groups.append(roles_value)
 
             okta_normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
@@ -1505,6 +1509,8 @@ class SSOService:
             roles_value = user_data.get("roles", [])
             if isinstance(roles_value, list):
                 groups.extend(r for r in roles_value if isinstance(r, str))
+            elif isinstance(roles_value, str):
+                groups.append(roles_value)
 
         generic_normalized: Dict[str, Any] = {
             "email": user_data.get("email"),

@@ -970,3 +970,87 @@ class TestBootstrapPreservesDBValues:
 
         _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
         assert merged_config["team_mapping"] == {"NewGroup": "new-uuid"}
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_custom_env_scope_overrides_db(self):
+        """A non-default env scope should override a custom DB scope."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "okta"
+        mock_existing_provider.display_name = "Okta"
+        mock_existing_provider.provider_metadata = None
+        mock_existing_provider.scope = "openid profile email groups"
+        mock_existing_provider.team_mapping = None
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=True)
+
+        provider_config = {
+            "id": "okta",
+            "name": "okta",
+            "display_name": "Okta",
+            "scope": "openid profile email groups offline_access",
+            "team_mapping": {},
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
+        assert merged_config["scope"] == "openid profile email groups offline_access"
+
+
+def test_okta_non_dict_group_mapping_uses_empty(monkeypatch, caplog):
+    """OKTA_GROUP_MAPPING with valid JSON but non-dict type should warn and use empty mapping."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=True,
+        sso_okta_client_id="okta-client",
+        sso_okta_client_secret=secret,
+        sso_okta_issuer="https://company.okta.com",
+        sso_okta_scope="openid profile email",
+        okta_group_mapping='["not", "a", "dict"]',
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_client_id=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.sso_bootstrap"):
+        providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["team_mapping"] == {}
+    assert any("must be a JSON object" in record.message for record in caplog.records)

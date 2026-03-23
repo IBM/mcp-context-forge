@@ -179,7 +179,11 @@ def get_predefined_sso_providers() -> List[Dict]:
         okta_team_mapping: Dict[str, Any] = {}
         if settings.okta_group_mapping:
             try:
-                okta_team_mapping = json.loads(settings.okta_group_mapping)
+                parsed = json.loads(settings.okta_group_mapping)
+                if isinstance(parsed, dict):
+                    okta_team_mapping = parsed
+                else:
+                    logger.warning("OKTA_GROUP_MAPPING must be a JSON object (got %s); using empty team mapping", type(parsed).__name__)
             except (json.JSONDecodeError, TypeError):
                 logger.warning("Failed to parse OKTA_GROUP_MAPPING as JSON; using empty team mapping")
         providers.append(
@@ -367,8 +371,9 @@ async def bootstrap_sso_providers() -> None:
                     merged_metadata = {**env_metadata, **db_metadata}
                     provider_config["provider_metadata"] = merged_metadata
 
-                # Preserve DB scope if env provides only the default value
-                if existing_provider.scope and existing_provider.scope != "openid profile email":
+                # Preserve DB scope when env provides only the default value;
+                # an explicit non-default env scope takes precedence over DB.
+                if existing_provider.scope and existing_provider.scope != "openid profile email" and provider_config.get("scope") == "openid profile email":
                     provider_config["scope"] = existing_provider.scope
 
                 # Preserve DB team_mapping if env provides empty mapping
