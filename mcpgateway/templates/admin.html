@@ -658,6 +658,15 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
+{% if 'policy' not in hidden_sections %}
+            <a href="#policy" id="tab-policy" data-testid="policy-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('policy')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🛡️</span>
+              <span x-show="!sidebarCollapsed">Policy Engine</span>
+            </a>
+            {% endif %}
             {% endif %}
           </div>
           {% endif %}
@@ -1653,6 +1662,9 @@
       {% if 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
+{% if is_admin and 'policy' not in hidden_sections %}
+      <div id="policy-panel" class="tab-panel hidden"></div>
+      {% endif %}
       {% endif %}
 
       <!-- Performance Panel -->
