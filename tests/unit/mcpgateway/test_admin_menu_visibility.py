@@ -446,3 +446,44 @@ async def test_none_permission_sections_never_hidden():
     assert "visible_section" not in result
     # Section with denied permission should be hidden
     assert "tools" in result
+
+
+def test_section_permissions_uses_valid_permissions():
+    """All permissions in SECTION_PERMISSIONS must exist in the Permissions class."""
+    from mcpgateway.db import Permissions
+
+    # Collect all permission strings defined in the Permissions class
+    defined_permissions = set()
+    for attr_name in dir(Permissions):
+        val = getattr(Permissions, attr_name)
+        if isinstance(val, str) and not attr_name.startswith("_"):
+            defined_permissions.add(val)
+
+    for section, permission in SECTION_PERMISSIONS.items():
+        if permission is None:
+            continue
+        assert permission in defined_permissions, (
+            f"SECTION_PERMISSIONS['{section}'] = '{permission}' is not defined in Permissions class. "
+            f"Available admin permissions: {sorted(p for p in defined_permissions if p.startswith('admin.'))}"
+        )
+
+
+def test_grpc_services_has_separate_section_permission():
+    """gRPC services must have its own section, not bundled with A2A agents."""
+    assert "grpc-services" in SECTION_PERMISSIONS, "grpc-services must be a separate section"
+    assert "agents" in SECTION_PERMISSIONS, "agents (A2A) must be a separate section"
+    assert SECTION_PERMISSIONS["grpc-services"] == "admin.grpc", "gRPC must require admin.grpc"
+    assert SECTION_PERMISSIONS["agents"] == "a2a.read", "agents must require a2a.read"
+
+
+def test_roots_permission_matches_routes():
+    """Roots section must use admin.system_config, matching its route decorators."""
+    assert SECTION_PERMISSIONS["roots"] == "admin.system_config"
+
+
+def test_grpc_services_is_hidable_section():
+    """grpc-services must be a first-class hidable section, not an alias."""
+    from mcpgateway.config import UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
+
+    assert "grpc-services" in UI_HIDABLE_SECTIONS, "grpc-services must be in UI_HIDABLE_SECTIONS"
+    assert "grpc-services" not in UI_HIDE_SECTION_ALIASES, "grpc-services must not be an alias"

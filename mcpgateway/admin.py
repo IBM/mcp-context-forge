@@ -209,7 +209,8 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "maintenance": ("maintenance",),
     "teams": ("teams",),
     "users": ("users",),
-    "agents": ("a2a-agents", "grpc-services"),
+    "agents": ("a2a-agents",),
+    "grpc-services": ("grpc-services",),
     "tokens": ("tokens",),
     "settings": ("llm-settings",),
 }
@@ -240,11 +241,13 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     # Team management sections
     "teams": "teams.read",
     "tokens": "tokens.read",
-    # A2A and agents
+    # A2A agents
     "agents": "a2a.read",
+    # gRPC services (separate from A2A - requires admin.grpc)
+    "grpc-services": "admin.grpc",
     # Overview and roots
     "overview": "admin.overview",  # Requires admin permission
-    "roots": "roots.read",
+    "roots": "admin.system_config",  # Roots routes use admin.system_config
     "mcp-registry": "servers.read",  # Catalog is part of servers
 }
 
@@ -3906,7 +3909,7 @@ async def admin_ui(
     # Load gRPC services if enabled and available
     grpc_services = []
     try:
-        if "agents" not in hidden_sections and GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
+        if "grpc-services" not in hidden_sections and GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
             grpc_services_raw = await grpc_service_mgr.list_services(
                 db,
                 include_inactive=include_inactive,
