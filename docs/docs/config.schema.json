@@ -341,6 +341,25 @@
       "description": "Okta issuer URL",
       "title": "Sso Okta Issuer"
     },
+    "sso_okta_scope": {
+      "default": "openid profile email",
+      "description": "Okta OIDC scopes (space-separated)",
+      "title": "Sso Okta Scope",
+      "type": "string"
+    },
+    "okta_group_mapping": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "JSON mapping of Okta group names to team UUIDs",
+      "title": "Okta Group Mapping"
+    },
     "sso_keycloak_enabled": {
       "default": false,
       "description": "Enable Keycloak OIDC authentication",
