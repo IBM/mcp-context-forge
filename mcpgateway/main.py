@@ -162,6 +162,7 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
@@ -9805,7 +9806,7 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             try:
                 data = await websocket.receive_text()
-                client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
+                client_args = {"timeout": settings.federation_timeout, "verify": internal_loopback_verify()}
 
                 # Build headers for /rpc request - forward auth credentials
                 rpc_headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -9816,7 +9817,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
-                        f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
+                        f"{internal_loopback_base_url()}{settings.app_root_path}/rpc",
                         json=orjson.loads(data),
                         headers=rpc_headers,
                     )

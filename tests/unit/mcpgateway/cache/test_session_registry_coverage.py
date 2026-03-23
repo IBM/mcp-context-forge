@@ -20,6 +20,7 @@ import pytest
 
 from mcpgateway.cache.session_registry import SessionRegistry
 from mcpgateway.config import settings
+from mcpgateway.utils.internal_http import internal_loopback_base_url
 
 
 # ---------------------------------------------------------------------------
@@ -2326,7 +2327,7 @@ class TestGenerateResponseEdgeCases:
 
         call_args = mock_client.post.call_args
         url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert url == f"http://127.0.0.1:{settings.port}/rpc"
+        assert url == f"{internal_loopback_base_url()}/rpc"
 
 
 # ---------------------------------------------------------------------------
