@@ -56,6 +56,28 @@ logger = logging.getLogger(__name__)
 _HOSTNAME_RE: Pattern[str] = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
 _SLUG_RE: Pattern[str] = re.compile(r"^[a-z0-9-]+$")
 
+_VALID_VISIBILITY = {"private", "team", "public"}
+
+
+def _coerce_visibility(v: Optional[str]) -> Optional[str]:
+    """Normalize legacy visibility values in Read/response schemas.
+
+    DB columns are unconstrained strings, so historical rows may contain
+    values outside the Literal enum.  Coerce them to 'public' (the DB
+    default) instead of letting Pydantic raise a ValidationError on the
+    read path.
+
+    Args:
+        v: Visibility value to normalize.
+
+    Returns:
+        The original value if valid, 'public' if invalid, or None if None.
+    """
+    if v is not None and v not in _VALID_VISIBILITY:
+        logger.warning("Coercing invalid visibility value %r to 'public'", v)
+        return "public"
+    return v
+
 
 def encode_datetime(v: datetime) -> str:
     """
@@ -387,7 +409,7 @@ class ToolCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
-    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -399,24 +421,6 @@ class ToolCreate(BaseModel):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value or None
-
-        Raises:
-            ValueError: If visibility is not a recognized level
-        """
-        if v is not None and v not in ("private", "team", "public"):
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
 
     @field_validator("tags")
     @classmethod
@@ -1435,7 +1439,7 @@ class ToolRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
@@ -1450,6 +1454,8 @@ class ToolRead(BaseModelWithConfigDict):
 
     # MCP protocol extension field
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 class ToolInvocation(BaseModelWithConfigDict):
@@ -1648,26 +1654,8 @@ class ResourceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value or None
-
-        Raises:
-            ValueError: If visibility is not a recognized level
-        """
-        if v is not None and v not in ("private", "team", "public"):
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
 
     @field_validator("tags")
     @classmethod
@@ -1812,7 +1800,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -1970,12 +1958,14 @@ class ResourceRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # MCP protocol fields
     title: Optional[str] = Field(None, description="Human-readable title for the resource")
     annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -2225,26 +2215,8 @@ class PromptCreate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
-    visibility: Optional[str] = Field(default=None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default=None, description="Visibility level: private, team, or public")
     gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value or None
-
-        Raises:
-            ValueError: If visibility is not a recognized level
-        """
-        if v is not None and v not in ("private", "team", "public"):
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
 
     @field_validator("tags")
     @classmethod
@@ -2411,7 +2383,7 @@ class PromptUpdate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
-    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -2578,11 +2550,13 @@ class PromptRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # MCP protocol fields
     title: Optional[str] = Field(None, description="Human-readable title for the prompt")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 class PromptInvocation(BaseModelWithConfigDict):
@@ -2702,7 +2676,7 @@ class GatewayCreate(BaseModelWithConfigDict):
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
-    visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Gateway visibility: private, team, or public")
 
     # CA certificate
     ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
@@ -3043,7 +3017,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
-    visibility: Optional[str] = Field(None, description="Gateway visibility: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Gateway visibility: private, team, or public")
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
@@ -3380,7 +3354,7 @@ class GatewayRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
-    visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Gateway visibility: private, team, or public")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -3405,6 +3379,8 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Gateway mode configuration
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
     @classmethod
@@ -3944,7 +3920,7 @@ class ServerCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
@@ -4029,24 +4005,6 @@ class ServerCreate(BaseModel):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: str) -> str:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value
-
-        Raises:
-            ValueError: If visibility is invalid
-        """
-        if v not in ["private", "team", "public"]:
-            raise ValueError("Visibility must be one of: private, team, public")
-        return v
-
     @field_validator("team_id")
     @classmethod
     def validate_team_id(cls, v: Optional[str]) -> Optional[str]:
@@ -4078,7 +4036,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
-    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
@@ -4255,11 +4213,13 @@ class ServerRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
     @classmethod
@@ -4458,7 +4418,7 @@ class A2AAgentCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
-    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -4546,24 +4506,6 @@ class A2AAgentCreate(BaseModel):
             dict: Value if validated as safe
         """
         SecurityValidator.validate_json_depth(v)
-        return v
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: str) -> str:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value
-
-        Raises:
-            ValueError: If visibility is invalid
-        """
-        if v not in ["private", "team", "public"]:
-            raise ValueError("Visibility must be one of: private, team, public")
         return v
 
     @field_validator("team_id")
@@ -4793,7 +4735,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
-    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -4885,24 +4827,6 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         if v is None:
             return v
         SecurityValidator.validate_json_depth(v)
-        return v
-
-    @field_validator("visibility")
-    @classmethod
-    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
-        """Validate visibility level.
-
-        Args:
-            v: Visibility value to validate
-
-        Returns:
-            Validated visibility value
-
-        Raises:
-            ValueError: If visibility is invalid
-        """
-        if v is not None and v not in ["private", "team", "public"]:
-            raise ValueError("Visibility must be one of: private, team, public")
         return v
 
     @field_validator("team_id")
@@ -5162,7 +5086,9 @@ class A2AAgentRead(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     @model_validator(mode="before")
     @classmethod
@@ -6108,7 +6034,7 @@ class TeamResponse(BaseModel):
     description: Optional[str] = Field(None, description="Team description")
     created_by: str = Field(..., description="Email of team creator")
     is_personal: bool = Field(..., description="Whether this is a personal team")
-    visibility: Optional[str] = Field(..., description="Team visibility level")
+    visibility: Optional[Literal["private", "public"]] = Field(..., description="Team visibility level")
     max_members: Optional[int] = Field(None, description="Maximum number of members allowed")
     member_count: int = Field(..., description="Current number of team members")
     created_at: datetime = Field(..., description="Team creation timestamp")
@@ -7054,7 +6980,7 @@ class GrpcServiceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: str = Field(default="public", description="Visibility level: private, team, or public")
+    visibility: Literal["private", "team", "public"] = Field(default="public", description="Visibility level: private, team, or public")
 
     @field_validator("name")
     @classmethod
@@ -7119,7 +7045,7 @@ class GrpcServiceUpdate(BaseModel):
     tls_key_path: Optional[str] = Field(None, description="TLS key path")
     grpc_metadata: Optional[Dict[str, str]] = Field(None, description="gRPC metadata headers")
     tags: Optional[List[str]] = Field(None, description="Service tags")
-    visibility: Optional[str] = Field(None, description="Visibility level")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
 
     @field_validator("name")
     @classmethod
@@ -7215,7 +7141,9 @@ class GrpcServiceRead(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID")
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Owner email")
-    visibility: str = Field(default="public", description="Visibility level")
+    visibility: Literal["private", "team", "public"] = Field(default="public", description="Visibility level: private, team, or public")
+
+    _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
 
 # Plugin-related schemas
