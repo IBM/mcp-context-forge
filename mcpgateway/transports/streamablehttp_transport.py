@@ -188,7 +188,12 @@ def _record_mcp_auth_cache_event(outcome: str) -> None:
 # SECURITY: Uses [^/]+ (any non-slash characters) instead of a restrictive hex-only
 # class to ensure ALL server-scoped paths are captured.  A narrow regex caused non-hex
 # IDs (e.g. "xyz") to silently fall through to unscoped global behaviour (#3891).
-_SERVER_ID_RE: Pattern[str] = re.compile(r"^/servers/(?P<server_id>[^/]+)/mcp")
+# Matches both URL patterns:
+#   /servers/{server_id}/mcp  (canonical, RFC 9728 compliant)
+#   /mcp/{server_id}          (Starlette mount shorthand routed by the /mcp mount)
+_SERVER_ID_RE: Pattern[str] = re.compile(
+    r"(?:^/servers/(?P<server_id>[^/]+)/mcp|^/mcp/(?P<mcp_server_id>[^/]+))"
+)
 
 # Pattern that detects a server-scoped MCP path even when _SERVER_ID_RE doesn't
 # match (e.g. empty segment: /servers//mcp).  Used as a defense-in-depth guard.
@@ -197,6 +202,15 @@ _SERVER_SCOPED_PATH_RE: Pattern[str] = re.compile(r"^/servers/.*/mcp(?:/)?$")
 # Sentinel returned by _validate_server_id to signal that an error response
 # has already been sent and the caller should return immediately.
 _REJECT = object()
+
+
+def _extract_server_id(match: re.Match) -> str:
+    """Extract server ID from a _SERVER_ID_RE match.
+
+    Handles both URL patterns: ``/servers/{id}/mcp`` (group ``server_id``)
+    and ``/mcp/{id}`` (group ``mcp_server_id``).
+    """
+    return match.group("server_id") or match.group("mcp_server_id")
 
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
@@ -1625,7 +1639,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         path = request.url.path
         match = _SERVER_ID_RE.search(path)
         if match:
-            s_id = match.group("server_id")
+            s_id = _extract_server_id(match)
 
         # Extract headers
         req_headers = dict(request.headers)
@@ -2591,7 +2605,7 @@ class SessionManagerWrapper:
             sent and the caller should return immediately.
         """
         if match:
-            server_id = match.group("server_id")
+            server_id = _extract_server_id(match)
             # SECURITY: Validate that the server_id exists in the database
             # to prevent unauthorized access via invalid server IDs.
             # Uses the shared BaseService.entity_exists() for a lightweight
@@ -2708,7 +2722,7 @@ class SessionManagerWrapper:
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
-            _server_id = match.group("server_id")
+            _server_id = _extract_server_id(match)
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
                 permission="servers.use",
@@ -2785,7 +2799,7 @@ class SessionManagerWrapper:
 
                 # Inject server_id from URL path into params for /rpc routing
                 if match:
-                    server_id = match.group("server_id")
+                    server_id = _extract_server_id(match)
                     if not isinstance(json_body.get("params"), dict):
                         json_body["params"] = {}
                     json_body["params"]["server_id"] = server_id
@@ -2952,7 +2966,7 @@ class SessionManagerWrapper:
 
                         # Inject server_id from URL path into params for /rpc routing
                         if match:
-                            server_id = match.group("server_id")
+                            server_id = _extract_server_id(match)
                             if not isinstance(json_body.get("params"), dict):
                                 json_body["params"] = {}
                             json_body["params"]["server_id"] = server_id
@@ -3259,8 +3273,10 @@ class _StreamableHttpAuthHandler:
         path = self.scope.get("path", "")
         # Normalize trailing slash for consistent matching
         normalized = path.rstrip("/")
-        # Check if this is an MCP-related path that requires authentication
-        is_mcp_path = normalized.endswith("/mcp") or normalized == "/mcp" or normalized.endswith("/mcp/sse") or normalized.endswith("/mcp/message")
+        # Check if this is an MCP-related path that requires authentication.
+        # path.startswith("/mcp/") catches /mcp/{server_id} paths that the
+        # Starlette mount at /mcp routes but that don't endswith("/mcp").
+        is_mcp_path = normalized.endswith("/mcp") or normalized == "/mcp" or normalized.endswith("/mcp/sse") or normalized.endswith("/mcp/message") or path.startswith("/mcp/")
         if not is_mcp_path or path.startswith("/.well-known/"):
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
@@ -3316,15 +3332,14 @@ class _StreamableHttpAuthHandler:
         if bearer_header_supplied:
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
 
-        # Strict mode: require authentication
-        if settings.mcp_require_auth:
-            return await self._send_error(detail="Authentication required for MCP endpoints", headers={"WWW-Authenticate": "Bearer"})
-
-        # Permissive mode: allow unauthenticated access with public-only scope
-        # BUT first check if this specific server requires OAuth (per-server enforcement)
+        # Per-server OAuth enforcement MUST run before the global auth check so that
+        # oauth_enabled servers always return 401 with resource_metadata URL (RFC 9728).
+        # Without this, strict mode (mcp_require_auth=True) returns a generic
+        # WWW-Authenticate: Bearer with no resource_metadata, and MCP clients cannot
+        # discover the OAuth server to authenticate.  (Fixes #3752)
         match = _SERVER_ID_RE.search(path)
         if match:
-            per_server_id = match.group("server_id")
+            per_server_id = _extract_server_id(match)
             try:
                 await _check_server_oauth_enforcement(per_server_id, {"is_authenticated": False})
             except OAuthRequiredError:
@@ -3335,6 +3350,11 @@ class _StreamableHttpAuthHandler:
                 logger.exception("OAuth enforcement check failed for server %s", per_server_id)
                 return await self._send_error(detail="Service unavailable — unable to verify server authentication requirements", status_code=503)
 
+        # Strict mode: require authentication (non-OAuth servers get generic 401)
+        if settings.mcp_require_auth:
+            return await self._send_error(detail="Authentication required for MCP endpoints", headers={"WWW-Authenticate": "Bearer"})
+
+        # Permissive mode: allow unauthenticated access with public-only scope
         # Set context indicating unauthenticated user with public-only access (teams=[])
         user_context_var.set(
             {
