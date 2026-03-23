@@ -1712,6 +1712,8 @@ async def test_streamable_http_auth_requires_auth_for_options_without_cors_heade
     """OPTIONS without CORS preflight headers still requires auth (not a true preflight)."""
     # Enable strict auth mode to verify non-preflight OPTIONS still goes through normal auth
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    # Stub per-server OAuth check — this test validates OPTIONS handling, not OAuth
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
 
     # OPTIONS request without Origin or Access-Control-Request-Method is NOT a CORS preflight
     scope = _make_scope("/servers/1/mcp", method="OPTIONS")
@@ -1732,6 +1734,8 @@ async def test_streamable_http_auth_no_authorization_strict_mode(monkeypatch):
     """Auth returns False and sends 401 if no Authorization header when mcp_require_auth=True."""
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    # Stub per-server OAuth check — this test validates strict-mode 401, not per-server OAuth
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
 
     scope = _make_scope("/servers/1/mcp")
     called = []
@@ -1780,6 +1784,8 @@ async def test_streamable_http_auth_wrong_scheme(monkeypatch):
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    # Stub per-server OAuth check — this test validates scheme rejection, not OAuth
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Basic foobar")])
     called = []
 
