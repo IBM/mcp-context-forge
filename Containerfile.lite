@@ -148,8 +148,13 @@ COPY pyproject.toml /app/
 # ----------------------------------------------------------------------------
 # Copy Rust plugin wheels from rust-builder stage (if any exist)
 # ----------------------------------------------------------------------------
-COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
+COPY --link --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
 COPY --from=rust-builder /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+
+# ----------------------------------------------------------------------------
+# Copy s390x pre-built wheels from IBM's GHCR repository (if building for s390x)
+# ----------------------------------------------------------------------------
+COPY --link --from=ghcr.io/ibm/mcp-context-forge-wheels:latest /wheels /tmp/prebuilt-wheels
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
@@ -170,10 +175,10 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
     && if [ "$(uname -m)" = "s390x" ]; then \
         echo "📦 Installing dependencies for s390x architecture..."; \
-        /app/.venv/bin/pip install --no-cache-dir ".[redis,observability,granian]" \
-        && /app/.venv/bin/pip install --no-cache-dir "psycopg[c]>=3.3.3"; \
+        /app/.venv/bin/pip install --no-cache-dir --find-links /tmp/prebuilt-wheels ".[redis,observability,granian]" \
+        && /app/.venv/bin/pip install --no-cache-dir --find-links /tmp/prebuilt-wheels "psycopg[c]>=3.3.3"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian]"; \
+        /app/.venv/bin/uv pip install --find-links /tmp/prebuilt-wheels ".[redis,postgres,observability,granian]"; \
     fi \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/rust-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
@@ -182,7 +187,7 @@ RUN set -euo pipefail \
     else \
         echo "⏭️  Rust plugins not available - using Python implementations"; \
     fi \
-    && rm -rf /tmp/rust-wheels \
+    && rm -rf /tmp/rust-wheels /tmp/prebuilt-wheels \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
         /app/.venv/bin/pip install --no-cache-dir "memray>=1.17.0" && \
