@@ -60,7 +60,7 @@ from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.content_security import ContentSizeError, get_content_security_service
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -472,6 +472,19 @@ class ResourceService(BaseService):
 
             content_security.validate_resource_size(content=content_to_validate, uri=resource.uri, user_email=created_by, ip_address=created_from_ip)
 
+            # Detect mime type if not provided (needed for validation)
+            mime_type: str | None = resource.mime_type
+            if not mime_type:
+                mime_type = self._detect_mime_type(resource.uri, resource.content)
+
+            # Validate MIME type against allowlist
+            content_security.validate_resource_mime_type(
+                mime_type=mime_type,
+                uri=resource.uri,
+                user_email=created_by,
+                ip_address=created_from_ip,
+            )
+
             # Extract gateway_id from resource if present
             gateway_id = getattr(resource, "gateway_id", None)
 
@@ -490,12 +503,7 @@ class ResourceService(BaseService):
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
-            # Detect mime type if not provided
-            mime_type = resource.mime_type
-            if not mime_type:
-                mime_type = self._detect_mime_type(resource.uri, resource.content)
-
-            # Determine content storage
+            # Determine content storage (mime_type already detected above)
             is_text = mime_type and mime_type.startswith("text/") or isinstance(resource.content, str)
 
             # Create DB model
@@ -628,6 +636,22 @@ class ResourceService(BaseService):
                 },
             )
             raise cse
+        except ContentTypeError as cte:
+
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource MIME type not allowed: {cte.mime_type}",
+                event_type="resource_mime_type_rejected",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "mime_type": cte.mime_type,
+                    "visibility": visibility,
+                },
+            )
+            raise cte
         except Exception as e:
             db.rollback()
 
@@ -742,14 +766,22 @@ class ResourceService(BaseService):
                 for resource in chunk:
                     try:
                         # Validate content size before processing
+                        content_security = get_content_security_service()
                         if hasattr(resource, "content") and resource.content:
-                            content_security = get_content_security_service()
                             content_security.validate_resource_size(
                                 content=resource.content,
                                 uri=resource.uri,
                                 user_email=created_by,
                                 ip_address=created_from_ip,
                             )
+
+                        # Validate MIME type against allowlist
+                        content_security.validate_resource_mime_type(
+                            mime_type=getattr(resource, "mime_type", None),
+                            uri=resource.uri,
+                            user_email=created_by,
+                            ip_address=created_from_ip,
+                        )
 
                         # Use provided parameters or schema values
                         resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
@@ -2853,6 +2885,15 @@ class ResourceService(BaseService):
                     ip_address=modified_from_ip,
                 )
 
+                # Validate MIME type if provided
+                if resource_update.mime_type:
+                    content_security.validate_resource_mime_type(
+                        mime_type=resource_update.mime_type,
+                        uri=resource_update.uri or resource.uri,
+                        user_email=modified_by or user_email,
+                        ip_address=modified_from_ip,
+                    )
+
                 # Determine content storage
                 is_text = resource.mime_type and resource.mime_type.startswith("text/") or isinstance(resource_update.content, str)
 
@@ -3003,6 +3044,23 @@ class ResourceService(BaseService):
                 error=cse,
             )
             raise cse
+        except ContentTypeError as cte:
+
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource MIME type not allowed: {cte.mime_type}",
+                event_type="resource_mime_type_rejected",
+                component="resource_service",
+                resource_type="resource",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_id=str(resource_id),
+                error=cte,
+                custom_fields={
+                    "mime_type": cte.mime_type,
+                },
+            )
+            raise cte
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
 

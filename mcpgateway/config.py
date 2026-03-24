@@ -90,7 +90,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
-        "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS",
+        "CONTENT_ALLOWED_RESOURCE_MIMETYPES",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -1568,6 +1568,35 @@ class Settings(BaseSettings):
     # Content Security - Size Limits
     content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
     content_max_prompt_size: int = Field(default=10240, ge=512, le=1048576, description="Maximum size in bytes for prompt templates (default: 10KB)")  # 10KB  # Minimum 512 bytes  # Maximum 1MB
+
+    # Content Security - MIME Type Restrictions (US-2)
+    content_allowed_resource_mimetypes: List[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "text/markdown",
+            "text/html",
+            "text/csv",
+            "application/json",
+            "application/xml",
+            "application/yaml",
+            "application/pdf",
+            "application/octet-stream",
+            "image/png",
+            "image/jpeg",
+            "image/gif",
+            "image/svg+xml",
+            "image/webp",
+            "audio/mpeg",
+            "audio/wav",
+            "video/mp4",
+            "video/webm",
+        ],
+        description="Allowed MIME types for resources. Vendor types (application/x-*, text/x-*) and structured-syntax suffix types (e.g. application/vnd.api+json) are always permitted regardless of this list.",
+    )
+    content_strict_mime_validation: bool = Field(
+        default=False,
+        description="Enable strict MIME type validation for resources (US-2). Set to false to log violations without blocking.",
+    )
 
     # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
     # Disabled by default for safety. Enable explicitly in production after testing.

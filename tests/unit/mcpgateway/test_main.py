@@ -1105,19 +1105,17 @@ class TestResourceEndpoints:
         assert data["max_size"] == 102400
 
     @patch("mcpgateway.main.resource_service.update_resource")
-    def test_update_resource_content_size_error(self, mock_update, test_client, auth_headers):
-        """Test update_resource returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
+    def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
+        """Test update_resource returns 415 for unsupported MIME type."""
+        from mcpgateway.services.content_security import ContentTypeError
 
-        mock_update.side_effect = ContentSizeError("Resource", 150000, 102400)
-        req = {"content": "x" * 150000}
+        mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
+        req = {"mime_type": "text/plain", "content": "hello"}
         response = test_client.put("/resources/1", json=req, headers=auth_headers)
-        assert response.status_code == 413
+        assert response.status_code == 415
         data = response.json()["detail"]
-        assert data["error"] == "Resource size limit exceeded"
-        assert data["actual_size"] == 150000
-        assert data["max_size"] == 102400
+        assert data["error"] == "Unsupported Media Type"
+        assert data["mime_type"] == "application/x-executable"
 
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_endpoint(self, mock_create, test_client, auth_headers):
@@ -1142,6 +1140,20 @@ class TestResourceEndpoints:
         assert data["error"] == "Resource size limit exceeded"
         assert data["actual_size"] == 150000
         assert data["max_size"] == 102400
+
+    @patch("mcpgateway.main.resource_service.register_resource")
+    def test_create_resource_content_type_error(self, mock_create, test_client, auth_headers):
+        """Test create_resource returns 415 for unsupported MIME type."""
+        from mcpgateway.services.content_security import ContentTypeError
+
+        mock_create.side_effect = ContentTypeError("application/x-malicious", ["text/plain", "application/json"])
+        req = {"resource": {"uri": "test/resource", "name": "Test Resource", "mime_type": "text/plain", "content": "hello"}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/resources/", json=req, headers=auth_headers)
+        assert response.status_code == 415
+        data = response.json()["detail"]
+        assert data["error"] == "Unsupported Media Type"
+        assert data["mime_type"] == "application/x-malicious"
+        assert "allowed_types" in data
 
         mock_create.assert_called_once()
 

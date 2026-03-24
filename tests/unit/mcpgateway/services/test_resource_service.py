@@ -345,8 +345,12 @@ class TestResourceRegistration:
                 mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_register_resource_binary_content(self, resource_service, mock_db):
+    async def test_register_resource_binary_content(self, resource_service, mock_db, monkeypatch):
         """Test registration with binary content."""
+        from mcpgateway import config
+        # Ensure strict MIME validation is off so this test is independent of .env settings
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
+
         binary_resource = ResourceCreate(uri="http://example.com/binary", name="Binary Resource", content=b"binary content", mime_type="application/octet-stream")
 
         # Mock no existing resource
@@ -2137,9 +2141,9 @@ class TestResourceServiceContentSizeError:
     async def test_register_resource_content_size_error(self, resource_service, mock_db, sample_resource_create):
         """Test that ContentSizeError is caught and re-raised during resource registration."""
         from mcpgateway.services.content_security import ContentSizeError
-        
+
         mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
-        
+
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = MagicMock()
         mock_security_service.validate_resource_size.side_effect = ContentSizeError(
@@ -2147,12 +2151,12 @@ class TestResourceServiceContentSizeError:
             actual_size=150000,
             max_size=102400
         )
-        
+
         with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
             # Create a resource with large content
             large_resource = sample_resource_create
             large_resource.content = "x" * 150000  # 150KB content
-            
+
             with pytest.raises(ContentSizeError) as exc_info:
                 await resource_service.register_resource(
                     mock_db,
@@ -2160,7 +2164,7 @@ class TestResourceServiceContentSizeError:
                     created_by="user@example.com",
                     owner_email="user@example.com",
                 )
-            
+
             # Verify the error details
             assert exc_info.value.actual_size == 150000
             assert exc_info.value.max_size == 102400
@@ -2171,11 +2175,11 @@ class TestResourceServiceContentSizeError:
         """Test that ContentSizeError is caught and re-raised during resource update."""
         from mcpgateway.services.content_security import ContentSizeError
         from mcpgateway.schemas import ResourceUpdate
-        
+
         mock_resource.owner_email = "user@example.com"
         mock_db.get = MagicMock(return_value=mock_resource)
         mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
-        
+
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = MagicMock()
         mock_security_service.validate_resource_size.side_effect = ContentSizeError(
@@ -2183,18 +2187,129 @@ class TestResourceServiceContentSizeError:
             actual_size=150000,
             max_size=102400
         )
-        
+
         with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
             # Update with large content
             update = ResourceUpdate(content="x" * 150000)  # 150KB content
-            
+
             with pytest.raises(ContentSizeError) as exc_info:
                 await resource_service.update_resource(mock_db, 1, update)
-            
+
             # Verify the error details
             assert exc_info.value.actual_size == 150000
             assert exc_info.value.max_size == 102400
             assert exc_info.value.content_type == "Resource content"
+
+class TestResourceServiceContentTypeError:
+    """Tests for ContentTypeError handling in resource service."""
+
+    @pytest.mark.asyncio
+    async def test_register_resource_content_type_error(self, resource_service, mock_db, sample_resource_create, monkeypatch):
+        """Test that ContentTypeError is caught and re-raised during resource registration."""
+        from mcpgateway.services.content_security import ContentTypeError
+        from mcpgateway import config
+
+        # Enable strict MIME validation
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
+
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        # Mock get_content_security_service to return a mock that raises ContentTypeError
+        mock_security_service = MagicMock()
+        mock_security_service.validate_resource_size = MagicMock()  # Size validation passes
+        mock_security_service.validate_resource_mime_type.side_effect = ContentTypeError(
+            mime_type="application/evil",
+            allowed_types=["text/plain", "text/markdown", "application/json"]
+        )
+
+        with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
+            # Create a resource with disallowed MIME type
+            evil_resource = sample_resource_create
+            evil_resource.mime_type = "application/evil"
+
+            with pytest.raises(ContentTypeError) as exc_info:
+                await resource_service.register_resource(
+                    mock_db,
+                    evil_resource,
+                    created_by="user@example.com",
+                    owner_email="user@example.com",
+                )
+
+            # Verify the error details
+            assert exc_info.value.mime_type == "application/evil"
+            assert "text/plain" in exc_info.value.allowed_types
+
+    @pytest.mark.asyncio
+    async def test_update_resource_content_type_error(self, resource_service, mock_db, mock_resource, monkeypatch):
+        """Test that ContentTypeError is caught and re-raised during resource update."""
+        from mcpgateway.services.content_security import ContentTypeError
+        from mcpgateway.schemas import ResourceUpdate
+        from mcpgateway import config
+
+        # Enable strict MIME validation
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
+
+        mock_resource.owner_email = "user@example.com"
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        # Mock get_content_security_service to return a mock that raises ContentTypeError
+        mock_security_service = MagicMock()
+        mock_security_service.validate_resource_size = MagicMock()  # Size validation passes
+        mock_security_service.validate_resource_mime_type.side_effect = ContentTypeError(
+            mime_type="application/malicious",
+            allowed_types=["text/plain", "text/markdown"]
+        )
+
+        with patch("mcpgateway.services.resource_service.get_content_security_service", return_value=mock_security_service):
+            # Update with disallowed MIME type - use model_construct to bypass Pydantic validation
+            update = ResourceUpdate.model_construct(mime_type="application/malicious", content="test content")
+
+            with pytest.raises(ContentTypeError) as exc_info:
+                await resource_service.update_resource(mock_db, 1, update)
+
+            # Verify the error details
+            assert exc_info.value.mime_type == "application/malicious"
+            assert len(exc_info.value.allowed_types) > 0
+
+    @pytest.mark.asyncio
+    async def test_register_resource_vendor_mime_type_allowed(self, resource_service, mock_db, sample_resource_create):
+        """Test that vendor MIME types (x- prefix) are always allowed."""
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        with (
+            patch.object(resource_service, "_detect_mime_type", return_value="application/x-custom"),
+            patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read") as mock_convert,
+        ):
+            # Use model_construct to bypass Pydantic validation for test data
+            mock_convert.return_value = ResourceRead.model_construct(
+                id="test-id",
+                uri=sample_resource_create.uri,
+                name=sample_resource_create.name,
+                description="",
+                mime_type="application/x-custom",
+                size=100,
+                enabled=True,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                template=None,
+                metrics={},
+            )
+
+            # Vendor MIME type should be allowed
+            vendor_resource = sample_resource_create
+            vendor_resource.mime_type = "application/x-custom"
+
+            result = await resource_service.register_resource(
+                mock_db,
+                vendor_resource,
+                created_by="user@example.com",
+            )
+
+            # Should succeed without ContentTypeError
+            assert result.mime_type == "application/x-custom"
+
 
 class TestResourceServiceMetricsExtended:
     """Extended tests for resource service metrics."""
@@ -4283,6 +4398,70 @@ class TestResourceServiceCoverageEdges:
         assert result["failed"] == 1
         assert any("Chunk processing failed" in e for e in result["errors"])
         mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_mime_validation_passes_for_allowed_type(self, resource_service, mock_db):
+        """MIME type validation in bulk: allowed type (text/plain) passes and resource is created."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.add_all = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+
+        resources = [
+            ResourceCreate(
+                name="Plain text",
+                uri="file:///allowed.txt",
+                description="allowed mime",
+                mime_type="text/plain",
+                content="hello",
+            )
+        ]
+
+        result = await resource_service.register_resources_bulk(
+            db=mock_db,
+            resources=resources,
+            created_by="tester",
+        )
+
+        assert result["created"] == 1
+        assert result["failed"] == 0
+        mock_db.add_all.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_mime_validation_fails_in_strict_mode(self, resource_service, mock_db, monkeypatch):
+        """MIME type validation in bulk: disallowed type in strict mode is counted as failed."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
+        monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.add_all = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+
+        resources = [
+            ResourceCreate(
+                name="Evil",
+                uri="file:///evil.bin",
+                description="disallowed mime",
+                mime_type="application/octet-stream",
+                content="binary",
+            )
+        ]
+
+        result = await resource_service.register_resources_bulk(
+            db=mock_db,
+            resources=resources,
+            created_by="tester",
+        )
+
+        # ContentTypeError is caught by the per-resource exception handler and counted as failed
+        assert result["failed"] == 1
+        assert result["created"] == 0
+        assert any("evil.bin" in e for e in result["errors"])
+        mock_db.add_all.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_check_resource_access_team_uses_db_lookup_when_token_teams_none(self):

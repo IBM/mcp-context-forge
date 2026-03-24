@@ -2518,6 +2518,28 @@ class TestAdminResourceRoutes:
         result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 413
+    @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_content_type_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """Test adding resource with ContentTypeError."""
+        from mcpgateway.services.content_security import ContentTypeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        mock_register_resource.side_effect = ContentTypeError(
+            mime_type="application/x-executable",
+            allowed_types=["text/plain", "application/json"]
+        )
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 415
+
 
 
     @patch.object(ResourceService, "register_resource")
@@ -2593,6 +2615,33 @@ class TestAdminResourceRoutes:
         result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 413
+    @patch.object(ResourceService, "update_resource")
+    async def test_admin_edit_resource_content_type_error(self, mock_request, mock_db, monkeypatch):
+        """Test editing resource with ContentTypeError."""
+        from mcpgateway.services.content_security import ContentTypeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        form_data = FakeForm({"uri": "/test/resource", "name": "Updated", "mimeType": "text/plain", "content": "x", "template": "t"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # Mock the module-level resource_service instance to raise ContentTypeError
+        mock_update = AsyncMock(side_effect=ContentTypeError(
+            mime_type="text/plain",
+            allowed_types=["application/json", "application/xml"]
+        ))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+
+        result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 415
+
 
     async def test_admin_edit_resource_error_handlers(self, mock_request, mock_db, monkeypatch):
         """Cover admin_edit_resource error branches (permission, validation, integrity, conflict, generic)."""
