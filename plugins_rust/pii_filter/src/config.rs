@@ -147,7 +147,7 @@ impl Default for PIIConfig {
             include_detection_details: true,
 
             // Default resource limits
-            max_text_bytes: 256 * 1024,
+            max_text_bytes: 10 * 1024 * 1024,
             max_nested_depth: 32,
             max_collection_items: 4096,
 
@@ -342,7 +342,7 @@ mod tests {
         assert!(config.detect_email);
         assert_eq!(config.redaction_text, "[REDACTED]");
         assert_eq!(config.default_mask_strategy, MaskingStrategy::Redact);
-        assert_eq!(config.max_text_bytes, 256 * 1024);
+        assert_eq!(config.max_text_bytes, 10 * 1024 * 1024);
         assert_eq!(config.max_nested_depth, 32);
         assert_eq!(config.max_collection_items, 4096);
     }

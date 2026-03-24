@@ -1104,6 +1104,34 @@ mod tests {
     }
 
     #[test]
+    fn test_default_detector_accepts_inputs_larger_than_256k() {
+        Python::initialize();
+        Python::attach(|_| {
+            let config = PIIConfig {
+                detect_ssn: true,
+                detect_bsn: false,
+                detect_credit_card: false,
+                detect_email: false,
+                detect_phone: false,
+                detect_ip_address: false,
+                detect_date_of_birth: false,
+                detect_passport: false,
+                detect_driver_license: false,
+                detect_bank_account: false,
+                detect_medical_record: false,
+                detect_aws_keys: false,
+                detect_api_keys: false,
+                ..Default::default()
+            };
+            let patterns = compile_patterns(&config).unwrap();
+            let detector = PIIDetectorRust { patterns, config };
+            let text = format!("{} SSN: 123-45-6789", "x".repeat(300 * 1024));
+
+            assert!(detector.detect(&text).is_ok());
+        });
+    }
+
+    #[test]
     fn test_longer_overlap_wins_over_registration_order() {
         let mut config = PIIConfig {
             detect_bsn: true,
