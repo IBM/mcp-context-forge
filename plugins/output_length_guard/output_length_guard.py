@@ -98,17 +98,6 @@ class OutputLengthGuardConfig(BaseModel):
     @classmethod
     def validate_strategy(cls, v: str) -> str:
         """Validate strategy is one of the allowed values.
-        
-        Args:
-            v: Strategy value to validate.
-            
-        Returns:
-            The validated strategy value.
-            
-        Raises:
-            ValueError: If strategy is not in ALLOWED_STRATEGIES.
-        """
-        logging.debug(f"Validating strategy: {v}")
 
         Args:
             v: Strategy value to validate.
@@ -117,8 +106,9 @@ class OutputLengthGuardConfig(BaseModel):
             Validated strategy value (lowercase).
 
         Raises:
-            ValueError: If strategy is not 'truncate' or 'block'.
+            ValueError: If strategy is not in ALLOWED_STRATEGIES.
         """
+        logging.debug(f"Validating strategy: {v}")
         normalized = v.lower().strip()
         if normalized not in cls.ALLOWED_STRATEGIES:
             raise ValueError(
@@ -194,7 +184,7 @@ class OutputLengthGuardConfig(BaseModel):
             Validated max_text_length value.
 
         Raises:
-            ValueError: If max_text_length is not in range 1KB to 10MB.
+            ValueError: If max_text_length is not in range 1 KB to 10 MB.
         """
         if v < 1000 or v > 10_000_000:
             raise ValueError("max_text_length must be between 1000 (1KB) and 10000000 (10MB)")
@@ -212,7 +202,7 @@ class OutputLengthGuardConfig(BaseModel):
             Validated max_structure_size value.
 
         Raises:
-            ValueError: If max_structure_size is not in range 10-100K.
+            ValueError: If max_structure_size is not in range 10 to 100 K.
         """
         if v < 10 or v > 100_000:
             raise ValueError("max_structure_size must be between 10 and 100000")
