@@ -10037,11 +10037,38 @@ class TestRemainingCoverageGaps:
         monkeypatch.setenv("CONTEXTFORGE_ENABLE_RUST_BUILD", "true")
         monkeypatch.setenv("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", "false")
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", False)
+        
+        # Mock Redis availability check to return True (healthy)
+        async def mock_is_redis_available():
+            return True
+        monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available)
+        
+        # Configure Redis to be enabled for this test
+        monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
+        monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
 
         response = FastAPIResponse()
         result = await main_mod.healthcheck(response)
 
+        # Check overall status
         assert result.status == "healthy"
+        
+        # Check statusItems for Database and Redis
+        assert len(result.statusItems) == 2
+        
+        # Check Database status
+        db_status = next((item for item in result.statusItems if item.name == "Database"), None)
+        assert db_status is not None
+        assert db_status.statusCode == 200
+        assert db_status.message == "Databse Connection Successful"
+        
+        # Check Redis status
+        redis_status = next((item for item in result.statusItems if item.name == "Redis"), None)
+        assert redis_status is not None
+        assert redis_status.statusCode == 200
+        assert redis_status.message == "ready"
+        
+        # Check MCP runtime fields
         assert result.mcp_runtime["mode"] == "python-rust-built-disabled"
         assert result.mcp_runtime["mounted"] == "python"
         assert result.mcp_runtime["rust_build_included"] is True
@@ -10050,6 +10077,8 @@ class TestRemainingCoverageGaps:
         assert result.mcp_runtime["resume_core_mode"] == "python"
         assert result.mcp_runtime["live_stream_core_mode"] == "python"
         assert result.mcp_runtime["session_auth_reuse_mode"] == "python"
+        
+        # Check response headers
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
         assert response.headers["x-contextforge-rust-build-included"] == "true"
@@ -10058,6 +10087,53 @@ class TestRemainingCoverageGaps:
         assert response.headers["x-contextforge-mcp-resume-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-live-stream-core-mode"] == "python"
         assert response.headers["x-contextforge-mcp-session-auth-reuse-mode"] == "python"
+    async def test_healthcheck_redis_exception_handling(self, monkeypatch):
+        """Test that Redis health check exceptions are caught and logged."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        class FakeSession:  # noqa: D401 - test helper
+            def execute(self, _stmt):  # noqa: ANN001
+                return None
+
+            def commit(self):
+                return None
+
+            def close(self):
+                return None
+
+        monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
+        
+        # Mock Redis availability check to raise an exception
+        async def mock_is_redis_available_exception():
+            raise RuntimeError("Redis connection timeout")
+        monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available_exception)
+        
+        # Configure Redis to be enabled for this test
+        monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
+        monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
+
+        response = FastAPIResponse()
+        result = await main_mod.healthcheck(response)
+
+        # Check overall status - should be unhealthy due to Redis failure
+        assert result.status == "unhealthy"
+        
+        # Check statusItems
+        assert len(result.statusItems) == 2
+        
+        # Check Database status - should be healthy
+        db_status = next((item for item in result.statusItems if item.name == "Database"), None)
+        assert db_status is not None
+        assert db_status.statusCode == 200
+        assert db_status.message == "Databse Connection Successful"
+        
+        # Check Redis status - should be unhealthy due to exception
+        redis_status = next((item for item in result.statusItems if item.name == "Redis"), None)
+        assert redis_status is not None
+        assert redis_status.statusCode == 503
+        assert redis_status.message == "Cannot connect to Redis"
+
 
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
         # First-Party
