@@ -46,6 +46,8 @@ from mcpgateway.plugins.framework import (
 )
 import logging
 logging.basicConfig(level=logging.DEBUG)
+
+
 class OutputLengthGuardConfig(BaseModel):
     """Configuration for the Output Length Guard plugin."""
 
@@ -574,7 +576,6 @@ def _truncate(
             logger.error(f"Invalid value type in _truncate: {type(value).__name__}")
             return str(value) if value is not None else ""
 
-        original_length = len(value)
         ell = ellipsis or ""
 
         # Token-based truncation (only if limit_mode is "token" and max_tokens specified)
@@ -1074,7 +1075,6 @@ class OutputLengthGuardPlugin(Plugin):
                     below_min = cfg.min_chars > 0 and length < cfg.min_chars
                     above_max = cfg.max_chars is not None and length > cfg.max_chars
 
-
                     if not (below_min or above_max):
                         logger.debug(f"Text within bounds: length={length}, limits=[{cfg.min_chars}, {cfg.max_chars}]")
                         meta.update({"within_bounds": True})
@@ -1206,7 +1206,6 @@ class OutputLengthGuardPlugin(Plugin):
                         # the properly truncated strings from structuredContent processing
                         new_text = _generate_text_representation(truncated_struct)
                         new_result['content'] = [{"type": "text", "text": new_text}]
-
 
                         return ToolPostInvokeResult(
                             modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result),
