@@ -2390,7 +2390,15 @@ async def content_type_exception_handler(_request: Request, exc: ContentTypeErro
         ORJSONResponse: A 415 Unsupported Media Type response with error details.
     """
     return ORJSONResponse(
-        status_code=415, content={"detail": {"error": "Unsupported MIME type", "message": str(exc), "mime_type": exc.mime_type, "allowed_types": exc.allowed_types[:5]}}  # Show first 5 for brevity
+        status_code=415,
+        content={
+            "detail": {
+                "error": "Unsupported MIME type",
+                "message": str(exc),
+                "mime_type": exc.mime_type,
+                "allowed_types": exc.allowed_types[:5],  # Limit to first 5
+            }
+        },
     )
 
 
