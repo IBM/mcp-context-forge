@@ -1971,7 +1971,14 @@ Disallow: /
     @field_validator("tool_description_forbidden_patterns", mode="after")
     @classmethod
     def _filter_empty_forbidden_patterns(cls, value: list[str]) -> list[str]:
-        """Strip empty/blank entries that would match every description."""
+        """Strip empty/blank entries that would match every description.
+
+        Args:
+            value: List of forbidden pattern strings.
+
+        Returns:
+            list[str]: Filtered list with empty/blank entries removed.
+        """
         return [p for p in value if p and p.strip()]
 
     @field_validator("mcpgateway_ui_hide_sections", mode="after")
