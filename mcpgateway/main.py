@@ -11038,7 +11038,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 # Healthcheck      #
 ####################
 @app.get("/health")
-async def healthcheck(response=HealthCheckResponse, status_code=status.HTTP_200_OK):
+async def healthcheck(response: Response):
     """
     Perform a basic health check to verify database connectivity.
 
@@ -11047,10 +11047,10 @@ async def healthcheck(response=HealthCheckResponse, status_code=status.HTTP_200_
     from get_db dependency. All DB operations happen in the same thread.
 
     Args:
-        response: Optional response object used to attach runtime-mode headers.
+        response: Response object used to attach runtime-mode headers.
 
     Returns:
-        A dictionary with the health status and optional error message.
+        A HealthCheckResponse with the health status and optional error message.
     """
     status_items = []
     db = SessionLocal()
@@ -11061,13 +11061,7 @@ async def healthcheck(response=HealthCheckResponse, status_code=status.HTTP_200_
         # if response is not None:
         #     _apply_runtime_mode_headers(response)
         # return {"status": "healthy", "mcp_runtime": _mcp_runtime_status_payload()}
-        status_items.append(
-            HealthStatusItem(
-                name="Database",
-                statusCode=status.HTTP_200_OK,
-                message="[POSTGRES]: Postgres Connection Successful"
-            )
-        )
+        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_200_OK, message="Databse Connection Successful"))
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -11082,13 +11076,7 @@ async def healthcheck(response=HealthCheckResponse, status_code=status.HTTP_200_
         # if response is not None:
         #     _apply_runtime_mode_headers(response)
         # return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
-        status_items.append(
-            HealthStatusItem(
-                name="Database",
-                statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
-                message="Cannot connect to Postgres"
-            )
-        )
+        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Databse"))
     finally:
         db.close()
 
@@ -11097,39 +11085,15 @@ async def healthcheck(response=HealthCheckResponse, status_code=status.HTTP_200_
         try:
             # is_redis_available() checks if Redis is available and responding to ping.
             if await is_redis_available():
-                status_items.append(
-                    HealthStatusItem(
-                        name="Redis",
-                        statusCode=status.HTTP_200_OK,
-                        message="ready"
-                    )
-                )
+                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_200_OK, message="ready"))
             else:
-                status_items.append(
-                    HealthStatusItem(
-                        name="Redis",
-                        statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        message="Cannot connect to Redis"
-                    )
-                )
+                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
         except Exception as e:
             logger.error(f"Redis health check failed: {str(e)}")
-            status_items.append(
-                HealthStatusItem(
-                    name="Redis",
-                    statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    message="Cannot connect to Redis"
-                )
-            )
+            status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
     else:
         # Redis not configured
-        status_items.append(
-            HealthStatusItem(
-                name="Redis",
-                statusCode=status.HTTP_503_SERVICE_UNAVAILABLE,
-                message="Redis is not enabled"
-            )
-        )
+        status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Redis is not enabled"))
 
     # Determine overall status:
     # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
@@ -11146,8 +11110,8 @@ async def healthcheck(response=HealthCheckResponse, status_code=status.HTTP_200_
 
     overall_status = "healthy" if database_healthy and redis_healthy else "unhealthy"
 
-    return HealthCheckResponse(status=overall_status, statusItems=status_items)
-
+    _apply_runtime_mode_headers(response)
+    return HealthCheckResponse(status=overall_status, statusItems=status_items, mcp_runtime=_mcp_runtime_status_payload())
 
 @app.get("/ready")
 async def readiness_check():
