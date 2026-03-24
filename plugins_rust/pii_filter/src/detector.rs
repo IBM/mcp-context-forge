@@ -229,7 +229,7 @@ impl PIIDetectorRust {
             let new_dict = PyDict::new(py);
 
             for (key, value) in dict.iter() {
-                let key_str: String = key.extract()?;
+                let key_str = key.str()?.to_string_lossy().into_owned();
                 let new_path = if path.is_empty() {
                     key_str.clone()
                 } else {
@@ -504,6 +504,7 @@ impl PIIDetectorRust {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::types::PyDict;
 
     #[test]
     fn test_detect_ssn() {
@@ -550,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn test_default_mask_strategy_applies_to_built_in_patterns() {
+    fn test_built_in_patterns_keep_explicit_mask_strategy() {
         let config = PIIConfig {
             detect_ssn: true,
             detect_email: true,
@@ -567,12 +568,92 @@ mod tests {
 
         assert_eq!(
             detections[&PIIType::Ssn][0].mask_strategy,
-            MaskingStrategy::Redact
+            MaskingStrategy::Partial
         );
         assert_eq!(
             detections[&PIIType::Email][0].mask_strategy,
+            MaskingStrategy::Partial
+        );
+    }
+
+    #[test]
+    fn test_built_in_mask_strategy_matrix_survives_global_override() {
+        let config = PIIConfig {
+            detect_ssn: true,
+            detect_credit_card: true,
+            detect_email: true,
+            detect_phone: true,
+            detect_ip_address: true,
+            detect_aws_keys: true,
+            default_mask_strategy: MaskingStrategy::Hash,
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+        let detections = detector.detect_internal(
+            "SSN 123-45-6789 Email john@example.com Phone 555-123-4567 Card 4111-1111-1111-1111 IP 192.168.1.1 Key AKIAIOSFODNN7EXAMPLE",
+        );
+
+        assert_eq!(
+            detections[&PIIType::Ssn][0].mask_strategy,
+            MaskingStrategy::Partial
+        );
+        assert_eq!(
+            detections[&PIIType::CreditCard][0].mask_strategy,
+            MaskingStrategy::Partial
+        );
+        assert_eq!(
+            detections[&PIIType::Email][0].mask_strategy,
+            MaskingStrategy::Partial
+        );
+        assert_eq!(
+            detections[&PIIType::Phone][0].mask_strategy,
+            MaskingStrategy::Partial
+        );
+        assert_eq!(
+            detections[&PIIType::IpAddress][0].mask_strategy,
             MaskingStrategy::Redact
         );
+        assert_eq!(
+            detections[&PIIType::AwsKey][0].mask_strategy,
+            MaskingStrategy::Redact
+        );
+    }
+
+    #[test]
+    fn test_structurally_impossible_ssns_are_still_detected_for_now() {
+        let config = PIIConfig {
+            detect_ssn: true,
+            detect_credit_card: false,
+            detect_email: false,
+            detect_phone: false,
+            detect_ip_address: false,
+            detect_date_of_birth: false,
+            detect_passport: false,
+            detect_driver_license: false,
+            detect_bank_account: false,
+            detect_medical_record: false,
+            detect_aws_keys: false,
+            detect_api_keys: false,
+            detect_bsn: false,
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+
+        for text in [
+            "SSN 000-12-3456",
+            "SSN 666-12-3456",
+            "SSN 901-12-3456",
+            "SSN 123-00-4567",
+            "SSN 123-45-0000",
+        ] {
+            let detections = detector.detect_internal(text);
+            assert!(
+                detections.contains_key(&PIIType::Ssn),
+                "expected current detector to match impossible SSN: {text}"
+            );
+        }
     }
 
     #[test]
@@ -598,5 +679,85 @@ mod tests {
             detections[&PIIType::Custom][0].mask_strategy,
             MaskingStrategy::Partial
         );
+    }
+
+    #[test]
+    fn test_bsn_context_is_not_downgraded_to_ssn() {
+        let config = PIIConfig {
+            detect_ssn: true,
+            detect_bsn: true,
+            detect_credit_card: false,
+            detect_email: false,
+            detect_phone: false,
+            detect_ip_address: false,
+            detect_date_of_birth: false,
+            detect_passport: false,
+            detect_driver_license: false,
+            detect_bank_account: false,
+            detect_medical_record: false,
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+
+        let detections = detector.detect_internal("Customer record: BSN: 123456789");
+
+        assert!(
+            detections.contains_key(&PIIType::Bsn),
+            "expected BSN detection for BSN-labeled identifier"
+        );
+        assert!(
+            !detections.contains_key(&PIIType::Ssn),
+            "did not expect SSN detection to win over BSN context"
+        );
+    }
+
+    #[test]
+    fn test_process_nested_accepts_non_string_dict_keys() {
+        Python::initialize();
+        Python::attach(|py| {
+            let mut config = PIIConfig {
+                detect_ssn: false,
+                detect_email: false,
+                default_mask_strategy: MaskingStrategy::Redact,
+                ..Default::default()
+            };
+            config
+                .custom_patterns
+                .push(super::super::config::CustomPattern {
+                    pattern: r"\bAKIA[0-9A-Z]{16}\b".to_string(),
+                    description: "Access key".to_string(),
+                    mask_strategy: MaskingStrategy::Redact,
+                    enabled: true,
+                });
+
+            let patterns = compile_patterns(&config).unwrap();
+            let detector = PIIDetectorRust { patterns, config };
+
+            let data = PyDict::new(py);
+            data.set_item(1, "AKIAFAKE12345EXAMPLE").unwrap();
+
+            let result = detector.process_nested(py, &data.into_any(), "");
+            assert!(
+                result.is_ok(),
+                "process_nested should not fail on non-string dict keys: {:?}",
+                result.err()
+            );
+
+            let (modified, new_data, detections) = result.unwrap();
+            assert!(modified);
+
+            let new_dict = new_data.bind(py).cast::<PyDict>().unwrap();
+            assert_eq!(
+                new_dict.get_item(1).unwrap().unwrap().extract::<String>().unwrap(),
+                "[REDACTED]"
+            );
+
+            let det_dict = detections.bind(py).cast::<PyDict>().unwrap();
+            assert!(
+                !det_dict.is_empty(),
+                "expected detections to be returned for masked value"
+            );
+        });
     }
 }

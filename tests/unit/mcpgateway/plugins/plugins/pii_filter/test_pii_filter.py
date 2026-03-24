@@ -165,6 +165,39 @@ class TestPIIDetectorParametric:
         assert "6789" in masked
         assert "123-45-6789" not in masked
 
+    @pytest.mark.parametrize(
+        "text,description",
+        [
+            ("SSN: 000-12-3456", "area cannot be 000"),
+            ("SSN: 666-12-3456", "area cannot be 666"),
+            ("SSN: 901-12-3456", "area cannot be 900-999"),
+            ("SSN: 123-00-4567", "group cannot be 00"),
+            ("SSN: 123-45-0000", "serial cannot be 0000"),
+        ],
+    )
+    def test_structurally_impossible_ssns_are_currently_detected(self, detector_class, text, description):
+        """Document the current lack of SSA-invalid SSN rejection in both detectors."""
+        config = PIIFilterConfig(
+            detect_ssn=True,
+            detect_bsn=False,
+            detect_phone=False,
+            detect_bank_account=False,
+            detect_credit_card=False,
+            detect_email=False,
+            detect_ip_address=False,
+            detect_date_of_birth=False,
+            detect_passport=False,
+            detect_driver_license=False,
+            detect_medical_record=False,
+            detect_aws_keys=False,
+            detect_api_keys=False,
+        )
+        detector = detector_class(config)
+        detections = detector.detect(text)
+        detection_keys = normalize_detection_keys(detections)
+
+        assert "ssn" in detection_keys, f"{description}: expected current detector to match {text}"
+
     # BSN Detection Tests (Python-specific)
     @pytest.mark.parametrize(
         "text,should_detect",
@@ -652,8 +685,8 @@ class TestRustPIIDetectorSpecific:
         modified, new_data, detections = detector.process_nested(data, "")
 
         assert modified is True
-        assert new_data["user"]["ssn"] == "[REDACTED]"
-        assert new_data["user"]["email"] == "[REDACTED]"
+        assert new_data["user"]["ssn"] == "***-**-6789"
+        assert new_data["user"]["email"] == "j***n@example.com"
         assert new_data["user"]["name"] == "John Doe"
 
         detection_keys = normalize_detection_keys(detections)
@@ -667,9 +700,9 @@ class TestRustPIIDetectorSpecific:
         modified, new_data, detections = detector.process_nested(data, "")
 
         assert modified is True
-        assert new_data[0] == "SSN: [REDACTED]"
+        assert new_data[0] == "SSN: ***-**-6789"
         assert new_data[1] == "No PII here"
-        assert new_data[2] == "Email: [REDACTED]"
+        assert new_data[2] == "Email: t***t@example.com"
 
     def test_process_nested_mixed_structure(self, detector):
         """Test processing mixed nested structure."""
@@ -678,9 +711,9 @@ class TestRustPIIDetectorSpecific:
         modified, new_data, detections = detector.process_nested(data, "")
 
         assert modified is True
-        assert new_data["users"][0]["ssn"] == "[REDACTED]"
-        assert new_data["users"][1]["ssn"] == "[REDACTED]"
-        assert new_data["contact"]["email"] == "[REDACTED]"
+        assert new_data["users"][0]["ssn"] == "***-**-6789"
+        assert new_data["users"][1]["ssn"] == "***-**-4321"
+        assert new_data["contact"]["email"] == "a***n@example.com"
 
     def test_process_nested_no_pii(self, detector):
         """Test processing nested data with no PII."""
@@ -702,13 +735,30 @@ class TestRustPIIDetectorSpecific:
         detector = RustDet(config)
         assert detector is not None
 
-    def test_default_mask_strategy_overrides_built_in_partial_masks(self):
-        """Built-in Rust detections should honor the configured default strategy."""
+    def test_built_in_partial_masks_override_global_redaction_default(self):
+        """Built-in Rust detections should keep their explicit partial strategies."""
         detector = RustPIIDetector(PIIFilterConfig(detect_ssn=True, detect_email=True, detect_phone=False, detect_ip_address=False, default_mask_strategy=MaskingStrategy.REDACT))
         detections = detector.detect("SSN: 123-45-6789 Email: john@example.com")
 
-        assert detections["ssn"][0]["mask_strategy"] == "redact"
-        assert detections["email"][0]["mask_strategy"] == "redact"
+        assert detections["ssn"][0]["mask_strategy"] == "partial"
+        assert detections["email"][0]["mask_strategy"] == "partial"
+
+    def test_built_in_redaction_masks_ignore_global_partial_default(self):
+        """Built-in redaction-only detections should keep their explicit redact strategies."""
+        detector = RustPIIDetector(
+            PIIFilterConfig(
+                detect_ssn=False,
+                detect_email=False,
+                detect_phone=False,
+                detect_ip_address=True,
+                detect_aws_keys=True,
+                default_mask_strategy=MaskingStrategy.PARTIAL,
+            )
+        )
+        detections = detector.detect("IP 192.168.1.1 KEY AKIAIOSFODNN7EXAMPLE")
+
+        assert detections["ip_address"][0]["mask_strategy"] == "redact"
+        assert detections["aws_key"][0]["mask_strategy"] == "redact"
 
     def test_custom_pattern_keeps_explicit_strategy_when_default_redacts(self):
         """Custom pattern overrides should win over the global default strategy."""
@@ -721,6 +771,80 @@ class TestRustPIIDetectorSpecific:
 
         detections = detector.detect("Employee ID EMP123456")
         assert detections["custom"][0]["mask_strategy"] == "partial"
+
+    def test_rust_mask_uses_built_in_partial_strategies_when_default_redacts(self):
+        """Live Rust masking should preserve built-in partial masking behavior."""
+        detector = RustPIIDetector(
+            PIIFilterConfig(
+                detect_ssn=True,
+                detect_email=True,
+                detect_phone=False,
+                detect_ip_address=False,
+                detect_bsn=False,
+                detect_credit_card=False,
+                detect_bank_account=False,
+                detect_date_of_birth=False,
+                detect_passport=False,
+                detect_driver_license=False,
+                detect_medical_record=False,
+                detect_aws_keys=False,
+                detect_api_keys=False,
+                default_mask_strategy=MaskingStrategy.REDACT,
+            )
+        )
+        text = "SSN: 123-45-6789 Email: john@example.com"
+        detections = detector.detect(text)
+        masked = detector.mask(text, detections)
+
+        assert "***-**-6789" in masked
+        assert "j***n@example.com" in masked
+        assert "[REDACTED]" not in masked
+
+    def test_rust_mask_strategy_regression_matrix(self):
+        """Regression test: built-in Rust masks should ignore a global hash default."""
+        detector = RustPIIDetector(
+            PIIFilterConfig(
+                detect_ssn=True,
+                detect_credit_card=True,
+                detect_email=True,
+                detect_phone=True,
+                detect_ip_address=True,
+                detect_aws_keys=True,
+                detect_bsn=False,
+                detect_bank_account=False,
+                detect_date_of_birth=False,
+                detect_passport=False,
+                detect_driver_license=False,
+                detect_medical_record=False,
+                detect_api_keys=False,
+                default_mask_strategy=MaskingStrategy.HASH,
+            )
+        )
+        text = (
+            "SSN: 123-45-6789 "
+            "Email: john@example.com "
+            "Phone: 555-123-4567 "
+            "Card: 4111-1111-1111-1111 "
+            "IP: 192.168.1.1 "
+            "Key: AKIAIOSFODNN7EXAMPLE"
+        )
+
+        detections = detector.detect(text)
+        masked = detector.mask(text, detections)
+
+        assert detections["ssn"][0]["mask_strategy"] == "partial"
+        assert detections["credit_card"][0]["mask_strategy"] == "partial"
+        assert detections["email"][0]["mask_strategy"] == "partial"
+        assert detections["phone"][0]["mask_strategy"] == "partial"
+        assert detections["ip_address"][0]["mask_strategy"] == "redact"
+        assert detections["aws_key"][0]["mask_strategy"] == "redact"
+
+        assert "***-**-6789" in masked
+        assert "j***n@example.com" in masked
+        assert "***-***-4567" in masked
+        assert "****-****-****-1111" in masked
+        assert masked.count("[REDACTED]") == 2
+        assert "[HASH:" not in masked
 
     def test_very_long_text_performance(self, detector):
         """Test performance with very long text."""

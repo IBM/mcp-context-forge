@@ -115,6 +115,23 @@ config:
   default_mask_strategy: "redact"
 ```
 
+## SSN Detection Notes
+
+- SSNs do not have a public checksum comparable to Luhn. Local pattern checks can only determine whether a value looks like an SSN, not whether it is assigned to a real person.
+- Authoritative SSN verification requires identity-aware SSA-backed verification, not standalone checksum validation.
+- The current Rust detector may classify bare 9-digit values as SSNs. This can create false positives for other 9-digit identifiers when `detect_ssn` is enabled.
+- A future hardening pass should keep broad compact-SSN support but reject structurally impossible SSNs instead of requiring an `SSN` label.
+
+### Structural Validation Limits
+
+The planned structural hardening should reject values that violate SSA invalid-number rules:
+
+- The first three digits cannot be `000`, `666`, or `900-999`
+- The middle two digits cannot be `00`
+- The last four digits cannot be `0000`
+
+These checks reduce false positives, but they still cannot prove a value is a real SSN.
+
 ## Testing
 
 ### Run All Tests

@@ -142,15 +142,17 @@ fn partial_mask(value: &str, pii_type: PIIType) -> String {
 
         _ => {
             // Generic partial masking: first + last char
-            if value.len() > 2 {
+            let chars: Vec<char> = value.chars().collect();
+
+            if chars.len() > 2 {
                 format!(
                     "{}{}{}",
-                    &value[..1],
-                    "*".repeat(value.len() - 2),
-                    &value[value.len() - 1..]
+                    chars[0],
+                    "*".repeat(chars.len() - 2),
+                    chars[chars.len() - 1]
                 )
-            } else if value.len() == 2 {
-                format!("{}*", &value[..1])
+            } else if chars.len() == 2 {
+                format!("{}*", chars[0])
             } else {
                 "*".to_string()
             }
@@ -218,5 +220,31 @@ mod tests {
 
         let result = mask_pii(text, &detections, &config);
         assert_eq!(result, text); // Zero-copy
+    }
+
+    #[test]
+    fn test_partial_mask_custom_unicode_does_not_panic() {
+        let config = PIIConfig {
+            default_mask_strategy: MaskingStrategy::Partial,
+            ..Default::default()
+        };
+        let text = "Contact José at jose@example.com and Jose Alvarez tomorrow";
+        let unicode_value = "José";
+        let start = text.find(unicode_value).unwrap();
+        let end = start + unicode_value.len();
+
+        let mut detections = HashMap::new();
+        detections.insert(
+            PIIType::Custom,
+            vec![Detection {
+                value: unicode_value.to_string(),
+                start,
+                end,
+                mask_strategy: MaskingStrategy::Partial,
+            }],
+        );
+
+        let result = mask_pii(text, &detections, &config);
+        assert_eq!(result, "Contact J**é at jose@example.com and Jose Alvarez tomorrow");
     }
 }
