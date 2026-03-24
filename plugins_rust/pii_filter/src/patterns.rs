@@ -29,16 +29,18 @@ pub struct CompiledPatterns {
 /// Pattern definitions (pattern, description, explicit masking strategy)
 type PatternDef = (&'static str, &'static str, MaskingStrategy);
 
+const VALID_SSN_DASHED_PATTERN: &str = r"\b(?:00[1-9]|0[1-9][0-9]|[1-5][0-9]{2}|6(?:[0-5][0-9]|6[0-5])|[7-8][0-9]{2})-(?:0[1-9]|[1-9][0-9])-(?:000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})\b";
+
 // SSN patterns
 static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![
         (
-            r"\b\d{3}-\d{2}-\d{4}\b",
+            VALID_SSN_DASHED_PATTERN,
             "US Social Security Number",
             MaskingStrategy::Partial,
         ),
         (
-            r"\b(?:SSN|Social\s+Security(?:\s+Number)?)[:\s#-]*\d{9}\b",
+            r"\b(?:SSN|Social\s+Security(?:\s+Number)?)[:\s#-]*(?:00[1-9]|0[1-9][0-9]|[1-5][0-9]{2}|6(?:[0-5][0-9]|6[0-5])|[7-8][0-9]{2})(?:0[1-9]|[1-9][0-9])(?:000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})\b",
             "US Social Security Number with explicit context",
             MaskingStrategy::Partial,
         ),
@@ -383,6 +385,21 @@ mod tests {
         let matches: Vec<_> = compiled.regex_set.matches(text).into_iter().collect();
 
         assert!(!matches.is_empty());
+    }
+
+    #[test]
+    fn test_invalid_ssn_does_not_match_regex_set() {
+        let config = PIIConfig {
+            detect_ssn: true,
+            detect_bsn: false,
+            ..Default::default()
+        };
+        let compiled = compile_patterns(&config).unwrap();
+
+        let text = "SSN: 000-12-3456";
+        let matches: Vec<_> = compiled.regex_set.matches(text).into_iter().collect();
+
+        assert!(matches.is_empty());
     }
 
     #[test]

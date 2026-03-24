@@ -7,6 +7,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use serde::{Deserialize, Serialize};
 
+const MAX_TEXT_BYTES_LIMIT: usize = 100 * 1024 * 1024;
+const MAX_NESTED_DEPTH_LIMIT: usize = 1000;
+const MAX_COLLECTION_ITEMS_LIMIT: usize = 1_000_000;
+
 /// PII types that can be detected
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -217,15 +221,33 @@ impl PIIConfig {
                 "max_text_bytes must be greater than 0",
             ));
         }
+        if config.max_text_bytes > MAX_TEXT_BYTES_LIMIT {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "max_text_bytes must be less than or equal to {}",
+                MAX_TEXT_BYTES_LIMIT
+            )));
+        }
         if config.max_nested_depth == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "max_nested_depth must be greater than 0",
             ));
         }
+        if config.max_nested_depth > MAX_NESTED_DEPTH_LIMIT {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "max_nested_depth must be less than or equal to {}",
+                MAX_NESTED_DEPTH_LIMIT
+            )));
+        }
         if config.max_collection_items == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "max_collection_items must be greater than 0",
             ));
+        }
+        if config.max_collection_items > MAX_COLLECTION_ITEMS_LIMIT {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "max_collection_items must be less than or equal to {}",
+                MAX_COLLECTION_ITEMS_LIMIT
+            )));
         }
 
         // Extract string values
@@ -304,6 +326,7 @@ impl PIIConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::types::PyDict;
 
     #[test]
     fn test_pii_type_as_str() {
@@ -322,5 +345,44 @@ mod tests {
         assert_eq!(config.max_text_bytes, 256 * 1024);
         assert_eq!(config.max_nested_depth, 32);
         assert_eq!(config.max_collection_items, 4096);
+    }
+
+    #[test]
+    fn test_from_py_dict_rejects_excessive_resource_limits() {
+        Python::initialize();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("max_text_bytes", 100 * 1024 * 1024 + 1)
+                .unwrap();
+
+            let err = PIIConfig::from_py_dict(&dict).unwrap_err();
+            assert!(err.to_string().contains("max_text_bytes"));
+        });
+    }
+
+    #[test]
+    fn test_from_py_dict_rejects_excessive_nested_depth() {
+        Python::initialize();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("max_nested_depth", MAX_NESTED_DEPTH_LIMIT + 1)
+                .unwrap();
+
+            let err = PIIConfig::from_py_dict(&dict).unwrap_err();
+            assert!(err.to_string().contains("max_nested_depth"));
+        });
+    }
+
+    #[test]
+    fn test_from_py_dict_rejects_excessive_collection_items() {
+        Python::initialize();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("max_collection_items", MAX_COLLECTION_ITEMS_LIMIT + 1)
+                .unwrap();
+
+            let err = PIIConfig::from_py_dict(&dict).unwrap_err();
+            assert!(err.to_string().contains("max_collection_items"));
+        });
     }
 }
