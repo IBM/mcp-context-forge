@@ -10194,7 +10194,7 @@ class TestRemainingCoverageGaps:
         assert payload["rust_affinity_core_enabled"] is False
         assert payload["session_auth_reuse_mode"] == "python"
 
-    def test_healthcheck_unhealthy_applies_runtime_headers(self, monkeypatch):
+    async def test_healthcheck_unhealthy_applies_runtime_headers(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -10212,9 +10212,9 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
 
         response = FastAPIResponse()
-        result = main_mod.healthcheck(response)
+        result = await main_mod.healthcheck(response)
 
-        assert result["status"] == "unhealthy"
+        assert result.status == "unhealthy"
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):

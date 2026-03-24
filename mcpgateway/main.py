@@ -11085,7 +11085,7 @@ async def healthcheck(response: Response):
         except Exception as e:
             logger.error(f"Redis health check failed: {str(e)}")
             status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
-    
+
     # Determine overall status:
     # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
     # - "unhealthy" if Database is unhealthy (503) OR Redis is unhealthy when enabled
