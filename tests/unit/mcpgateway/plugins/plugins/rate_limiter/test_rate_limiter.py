@@ -37,6 +37,7 @@ from plugins.rate_limiter.rate_limiter import (
     RateLimiterPlugin,
     SlidingWindowAlgorithm,
     TokenBucketAlgorithm,
+    _extract_user_identity,
     _make_headers,
     _parse_rate,
     _select_most_restrictive,
@@ -2959,3 +2960,148 @@ async def test_sliding_window_allow_after_sweep_starts_fresh():
             "After sweep() evicts the stale key, the next allow() must start fresh "
             "with a full quota — stale state must not persist"
         )
+
+
+# ============================================================================
+# _extract_user_identity Tests
+#
+# Covers the dict branch (production JWT path), string, None, and edge cases.
+# ============================================================================
+
+
+class TestExtractUserIdentity:
+    """Tests for _extract_user_identity covering all input types."""
+
+    def test_dict_with_email(self):
+        """Dict with 'email' key returns email as identity."""
+        assert _extract_user_identity({"email": "alice@example.com"}) == "alice@example.com"
+
+    def test_dict_with_id_fallback(self):
+        """Dict without 'email' falls back to 'id'."""
+        assert _extract_user_identity({"id": "user-123"}) == "user-123"
+
+    def test_dict_with_sub_fallback(self):
+        """Dict without 'email' or 'id' falls back to 'sub'."""
+        assert _extract_user_identity({"sub": "sub-456"}) == "sub-456"
+
+    def test_dict_with_all_keys_prefers_email(self):
+        """When all keys are present, email takes priority."""
+        assert _extract_user_identity({"email": "e@x.com", "id": "id-1", "sub": "sub-1"}) == "e@x.com"
+
+    def test_dict_with_empty_email_falls_back_to_id(self):
+        """Empty email falls through to 'id'."""
+        assert _extract_user_identity({"email": "", "id": "id-1"}) == "id-1"
+
+    def test_dict_with_all_empty_falls_back_to_anonymous(self):
+        """Dict with all empty/falsy values returns 'anonymous'."""
+        assert _extract_user_identity({"email": "", "id": "", "sub": ""}) == "anonymous"
+
+    def test_dict_empty(self):
+        """Empty dict returns 'anonymous'."""
+        assert _extract_user_identity({}) == "anonymous"
+
+    def test_dict_strips_whitespace(self):
+        """Dict values are stripped of whitespace."""
+        assert _extract_user_identity({"email": "  alice@x.com  "}) == "alice@x.com"
+
+    def test_string_identity(self):
+        """String user returns itself."""
+        assert _extract_user_identity("bob@example.com") == "bob@example.com"
+
+    def test_string_whitespace_only(self):
+        """Whitespace-only string returns 'anonymous'."""
+        assert _extract_user_identity("   ") == "anonymous"
+
+    def test_none_returns_anonymous(self):
+        """None user returns 'anonymous'."""
+        assert _extract_user_identity(None) == "anonymous"
+
+    def test_empty_string_returns_anonymous(self):
+        """Empty string user returns 'anonymous'."""
+        assert _extract_user_identity("") == "anonymous"
+
+
+# ============================================================================
+# prompt_pre_fetch tenant path coverage
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_prompt_pre_fetch_with_tenant_enforces_by_tenant():
+    """prompt_pre_fetch must check by_tenant when tenant_id is set.
+
+    This covers the tenant dimension in prompt_pre_fetch (line 713), ensuring
+    that tenant rate limits apply to prompt fetches, not just tool invocations.
+    """
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[PromptHookType.PROMPT_PRE_FETCH],
+            config={"by_user": "100/s", "by_tenant": "2/s"},
+        )
+    )
+
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice", tenant_id="acme"))
+    payload = PromptPrehookPayload(prompt_id="p", args={})
+
+    r1 = await plugin.prompt_pre_fetch(payload, ctx)
+    r2 = await plugin.prompt_pre_fetch(payload, ctx)
+    r3 = await plugin.prompt_pre_fetch(payload, ctx)
+
+    assert r1.violation is None
+    assert r2.violation is None
+    assert r3.violation is not None, "by_tenant limit should be enforced in prompt_pre_fetch"
+    assert r3.violation.http_status_code == 429
+
+
+# ============================================================================
+# Token bucket sweep coverage
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_sweep_evicts_inactive_buckets():
+    """Token bucket sweep evicts buckets inactive for over 1 hour."""
+    algorithm = TokenBucketAlgorithm()
+    lock = asyncio.Lock()
+
+    # Create a bucket
+    await algorithm.allow(lock, "user:eve", 5, 1)
+    assert len(algorithm._store) == 1
+
+    # Back-date last_refill by over an hour
+    for bucket in algorithm._store.values():
+        bucket.last_refill -= 3700
+
+    await algorithm.sweep(lock)
+    assert len(algorithm._store) == 0, "Inactive bucket should be evicted after 1 hour"
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_sweep_keeps_active_buckets():
+    """Token bucket sweep does NOT evict recently active buckets."""
+    algorithm = TokenBucketAlgorithm()
+    lock = asyncio.Lock()
+
+    await algorithm.allow(lock, "user:frank", 5, 1)
+    assert len(algorithm._store) == 1
+
+    # Sweep immediately — bucket is active
+    await algorithm.sweep(lock)
+    assert len(algorithm._store) == 1, "Active bucket should NOT be evicted"
+
+
+# ============================================================================
+# Redis backend no-limit fast path
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_redis_backend_no_limit_returns_unlimited():
+    """RedisBackend.allow with no limit returns unlimited without contacting Redis."""
+    backend = RedisBackend(redis_url="redis://localhost:6379/0")
+    allowed, limit, reset_ts, meta = await backend.allow("user:ghost", None)
+    assert allowed is True
+    assert limit == 0
+    assert meta == {"limited": False}
