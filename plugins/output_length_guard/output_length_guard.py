@@ -97,9 +97,18 @@ class OutputLengthGuardConfig(BaseModel):
     @field_validator('strategy')
     @classmethod
     def validate_strategy(cls, v: str) -> str:
-
-        logging.debug(f"Validating strategy: {v}")
         """Validate strategy is one of the allowed values.
+        
+        Args:
+            v: Strategy value to validate.
+            
+        Returns:
+            The validated strategy value.
+            
+        Raises:
+            ValueError: If strategy is not in ALLOWED_STRATEGIES.
+        """
+        logging.debug(f"Validating strategy: {v}")
 
         Args:
             v: Strategy value to validate.
@@ -502,8 +511,7 @@ def _find_word_boundary(value: str, cut: int, max_chars: int) -> int:
             return cut
 
         # Ensure cut is within bounds
-        if cut > len(value):
-            cut = len(value)
+        cut = min(cut, len(value))
 
         min_search = max(0, cut - int(max_chars * 0.2))
 
@@ -1021,7 +1029,7 @@ class OutputLengthGuardPlugin(Plugin):
             f"word_boundary={self._cfg.word_boundary}"
         )
 
-    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:  # noqa: PLR0911
         """Guard tool output by length with block or truncate strategies.
 
         Args:
