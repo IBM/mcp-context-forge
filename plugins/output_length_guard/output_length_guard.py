@@ -60,7 +60,7 @@ class OutputLengthGuardConfig(BaseModel):
     chars_per_token: int = Field(default=4, ge=1, le=10, description="Characters per token ratio for estimation. Default: 4 (English/GPT models)")
     
     # Behavior
-    limit_mode: str = Field(default="character", description='Limit enforcement mode: "character" (character-based limits only) or "token" (token-based limits only). v0.4.2+')
+    limit_mode: str = Field(default="character", description='Limit enforcement mode: "character" (character-based limits only) or "token" (token-based limits only)')
     strategy: str = Field(default="truncate", description='Strategy when out of bounds: "truncate" or "block"')
     ellipsis: str = Field(default="…", description="Suffix appended on truncation. Use empty string to disable.")
     word_boundary: bool = Field(default=False, description="When true, truncate at word boundaries to avoid mid-word cuts.")
@@ -70,13 +70,6 @@ class OutputLengthGuardConfig(BaseModel):
     max_structure_size: int = Field(default=10_000, description="Maximum items in list/dict (10K default). Prevents DoS attacks.")
     max_recursion_depth: int = Field(default=100, description="Maximum nesting depth (100 default). Prevents stack overflow.")
     max_binary_search_iterations: int = Field(default=30, description="Binary search iteration limit (30 default). Prevents infinite loops.")
-    sensitive_keywords: frozenset[str] = Field(
-        default_factory=lambda: frozenset({
-            'password', 'token', 'secret', 'key', 'api_key', 'apikey',
-            'auth', 'credential', 'private', 'confidential'
-        }),
-        description="Keywords to sanitize in logs. Prevents information disclosure."
-    )
 
     @field_validator('limit_mode')
     @classmethod
@@ -407,10 +400,6 @@ def _find_token_cut_point(
             f"using best cut point found: {best_cut}"
         )
     
-    logger.info(
-        f"Binary search completed: iterations={iterations}, cut_point={best_cut}, "
-        f"estimated_tokens={best_cut // chars_per_token}"
-    )
     
     return best_cut
 
@@ -453,13 +442,6 @@ def _truncate(
 ) -> str:
     """Truncate string to maximum length with ellipsis.
 
-    BUG FIX #5: Handle max_chars=None correctly to disable truncation.
-    BUG FIX #7: Optimize for large strings by caching length and using early returns.
-    FEATURE v0.3.5: Add word-boundary truncation to avoid mid-word cuts.
-    FEATURE v0.4.0: Add token-based truncation with performance optimizations.
-    FEATURE v0.4.1: Add configurable security limits.
-    FEATURE v0.4.2: Add limit_mode to enforce only character OR token limits.
-
     Args:
         value: String to truncate.
         max_chars: Maximum number of characters. None means no limit.
@@ -482,12 +464,6 @@ def _truncate(
         estimated_tokens = len(value) // chars_per_token
         
         if estimated_tokens > max_tokens:
-            logger.info(
-                f"Token limit exceeded, truncating: original_length={original_length}, "
-                f"estimated_tokens={estimated_tokens}, max_tokens={max_tokens}, "
-                f"word_boundary={word_boundary}"
-            )
-            
             # Use binary search to find cut point
             cut = _find_token_cut_point(value, max_tokens, chars_per_token, max_text_length, max_iterations)
             
@@ -504,11 +480,6 @@ def _truncate(
             
             result = value[:cut] + ell
             
-            logger.info(
-                f"Token-based truncation applied: original_length={original_length}, "
-                f"truncated_length={len(result)}, cut_point={cut}, "
-                f"reduction_percent={round((1 - len(result) / original_length) * 100, 2)}"
-            )
             
             return result
     
@@ -538,20 +509,10 @@ def _truncate(
     
     # Word boundary truncation
     if word_boundary and cut > 0:
-        logger.info(
-            f"Character limit exceeded, truncating: original_length={original_length}, "
-            f"max_chars={max_chars}, word_boundary={word_boundary}"
-        )
-        
         cut = _find_word_boundary(value, cut, max_chars)
         
         result = value[:cut] + ell
         
-        logger.info(
-            f"Character-based truncation applied: original_length={original_length}, "
-            f"truncated_length={len(result)}, "
-            f"reduction_percent={round((1 - len(result) / original_length) * 100, 2)}"
-        )
         
         return result
     
@@ -602,10 +563,6 @@ def _process_structured_data(
     or blocks when string values exceed limits. Numeric strings (integers, floats,
     and scientific notation) are not truncated or blocked.
     
-    FEATURE v0.4.0: Added token-based budget support with performance optimizations.
-    FEATURE v0.4.1: Security limits now configurable via plugin settings.
-    FEATURE v0.4.2: Added limit_mode to enforce only character OR token limits.
-    
     Args:
         data: The data to process (can be str, list, dict, or nested structures).
         min_chars: Minimum allowed characters. 0 disables minimum check.
@@ -636,7 +593,6 @@ def _process_structured_data(
     if isinstance(data, str):
         # Skip processing for numeric strings (int, float, scientific notation)
         if _is_numeric_string(data):
-            logger.info(f"🔄 Skipping numeric string: '{data}'")
             return data, False, None
         
         # PERFORMANCE: Calculate once, reuse
@@ -692,7 +648,7 @@ def _process_structured_data(
                         http_status_code=422,
                         mcp_error_code=-32000,
                     )
-                    logger.info(f"🚫 BLOCKING: String at {path or 'root'} exceeds char limits (length={length})")
+                    logger.debug(f"🚫 BLOCKING: String at {path or 'root'} exceeds char limits (length={length})")
                 else:
                     # Min violations
                     violation = PluginViolation(
@@ -709,7 +665,7 @@ def _process_structured_data(
                         http_status_code=422,
                         mcp_error_code=-32000,
                     )
-                    logger.info(f"🚫 BLOCKING: String at {path or 'root'} below minimum limits")
+                    logger.debug(f"🚫 BLOCKING: String at {path or 'root'} below minimum limits")
                 
                 return data, False, violation
             
@@ -720,8 +676,6 @@ def _process_structured_data(
                     max_text_length, max_binary_search_iterations, limit_mode
                 )
                 was_modified = truncated != data
-                if was_modified:
-                    logger.info(f"🔄 Truncated string at {path or 'root'}: '{data[:30]}...' -> '{truncated}'")
                 return truncated, was_modified, None
         
         # Within bounds - return unchanged
@@ -747,7 +701,6 @@ def _process_structured_data(
             result.append(processed_item)
             if item_modified:
                 modified = True
-                logger.info(f"🔄 Modified list item at index {idx}")
         return result, modified, None
     
     # Recursive case: dict - process each value
@@ -770,7 +723,6 @@ def _process_structured_data(
             result[key] = processed_value
             if value_modified:
                 modified = True
-                logger.info(f"🔄 Modified dict value for key '{key}'")
         return result, modified, None
     
     # Other types (int, bool, None, etc.) - pass through unchanged
@@ -800,7 +752,6 @@ def _generate_text_representation(data: Any) -> str:
         if isinstance(data, dict) and len(data) == 1:
             # Get the single value (e.g., from {"result": [...]})
             value = next(iter(data.values()))
-            logger.info(f"🔄 Extracting single dict value for content display")
             # Recursively format the value
             return _generate_text_representation(value)
         
@@ -837,9 +788,6 @@ class OutputLengthGuardPlugin(Plugin):
         Returns:
             Result with length enforcement applied.
         """
-        # CRITICAL DEBUG LOG - This should appear if method is called
-        logger.info(f"🎯 OutputLengthGuard.tool_post_invoke CALLED for tool '{payload.name}'")
-        logger.info(f"🎯 Plugin config: max_chars={self._cfg.max_chars}, min_chars={self._cfg.min_chars}, strategy={self._cfg.strategy}")
         
         cfg = self._cfg
 
@@ -855,23 +803,19 @@ class OutputLengthGuardPlugin(Plugin):
             """
             # Check if text is numeric (int, float, scientific notation) - if so, don't truncate
             if _is_numeric_string(text):
-                logger.info(f"🎯 handle_text: Skipping numeric string: '{text}'")
                 meta = {"original_length": len(text), "numeric": True, "within_bounds": True}
                 return text, meta, None
             
             length = _length(text)
             meta = {"original_length": length}
 
-            # BUG FIX #1: Use explicit comparison instead of falsy check
+            # Use explicit comparison instead of falsy check
             # When min_chars=0, we want to skip the minimum check (not treat 0 as False)
             below_min = cfg.min_chars > 0 and length < cfg.min_chars
             above_max = cfg.max_chars is not None and length > cfg.max_chars
             
-            logger.info(f"🎯 handle_text: text='{text[:50]}...', length={length}, min_chars={cfg.min_chars}, max_chars={cfg.max_chars}")
-            logger.info(f"🎯 handle_text: below_min={below_min}, above_max={above_max}")
             
             if not (below_min or above_max):
-                logger.info(f"🎯 handle_text: Within bounds, returning unchanged")
                 meta.update({"within_bounds": True})
                 return text, meta, None
 
@@ -897,9 +841,7 @@ class OutputLengthGuardPlugin(Plugin):
                 return text, meta, violation
 
             # Truncate strategy only handles over-length
-            logger.info(f"🎯 handle_text: Checking truncation condition - above_max={above_max}, cfg.max_chars={cfg.max_chars}")
             if above_max and cfg.max_chars is not None:
-                logger.info(f"🎯 handle_text: TRUNCATING text from {length} to {cfg.max_chars} chars")
                 new_text = _truncate(
                     text, cfg.max_chars, cfg.ellipsis, cfg.word_boundary,
                     max_tokens=None, chars_per_token=cfg.chars_per_token,
@@ -907,37 +849,22 @@ class OutputLengthGuardPlugin(Plugin):
                     max_iterations=cfg.max_binary_search_iterations,
                     limit_mode=cfg.limit_mode
                 )
-                logger.info(f"🎯 handle_text: Truncated result: '{new_text}' (length={len(new_text)})")
                 meta.update({"truncated": True, "new_length": len(new_text)})
                 return new_text, meta, None
 
             # Under min with truncate: allow through, annotate only
-            logger.info(f"🎯 handle_text: NOT truncating, returning original text")
             meta.update({"truncated": False, "new_length": length})
             return text, meta, None
 
         result = payload.result
         
-        # Debug: Log what we received
-        logger.info(
-            f"🎯 OutputLengthGuard: Received result type: {type(result).__name__}, "
-            f"is_dict: {isinstance(result, dict)}, "
-            f"has_content: {'content' in result if isinstance(result, dict) else 'N/A'}"
-        )
         if isinstance(result, dict):
-            logger.info(f"🎯 OutputLengthGuard: Result keys: {list(result.keys())}")
             if 'content' in result:
-                logger.info(f"🎯 OutputLengthGuard: Content type: {type(result['content'])}, length: {len(result['content']) if isinstance(result['content'], list) else 'N/A'}")
                 if isinstance(result['content'], list) and len(result['content']) > 0:
-                    logger.info(f"🎯 OutputLengthGuard: First content item: {result['content'][0]}")
 
         # Case 0: MCP CallToolResult as dict (from model_dump with 'content' key)
         # This is the most common case when tools return MCP-formatted results
         if isinstance(result, dict) and 'content' in result and isinstance(result.get('content'), list):
-            logger.info(
-                f"🎯 OutputLengthGuard: ✓ MATCHED Case 0 - Processing MCP result dict with {len(result['content'])} content items from tool '{payload.name}'"
-            )
-            
             # PRIORITY CHECK: Process structuredContent first if present
             struct_key = None
             struct_modified = False
@@ -949,7 +876,6 @@ class OutputLengthGuardPlugin(Plugin):
                 struct_key = 'structured_content'
             
             if struct_key:
-                logger.info(f"🎯 Processing {struct_key} field FIRST (will skip content processing)")
                 
                 # Recursively process all strings in structured data (truncate or block)
                 truncated_struct, struct_modified, violation = _process_structured_data(
@@ -973,7 +899,7 @@ class OutputLengthGuardPlugin(Plugin):
                 
                 # If blocking mode triggered a violation, return it immediately
                 if violation:
-                    logger.info(f"🚫 Blocking due to violation in {struct_key}")
+                    logger.debug(f"🚫 Blocking due to violation in {struct_key}")
                     return ToolPostInvokeResult(
                         continue_processing=False,
                         violation=violation,
@@ -987,7 +913,6 @@ class OutputLengthGuardPlugin(Plugin):
                     )
                 
                 if struct_modified:
-                    logger.info(f"🎯 {struct_key} was modified, regenerating content text")
                     # Create new result dict
                     new_result = dict(result)
                     new_result[struct_key] = truncated_struct
@@ -998,7 +923,6 @@ class OutputLengthGuardPlugin(Plugin):
                     new_text = _generate_text_representation(truncated_struct)
                     new_result['content'] = [{"type": "text", "text": new_text}]
                     
-                    logger.info(f"🎯 Updated content text from structuredContent: '{new_text[:100]}...'")
                     
                     return ToolPostInvokeResult(
                         modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result),
@@ -1012,11 +936,9 @@ class OutputLengthGuardPlugin(Plugin):
                         }
                     )
                 else:
-                    logger.info(f"🎯 {struct_key} was not modified, no changes needed")
                     return ToolPostInvokeResult(metadata={"mcp_result_processed": True, "items_modified": False, "structured_content_processed": False})
             
             # NO structuredContent: Process content array normally
-            logger.info("🎯 No structuredContent found, processing content array")
             modified = False
             out = []
             
@@ -1079,7 +1001,7 @@ class OutputLengthGuardPlugin(Plugin):
                     return ToolPostInvokeResult(modified_payload=ToolPostInvokePayload(name=payload.name, result=new_res), metadata=meta)
                 return ToolPostInvokeResult(metadata=meta)
             else:
-                # BUG FIX #2: Dict without "text" field - pass through unchanged
+                # Dict without "text" field - pass through unchanged
                 if hasattr(context, 'logger'):
                     context.logger.debug(
                         f"OutputLengthGuard: Dict result from tool '{payload.name}' has no 'text' field, passing through unchanged"
@@ -1125,10 +1047,10 @@ class OutputLengthGuardPlugin(Plugin):
             meta_list: List[dict[str, Any]] = []
             out: List[str] = []
 
-            # BUG FIX #8: Cache blocking mode for early exit optimization
+            # Cache blocking mode for early exit optimization
             is_blocking = cfg.is_blocking()
 
-            # BUG FIX #3: Add logging to track list processing
+            # Add logging to track list processing
             if hasattr(context, 'logger'):
                 context.logger.debug(
                     f"OutputLengthGuard: Processing list of {len(texts)} strings from tool '{payload.name}'"
@@ -1139,7 +1061,7 @@ class OutputLengthGuardPlugin(Plugin):
                 meta_list.append(m)
 
                 if violation:
-                    # BUG FIX #8: Early exit in block mode for performance
+                    # Early exit in block mode for performance
                     if is_blocking and hasattr(context, 'logger'):
                         context.logger.debug(
                             f"OutputLengthGuard: Blocking at list index {idx}/{len(texts)}"
@@ -1152,7 +1074,7 @@ class OutputLengthGuardPlugin(Plugin):
 
                 if new_t != t:
                     modified = True
-                    # BUG FIX #3: Log individual truncations
+                    # Log individual truncations
                     if hasattr(context, 'logger'):
                         context.logger.debug(
                             f"OutputLengthGuard: Truncated list item {idx} from {len(t)} to {len(new_t)} chars"
@@ -1167,7 +1089,7 @@ class OutputLengthGuardPlugin(Plugin):
                 )
             return ToolPostInvokeResult(metadata={"items": meta_list})
 
-        # BUG FIX #6: Log unsupported result types for observability
+        # Log unsupported result types for observability
         result_type = type(result).__name__
         if hasattr(context, 'logger'):
             context.logger.debug(
