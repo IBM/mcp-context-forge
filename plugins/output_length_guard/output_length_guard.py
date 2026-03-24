@@ -194,7 +194,7 @@ class OutputLengthGuardConfig(BaseModel):
             Validated max_text_length value.
 
         Raises:
-            ValueError: If max_text_length is not in range 1KB-10MB.
+            ValueError: If max_text_length is not in range 1KB to 10MB.
         """
         if v < 1000 or v > 10_000_000:
             raise ValueError("max_text_length must be between 1000 (1KB) and 10000000 (10MB)")
