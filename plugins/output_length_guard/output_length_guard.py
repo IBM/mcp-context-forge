@@ -54,9 +54,9 @@ class OutputLengthGuardConfig(BaseModel):
 
     # Output limits
     min_chars: int = Field(default=0, ge=0, description="Minimum allowed characters. 0 disables minimum check.")
-    max_chars: Optional[int] = Field(default=None, description="Maximum allowed characters. None disables maximum check.")
+    max_chars: Optional[int] = Field(default=None, description="Maximum allowed characters. 0 or None disables maximum check.")
     min_tokens: int = Field(default=0, ge=0, description="Minimum allowed tokens. 0 disables minimum token check.")
-    max_tokens: Optional[int] = Field(default=None, description="Maximum allowed tokens. None disables maximum token check.")
+    max_tokens: Optional[int] = Field(default=None, description="Maximum allowed tokens. 0 or None disables maximum token check.")
     chars_per_token: int = Field(default=4, ge=1, le=10, description="Characters per token ratio for estimation. Default: 4 (English/GPT models)")
 
     # Behavior
@@ -118,38 +118,40 @@ class OutputLengthGuardConfig(BaseModel):
     @field_validator('max_chars')
     @classmethod
     def validate_max_chars(cls, v: Optional[int]) -> Optional[int]:
-        """Validate max_chars is positive when set.
+        """Validate max_chars is positive when set, or convert 0 to None.
 
         Args:
             v: Maximum characters value.
 
         Returns:
-            Validated max_chars value.
+            Validated max_chars value (None if 0 or None).
 
         Raises:
-            ValueError: If max_chars is set but not positive.
+            ValueError: If max_chars is negative.
         """
-        if v is not None and v < 1:
-            raise ValueError("max_chars must be >= 1 when set, or None to disable")
-        return v
+        if v is not None and v < 0:
+            raise ValueError("max_chars must be >= 0 (0 disables), or None to disable")
+        # Treat 0 as None (disabled)
+        return None if v == 0 else v
 
     @field_validator('max_tokens')
     @classmethod
     def validate_max_tokens(cls, v: Optional[int]) -> Optional[int]:
-        """Validate max_tokens is positive when set.
+        """Validate max_tokens is positive when set, or convert 0 to None.
 
         Args:
             v: Maximum tokens value.
 
         Returns:
-            Validated max_tokens value.
+            Validated max_tokens value (None if 0 or None).
 
         Raises:
-            ValueError: If max_tokens is set but not positive.
+            ValueError: If max_tokens is negative.
         """
-        if v is not None and v < 1:
-            raise ValueError("max_tokens must be >= 1 when set, or None to disable")
-        return v
+        if v is not None and v < 0:
+            raise ValueError("max_tokens must be >= 0 (0 disables), or None to disable")
+        # Treat 0 as None (disabled)
+        return None if v == 0 else v
 
     @field_validator('chars_per_token')
     @classmethod
@@ -576,7 +578,8 @@ def _truncate(
         ell = ellipsis or ""
 
         # Token-based truncation (only if limit_mode is "token" and max_tokens specified)
-        if limit_mode == "token" and max_tokens is not None:
+        # Treat 0 as None (disabled) - consistent with validator behavior
+        if limit_mode == "token" and max_tokens is not None and max_tokens > 0:
             estimated_tokens = len(value) // chars_per_token
 
             if estimated_tokens > max_tokens:
@@ -602,11 +605,9 @@ def _truncate(
         if limit_mode != "character":
             return value
 
-        if max_chars is None:
+        # Treat 0 as None (disabled) - consistent with validator behavior
+        if max_chars is None or max_chars == 0:
             return value
-
-        if max_chars <= 0:
-            return ""
 
         value_len = len(value)
         if value_len <= max_chars:
