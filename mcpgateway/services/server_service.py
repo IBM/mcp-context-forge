@@ -1138,9 +1138,13 @@ class ServerService(BaseService):
                 server_id,
                 options=[
                     selectinload(DbServer.tools),
+                    with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                     selectinload(DbServer.resources),
+                    with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                     selectinload(DbServer.prompts),
+                    with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                     selectinload(DbServer.a2a_agents),
+                    with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                     selectinload(DbServer.email_team),
                 ],
             )
@@ -1446,9 +1450,13 @@ class ServerService(BaseService):
                     nowait=True,
                     options=[
                         selectinload(DbServer.tools),
+                        with_loader_criteria(DbTool, DbTool.enabled.is_(True)),
                         selectinload(DbServer.resources),
+                        with_loader_criteria(DbResource, DbResource.enabled.is_(True)),
                         selectinload(DbServer.prompts),
+                        with_loader_criteria(DbPrompt, DbPrompt.enabled.is_(True)),
                         selectinload(DbServer.a2a_agents),
+                        with_loader_criteria(DbA2AAgent, DbA2AAgent.enabled.is_(True)),
                         selectinload(DbServer.email_team),
                     ],
                 )
