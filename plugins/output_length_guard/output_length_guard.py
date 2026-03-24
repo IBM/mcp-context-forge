@@ -593,6 +593,7 @@ def _process_structured_data(
     if isinstance(data, str):
         # Skip processing for numeric strings (int, float, scientific notation)
         if _is_numeric_string(data):
+            logger.debug(f"Skipping numeric string at {path or 'root'}: length={len(data)}")
             return data, False, None
         
         # PERFORMANCE: Calculate once, reuse
@@ -608,6 +609,11 @@ def _process_structured_data(
         above_max_tokens = max_tokens is not None and token_count > max_tokens
         
         if below_min_chars or above_max_chars or below_min_tokens or above_max_tokens:
+            logger.debug(
+                f"String out of bounds at {path or 'root'}: length={length}, tokens={token_count}, "
+                f"char_limits=[{min_chars}, {max_chars}], token_limits=[{min_tokens}, {max_tokens}]"
+            )
+            
             # BLOCK MODE: Return violation immediately
             if strategy == "block":
                 location = f" at {path}" if path else ""
@@ -777,6 +783,15 @@ class OutputLengthGuardPlugin(Plugin):
         """
         super().__init__(config)
         self._cfg = OutputLengthGuardConfig(**(config.config or {}))
+        
+        # Log plugin initialization with configuration summary
+        logger.info(
+            f"OutputLengthGuard initialized: mode={self._cfg.limit_mode}, "
+            f"strategy={self._cfg.strategy}, "
+            f"char_limits=[{self._cfg.min_chars}, {self._cfg.max_chars}], "
+            f"token_limits=[{self._cfg.min_tokens}, {self._cfg.max_tokens}], "
+            f"word_boundary={self._cfg.word_boundary}"
+        )
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Guard tool output by length with block or truncate strategies.
@@ -790,6 +805,11 @@ class OutputLengthGuardPlugin(Plugin):
         """
         
         cfg = self._cfg
+        
+        # Log hook invocation
+        result_type = type(payload.result).__name__
+        logger.info(f"OutputLengthGuard processing tool '{payload.name}' with result type: {result_type}")
+        logger.debug(f"Tool '{payload.name}' config: mode={cfg.limit_mode}, strategy={cfg.strategy}, char_limits=[{cfg.min_chars}, {cfg.max_chars}]")
 
         # Helper to evaluate and possibly modify a single string
         def handle_text(text: str) -> tuple[str, dict[str, Any], Optional[PluginViolation]]:
@@ -803,6 +823,7 @@ class OutputLengthGuardPlugin(Plugin):
             """
             # Check if text is numeric (int, float, scientific notation) - if so, don't truncate
             if _is_numeric_string(text):
+                logger.debug(f"Preserving numeric string: length={len(text)}, value_preview={text[:50]}...")
                 meta = {"original_length": len(text), "numeric": True, "within_bounds": True}
                 return text, meta, None
             
@@ -816,6 +837,7 @@ class OutputLengthGuardPlugin(Plugin):
             
             
             if not (below_min or above_max):
+                logger.debug(f"Text within bounds: length={length}, limits=[{cfg.min_chars}, {cfg.max_chars}]")
                 meta.update({"within_bounds": True})
                 return text, meta, None
 
@@ -830,6 +852,7 @@ class OutputLengthGuardPlugin(Plugin):
             )
 
             if cfg.is_blocking():
+                logger.info(f"BLOCKING output: length={length}, limits=[{cfg.min_chars}, {cfg.max_chars}], below_min={below_min}, above_max={above_max}")
                 violation = PluginViolation(
                     reason="Output length out of bounds",
                     description=f"Result length {length} not in [{cfg.min_chars}, {cfg.max_chars}]",
@@ -842,6 +865,7 @@ class OutputLengthGuardPlugin(Plugin):
 
             # Truncate strategy only handles over-length
             if above_max and cfg.max_chars is not None:
+                logger.info(f"TRUNCATING output: original_length={length}, max_chars={cfg.max_chars}, mode={cfg.limit_mode}")
                 new_text = _truncate(
                     text, cfg.max_chars, cfg.ellipsis, cfg.word_boundary,
                     max_tokens=None, chars_per_token=cfg.chars_per_token,
@@ -849,19 +873,20 @@ class OutputLengthGuardPlugin(Plugin):
                     max_iterations=cfg.max_binary_search_iterations,
                     limit_mode=cfg.limit_mode
                 )
+                reduction_pct = round((1 - len(new_text) / length) * 100, 1) if length > 0 else 0
+                logger.info(f"Truncation complete: new_length={len(new_text)}, reduction={reduction_pct}%")
                 meta.update({"truncated": True, "new_length": len(new_text)})
                 return new_text, meta, None
 
             # Under min with truncate: allow through, annotate only
+            logger.debug(f"Text below minimum but allowing through (truncate mode): length={length}, min={cfg.min_chars}")
             meta.update({"truncated": False, "new_length": length})
             return text, meta, None
 
         result = payload.result
         
-        if isinstance(result, dict):
-            if 'content' in result:
-                if isinstance(result['content'], list) and len(result['content']) > 0:
-
+        result = payload.result
+        
         # Case 0: MCP CallToolResult as dict (from model_dump with 'content' key)
         # This is the most common case when tools return MCP-formatted results
         if isinstance(result, dict) and 'content' in result and isinstance(result.get('content'), list):
