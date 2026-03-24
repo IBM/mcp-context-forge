@@ -1306,6 +1306,12 @@
             "VALIDATION_MAX_REQUESTS_PER_MINUTE": {
               "type": "string"
             },
+            "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED": {
+              "type": "string"
+            },
+            "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS": {
+              "type": "string"
+            },
             "VALIDATION_MIDDLEWARE_ENABLED": {
               "type": "string"
             },

@@ -876,6 +876,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting | Description | Default | Options |
 | :--- | :--- | :--- | :--- |
 | `JSON_SCHEMA_VALIDATION_STRICT` | Enforce strict JSON Schema validation for tools and prompts | `true` | bool |
+| `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED` | Enable forbidden pattern checks on tool descriptions | `true` | bool |
+| `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` | Substrings blocked in tool descriptions | `["&&", ";", "||", "$(", "\|", "> ", "< "]` | JSON array |
 
 **Strict Mode Scenarios:**
 

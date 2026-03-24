@@ -430,6 +430,8 @@ services:
       # Disable optional middlewares for maximum throughput
       - VALIDATION_MIDDLEWARE_ENABLED=true
       - JSON_SCHEMA_VALIDATION_STRICT=true
+      - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED:-true}
+      - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS:-["&&", ";", "||", "$(", "|", "> ", "< "]}
       - CORRELATION_ID_ENABLED=false
       - LLMCHAT_ENABLED=true
       - OBSERVABILITY_ENABLED=false

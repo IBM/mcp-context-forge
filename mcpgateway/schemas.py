@@ -527,13 +527,15 @@ class ToolCreate(BaseModel):
         # When VALIDATION_STRICT=false these patterns produce a warning only so
         # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
         # "< input", "cmd | grep") can register without error.
-        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
-        for pat in forbidden_patterns:
-            if pat in v:
-                if settings.validation_strict:
-                    raise ValueError(f"Description contains unsafe characters: '{pat}'")
-                logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
-                break
+        if settings.tool_description_forbidden_patterns_enabled:
+            for pat in settings.tool_description_forbidden_patterns:
+                if not pat or not pat.strip():
+                    continue
+                if pat in v:
+                    if settings.validation_strict:
+                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                    break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
