@@ -3848,3 +3848,46 @@ class TestTenantIdPropagation:
             "When team_id is None, GlobalContext.tenant_id must be None — "
             "no phantom tenant should be invented"
         )
+
+    def test_propagate_tenant_id_on_middleware_seeded_context(self):
+        """_propagate_tenant_id must work when middleware has already created GlobalContext.
+
+        Regression: the original fix only propagated team_id → tenant_id inside
+        _inject_userinfo_instate (gated by include_user_info, default False) or
+        in the get_current_user fallback (skipped when plugin_global_context exists).
+        On the normal middleware path, tenant_id stayed None.
+        """
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+
+        # Simulate middleware pre-creating context with tenant_id=None
+        global_context = GlobalContext(request_id="r1", tenant_id=None)
+        request = self._make_request(team_id="team-acme", existing_global_context=global_context)
+
+        auth_module._propagate_tenant_id(request)
+
+        assert request.state.plugin_global_context.tenant_id == "team-acme", (
+            "_propagate_tenant_id must fill tenant_id even when middleware "
+            "has already created plugin_global_context with tenant_id=None"
+        )
+
+    def test_propagate_tenant_id_no_overwrite(self):
+        """_propagate_tenant_id must not overwrite an already-set tenant_id."""
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1", tenant_id="plugin-set-tenant")
+        request = self._make_request(team_id="different-team", existing_global_context=global_context)
+
+        auth_module._propagate_tenant_id(request)
+
+        assert request.state.plugin_global_context.tenant_id == "plugin-set-tenant", (
+            "_propagate_tenant_id must not overwrite an already-set tenant_id"
+        )
+
+    def test_propagate_tenant_id_none_request_is_noop(self):
+        """_propagate_tenant_id with None request must not raise."""
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+
+        # Should not raise
+        auth_module._propagate_tenant_id(None)

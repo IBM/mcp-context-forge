@@ -3105,3 +3105,64 @@ async def test_redis_backend_no_limit_returns_unlimited():
     assert allowed is True
     assert limit == 0
     assert meta == {"limited": False}
+
+
+# ============================================================================
+# Sliding window Retry-After regression
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_retry_after_never_zero_when_blocked():
+    """Retry-After (reset_in) must be >= 1 when the request is blocked.
+
+    Regression: int truncation of (oldest_ts + window - now) could produce 0
+    when the oldest timestamp + window rounded down to int(now).
+    """
+    algorithm = SlidingWindowAlgorithm()
+    lock = asyncio.Lock()
+
+    with patch("plugins.rate_limiter.rate_limiter.time") as mock_time:
+        # Place a request at a fractional timestamp
+        mock_time.time.return_value = 1000.1
+        await algorithm.allow(lock, "user:x", 1, 1)  # consume limit
+
+        # At t=1000.9: oldest=1000.1, reset_timestamp=int(1001.1)=1001,
+        # reset_in = int(1001 - 1000.9) = int(0.1) = 0 WITHOUT the fix.
+        mock_time.time.return_value = 1000.9
+        allowed, _, _, meta = await algorithm.allow(lock, "user:x", 1, 1)
+
+    assert allowed is False
+    assert meta["reset_in"] >= 1, (
+        f"Retry-After must be >= 1 when blocked, got {meta['reset_in']}"
+    )
+
+
+# ============================================================================
+# Token bucket first-request memory/Redis parity
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_token_bucket_first_request_reset_in_matches_refill_rate():
+    """First-request reset_in must reflect tokens_needed/refill_rate, not the full window.
+
+    Regression: memory path hard-coded time_to_full=window on first request,
+    while Redis derived it from tokens_needed/refill_rate, causing metadata
+    divergence between backends.
+    """
+    algorithm = TokenBucketAlgorithm()
+    lock = asyncio.Lock()
+
+    # 10/m → refill_rate = 10/60 ≈ 0.167 tok/s
+    # After first request: tokens_needed = 1, time_to_full = 1/0.167 ≈ 6
+    allowed, count, reset_ts, meta = await algorithm.allow(lock, "user:y", 10, 60)
+
+    assert allowed is True
+    assert meta["remaining"] == 9
+    # Must NOT be 60 (the full window) — should be ~6 (1 token / refill_rate)
+    assert meta["reset_in"] < 60, (
+        f"First-request reset_in should reflect tokens_needed/refill_rate, "
+        f"not the full window. Got {meta['reset_in']}, expected ~6"
+    )
+    assert meta["reset_in"] >= 1, "reset_in must be at least 1"

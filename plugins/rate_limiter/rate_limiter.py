@@ -272,7 +272,9 @@ class SlidingWindowAlgorithm:
 
             if current >= count:
                 self._store[win_key] = timestamps
-                return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": reset_in}
+                # Ensure Retry-After is at least 1 so clients do not retry immediately
+                # when the oldest timestamp + window truncates to int(now).
+                return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": max(1, reset_in)}
 
             timestamps.append(now)
             self._store[win_key] = timestamps
@@ -320,9 +322,12 @@ class TokenBucketAlgorithm:
             bucket = self._store.get(key)
 
             if bucket is None:
-                # First request — start with a full bucket minus this request
+                # First request — start with a full bucket minus this request.
+                # Use tokens_needed / refill_rate for time_to_full — consistent
+                # with the subsequent-request path and the Redis Lua script.
                 self._store[key] = _Bucket(tokens=count - 1, last_refill=now)
-                time_to_full = window
+                tokens_needed = 1  # consumed 1 from a full bucket
+                time_to_full = max(1, int(tokens_needed / refill_rate)) if tokens_needed > 0 else 0
                 reset_timestamp = int(now + time_to_full)
                 return True, count, reset_timestamp, {"limited": True, "remaining": count - 1, "reset_in": time_to_full}
 
@@ -585,7 +590,7 @@ return {allowed, math.floor(tokens), time_to_next}
         remaining = max(0, count - current_count)
 
         if not allowed_int:
-            return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": reset_in}
+            return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": max(1, reset_in)}
         return True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": reset_in}
 
     async def _allow_token_bucket(self, client: Any, redis_key: str, count: int, window_seconds: int) -> tuple[bool, int, int, dict[str, Any]]:

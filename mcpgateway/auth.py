@@ -1058,6 +1058,7 @@ async def get_current_user(
                 if request and global_context:
                     request.state.plugin_global_context = global_context
 
+                _propagate_tenant_id(request)
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, user)
 
@@ -1184,6 +1185,7 @@ async def get_current_user(
                                     headers={"WWW-Authenticate": "Bearer"},
                                 )
 
+                        _propagate_tenant_id(request)
                         if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                             _inject_userinfo_instate(request, _user_from_cached_dict(cached_ctx.user))
 
@@ -1315,6 +1317,7 @@ async def get_current_user(
                             headers={"WWW-Authenticate": "Bearer"},
                         )
 
+                _propagate_tenant_id(request)
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, _batched_user)
 
@@ -1490,10 +1493,30 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    _propagate_tenant_id(request)
     if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
         _inject_userinfo_instate(request, user)
 
     return user
+
+
+def _propagate_tenant_id(request: Optional[object] = None) -> None:
+    """Propagate request.state.team_id into GlobalContext.tenant_id for rate limiting.
+
+    Called unconditionally at every return path in get_current_user() — unlike
+    _inject_userinfo_instate() which is gated by include_user_info.  This
+    ensures by_tenant rate limiting works even when include_user_info is False
+    (the default) and the middleware has already created plugin_global_context.
+
+    Only writes when tenant_id is still None (no overwrite of plugin-set values).
+    """
+    if not request:
+        return
+    global_context = getattr(getattr(request, "state", None), "plugin_global_context", None)
+    if global_context and global_context.tenant_id is None:
+        team_id = getattr(getattr(request, "state", None), "team_id", None)
+        if team_id:
+            global_context.tenant_id = team_id
 
 
 def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[EmailUser] = None) -> None:
