@@ -10,7 +10,7 @@ Some embedded/proxy deployments do not populate ``scope["root_path"]``
 consistently.  This module provides a single canonical helper that checks
 the ASGI scope first and falls back to ``settings.app_root_path`` when the
 scope value is empty — the same logic that was previously private to
-``mcpgateway/admin.py`` (PR #3297).
+``mcpgateway/admin.py`` issue #3298).
 
 All call sites that previously read ``request.scope.get("root_path", "")``
 directly should use :func:`resolve_root_path` instead.
