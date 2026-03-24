@@ -386,13 +386,15 @@ export const ensureNoResultsElement = function (
   entityLabel
 ) {
   let msg = document.getElementById(msgId);
-  let span = document.getElementById(spanId);
   if (msg) {
-    // Element already in the DOM – just return references
-    if (!span) {
-      span = msg.querySelector("span");
-    }
-    return { msg, span };
+    // Scope span lookup to inside msg — guard against global ID collisions
+    const span = document.getElementById(spanId);
+    return { msg, span: span && msg.contains(span) ? span : msg.querySelector("span") };
+  }
+  // Remove any stale element holding spanId before creating a new one
+  const staleSpan = document.getElementById(spanId);
+  if (staleSpan) {
+    staleSpan.removeAttribute("id");
   }
   // Create the message element dynamically
   const container = document.getElementById(containerId);
@@ -403,7 +405,7 @@ export const ensureNoResultsElement = function (
   msg.id = msgId;
   msg.className = "text-gray-700 dark:text-gray-300 mt-2";
   msg.style.display = "none";
-  span = document.createElement("span");
+  const span = document.createElement("span");
   span.id = spanId;
   msg.appendChild(
     document.createTextNode(`No ${entityLabel} found containing \u201C`)
