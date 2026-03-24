@@ -619,6 +619,8 @@ fn has_known_card_prefix(digits: &[u32]) -> bool {
         || matches!((prefix2, len), ("34" | "37", 15))
         || matches!((prefix4, len), ("6011", 16 | 19))
         || matches!((prefix2, len), ("65", 16 | 19))
+        || matches!(prefix2.parse::<u32>(), Ok(62)) && (16..=19).contains(&len)
+        || matches!(prefix2.parse::<u32>(), Ok(67)) && (12..=19).contains(&len)
         || matches!((prefix2, len), ("36" | "38" | "39", 14))
         || matches!(
             (prefix3, len),
@@ -972,6 +974,67 @@ mod tests {
             detector
                 .detect_internal("Passport Number: AB123456")
                 .contains_key(&PIIType::Passport)
+        );
+    }
+
+    #[test]
+    fn test_passport_detection_includes_identifier_not_just_label() {
+        let config = PIIConfig {
+            detect_ssn: false,
+            detect_bsn: false,
+            detect_credit_card: false,
+            detect_email: false,
+            detect_phone: false,
+            detect_ip_address: false,
+            detect_date_of_birth: false,
+            detect_passport: true,
+            detect_driver_license: false,
+            detect_bank_account: false,
+            detect_medical_record: false,
+            detect_aws_keys: false,
+            detect_api_keys: false,
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+
+        let detections = detector.detect_internal("Passport Number: AB123456");
+        assert_eq!(
+            detections[&PIIType::Passport][0].value,
+            "Passport Number: AB123456"
+        );
+    }
+
+    #[test]
+    fn test_credit_card_accepts_valid_maestro_and_unionpay_numbers() {
+        let config = PIIConfig {
+            detect_credit_card: true,
+            detect_ssn: false,
+            detect_email: false,
+            detect_phone: false,
+            detect_ip_address: false,
+            detect_date_of_birth: false,
+            detect_passport: false,
+            detect_driver_license: false,
+            detect_bank_account: false,
+            detect_medical_record: false,
+            detect_aws_keys: false,
+            detect_api_keys: false,
+            detect_bsn: false,
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+
+        assert!(
+            detector
+                .detect_internal("Card 6759649826438453")
+                .contains_key(&PIIType::CreditCard)
+        );
+        assert!(
+            detector
+                .detect_internal("Card 6200000000000005")
+                .contains_key(&PIIType::CreditCard)
         );
     }
 

@@ -133,7 +133,7 @@ static DOB_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 // Passport patterns
 static PASSPORT_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
-        r"\b(?:Passport|Passport\s+No|Passport\s+Number)[#:\s-]+[A-Z0-9]{6,9}\b",
+        r"\b(?:Passport\s+Number|Passport\s+No|Passport)[#:\s-]+[A-Z0-9]{6,9}\b",
         "Passport number with explicit context",
         MaskingStrategy::Redact,
     )]
