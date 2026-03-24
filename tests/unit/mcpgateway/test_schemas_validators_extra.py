@@ -844,6 +844,79 @@ def test_password_team_token_and_grpc_validators(monkeypatch):
     assert len(GrpcServiceUpdate.validate_description("x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1))) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
 
+class TestToolDescriptionForbiddenPatterns:
+    """Tests for configurable forbidden pattern validation on tool descriptions."""
+
+    def test_default_patterns_block_forbidden_chars(self, monkeypatch):
+        """Default forbidden patterns reject known unsafe substrings in strict mode."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$(", "|", "> ", "< "])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolCreate.validate_description(f"description with {pat} inside")
+
+    def test_non_strict_mode_warns_instead_of_rejecting(self, monkeypatch):
+        """When VALIDATION_STRICT=false, forbidden patterns produce a warning, not an error."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";"])
+        monkeypatch.setattr(settings, "validation_strict", False)
+        result = ToolCreate.validate_description("run && something")
+        assert result is not None
+
+    def test_disabled_allows_any_description(self, monkeypatch):
+        """Disabling forbidden patterns allows descriptions with any content."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", False)
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolCreate.validate_description("run; rm -rf / && $(evil)")
+        assert result is not None
+
+    def test_custom_patterns_override_defaults(self, monkeypatch):
+        """Custom pattern list replaces the default list entirely."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["EVIL"])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        # Default patterns like ";" are no longer blocked
+        result = ToolCreate.validate_description("run; something")
+        assert ";" in result
+        # Custom pattern is blocked
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolCreate.validate_description("contains EVIL word")
+
+    def test_none_description_bypasses_check(self, monkeypatch):
+        """None descriptions are passed through without pattern checking."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";"])
+        assert ToolCreate.validate_description(None) is None
+
+    def test_empty_pattern_in_list_does_not_match_everything(self, monkeypatch):
+        """Empty string patterns are filtered out and do not reject all descriptions."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", [""])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        # Empty pattern would match everything via `'' in v`; must be filtered
+        result = ToolCreate.validate_description("perfectly safe description")
+        assert result is not None
+
+
+class TestToolDescriptionForbiddenPatternsConfig:
+    """Tests for forbidden pattern config parsing and normalization."""
+
+    def test_filter_empty_forbidden_patterns(self):
+        """Empty/blank patterns are stripped from the config at validation time."""
+        from mcpgateway.config import Settings
+
+        s = Settings._filter_empty_forbidden_patterns(["&&", "", "  ", ";"])
+        assert s == ["&&", ";"]
+
+    def test_filter_preserves_valid_patterns(self):
+        """Non-empty patterns are preserved unchanged."""
+        from mcpgateway.config import Settings
+
+        patterns = ["&&", ";", "||", "$("]
+        assert Settings._filter_empty_forbidden_patterns(patterns) == patterns
+
+
 class TestMaskOauthConfig:
     """Tests for the _mask_oauth_config() helper function."""
 

@@ -90,6 +90,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
+        "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -361,6 +362,11 @@ class Settings(BaseSettings):
             r"[\x00-\x1f\x7f-\x9f]",  # Control characters
         ],
         description="Regex patterns for dangerous input",
+    )
+    tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
+    tool_description_forbidden_patterns: List[str] = Field(
+        default_factory=lambda: ["&&", ";", "||", "$(", "|", "> ", "< "],
+        description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&",";"]\'.',
     )
 
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
@@ -1925,6 +1931,7 @@ Disallow: /
         "insecure_queryparam_auth_allowed_hosts",
         "mcpgateway_ui_hide_sections",
         "mcpgateway_ui_hide_header_items",
+        "tool_description_forbidden_patterns",
         mode="before",
     )
     @classmethod
@@ -1960,6 +1967,19 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    @field_validator("tool_description_forbidden_patterns", mode="after")
+    @classmethod
+    def _filter_empty_forbidden_patterns(cls, value: list[str]) -> list[str]:
+        """Strip empty/blank entries that would match every description.
+
+        Args:
+            value: List of forbidden pattern strings.
+
+        Returns:
+            list[str]: Filtered list with empty/blank entries removed.
+        """
+        return [p for p in value if p and p.strip()]
 
     @field_validator("mcpgateway_ui_hide_sections", mode="after")
     @classmethod

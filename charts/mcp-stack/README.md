@@ -589,6 +589,8 @@ retry the Helm upgrade.
 | mcpContextForge.config.EXPERIMENTAL_VALIDATE_IO | string | `"false"` |  |
 | mcpContextForge.config.VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.VALIDATION_STRICT | string | `"true"` |  |
+| mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED | string | `"true"` | Enable forbidden pattern checks on tool descriptions |
+| mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS | string | `'["&&", ";", "||", "$(", "|", "> ", "< "]'` | Substrings blocked in tool descriptions (JSON array) |
 | mcpContextForge.config.JSON_SCHEMA_VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.SANITIZE_OUTPUT | string | `"true"` |  |
 | mcpContextForge.config.ALLOWED_ROOTS | string | `"[]"` |  |
