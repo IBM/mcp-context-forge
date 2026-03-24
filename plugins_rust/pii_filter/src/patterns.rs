@@ -29,7 +29,8 @@ pub struct CompiledPatterns {
 /// Pattern definitions (pattern, description, explicit masking strategy)
 type PatternDef = (&'static str, &'static str, MaskingStrategy);
 
-const VALID_SSN_DASHED_PATTERN: &str = r"\b(?:00[1-9]|0[1-9][0-9]|[1-5][0-9]{2}|6(?:[0-5][0-9]|6[0-5])|[7-8][0-9]{2})-(?:0[1-9]|[1-9][0-9])-(?:000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})\b";
+const VALID_SSN_DASHED_PATTERN: &str = r"\b(?:00[1-9]|0[1-9][0-9]|[1-5][0-9]{2}|6(?:[0-5][0-9]|6[0-57-9]|[7-9][0-9])|[7-8][0-9]{2})-(?:0[1-9]|[1-9][0-9])-(?:000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})\b";
+const VALID_SSN_CONTEXTUAL_PATTERN: &str = r"\b(?:SSN|Social\s+Security(?:\s+Number)?)[:\s#-]*(?:00[1-9]|0[1-9][0-9]|[1-5][0-9]{2}|6(?:[0-5][0-9]|6[0-57-9]|[7-9][0-9])|[7-8][0-9]{2})(?:0[1-9]|[1-9][0-9])(?:000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})\b";
 
 // SSN patterns
 static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
@@ -40,7 +41,7 @@ static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
             MaskingStrategy::Partial,
         ),
         (
-            r"\b(?:SSN|Social\s+Security(?:\s+Number)?)[:\s#-]*(?:00[1-9]|0[1-9][0-9]|[1-5][0-9]{2}|6(?:[0-5][0-9]|6[0-5])|[7-8][0-9]{2})(?:0[1-9]|[1-9][0-9])(?:000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})\b",
+            VALID_SSN_CONTEXTUAL_PATTERN,
             "US Social Security Number with explicit context",
             MaskingStrategy::Partial,
         ),
@@ -403,6 +404,21 @@ mod tests {
     }
 
     #[test]
+    fn test_valid_ssn_in_656_to_699_range_matches_regex_set() {
+        let config = PIIConfig {
+            detect_ssn: true,
+            detect_bsn: false,
+            ..Default::default()
+        };
+        let compiled = compile_patterns(&config).unwrap();
+
+        let text = "SSN: 667-12-3456";
+        let matches: Vec<_> = compiled.regex_set.matches(text).into_iter().collect();
+
+        assert!(!matches.is_empty());
+    }
+
+    #[test]
     fn test_empty_regex_set_when_all_detectors_disabled() {
         let config = PIIConfig {
             detect_ssn: false,
@@ -452,5 +468,19 @@ mod tests {
 
         let err = compile_patterns(&config).err().unwrap();
         assert!(err.contains("too many alternations"));
+    }
+
+    #[test]
+    fn test_accepts_escaped_literals_in_custom_pattern_complexity_check() {
+        let mut config = PIIConfig::default();
+        config.custom_patterns.push(super::super::config::CustomPattern {
+            pattern: r"foo\|bar\+\?\{baz\}".to_string(),
+            description: "Escaped regex metacharacters".to_string(),
+            mask_strategy: MaskingStrategy::Redact,
+            enabled: true,
+        });
+
+        let compiled = compile_patterns(&config);
+        assert!(compiled.is_ok());
     }
 }
