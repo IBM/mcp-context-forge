@@ -199,7 +199,9 @@ impl PIIDetectorRust {
         let rust_detections = self.py_detections_to_rust(detections)?;
 
         // Apply masking
-        Ok(masking::mask_pii(text, &rust_detections, &self.config).into_owned())
+        masking::mask_pii(text, &rust_detections, &self.config)
+            .map(|masked| masked.into_owned())
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
     }
 
     /// Process nested data structures (dicts, lists, strings)
@@ -242,7 +244,12 @@ impl PIIDetectorRust {
             let detections = self.detect_internal(&text);
 
             if !detections.is_empty() {
-                let masked = masking::mask_pii(&text, &detections, &self.config);
+                let masked = masking::mask_pii(&text, &detections, &self.config).map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                        "Failed to mask nested string at '{}': {}",
+                        path, e
+                    ))
+                })?;
                 let py_detections = self.rust_detections_to_py(py, &detections)?;
                 return Ok((
                     true,
@@ -479,11 +486,10 @@ impl PIIDetectorRust {
         if let Ok(list) = py_list.cast::<PyList>() {
             for item in list.iter() {
                 if let Ok(dict) = item.cast::<PyDict>() {
-                    let value: String = dict.get_item("value")?.unwrap().extract()?;
-                    let start: usize = dict.get_item("start")?.unwrap().extract()?;
-                    let end: usize = dict.get_item("end")?.unwrap().extract()?;
-                    let strategy_str: String =
-                        dict.get_item("mask_strategy")?.unwrap().extract()?;
+                    let value: String = required_detection_field(dict, "value")?;
+                    let start: usize = required_detection_field(dict, "start")?;
+                    let end: usize = required_detection_field(dict, "end")?;
+                    let strategy_str: String = required_detection_field(dict, "mask_strategy")?;
 
                     let mask_strategy = match strategy_str.as_str() {
                         "partial" => MaskingStrategy::Partial,
@@ -634,6 +640,22 @@ fn validate_text_size(text: &str) -> PyResult<()> {
     }
 
     Ok(())
+}
+
+fn required_detection_field<'py, T>(dict: &Bound<'py, PyDict>, field: &str) -> PyResult<T>
+where
+    T: for<'a, 'py2> pyo3::FromPyObject<'a, 'py2>,
+    for<'a, 'py2> <T as pyo3::FromPyObject<'a, 'py2>>::Error: Into<PyErr>,
+{
+    dict.get_item(field)?
+        .ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Detection is missing required field '{}'",
+                field
+            ))
+        })?
+        .extract()
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -1116,5 +1138,62 @@ mod tests {
         assert!(detections.contains_key(&PIIType::Bsn));
         assert_eq!(detections[&PIIType::Bsn][0].value, "BSN: 123456789");
         assert!(!detections.contains_key(&PIIType::Custom));
+    }
+
+    #[test]
+    fn test_mask_rejects_missing_detection_fields() {
+        Python::initialize();
+        Python::attach(|py| {
+            let config = PIIConfig {
+                detect_email: true,
+                ..Default::default()
+            };
+            let patterns = compile_patterns(&config).unwrap();
+            let detector = PIIDetectorRust { patterns, config };
+
+            let detections = PyDict::new(py);
+            let items = PyList::empty(py);
+            let bad_detection = PyDict::new(py);
+            bad_detection
+                .set_item("value", "john@example.com")
+                .unwrap();
+            bad_detection.set_item("start", 0).unwrap();
+            bad_detection.set_item("end", 16).unwrap();
+            items.append(bad_detection).unwrap();
+            detections.set_item("email", items).unwrap();
+
+            let err = detector
+                .mask("john@example.com", &detections.into_any())
+                .unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        });
+    }
+
+    #[test]
+    fn test_mask_rejects_invalid_detection_ranges() {
+        Python::initialize();
+        Python::attach(|py| {
+            let config = PIIConfig {
+                detect_email: true,
+                ..Default::default()
+            };
+            let patterns = compile_patterns(&config).unwrap();
+            let detector = PIIDetectorRust { patterns, config };
+
+            let detections = PyDict::new(py);
+            let items = PyList::empty(py);
+            let bad_detection = PyDict::new(py);
+            bad_detection.set_item("value", "john@example.com").unwrap();
+            bad_detection.set_item("start", 99).unwrap();
+            bad_detection.set_item("end", 100).unwrap();
+            bad_detection.set_item("mask_strategy", "partial").unwrap();
+            items.append(bad_detection).unwrap();
+            detections.set_item("email", items).unwrap();
+
+            let err = detector
+                .mask("john@example.com", &detections.into_any())
+                .unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        });
     }
 }

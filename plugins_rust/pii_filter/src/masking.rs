@@ -24,11 +24,13 @@ pub fn mask_pii<'a>(
     text: &'a str,
     detections: &HashMap<PIIType, Vec<Detection>>,
     config: &PIIConfig,
-) -> Cow<'a, str> {
+) -> Result<Cow<'a, str>, String> {
     if detections.is_empty() {
         // Zero-copy optimization when no masking needed
-        return Cow::Borrowed(text);
+        return Ok(Cow::Borrowed(text));
     }
+
+    validate_detection_ranges(text, detections)?;
 
     // Collect all detections with their positions
     let mut all_detections: Vec<(&Detection, PIIType)> = Vec::new();
@@ -50,7 +52,53 @@ pub fn mask_pii<'a>(
         result.replace_range(detection.start..detection.end, &masked_value);
     }
 
-    Cow::Owned(result)
+    Ok(Cow::Owned(result))
+}
+
+fn validate_detection_ranges(
+    text: &str,
+    detections: &HashMap<PIIType, Vec<Detection>>,
+) -> Result<(), String> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+
+    for items in detections.values() {
+        for detection in items {
+            if detection.start > detection.end {
+                return Err(format!(
+                    "Invalid detection range: start {} is after end {}",
+                    detection.start, detection.end
+                ));
+            }
+
+            if detection.end > text.len() {
+                return Err(format!(
+                    "Invalid detection range: end {} exceeds text length {}",
+                    detection.end,
+                    text.len()
+                ));
+            }
+
+            if !text.is_char_boundary(detection.start) || !text.is_char_boundary(detection.end) {
+                return Err("Invalid detection range: offsets must align to UTF-8 boundaries".to_string());
+            }
+
+            ranges.push((detection.start, detection.end));
+        }
+    }
+
+    ranges.sort_unstable();
+    for window in ranges.windows(2) {
+        if let [(prev_start, prev_end), (next_start, _)] = window
+            && next_start < prev_end
+        {
+            return Err(format!(
+                "Overlapping detection ranges are not supported: {}..{} overlaps a later span",
+                prev_start, prev_end
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Apply specific masking strategy to a value
@@ -218,7 +266,7 @@ mod tests {
         let detections = HashMap::new();
         let text = "No PII here";
 
-        let result = mask_pii(text, &detections, &config);
+        let result = mask_pii(text, &detections, &config).unwrap();
         assert_eq!(result, text); // Zero-copy
     }
 
@@ -244,10 +292,37 @@ mod tests {
             }],
         );
 
-        let result = mask_pii(text, &detections, &config);
+        let result = mask_pii(text, &detections, &config).unwrap();
         assert_eq!(
             result,
             "Contact J**é at jose@example.com and Jose Alvarez tomorrow"
         );
+    }
+
+    #[test]
+    fn test_mask_pii_rejects_overlapping_ranges() {
+        let config = PIIConfig::default();
+        let text = "abcdef";
+        let mut detections = HashMap::new();
+        detections.insert(
+            PIIType::Custom,
+            vec![
+                Detection {
+                    value: "abc".to_string(),
+                    start: 0,
+                    end: 3,
+                    mask_strategy: MaskingStrategy::Redact,
+                },
+                Detection {
+                    value: "bcd".to_string(),
+                    start: 1,
+                    end: 4,
+                    mask_strategy: MaskingStrategy::Redact,
+                },
+            ],
+        );
+
+        let err = mask_pii(text, &detections, &config).unwrap_err();
+        assert!(err.contains("Overlapping detection ranges"));
     }
 }
