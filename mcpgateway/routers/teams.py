@@ -387,9 +387,7 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
                     detail=f"max_members cannot exceed {limit} for non-admin users",
                 )
 
-        success = await service.update_team(
-            team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=is_admin
-        )
+        success = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=is_admin)
 
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found or update failed")
