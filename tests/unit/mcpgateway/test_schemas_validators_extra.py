@@ -889,6 +889,33 @@ class TestToolDescriptionForbiddenPatterns:
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";"])
         assert ToolCreate.validate_description(None) is None
 
+    def test_empty_pattern_in_list_does_not_match_everything(self, monkeypatch):
+        """Empty string patterns are filtered out and do not reject all descriptions."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", [""])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        # Empty pattern would match everything via `'' in v`; must be filtered
+        result = ToolCreate.validate_description("perfectly safe description")
+        assert result is not None
+
+
+class TestToolDescriptionForbiddenPatternsConfig:
+    """Tests for forbidden pattern config parsing and normalization."""
+
+    def test_filter_empty_forbidden_patterns(self):
+        """Empty/blank patterns are stripped from the config at validation time."""
+        from mcpgateway.config import Settings
+
+        s = Settings._filter_empty_forbidden_patterns(["&&", "", "  ", ";"])
+        assert s == ["&&", ";"]
+
+    def test_filter_preserves_valid_patterns(self):
+        """Non-empty patterns are preserved unchanged."""
+        from mcpgateway.config import Settings
+
+        patterns = ["&&", ";", "||", "$("]
+        assert Settings._filter_empty_forbidden_patterns(patterns) == patterns
+
 
 class TestMaskOauthConfig:
     """Tests for the _mask_oauth_config() helper function."""

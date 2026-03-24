@@ -90,6 +90,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
+        "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -1930,6 +1931,7 @@ Disallow: /
         "insecure_queryparam_auth_allowed_hosts",
         "mcpgateway_ui_hide_sections",
         "mcpgateway_ui_hide_header_items",
+        "tool_description_forbidden_patterns",
         mode="before",
     )
     @classmethod
@@ -1965,6 +1967,12 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    @field_validator("tool_description_forbidden_patterns", mode="after")
+    @classmethod
+    def _filter_empty_forbidden_patterns(cls, value: list[str]) -> list[str]:
+        """Strip empty/blank entries that would match every description."""
+        return [p for p in value if p and p.strip()]
 
     @field_validator("mcpgateway_ui_hide_sections", mode="after")
     @classmethod

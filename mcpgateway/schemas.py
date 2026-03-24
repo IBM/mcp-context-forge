@@ -529,6 +529,8 @@ class ToolCreate(BaseModel):
         # "< input", "cmd | grep") can register without error.
         if settings.tool_description_forbidden_patterns_enabled:
             for pat in settings.tool_description_forbidden_patterns:
+                if not pat or not pat.strip():
+                    continue
                 if pat in v:
                     if settings.validation_strict:
                         raise ValueError(f"Description contains unsafe characters: '{pat}'")
