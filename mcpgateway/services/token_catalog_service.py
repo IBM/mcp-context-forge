@@ -269,8 +269,9 @@ class TokenCatalogService:
             "auth_provider": "api_token",
         }
 
-        # Build teams list
-        teams = [team_id] if team_id else []
+        # Build teams list — None means "all teams" (admin bypass when is_admin=true),
+        # [] means "public-only" (see normalize_token_teams() in auth.py)
+        teams = [team_id] if team_id else None
 
         # Build scopes dict
         # Empty permissions = defer to RBAC at runtime (not wildcard access)

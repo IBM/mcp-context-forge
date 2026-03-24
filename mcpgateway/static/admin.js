@@ -22466,7 +22466,7 @@ function setupCreateTokenForm() {
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
 
-        // User can create public-only tokens in that context
+        // User can create all-teams tokens in that context
         await createToken(form);
     });
 
@@ -22599,7 +22599,7 @@ async function createToken(form) {
         submitButton.textContent = "Creating...";
         submitButton.disabled = true;
 
-        // Get current team ID (null means "All Teams" = public-only token)
+        // Get current team ID (null means "All Teams" — admin bypass for admins, public-only for non-admins)
         const currentTeamId = getCurrentTeamId();
 
         // Build request payload
@@ -22610,7 +22610,7 @@ async function createToken(form) {
                 ? parseInt(formData.get("expires_in_days"))
                 : null,
             tags: [],
-            team_id: currentTeamId || null, // null = public-only token
+            team_id: currentTeamId || null, // null = all teams (admin bypass for admins, public-only for non-admins)
         };
 
         // Add scoping if provided
@@ -22692,7 +22692,7 @@ async function createToken(form) {
             ) {
                 const scopeLabel = currentTeamId
                     ? "the selected team"
-                    : "All Teams (public-only)";
+                    : "All Teams";
                 errorMsg = `Token name already exists in ${scopeLabel}. Choose a different token name.`;
             }
             if (
@@ -22720,7 +22720,7 @@ async function createToken(form) {
         }
 
         // Show appropriate success message
-        const tokenType = currentTeamId ? "team-scoped" : "public-only";
+        const tokenType = currentTeamId ? "team-scoped" : "all-teams";
         showNotification(`${tokenType} token created successfully!`, "success");
     } catch (error) {
         console.error("Error creating token:", error);
@@ -23184,7 +23184,7 @@ function showTokenDetailsModal(token) {
                     </div>
                     <div class="flex">
                         <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Team:</span>
-                        <span class="text-gray-900 dark:text-white">${teamName ? `${escapeHtml(teamName)} <code class="text-xs text-gray-500">(${escapeHtml(token.team_id.substring(0, 8))}...)</code>` : "None (Public-only)"}</span>
+                        <span class="text-gray-900 dark:text-white">${teamName ? `${escapeHtml(teamName)} <code class="text-xs text-gray-500">(${escapeHtml(token.team_id.substring(0, 8))}...)</code>` : "All Teams"}</span>
                     </div>
                     <div class="flex">
                         <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Created:</span>
