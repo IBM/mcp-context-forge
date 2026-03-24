@@ -199,7 +199,7 @@ impl PIIDetectorRust {
         // Apply masking
         masking::mask_pii(text, &rust_detections, &self.config)
             .map(|masked| masked.into_owned())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e))
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
     }
 
     /// Process nested data structures (dicts, lists, strings)
@@ -600,7 +600,7 @@ fn passes_luhn(value: &str) -> bool {
         sum += value;
     }
 
-    sum % 10 == 0 && has_known_card_prefix(&digits)
+    sum.is_multiple_of(10) && has_known_card_prefix(&digits)
 }
 
 fn has_known_card_prefix(digits: &[u32]) -> bool {
