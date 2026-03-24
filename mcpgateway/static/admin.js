@@ -32702,10 +32702,20 @@ function refreshLLMProviders() {
 
 // Full model list for the model-id combobox (reset on each modal open)
 let _llmAllModels = [];
+var _llmModelsFetched = false; // eslint-disable-line no-var -- reassigned across function scopes
+let _llmComboboxActiveIndex = -1;
+
+function _llmComboboxSetExpanded(expanded) {
+    const input = document.getElementById("llm-model-model-id");
+    if (input) input.setAttribute("aria-expanded", String(expanded));
+}
 
 function llmModelComboboxOpen() {
+    if (!_llmModelsFetched) return;
+    _llmComboboxActiveIndex = -1;
     _renderLLMModelDropdown(_llmAllModels);
     document.getElementById("llm-model-dropdown").classList.remove("hidden");
+    _llmComboboxSetExpanded(true);
 }
 
 function llmModelComboboxClose() {
@@ -32713,20 +32723,85 @@ function llmModelComboboxClose() {
     if (ul) {
         ul.classList.add("hidden");
     }
+    _llmComboboxActiveIndex = -1;
+    _llmComboboxSetExpanded(false);
+    _llmComboboxClearHighlight();
 }
 
 function llmModelComboboxFilter(text) {
+    if (!_llmModelsFetched) return;
     const lower = text.toLowerCase();
     const filtered = _llmAllModels.filter((m) =>
         m.id.toLowerCase().includes(lower),
     );
+    _llmComboboxActiveIndex = -1;
     _renderLLMModelDropdown(filtered);
     document.getElementById("llm-model-dropdown").classList.remove("hidden");
+    _llmComboboxSetExpanded(true);
 }
 
 function llmModelComboboxSelect(value) {
     document.getElementById("llm-model-model-id").value = value;
     llmModelComboboxClose();
+}
+
+function llmModelComboboxKeydown(event) {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (!ul || ul.classList.contains("hidden")) return;
+    const items = ul.querySelectorAll("li[data-model-id]");
+    if (!items.length) return;
+
+    if (event.key === "ArrowDown") {
+        event.preventDefault();
+        _llmComboboxActiveIndex = Math.min(
+            _llmComboboxActiveIndex + 1,
+            items.length - 1,
+        );
+        _llmComboboxHighlight(items);
+    } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        _llmComboboxActiveIndex = Math.max(_llmComboboxActiveIndex - 1, 0);
+        _llmComboboxHighlight(items);
+    } else if (event.key === "Enter") {
+        if (_llmComboboxActiveIndex >= 0 && items[_llmComboboxActiveIndex]) {
+            event.preventDefault();
+            llmModelComboboxSelect(
+                items[_llmComboboxActiveIndex].dataset.modelId,
+            );
+        }
+    } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        llmModelComboboxClose();
+    }
+}
+
+function _llmComboboxHighlight(items) {
+    const ul = document.getElementById("llm-model-dropdown");
+    _llmComboboxClearHighlight();
+    if (_llmComboboxActiveIndex >= 0 && items[_llmComboboxActiveIndex]) {
+        const active = items[_llmComboboxActiveIndex];
+        active.classList.add("bg-indigo-100", "dark:bg-indigo-700");
+        active.id = "llm-model-active-option";
+        const input = document.getElementById("llm-model-model-id");
+        if (input) {
+            input.setAttribute("aria-activedescendant", active.id);
+        }
+        if (ul && active.scrollIntoView) {
+            active.scrollIntoView({ block: "nearest" });
+        }
+    }
+}
+
+function _llmComboboxClearHighlight() {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (!ul) return;
+    ul.querySelectorAll("li").forEach((li) => {
+        li.classList.remove("bg-indigo-100", "dark:bg-indigo-700");
+        li.removeAttribute("id");
+    });
+    const input = document.getElementById("llm-model-model-id");
+    if (input) input.removeAttribute("aria-activedescendant");
 }
 
 function _renderLLMModelDropdown(models) {
@@ -32746,6 +32821,7 @@ function _renderLLMModelDropdown(models) {
         const li = document.createElement("li");
         li.className =
             "px-3 py-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100";
+        li.setAttribute("role", "option");
         li.dataset.modelId = m.id;
         li.textContent = m.id;
         ul.appendChild(li);
@@ -32772,6 +32848,7 @@ async function showAddModelModal() {
     document.getElementById("llm-model-modal-title").textContent =
         "Add LLM Model";
     _llmAllModels = [];
+    _llmModelsFetched = false;
     llmModelComboboxClose();
 
     // Populate providers dropdown
@@ -32826,6 +32903,7 @@ async function onModelProviderChange() {
 
     // Clear existing suggestions
     _llmAllModels = [];
+    _llmModelsFetched = false;
     llmModelComboboxClose();
 
     if (!providerId) {
@@ -32844,7 +32922,8 @@ async function onModelProviderChange() {
  * Fetch available models for the model modal
  */
 async function fetchModelsForModelModal() {
-    const providerId = document.getElementById("llm-model-provider").value;
+    const providerSelect = document.getElementById("llm-model-provider");
+    const providerId = providerSelect.value;
     const statusEl = document.getElementById("llm-model-fetch-status");
 
     if (!providerId) {
@@ -32868,21 +32947,29 @@ async function fetchModelsForModelModal() {
 
         const result = await response.json();
 
+        // Guard against stale response if provider changed during fetch
+        if (providerSelect.value !== providerId) return;
+
         if (result.success && result.models && result.models.length > 0) {
             _llmAllModels = result.models;
+            _llmModelsFetched = true;
             _renderLLMModelDropdown(_llmAllModels);
 
             statusEl.textContent = `Found ${result.models.length} models. Type to filter or enter custom.`;
             statusEl.classList.remove("hidden");
         } else {
             _llmAllModels = [];
+            _llmModelsFetched = true;
             statusEl.textContent =
                 result.error || "No models found. Enter model ID manually.";
             statusEl.classList.remove("hidden");
         }
     } catch (error) {
         console.error("Error fetching models:", error);
+        // Guard against stale response if provider changed during fetch
+        if (providerSelect.value !== providerId) return;
         _llmAllModels = [];
+        _llmModelsFetched = true;
         statusEl.textContent =
             "Failed to fetch models. Enter model ID manually.";
         statusEl.classList.remove("hidden");
@@ -32897,6 +32984,7 @@ window.fetchModelsForModelModal = fetchModelsForModelModal;
  */
 async function editLLMModel(modelId) {
     _llmAllModels = [];
+    _llmModelsFetched = false;
     llmModelComboboxClose();
     try {
         const response = await fetch(
@@ -33294,6 +33382,7 @@ window.llmModelComboboxOpen = llmModelComboboxOpen;
 window.llmModelComboboxClose = llmModelComboboxClose;
 window.llmModelComboboxFilter = llmModelComboboxFilter;
 window.llmModelComboboxSelect = llmModelComboboxSelect;
+window.llmModelComboboxKeydown = llmModelComboboxKeydown;
 window.editLLMModel = editLLMModel;
 window.saveLLMModel = saveLLMModel;
 window.deleteLLMModel = deleteLLMModel;

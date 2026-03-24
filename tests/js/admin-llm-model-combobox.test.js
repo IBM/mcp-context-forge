@@ -3,12 +3,13 @@
  *
  * Covers:
  *   - llmModelComboboxOpen: renders models and shows dropdown
- *   - llmModelComboboxClose: hides dropdown, null-safe
+ *   - llmModelComboboxClose: hides dropdown, null-safe, ARIA expanded
  *   - llmModelComboboxFilter: type-ahead filtering
  *   - llmModelComboboxSelect: sets input value and closes dropdown
- *   - _renderLLMModelDropdown: DOM rendering, empty-state, XSS safety
+ *   - llmModelComboboxKeydown: ArrowDown/ArrowUp/Enter/Escape keyboard nav
+ *   - _renderLLMModelDropdown: DOM rendering, empty-state, XSS safety, ARIA roles
  *   - DOMContentLoaded delegation: mousedown preventDefault, click-to-select
- *   - fetchModelsForModelModal: populates combobox from API response
+ *   - fetchModelsForModelModal: populates combobox, stale-response guard
  */
 
 import {
@@ -87,10 +88,10 @@ function setupFullModalDOM() {
 
 /**
  * Populate the closure-scoped _llmAllModels via fetchModelsForModelModal.
- * Returns the models that were loaded.
+ * Returns the DOM elements for further assertions.
  */
 async function populateModelsViaFetch(models) {
-    setupFullModalDOM();
+    const dom = setupFullModalDOM();
     win.ROOT_PATH = "";
     win.getAuthToken = async () => "fake-token";
     win.fetch = vi.fn().mockResolvedValue({
@@ -98,7 +99,7 @@ async function populateModelsViaFetch(models) {
         json: async () => ({ success: true, models }),
     });
     await win.fetchModelsForModelModal();
-    return models;
+    return dom;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,18 +124,23 @@ describe("_renderLLMModelDropdown", () => {
         expect(ul.children[1].dataset.modelId).toBe("claude-3");
     });
 
+    test("sets role=option on each model <li>", () => {
+        const { ul } = setupComboboxDOM();
+        win._renderLLMModelDropdown([{ id: "m1" }, { id: "m2" }]);
+        ul.querySelectorAll("li[data-model-id]").forEach((li) => {
+            expect(li.getAttribute("role")).toBe("option");
+        });
+    });
+
     test("escapes HTML-significant characters in model IDs (XSS safety)", () => {
         const { ul } = setupComboboxDOM();
         const malicious = "<img onerror=alert(1) src=x>";
         win._renderLLMModelDropdown([{ id: malicious }]);
-        // textContent is used, so the string should appear literally, not as HTML
         expect(ul.children[0].textContent).toBe(malicious);
-        // No <img> element should exist
         expect(ul.querySelector("img")).toBeNull();
     });
 
     test("is a no-op when the dropdown element does not exist", () => {
-        // No DOM setup — should not throw
         expect(() => win._renderLLMModelDropdown([{ id: "x" }])).not.toThrow();
     });
 });
@@ -144,20 +150,26 @@ describe("_renderLLMModelDropdown", () => {
 // ---------------------------------------------------------------------------
 
 describe("llmModelComboboxOpen", () => {
-    test("removes 'hidden' class from dropdown", () => {
-        setupComboboxDOM();
-        // Even with empty models, open should show the dropdown
+    test("does not open dropdown before any fetch has occurred", () => {
+        const { ul } = setupComboboxDOM();
         win.llmModelComboboxOpen();
-        const ul = doc.getElementById("llm-model-dropdown");
-        expect(ul.classList.contains("hidden")).toBe(false);
+        expect(ul.classList.contains("hidden")).toBe(true);
     });
 
-    test("renders fetched models into dropdown on open", async () => {
+    test("opens dropdown after models have been fetched", async () => {
         await populateModelsViaFetch([{ id: "a" }, { id: "b" }]);
         const ul = doc.getElementById("llm-model-dropdown");
-        // fetchModelsForModelModal already renders, but open should re-render
+        ul.classList.add("hidden");
         win.llmModelComboboxOpen();
+        expect(ul.classList.contains("hidden")).toBe(false);
         expect(ul.querySelectorAll("li[data-model-id]").length).toBe(2);
+    });
+
+    test("sets aria-expanded=true on the input", async () => {
+        await populateModelsViaFetch([{ id: "m1" }]);
+        const input = doc.getElementById("llm-model-model-id");
+        win.llmModelComboboxOpen();
+        expect(input.getAttribute("aria-expanded")).toBe("true");
     });
 });
 
@@ -173,8 +185,14 @@ describe("llmModelComboboxClose", () => {
         expect(ul.classList.contains("hidden")).toBe(true);
     });
 
+    test("sets aria-expanded=false on the input", () => {
+        const { input } = setupComboboxDOM();
+        input.setAttribute("aria-expanded", "true");
+        win.llmModelComboboxClose();
+        expect(input.getAttribute("aria-expanded")).toBe("false");
+    });
+
     test("is a no-op when the dropdown element does not exist", () => {
-        // No DOM setup — should not throw
         expect(() => win.llmModelComboboxClose()).not.toThrow();
     });
 });
@@ -184,6 +202,15 @@ describe("llmModelComboboxClose", () => {
 // ---------------------------------------------------------------------------
 
 describe("llmModelComboboxFilter", () => {
+    test("does not open dropdown before any fetch has occurred", () => {
+        // Reset _llmModelsFetched via onModelProviderChange with empty provider
+        const dom = setupFullModalDOM();
+        dom.provider.value = "";
+        win.onModelProviderChange();
+        win.llmModelComboboxFilter("gpt");
+        expect(dom.ul.classList.contains("hidden")).toBe(true);
+    });
+
     test("filters models by case-insensitive substring match", async () => {
         await populateModelsViaFetch([
             { id: "gpt-4o" },
@@ -237,27 +264,149 @@ describe("llmModelComboboxSelect", () => {
 });
 
 // ---------------------------------------------------------------------------
+// llmModelComboboxKeydown — keyboard navigation
+// ---------------------------------------------------------------------------
+
+describe("llmModelComboboxKeydown", () => {
+    async function setupKeyboardTest() {
+        const dom = await populateModelsViaFetch([
+            { id: "alpha" },
+            { id: "bravo" },
+            { id: "charlie" },
+        ]);
+        win.llmModelComboboxOpen();
+        return dom;
+    }
+
+    function fireKey(key) {
+        const event = doc.createEvent("Event");
+        event.initEvent("keydown", true, true);
+        event.key = key;
+        event.preventDefault = vi.fn();
+        event.stopPropagation = vi.fn();
+        win.llmModelComboboxKeydown(event);
+        return event;
+    }
+
+    test("ArrowDown moves highlight to the first item", async () => {
+        await setupKeyboardTest();
+        fireKey("ArrowDown");
+        const ul = doc.getElementById("llm-model-dropdown");
+        const active = ul.querySelector("#llm-model-active-option");
+        expect(active).not.toBeNull();
+        expect(active.dataset.modelId).toBe("alpha");
+    });
+
+    test("ArrowDown then ArrowDown moves to second item", async () => {
+        await setupKeyboardTest();
+        fireKey("ArrowDown");
+        fireKey("ArrowDown");
+        const ul = doc.getElementById("llm-model-dropdown");
+        const active = ul.querySelector("#llm-model-active-option");
+        expect(active.dataset.modelId).toBe("bravo");
+    });
+
+    test("ArrowDown clamps at the last item", async () => {
+        await setupKeyboardTest();
+        fireKey("ArrowDown");
+        fireKey("ArrowDown");
+        fireKey("ArrowDown");
+        fireKey("ArrowDown"); // beyond last
+        const ul = doc.getElementById("llm-model-dropdown");
+        const active = ul.querySelector("#llm-model-active-option");
+        expect(active.dataset.modelId).toBe("charlie");
+    });
+
+    test("ArrowUp moves highlight upward", async () => {
+        await setupKeyboardTest();
+        fireKey("ArrowDown");
+        fireKey("ArrowDown");
+        fireKey("ArrowUp");
+        const ul = doc.getElementById("llm-model-dropdown");
+        const active = ul.querySelector("#llm-model-active-option");
+        expect(active.dataset.modelId).toBe("alpha");
+    });
+
+    test("ArrowUp clamps at the first item", async () => {
+        await setupKeyboardTest();
+        fireKey("ArrowDown");
+        fireKey("ArrowUp");
+        fireKey("ArrowUp"); // beyond first
+        const ul = doc.getElementById("llm-model-dropdown");
+        const active = ul.querySelector("#llm-model-active-option");
+        expect(active.dataset.modelId).toBe("alpha");
+    });
+
+    test("Enter selects the highlighted item", async () => {
+        const { input } = await setupKeyboardTest();
+        fireKey("ArrowDown");
+        fireKey("ArrowDown");
+        const event = fireKey("Enter");
+        expect(input.value).toBe("bravo");
+        expect(event.preventDefault).toHaveBeenCalled();
+    });
+
+    test("Enter does nothing with no highlight", async () => {
+        const { input } = await setupKeyboardTest();
+        input.value = "";
+        fireKey("Enter"); // no ArrowDown first
+        expect(input.value).toBe("");
+    });
+
+    test("Escape closes the dropdown and stops propagation", async () => {
+        await setupKeyboardTest();
+        const ul = doc.getElementById("llm-model-dropdown");
+        expect(ul.classList.contains("hidden")).toBe(false);
+        const event = fireKey("Escape");
+        expect(ul.classList.contains("hidden")).toBe(true);
+        expect(event.stopPropagation).toHaveBeenCalled();
+    });
+
+    test("sets aria-activedescendant on highlight", async () => {
+        await setupKeyboardTest();
+        const input = doc.getElementById("llm-model-model-id");
+        fireKey("ArrowDown");
+        expect(input.getAttribute("aria-activedescendant")).toBe(
+            "llm-model-active-option",
+        );
+    });
+
+    test("clears aria-activedescendant on close", async () => {
+        await setupKeyboardTest();
+        const input = doc.getElementById("llm-model-model-id");
+        fireKey("ArrowDown");
+        win.llmModelComboboxClose();
+        expect(input.hasAttribute("aria-activedescendant")).toBe(false);
+    });
+
+    test("is a no-op when dropdown is hidden", () => {
+        setupComboboxDOM();
+        // dropdown starts hidden — should not throw
+        expect(() => fireKey("ArrowDown")).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
 // fetchModelsForModelModal — combobox integration
 // ---------------------------------------------------------------------------
 
 describe("fetchModelsForModelModal", () => {
     test("populates dropdown with models from API response", async () => {
-        const models = [{ id: "gpt-4o" }, { id: "claude-3-opus" }];
-        await populateModelsViaFetch(models);
+        await populateModelsViaFetch([
+            { id: "gpt-4o" },
+            { id: "claude-3-opus" },
+        ]);
         const ul = doc.getElementById("llm-model-dropdown");
         expect(ul.querySelectorAll("li[data-model-id]").length).toBe(2);
     });
 
     test("clears models on empty API response", async () => {
-        // First populate
         await populateModelsViaFetch([{ id: "m1" }]);
-        // Then fetch returns empty
         win.fetch = vi.fn().mockResolvedValue({
             ok: true,
             json: async () => ({ success: true, models: [] }),
         });
         await win.fetchModelsForModelModal();
-        // open should show empty state
         win.llmModelComboboxOpen();
         const ul = doc.getElementById("llm-model-dropdown");
         expect(ul.querySelectorAll("li[data-model-id]").length).toBe(0);
@@ -271,6 +420,39 @@ describe("fetchModelsForModelModal", () => {
         const ul = doc.getElementById("llm-model-dropdown");
         expect(ul.querySelectorAll("li[data-model-id]").length).toBe(0);
     });
+
+    test("discards response if provider changed during fetch", async () => {
+        const { provider } = await populateModelsViaFetch([{ id: "old" }]);
+        // Set up a fetch that resolves, but we change the provider before it does
+        let resolveResponse;
+        win.fetch = vi.fn().mockReturnValue(
+            new win.Promise((resolve) => {
+                resolveResponse = resolve;
+            }),
+        );
+        const fetchPromise = win.fetchModelsForModelModal();
+        // Simulate user switching provider while fetch is in-flight
+        const opt2 = doc.createElement("option");
+        opt2.value = "prov-2";
+        provider.appendChild(opt2);
+        provider.value = "prov-2";
+        // Now resolve the original prov-1 response
+        resolveResponse({
+            ok: true,
+            json: async () => ({
+                success: true,
+                models: [{ id: "stale-model" }],
+            }),
+        });
+        await fetchPromise;
+        // The stale response should be discarded; old models should remain
+        win.llmModelComboboxOpen();
+        const ul = doc.getElementById("llm-model-dropdown");
+        const items = ul.querySelectorAll("li[data-model-id]");
+        // Should still show "old" from the first fetch, not "stale-model"
+        expect(items.length).toBe(1);
+        expect(items[0].dataset.modelId).toBe("old");
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -281,7 +463,6 @@ describe("DOMContentLoaded dropdown delegation", () => {
     test("mousedown on dropdown prevents default (keeps focus on input)", () => {
         const { ul } = setupComboboxDOM();
 
-        // Fire the DOMContentLoaded handler so delegation is wired
         const event = doc.createEvent("Event");
         event.initEvent("DOMContentLoaded", true, true);
         doc.dispatchEvent(event);
@@ -297,12 +478,10 @@ describe("DOMContentLoaded dropdown delegation", () => {
         const { input, ul } = setupComboboxDOM();
         win._renderLLMModelDropdown([{ id: "test-model" }]);
 
-        // Fire DOMContentLoaded to wire delegation
         const domReady = doc.createEvent("Event");
         domReady.initEvent("DOMContentLoaded", true, true);
         doc.dispatchEvent(domReady);
 
-        // Click the first <li>
         const li = ul.querySelector("li[data-model-id]");
         const click = doc.createEvent("MouseEvent");
         click.initEvent("click", true, true);
