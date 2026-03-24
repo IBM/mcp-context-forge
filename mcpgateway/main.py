@@ -11058,9 +11058,6 @@ async def healthcheck(response: Response):
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        # if response is not None:
-        #     _apply_runtime_mode_headers(response)
-        # return {"status": "healthy", "mcp_runtime": _mcp_runtime_status_payload()}
         status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_200_OK, message="Databse Connection Successful"))
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
@@ -11073,9 +11070,6 @@ async def healthcheck(response: Response):
                 pass  # nosec B110 - Best effort cleanup on connection failure
         error_message = f"Database health check failed: {str(e)}"
         logger.error(error_message)
-        # if response is not None:
-        #     _apply_runtime_mode_headers(response)
-        # return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
         status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Databse"))
     finally:
         db.close()
@@ -11091,10 +11085,7 @@ async def healthcheck(response: Response):
         except Exception as e:
             logger.error(f"Redis health check failed: {str(e)}")
             status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
-    else:
-        # Redis not configured
-        status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Redis is not enabled"))
-
+    
     # Determine overall status:
     # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
     # - "unhealthy" if Database is unhealthy (503) OR Redis is unhealthy when enabled
