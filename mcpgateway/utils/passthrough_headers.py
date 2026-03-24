@@ -568,6 +568,9 @@ def _loopback_skip_set() -> frozenset[str]:
     passthrough headers can never overwrite the gateway-internal proxy
     user identity — even if that header name is added to the passthrough
     allowlist by mistake.
+
+    Returns:
+        frozenset[str]: Header names to skip during loopback forwarding.
     """
     proxy = settings.proxy_user_header.lower()
     if proxy in _LOOPBACK_SKIP_HEADERS:
@@ -787,6 +790,13 @@ def safe_extract_headers_for_loopback(request_headers: Dict[str, str], transport
     Wraps :func:`extract_headers_for_loopback` so that SSE / WebSocket setup
     is never blocked by passthrough configuration issues.  ``ImportError``
     propagates (broken deployment should fail loudly).
+
+    Args:
+        request_headers: Incoming HTTP headers to extract from.
+        transport_name: Label for warning logs on failure.
+
+    Returns:
+        Dict[str, str]: Extracted passthrough headers, or empty dict on error.
     """
     try:
         return extract_headers_for_loopback(request_headers)
@@ -801,6 +811,12 @@ def safe_extract_and_filter_for_loopback(request_headers: Dict[str, str]) -> Dic
     Combines :func:`extract_headers_for_loopback` and
     :func:`filter_loopback_skip_headers` with error handling so that
     Streamable HTTP affinity loopback calls degrade gracefully.
+
+    Args:
+        request_headers: Incoming HTTP headers to extract and filter.
+
+    Returns:
+        Dict[str, str]: Filtered passthrough headers, or empty dict on error.
     """
     try:
         return filter_loopback_skip_headers(extract_headers_for_loopback(request_headers))

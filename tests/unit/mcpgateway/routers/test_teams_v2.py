@@ -194,7 +194,7 @@ class TestTeamsRouterV2:
     async def test_update_team_success(self, mock_user_context, mock_db, mock_team):
         """Test updating a team successfully."""
         team_id = mock_team.id
-        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
+        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=100)
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
