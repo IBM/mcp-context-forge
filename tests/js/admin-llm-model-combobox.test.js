@@ -453,6 +453,50 @@ describe("fetchModelsForModelModal", () => {
         expect(items.length).toBe(1);
         expect(items[0].dataset.modelId).toBe("old");
     });
+
+    test("discards earlier response when same provider is fetched twice", async () => {
+        await populateModelsViaFetch([{ id: "initial" }]);
+        // Set up two pending fetches to the same provider
+        const resolvers = [];
+        win.fetch = vi.fn().mockImplementation(
+            () =>
+                new win.Promise((r) => {
+                    resolvers.push(r);
+                }),
+        );
+        // Fire first request (e.g., auto-fetch on provider change)
+        const fetch1 = win.fetchModelsForModelModal();
+        // Yield so the first fetch() call registers before we start the second
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        // Fire second request (e.g., user clicks refresh) before first resolves
+        const fetch2 = win.fetchModelsForModelModal();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(resolvers.length).toBe(2);
+        // Resolve the SECOND (newer) request first
+        resolvers[1]({
+            ok: true,
+            json: async () => ({
+                success: true,
+                models: [{ id: "newer" }],
+            }),
+        });
+        await fetch2;
+        // Now resolve the FIRST (older, stale) request
+        resolvers[0]({
+            ok: true,
+            json: async () => ({
+                success: true,
+                models: [{ id: "older-stale" }],
+            }),
+        });
+        await fetch1;
+        // Only the newer response should be applied
+        win.llmModelComboboxOpen();
+        const ul = doc.getElementById("llm-model-dropdown");
+        const items = ul.querySelectorAll("li[data-model-id]");
+        expect(items.length).toBe(1);
+        expect(items[0].dataset.modelId).toBe("newer");
+    });
 });
 
 // ---------------------------------------------------------------------------

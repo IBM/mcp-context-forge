@@ -32704,7 +32704,6 @@ function refreshLLMProviders() {
 let _llmAllModels = [];
 var _llmModelsFetched = false; // eslint-disable-line no-var -- reassigned across function scopes
 let _llmComboboxActiveIndex = -1;
-
 function _llmComboboxSetExpanded(expanded) {
     const input = document.getElementById("llm-model-model-id");
     if (input) input.setAttribute("aria-expanded", String(expanded));
@@ -32918,6 +32917,10 @@ async function onModelProviderChange() {
     await fetchModelsForModelModal();
 }
 
+// Monotonic counter — each fetchModelsForModelModal call bumps it; stale
+// responses (from a prior call to the same or different provider) are discarded.
+var _llmFetchSeq = 0; // eslint-disable-line no-var -- reassigned across function scopes
+
 /**
  * Fetch available models for the model modal
  */
@@ -32930,6 +32933,8 @@ async function fetchModelsForModelModal() {
         showToast("Please select a provider first", "warning");
         return;
     }
+
+    const seq = ++_llmFetchSeq;
 
     statusEl.textContent = "Fetching models...";
     statusEl.classList.remove("hidden");
@@ -32947,8 +32952,8 @@ async function fetchModelsForModelModal() {
 
         const result = await response.json();
 
-        // Guard against stale response if provider changed during fetch
-        if (providerSelect.value !== providerId) return;
+        // Discard stale: provider changed, or a newer request superseded this one
+        if (providerSelect.value !== providerId || seq !== _llmFetchSeq) return;
 
         if (result.success && result.models && result.models.length > 0) {
             _llmAllModels = result.models;
@@ -32966,8 +32971,7 @@ async function fetchModelsForModelModal() {
         }
     } catch (error) {
         console.error("Error fetching models:", error);
-        // Guard against stale response if provider changed during fetch
-        if (providerSelect.value !== providerId) return;
+        if (providerSelect.value !== providerId || seq !== _llmFetchSeq) return;
         _llmAllModels = [];
         _llmModelsFetched = true;
         statusEl.textContent =
