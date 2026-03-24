@@ -102,6 +102,11 @@ pub struct PIIConfig {
     pub log_detections: bool,
     pub include_detection_details: bool,
 
+    // Resource limits
+    pub max_text_bytes: usize,
+    pub max_nested_depth: usize,
+    pub max_collection_items: usize,
+
     // Custom patterns
     #[serde(default)]
     pub custom_patterns: Vec<CustomPattern>,
@@ -136,6 +141,11 @@ impl Default for PIIConfig {
             block_on_detection: false,
             log_detections: true,
             include_detection_details: true,
+
+            // Default resource limits
+            max_text_bytes: 256 * 1024,
+            max_nested_depth: 32,
+            max_collection_items: 4096,
 
             // Custom patterns
             custom_patterns: Vec::new(),
@@ -191,6 +201,32 @@ impl PIIConfig {
         extract_bool!(block_on_detection);
         extract_bool!(log_detections);
         extract_bool!(include_detection_details);
+
+        if let Some(value) = dict.get_item("max_text_bytes")? {
+            config.max_text_bytes = value.extract()?;
+        }
+        if let Some(value) = dict.get_item("max_nested_depth")? {
+            config.max_nested_depth = value.extract()?;
+        }
+        if let Some(value) = dict.get_item("max_collection_items")? {
+            config.max_collection_items = value.extract()?;
+        }
+
+        if config.max_text_bytes == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_text_bytes must be greater than 0",
+            ));
+        }
+        if config.max_nested_depth == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_nested_depth must be greater than 0",
+            ));
+        }
+        if config.max_collection_items == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_collection_items must be greater than 0",
+            ));
+        }
 
         // Extract string values
         if let Some(value) = dict.get_item("redaction_text")? {
@@ -283,5 +319,8 @@ mod tests {
         assert!(config.detect_email);
         assert_eq!(config.redaction_text, "[REDACTED]");
         assert_eq!(config.default_mask_strategy, MaskingStrategy::Redact);
+        assert_eq!(config.max_text_bytes, 256 * 1024);
+        assert_eq!(config.max_nested_depth, 32);
+        assert_eq!(config.max_collection_items, 4096);
     }
 }

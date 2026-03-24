@@ -12,10 +12,6 @@ use super::config::{MaskingStrategy, PIIConfig, PIIType};
 use super::masking;
 use super::patterns::{CompiledPatterns, compile_patterns};
 
-const MAX_TEXT_BYTES: usize = 256 * 1024;
-const MAX_NESTED_DEPTH: usize = 32;
-const MAX_COLLECTION_ITEMS: usize = 4096;
-
 /// Public API for benchmarks - detect PII in text
 #[allow(dead_code)]
 pub fn detect_pii(
@@ -156,7 +152,7 @@ impl PIIDetectorRust {
     /// }
     /// ```
     pub fn detect(&self, text: &str) -> PyResult<Py<PyAny>> {
-        validate_text_size(text)?;
+        validate_text_size(text, self.config.max_text_bytes)?;
         let detections = self.detect_internal(text);
 
         // Convert Rust HashMap to Python dict
@@ -231,16 +227,16 @@ impl PIIDetectorRust {
         path: &str,
         depth: usize,
     ) -> PyResult<(bool, Py<PyAny>, Py<PyAny>)> {
-        if depth > MAX_NESTED_DEPTH {
+        if depth > self.config.max_nested_depth {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Nested data exceeds maximum depth of {}",
-                MAX_NESTED_DEPTH
+                self.config.max_nested_depth
             )));
         }
 
         // Handle strings directly
         if let Ok(text) = data.extract::<String>() {
-            validate_text_size(&text)?;
+            validate_text_size(&text, self.config.max_text_bytes)?;
             let detections = self.detect_internal(&text);
 
             if !detections.is_empty() {
@@ -270,10 +266,10 @@ impl PIIDetectorRust {
             let mut modified = false;
             let mut all_detections: HashMap<PIIType, Vec<Detection>> = HashMap::new();
             let new_dict = PyDict::new(py);
-            if dict.len() > MAX_COLLECTION_ITEMS {
+            if dict.len() > self.config.max_collection_items {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Nested mapping exceeds maximum size of {} items",
-                    MAX_COLLECTION_ITEMS
+                    self.config.max_collection_items
                 )));
             }
 
@@ -321,10 +317,10 @@ impl PIIDetectorRust {
             let mut modified = false;
             let mut all_detections: HashMap<PIIType, Vec<Detection>> = HashMap::new();
             let new_list = PyList::empty(py);
-            if list.len() > MAX_COLLECTION_ITEMS {
+            if list.len() > self.config.max_collection_items {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Nested list exceeds maximum size of {} items",
-                    MAX_COLLECTION_ITEMS
+                    self.config.max_collection_items
                 )));
             }
 
@@ -631,11 +627,11 @@ fn has_known_card_prefix(digits: &[u32]) -> bool {
         || matches!(prefix4.parse::<u32>(), Ok(3528..=3589)) && len == 16
 }
 
-fn validate_text_size(text: &str) -> PyResult<()> {
-    if text.len() > MAX_TEXT_BYTES {
+fn validate_text_size(text: &str, max_text_bytes: usize) -> PyResult<()> {
+    if text.len() > max_text_bytes {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
             "Input exceeds maximum supported size of {} bytes",
-            MAX_TEXT_BYTES
+            max_text_bytes
         )));
     }
 
@@ -1095,9 +1091,10 @@ mod tests {
                 detect_ssn: true,
                 ..Default::default()
             };
+            let max_text_bytes = config.max_text_bytes;
             let patterns = compile_patterns(&config).unwrap();
             let detector = PIIDetectorRust { patterns, config };
-            let oversized = "a".repeat(MAX_TEXT_BYTES + 1);
+            let oversized = "a".repeat(max_text_bytes + 1);
 
             let err = detector.detect(&oversized).unwrap_err();
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
@@ -1138,6 +1135,55 @@ mod tests {
         assert!(detections.contains_key(&PIIType::Bsn));
         assert_eq!(detections[&PIIType::Bsn][0].value, "BSN: 123456789");
         assert!(!detections.contains_key(&PIIType::Custom));
+    }
+
+    #[test]
+    fn test_bare_nine_digit_ssn_with_label_is_detected() {
+        let config = PIIConfig {
+            detect_ssn: true,
+            detect_bsn: false,
+            detect_phone: false,
+            detect_bank_account: false,
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+
+        let detections = detector.detect_internal("SSN: 123456789");
+        assert!(detections.contains_key(&PIIType::Ssn));
+    }
+
+    #[test]
+    fn test_detect_uses_configurable_text_limit() {
+        Python::initialize();
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("detect_ssn", true).unwrap();
+            config.set_item("max_text_bytes", 8).unwrap();
+
+            let detector = PIIDetectorRust::new(&config.into_any()).unwrap();
+            let err = detector.detect("123456789").unwrap_err();
+
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        });
+    }
+
+    #[test]
+    fn test_process_nested_uses_configurable_collection_limit() {
+        Python::initialize();
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("detect_email", true).unwrap();
+            config.set_item("max_collection_items", 1).unwrap();
+
+            let detector = PIIDetectorRust::new(&config.into_any()).unwrap();
+            let data = PyList::empty(py);
+            data.append("a@example.com").unwrap();
+            data.append("b@example.com").unwrap();
+
+            let err = detector.process_nested(py, &data.into_any(), "").unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        });
     }
 
     #[test]
