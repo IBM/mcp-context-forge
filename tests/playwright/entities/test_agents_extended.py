@@ -804,8 +804,13 @@ class TestA2AEditModal:
         if response.status >= 400:
             pytest.skip(f"Agent edit save failed (HTTP {response.status})")
 
-        # Wait for the JS navigation to complete after successful save
-        agents_page.page.wait_for_load_state("domcontentloaded")
+        # The JS save handler closes the modal then triggers _navigateAdmin()
+        # which fires an async HTMX refresh. wait_for_load_state returns
+        # immediately on the already-loaded page, so wait for the modal to
+        # close (confirms the handler ran) then reload for a clean state.
+        agents_page.page.wait_for_selector("#a2a-edit-modal", state="hidden", timeout=10000)
+        agents_page.page.reload(wait_until="domcontentloaded")
+        agents_page.navigate_to_agents_tab()
         agents_page.wait_for_agents_panel_loaded()
 
         # Re-open the edit modal

@@ -394,7 +394,7 @@ class TestRBACGatewayCreate:
         logger.info("Developer create gateway (team view): status=%d — RBAC passed", status)
 
     def test_viewer_cannot_create_gateway(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer should be denied gateway creation (security check)."""
+        """Viewer should not see the gateway creation form (UI hides it via RBAC)."""
         team_id = rbac_test_team["id"]
         _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
         _wait_for_admin_shell(page, team_id=team_id)
@@ -405,13 +405,10 @@ class TestRBACGatewayCreate:
             logger.info("Viewer create gateway: page did not render — correctly denied (auth failure)")
             return
 
-        name = f"{RBAC_TEST_PREFIX}-viewer-gw-{uuid.uuid4().hex[:8]}"
-        url = VALID_MCP_SERVER_URLS[2]
-
-        status = _submit_gateway_form_and_get_status(gw_page, name, url)
-
-        assert status in (401, 403), f"Viewer should be denied gateway creation but got status={status}"
-        logger.info("Viewer create gateway: status=%d — correctly denied", status)
+        # The UI conditionally renders the create form based on RBAC permissions.
+        # Viewers lack gateways.create, so #add-gateway-form should not be in the DOM.
+        assert gw_page.add_gateway_form.count() == 0, "Gateway creation form should not be visible to viewers"
+        logger.info("Viewer create gateway: form correctly hidden by RBAC")
 
     def test_admin_create_gateway_all_teams_view(self, page: Page, base_url: str):
         """Admin (platform_admin role) should be able to create gateways from All Teams view."""
@@ -469,7 +466,7 @@ class TestRBACServerCreate:
         logger.info("Developer create server (team view): status=%d — RBAC passed", status)
 
     def test_viewer_cannot_create_server(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer should be denied server creation (security check)."""
+        """Viewer should not see the server creation form (UI hides it via RBAC)."""
         team_id = rbac_test_team["id"]
         _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
         _wait_for_admin_shell(page, team_id=team_id)
@@ -480,12 +477,8 @@ class TestRBACServerCreate:
             logger.info("Viewer create server: page did not render — correctly denied (auth failure)")
             return
 
-        name = f"{RBAC_TEST_PREFIX}-viewer-srv-{uuid.uuid4().hex[:8]}"
-
-        status = _submit_server_form_and_get_status(srv_page, name)
-
-        assert status in (401, 403), f"Viewer should be denied server creation but got status={status}"
-        logger.info("Viewer create server: status=%d — correctly denied", status)
+        assert srv_page.add_server_form.count() == 0, "Server creation form should not be visible to viewers"
+        logger.info("Viewer create server: form correctly hidden by RBAC")
 
 
 @pytest.mark.ui
@@ -828,7 +821,7 @@ class TestRBACToolOperations:
         logger.info("Developer create tool (All Teams): status=%d — RBAC passed", status)
 
     def test_viewer_cannot_create_tool(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer should be denied tool creation (security check)."""
+        """Viewer should not see the tool creation form (UI hides it via RBAC)."""
         team_id = rbac_test_team["id"]
         _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
         _wait_for_admin_shell(page, team_id=team_id)
@@ -839,12 +832,8 @@ class TestRBACToolOperations:
             logger.info("Viewer create tool: page did not render — correctly denied (auth failure)")
             return
 
-        name = f"{RBAC_TEST_PREFIX}-viewer-tool-{uuid.uuid4().hex[:8]}"
-
-        status = _submit_tool_form_and_get_status(tools_page, name)
-
-        assert status in (401, 403), f"Viewer should be denied tool creation but got status={status}"
-        logger.info("Viewer create tool: status=%d — correctly denied", status)
+        assert tools_page.add_tool_form.count() == 0, "Tool creation form should not be visible to viewers"
+        logger.info("Viewer create tool: form correctly hidden by RBAC")
 
 
 # ==================== D8: Resource Operations ====================
@@ -872,7 +861,7 @@ class TestRBACResourceOperations:
         logger.info("Developer create resource: status=%d — RBAC passed", status)
 
     def test_viewer_cannot_create_resource(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer should be denied resource creation (security check)."""
+        """Viewer should not see the resource creation form (UI hides it via RBAC)."""
         team_id = rbac_test_team["id"]
         _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
         _wait_for_admin_shell(page, team_id=team_id)
@@ -883,12 +872,8 @@ class TestRBACResourceOperations:
             logger.info("Viewer create resource: page did not render — correctly denied (auth failure)")
             return
 
-        name = f"{RBAC_TEST_PREFIX}-viewer-res-{uuid.uuid4().hex[:8]}"
-
-        status = _submit_resource_form_and_get_status(res_page, name)
-
-        assert status in (401, 403), f"Viewer should be denied resource creation but got status={status}"
-        logger.info("Viewer create resource: status=%d — correctly denied", status)
+        assert res_page.add_resource_form.count() == 0, "Resource creation form should not be visible to viewers"
+        logger.info("Viewer create resource: form correctly hidden by RBAC")
 
 
 # ==================== D8: Prompt Operations ====================
@@ -916,7 +901,7 @@ class TestRBACPromptOperations:
         logger.info("Developer create prompt: status=%d — RBAC passed", status)
 
     def test_viewer_cannot_create_prompt(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer should be denied prompt creation (security check)."""
+        """Viewer should not see the prompt creation form (UI hides it via RBAC)."""
         team_id = rbac_test_team["id"]
         _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
         _wait_for_admin_shell(page, team_id=team_id)
@@ -927,12 +912,8 @@ class TestRBACPromptOperations:
             logger.info("Viewer create prompt: page did not render — correctly denied (auth failure)")
             return
 
-        name = f"{RBAC_TEST_PREFIX}-viewer-prompt-{uuid.uuid4().hex[:8]}"
-
-        status = _submit_prompt_form_and_get_status(pr_page, name)
-
-        assert status in (401, 403), f"Viewer should be denied prompt creation but got status={status}"
-        logger.info("Viewer create prompt: status=%d — correctly denied", status)
+        assert pr_page.add_prompt_form.count() == 0, "Prompt creation form should not be visible to viewers"
+        logger.info("Viewer create prompt: form correctly hidden by RBAC")
 
 
 # ==================== D8: Team Management ====================
