@@ -11,3 +11,4 @@ def py_scan_container(container: typing.Any, config: typing.Any) -> tuple[builti
     r"""
     Scan Python container for secrets using optimized type dispatch
     """
+
