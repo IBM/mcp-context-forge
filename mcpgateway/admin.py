@@ -2188,8 +2188,11 @@ async def update_global_passthrough_headers(
         else:
             config.passthrough_headers = config_update.passthrough_headers
         db.commit()
-        # Invalidate cache so changes propagate immediately (Issue #1715)
-        global_config_cache.invalidate()
+        # Invalidate both global and loopback caches so changes propagate immediately (Issue #1715, #3640)
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
+
+        invalidate_passthrough_header_caches()
         return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
     except IntegrityError as e:
         db.rollback()
@@ -2232,11 +2235,14 @@ async def invalidate_passthrough_headers_cache(
         >>> inspect.iscoroutinefunction(invalidate_passthrough_headers_cache)
         True
     """
-    global_config_cache.invalidate()
+    # First-Party
+    from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
+
+    invalidate_passthrough_header_caches()
     stats = global_config_cache.stats()
     return {
         "status": "invalidated",
-        "message": "GlobalConfig cache invalidated successfully",
+        "message": "Passthrough header caches invalidated successfully",
         "cache_stats": stats,
     }
 
