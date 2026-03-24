@@ -157,7 +157,7 @@ class PIIDetector:
 
         # Social Security Number patterns
         if self.config.detect_ssn:
-            patterns.append(PIIPattern(type=PIIType.SSN, pattern=r"\b\d{3}-\d{2}-\d{4}\b", description="US Social Security Number", mask_strategy=MaskingStrategy.PARTIAL))
+            patterns.append(PIIPattern(type=PIIType.SSN, pattern=r"\b\d{3}-\d{2}-\d{4}\b", description="US Social Security Number", mask_strategy=self.config.default_mask_strategy))
 
         # Dutch BSN (Burgerservicenummer) patterns - 9-digit Dutch citizen service number
         if self.config.detect_bsn:
@@ -171,7 +171,7 @@ class PIIDetector:
                         type=PIIType.BSN,
                         pattern=r"\b(?:BSN|Citizen\s+ID|Burgerservicenummer)[:\s#]*\d{9}\b",
                         description="Dutch BSN with explicit context",
-                        mask_strategy=MaskingStrategy.PARTIAL,
+                        mask_strategy=self.config.default_mask_strategy,
                     ),
                     # Generic ID context
                     # Note: Phone numbers are filtered by phone detector which runs first
@@ -179,32 +179,32 @@ class PIIDetector:
                         type=PIIType.BSN,
                         pattern=r"\b(?:ID|Order|Invoice|Tracking|Numbers?)[:\s#]*\d{9}\b",
                         description="9-digit ID with generic context",
-                        mask_strategy=MaskingStrategy.PARTIAL,
+                        mask_strategy=self.config.default_mask_strategy,
                     ),
                     # "My BSN is" pattern
                     PIIPattern(
                         type=PIIType.BSN,
                         pattern=r"\b(?:My\s+)?BSN\s+(?:is\s+)?\d{9}\b",
                         description="BSN with 'is' context",
-                        mask_strategy=MaskingStrategy.PARTIAL,
+                        mask_strategy=self.config.default_mask_strategy,
                     ),
                 ]
             )
 
         # Credit Card patterns (basic validation for common formats)
         if self.config.detect_credit_card:
-            patterns.append(PIIPattern(type=PIIType.CREDIT_CARD, pattern=r"\b(?:\d{4}[-\s]?){3}\d{4}\b", description="Credit card number", mask_strategy=MaskingStrategy.PARTIAL))
+            patterns.append(PIIPattern(type=PIIType.CREDIT_CARD, pattern=r"\b(?:\d{4}[-\s]?){3}\d{4}\b", description="Credit card number", mask_strategy=self.config.default_mask_strategy))
 
         # Email patterns
         if self.config.detect_email:
-            patterns.append(PIIPattern(type=PIIType.EMAIL, pattern=r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", description="Email address", mask_strategy=MaskingStrategy.PARTIAL))
+            patterns.append(PIIPattern(type=PIIType.EMAIL, pattern=r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", description="Email address", mask_strategy=self.config.default_mask_strategy))
 
         # Phone number patterns (US and international)
         if self.config.detect_phone:
             patterns.extend(
                 [
-                    PIIPattern(type=PIIType.PHONE, pattern=r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", description="US phone number", mask_strategy=MaskingStrategy.PARTIAL),
-                    PIIPattern(type=PIIType.PHONE, pattern=r"\b\+?[1-9]\d{1,14}\b", description="International phone number", mask_strategy=MaskingStrategy.PARTIAL),
+                    PIIPattern(type=PIIType.PHONE, pattern=r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", description="US phone number", mask_strategy=self.config.default_mask_strategy),
+                    PIIPattern(type=PIIType.PHONE, pattern=r"\b\+?[1-9]\d{1,14}\b", description="International phone number", mask_strategy=self.config.default_mask_strategy),
                 ]
             )
 
@@ -216,9 +216,9 @@ class PIIDetector:
                         type=PIIType.IP_ADDRESS,
                         pattern=r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
                         description="IPv4 address",
-                        mask_strategy=MaskingStrategy.REDACT,
+                        mask_strategy=self.config.default_mask_strategy,
                     ),
-                    PIIPattern(type=PIIType.IP_ADDRESS, pattern=r"\b(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\b", description="IPv6 address", mask_strategy=MaskingStrategy.REDACT),
+                    PIIPattern(type=PIIType.IP_ADDRESS, pattern=r"\b(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\b", description="IPv6 address", mask_strategy=self.config.default_mask_strategy),
                 ]
             )
 
@@ -230,26 +230,26 @@ class PIIDetector:
                         type=PIIType.DATE_OF_BIRTH,
                         pattern=r"\b(?:DOB|Date of Birth|Born|Birthday)[:\s]+\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b",
                         description="Date of birth with label",
-                        mask_strategy=MaskingStrategy.REDACT,
+                        mask_strategy=self.config.default_mask_strategy,
                     ),
                     PIIPattern(
                         type=PIIType.DATE_OF_BIRTH,
                         pattern=r"\b(?:0[1-9]|1[0-2])[-/](?:0[1-9]|[12]\d|3[01])[-/](?:19|20)\d{2}\b",
                         description="Date in MM/DD/YYYY format",
-                        mask_strategy=MaskingStrategy.REDACT,
+                        mask_strategy=self.config.default_mask_strategy,
                     ),
                 ]
             )
 
         # Passport patterns
         if self.config.detect_passport:
-            patterns.append(PIIPattern(type=PIIType.PASSPORT, pattern=r"\b[A-Z]{1,2}\d{6,9}\b", description="Passport number", mask_strategy=MaskingStrategy.REDACT))
+            patterns.append(PIIPattern(type=PIIType.PASSPORT, pattern=r"\b[A-Z]{1,2}\d{6,9}\b", description="Passport number", mask_strategy=self.config.default_mask_strategy))
 
         # Driver's License patterns (US states)
         if self.config.detect_driver_license:
             patterns.append(
                 PIIPattern(
-                    type=PIIType.DRIVER_LICENSE, pattern=r"\b(?:DL|License|Driver\'?s? License)[#:\s]+[A-Z0-9]{5,20}\b", description="Driver's license number", mask_strategy=MaskingStrategy.REDACT
+                    type=PIIType.DRIVER_LICENSE, pattern=r"\b(?:DL|License|Driver\'?s? License)[#:\s]+[A-Z0-9]{5,20}\b", description="Driver's license number", mask_strategy=self.config.default_mask_strategy
                 )
             )
 
@@ -257,15 +257,15 @@ class PIIDetector:
         if self.config.detect_bank_account:
             patterns.extend(
                 [
-                    PIIPattern(type=PIIType.BANK_ACCOUNT, pattern=r"\b\d{8,17}\b", description="Bank account number", mask_strategy=MaskingStrategy.REDACT),  # Generic bank account
-                    PIIPattern(type=PIIType.BANK_ACCOUNT, pattern=r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:\d{3})?\b", description="IBAN", mask_strategy=MaskingStrategy.PARTIAL),  # IBAN
+                    PIIPattern(type=PIIType.BANK_ACCOUNT, pattern=r"\b\d{8,17}\b", description="Bank account number", mask_strategy=self.config.default_mask_strategy),  # Generic bank account
+                    PIIPattern(type=PIIType.BANK_ACCOUNT, pattern=r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:\d{3})?\b", description="IBAN", mask_strategy=self.config.default_mask_strategy),  # IBAN
                 ]
             )
 
         # Medical Record patterns
         if self.config.detect_medical_record:
             patterns.append(
-                PIIPattern(type=PIIType.MEDICAL_RECORD, pattern=r"\b(?:MRN|Medical Record)[#:\s]+[A-Z0-9]{6,12}\b", description="Medical record number", mask_strategy=MaskingStrategy.REDACT)
+                PIIPattern(type=PIIType.MEDICAL_RECORD, pattern=r"\b(?:MRN|Medical Record)[#:\s]+[A-Z0-9]{6,12}\b", description="Medical record number", mask_strategy=self.config.default_mask_strategy)
             )
 
         # Add custom patterns
