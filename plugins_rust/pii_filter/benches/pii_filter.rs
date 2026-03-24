@@ -35,6 +35,7 @@ fn create_test_config() -> PIIConfig {
         include_detection_details: true,
         custom_patterns: vec![],
         whitelist_patterns: vec![],
+        ..Default::default()
     }
 }
 
