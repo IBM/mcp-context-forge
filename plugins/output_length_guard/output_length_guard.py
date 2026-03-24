@@ -29,7 +29,7 @@ from __future__ import annotations
 
 # Standard
 import json
-from typing import Any, ClassVar, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
 from venv import logger
 
 # Third-Party
@@ -1066,7 +1066,7 @@ class OutputLengthGuardPlugin(Plugin):
                         return text, meta, None
 
                     length = _length(text)
-                    meta = {"original_length": length}
+                    meta: Dict[str, Any] = {"original_length": length}
 
                     # Use explicit comparison instead of falsy check
                     # When min_chars=0, we want to skip the minimum check (not treat 0 as False)
@@ -1223,7 +1223,7 @@ class OutputLengthGuardPlugin(Plugin):
 
                 # NO structuredContent: Process content array normally
                 modified = False
-                out = []
+                content_out: List[Any] = []
 
                 for item in result['content']:
                     # Check if it's a text content dict (has type='text' and 'text' key)
@@ -1239,22 +1239,22 @@ class OutputLengthGuardPlugin(Plugin):
                             # Create new dict with modified text, preserving other fields
                             new_item = dict(item)
                             new_item['text'] = new_text
-                            out.append(new_item)
+                            content_out.append(new_item)
 
                             if hasattr(context, 'logger'):
                                 context.logger.debug(
                                     f"OutputLengthGuard: Truncated text content from {len(current_text)} to {len(new_text)} chars"
                                 )
                         else:
-                            out.append(item)
+                            content_out.append(item)
                     else:
                         # Non-text content item (image, audio, etc.), pass through
-                        out.append(item)
+                        content_out.append(item)
 
                 if modified:
                     # Create new result dict with modified content
                     new_result = dict(result)
-                    new_result['content'] = out
+                    new_result['content'] = content_out
 
                     return ToolPostInvokeResult(
                         modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result),
@@ -1295,7 +1295,7 @@ class OutputLengthGuardPlugin(Plugin):
             if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict) and "type" in result[0]:
                 # MCP format - process text content items
                 modified = False
-                out = []
+                mcp_out: List[Any] = []
 
                 for item in result:
                     if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
@@ -1309,16 +1309,16 @@ class OutputLengthGuardPlugin(Plugin):
                             modified = True
                             new_item = dict(item)
                             new_item["text"] = new_text
-                            out.append(new_item)
+                            mcp_out.append(new_item)
                         else:
-                            out.append(item)
+                            mcp_out.append(item)
                     else:
                         # Non-text content item, pass through
-                        out.append(item)
+                        mcp_out.append(item)
 
                 if modified:
                     return ToolPostInvokeResult(
-                        modified_payload=ToolPostInvokePayload(name=payload.name, result=out),
+                        modified_payload=ToolPostInvokePayload(name=payload.name, result=mcp_out),
                         metadata={"mcp_content_processed": True}
                     )
                 return ToolPostInvokeResult(metadata={"mcp_content_processed": True})
@@ -1328,7 +1328,7 @@ class OutputLengthGuardPlugin(Plugin):
                 texts: List[str] = result
                 modified = False
                 meta_list: List[dict[str, Any]] = []
-                out: List[str] = []
+                str_list_out: List[str] = []
 
                 # Cache blocking mode for early exit optimization
                 is_blocking = cfg.is_blocking()
@@ -1363,11 +1363,11 @@ class OutputLengthGuardPlugin(Plugin):
                                 f"OutputLengthGuard: Truncated list item {idx} from {len(t)} to {len(new_t)} chars"
                             )
 
-                    out.append(new_t)
+                    str_list_out.append(new_t)
 
                 if modified:
                     return ToolPostInvokeResult(
-                        modified_payload=ToolPostInvokePayload(name=payload.name, result=out),
+                        modified_payload=ToolPostInvokePayload(name=payload.name, result=str_list_out),
                         metadata={"items": meta_list}
                     )
                 return ToolPostInvokeResult(metadata={"items": meta_list})
