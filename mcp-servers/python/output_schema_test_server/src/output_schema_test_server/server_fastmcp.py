@@ -178,7 +178,7 @@ async def echo_list(
     items: list[str] = Field(..., description="List of strings to echo back"),
 ) -> list[str]:
     """Echo back a list of strings.
-    
+
     This tool demonstrates list-based input and output schema support.
     Accepts a list of strings and returns the same list.
     """
@@ -191,7 +191,7 @@ async def echo_dict(
     data: dict[str, str] = Field(..., description="Dictionary with string keys and values to echo back"),
 ) -> dict[str, str]:
     """Echo back a dictionary of strings.
-    
+
     This tool demonstrates dictionary-based input and output schema support.
     Accepts a dict with string keys and values, returns the same dict.
     """

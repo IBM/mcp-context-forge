@@ -58,13 +58,13 @@ class OutputLengthGuardConfig(BaseModel):
     min_tokens: int = Field(default=0, ge=0, description="Minimum allowed tokens. 0 disables minimum token check.")
     max_tokens: Optional[int] = Field(default=None, description="Maximum allowed tokens. None disables maximum token check.")
     chars_per_token: int = Field(default=4, ge=1, le=10, description="Characters per token ratio for estimation. Default: 4 (English/GPT models)")
-    
+
     # Behavior
     limit_mode: str = Field(default="character", description='Limit enforcement mode: "character" (character-based limits only) or "token" (token-based limits only)')
     strategy: str = Field(default="truncate", description='Strategy when out of bounds: "truncate" or "block"')
     ellipsis: str = Field(default="…", description="Suffix appended on truncation. Use empty string to disable.")
     word_boundary: bool = Field(default=False, description="When true, truncate at word boundaries to avoid mid-word cuts.")
-    
+
     # Security limits
     max_text_length: int = Field(default=1_000_000, description="Maximum text size to process (1MB default). Prevents memory exhaustion.")
     max_structure_size: int = Field(default=10_000, description="Maximum items in list/dict (10K default). Prevents DoS attacks.")
@@ -95,7 +95,7 @@ class OutputLengthGuardConfig(BaseModel):
     @field_validator('strategy')
     @classmethod
     def validate_strategy(cls, v: str) -> str:
-        
+
         logging.debug(f"Validating strategy: {v}")
         """Validate strategy is one of the allowed values.
 
@@ -291,25 +291,25 @@ BOUNDARY_CHARS = frozenset({
 
 def _estimate_tokens(text: str, chars_per_token: int) -> int:
     """Estimate token count using configurable chars-per-token ratio.
-    
+
     This is an approximate estimation based on the industry-standard heuristic
     that English text averages ~4 characters per token for GPT models.
-    
+
     Args:
         text: String to estimate tokens for
         chars_per_token: Characters per token ratio (default: 4)
-        
+
     Returns:
         Estimated token count. Returns 0 if an error occurs.
-        
+
     Note:
         All exceptions are caught and handled internally. On error, returns 0
         and logs the exception. Handles: ZeroDivisionError, TypeError, ValueError.
-        
+
     Examples:
         >>> _estimate_tokens("Hello world", 4)
         2  # 11 chars / 4 = 2 tokens
-        
+
         >>> _estimate_tokens("Hello world", 3)
         3  # 11 chars / 3 = 3 tokens
     """
@@ -318,23 +318,23 @@ def _estimate_tokens(text: str, chars_per_token: int) -> int:
         if not isinstance(text, str):
             logger.error(f"Invalid text type in _estimate_tokens: {type(text).__name__}, expected str")
             return 0
-        
+
         if not isinstance(chars_per_token, int):
             logger.error(f"Invalid chars_per_token type: {type(chars_per_token).__name__}, expected int")
             chars_per_token = 4
-        
+
         if chars_per_token <= 0:
             logger.error(f"Invalid chars_per_token: {chars_per_token}, using default 4")
             chars_per_token = 4
-        
+
         token_count = len(text) // chars_per_token
-        
+
         logger.debug(
             f"Token estimation: {len(text)} chars / {chars_per_token} = {token_count} tokens"
         )
-        
+
         return token_count
-    
+
     except (ZeroDivisionError, TypeError, ValueError) as e:
         logger.error(
             f"Exception in _estimate_tokens: {type(e).__name__}: {str(e)}",
@@ -364,25 +364,25 @@ def _find_token_cut_point(
     max_iterations: int = 30
 ) -> int:
     """Binary search to find character position that fits token budget.
-    
+
     PERFORMANCE OPTIMIZATION: Calculates tokens from length without creating
     substrings, reducing complexity from O(n*log n) to O(log n).
-    
+
     Security measures:
     - Limits text length to prevent memory exhaustion
     - Limits iterations to prevent infinite loops
     - Validates inputs
-    
+
     Args:
         text: String to find cut point for
         max_tokens: Maximum token count
         chars_per_token: Characters per token ratio
         max_text_length: Maximum text size to process (security limit)
         max_iterations: Maximum binary search iterations (security limit)
-        
+
     Returns:
         Character index for truncation. Returns 0 if an error occurs.
-        
+
     Note:
         All exceptions are caught and handled internally. On error, returns 0
         and logs the exception. Handles: ValueError, TypeError, MemoryError.
@@ -392,10 +392,10 @@ def _find_token_cut_point(
         if not isinstance(text, str):
             logger.error(f"Invalid text type in _find_token_cut_point: {type(text).__name__}")
             return 0
-        
+
         if not text or max_tokens <= 0:
             return 0
-        
+
         # SECURITY: Limit text length
         if len(text) > max_text_length:
             logger.warning(
@@ -403,49 +403,49 @@ def _find_token_cut_point(
                 f"truncating to safe length"
             )
             text = text[:max_text_length]
-        
+
         # SECURITY: Prevent division by zero
         if chars_per_token <= 0:
             logger.error(f"Invalid chars_per_token: {chars_per_token}, using default 4")
             chars_per_token = 4
-        
+
         logger.debug(
             f"Starting binary search: text_length={len(text)}, max_tokens={max_tokens}, "
             f"chars_per_token={chars_per_token}"
         )
-        
+
         left, right = 0, min(len(text), max_tokens * chars_per_token + 100)
         best_cut = 0
         iterations = 0
-        
+
         while left <= right and iterations < max_iterations:
             iterations += 1
             mid = (left + right) // 2
-            
+
             # PERFORMANCE CRITICAL: Calculate tokens from length, not substring
             # Before: estimated_tokens = len(text[:mid]) // chars_per_token  # O(n) per iteration!
             # After:  estimated_tokens = mid // chars_per_token              # O(1) per iteration!
             estimated_tokens = mid // chars_per_token
-            
+
             logger.debug(
                 f"Binary search iteration {iterations}: left={left}, right={right}, "
                 f"mid={mid}, estimated_tokens={estimated_tokens}"
             )
-            
+
             if estimated_tokens <= max_tokens:
                 best_cut = mid
                 left = mid + 1
             else:
                 right = mid - 1
-        
+
         if iterations >= max_iterations:
             logger.warning(
                 f"Binary search hit iteration limit ({max_iterations}), "
                 f"using best cut point found: {best_cut}"
             )
-        
+
         return best_cut
-    
+
     except (ValueError, TypeError, MemoryError) as e:
         logger.error(
             f"Exception in _find_token_cut_point: {type(e).__name__}: {str(e)}",
@@ -470,19 +470,19 @@ def _find_token_cut_point(
 
 def _find_word_boundary(value: str, cut: int, max_chars: int) -> int:
     """Find word boundary position without creating substrings.
-    
+
     PERFORMANCE OPTIMIZATION: Returns position instead of creating substrings
     in the loop, reducing from O(n) substring creations to O(1).
-    
+
     Args:
         value: String to search
         cut: Initial cut position
         max_chars: Maximum characters (for calculating search range)
-        
+
     Returns:
         Position of word boundary, or cut if none found. Returns original cut
         position if an error occurs.
-        
+
     Note:
         All exceptions are caught and handled internally. On error, returns
         original cut position and logs the exception. Handles: IndexError,
@@ -493,24 +493,24 @@ def _find_word_boundary(value: str, cut: int, max_chars: int) -> int:
         if not isinstance(value, str):
             logger.error(f"Invalid value type in _find_word_boundary: {type(value).__name__}")
             return cut
-        
+
         if not value or cut <= 0:
             return cut
-        
+
         # Ensure cut is within bounds
         if cut > len(value):
             cut = len(value)
-        
+
         min_search = max(0, cut - int(max_chars * 0.2))
-        
+
         # PERFORMANCE: Use module-level constant instead of creating set
         for i in range(cut - 1, min_search - 1, -1):
             if value[i] in BOUNDARY_CHARS:
                 # Return position after the boundary character (includes the space/boundary in result)
                 return i + 1
-        
+
         return cut  # No boundary found
-    
+
     except (IndexError, TypeError, ValueError) as e:
         logger.error(
             f"Exception in _find_word_boundary: {type(e).__name__}: {str(e)}",
@@ -560,7 +560,7 @@ def _truncate(
     Returns:
         Truncated string, or original if within limits. Returns original string
         or empty string if an error occurs.
-        
+
     Note:
         All exceptions are caught and handled internally. On error, returns
         original value (if string) or empty string, and logs the exception.
@@ -571,37 +571,37 @@ def _truncate(
         if not isinstance(value, str):
             logger.error(f"Invalid value type in _truncate: {type(value).__name__}")
             return str(value) if value is not None else ""
-        
+
         original_length = len(value)
         ell = ellipsis or ""
-        
+
         # Token-based truncation (only if limit_mode is "token" and max_tokens specified)
         if limit_mode == "token" and max_tokens is not None:
             estimated_tokens = len(value) // chars_per_token
-            
+
             if estimated_tokens > max_tokens:
                 # Use binary search to find cut point
                 cut = _find_token_cut_point(value, max_tokens, chars_per_token, max_text_length, max_iterations)
-                
+
                 # Apply word boundary if enabled
                 if word_boundary and cut > 0:
                     original_cut = cut
                     cut = _find_word_boundary(value, cut, cut)
-                    
+
                     if cut != original_cut:
                         logger.debug(
                             f"Word boundary adjustment: original_cut={original_cut}, "
                             f"adjusted_cut={cut}, adjustment={original_cut - cut}"
                         )
-                
+
                 result = value[:cut] + ell
-                
+
                 return result
-        
+
         # Character-based truncation (only if limit_mode is "character")
         if limit_mode != "character":
             return value
-        
+
         if max_chars is None:
             return value
 
@@ -621,18 +621,18 @@ def _truncate(
 
         # Calculate cut point
         cut = max_chars - ell_len
-        
+
         # Word boundary truncation
         if word_boundary and cut > 0:
             cut = _find_word_boundary(value, cut, max_chars)
-            
+
             result = value[:cut] + ell
-            
+
             return result
-        
+
         # Hard cut (no word boundary mode or no boundary found)
         return value[:cut] + ell
-    
+
     except (IndexError, ValueError, TypeError, MemoryError) as e:
         logger.error(
             f"Exception in _truncate: {type(e).__name__}: {str(e)}",
@@ -658,13 +658,13 @@ def _truncate(
 
 def _is_numeric_string(text: str) -> bool:
     """Check if a string represents a numeric value.
-    
+
     Handles integers, floats, and scientific notation.
     Examples: "123", "123.45", "1.23e-4", "5E+10"
-    
+
     Args:
         text: String to check
-        
+
     Returns:
         True if string is numeric, False otherwise
     """
@@ -694,11 +694,11 @@ def _process_structured_data(
     limit_mode: str = "character"
 ) -> Tuple[Any, bool, Optional[PluginViolation]]:
     """Recursively process structured data, truncating or blocking based on strategy.
-    
+
     This function traverses nested data structures (lists, dicts) and either truncates
     or blocks when string values exceed limits. Numeric strings (integers, floats,
     and scientific notation) are not truncated or blocked.
-    
+
     Args:
         data: The data to process (can be str, list, dict, or nested structures).
         min_chars: Minimum allowed characters. 0 disables minimum check.
@@ -715,13 +715,13 @@ def _process_structured_data(
         max_structure_size: Maximum structure size for security (prevents DoS).
         max_recursion_depth: Maximum recursion depth for security (prevents stack overflow).
         max_binary_search_iterations: Maximum binary search iterations for security.
-    
+
     Returns:
         Tuple of (modified_data, was_modified, violation).
         - In block mode: returns violation if any string exceeds limits
         - In truncate mode: returns modified data with truncated strings
         Returns (original_data, False, None) if an error occurs.
-        
+
     Note:
         All exceptions are caught and handled internally. On error, returns
         original data unchanged and logs the exception. Handles: RecursionError,
@@ -732,7 +732,7 @@ def _process_structured_data(
             f"Processing structured data: type={type(data).__name__}, path={path or 'root'}, "
             f"strategy={strategy}"
         )
-        
+
         # Security: Check recursion depth
         depth = path.count('.') + path.count('[')
         if depth > max_recursion_depth:
@@ -740,36 +740,36 @@ def _process_structured_data(
                 f"Recursion depth {depth} exceeds maximum {max_recursion_depth} at path: {path}"
             )
             return data, False, None
-        
+
         # Base case: string - check if it's numeric, then process based on strategy
         if isinstance(data, str):
             # Skip processing for numeric strings (int, float, scientific notation)
             if _is_numeric_string(data):
                 logger.debug(f"Skipping numeric string at {path or 'root'}: length={len(data)}")
                 return data, False, None
-            
+
             # PERFORMANCE: Calculate once, reuse
             length = len(data)
             token_count = length // chars_per_token  # Inline for speed
-            
+
             # Check if string is out of bounds (character limits)
             below_min_chars = min_chars > 0 and length < min_chars
             above_max_chars = max_chars is not None and length > max_chars
-            
+
             # Check if string is out of bounds (token limits)
             below_min_tokens = min_tokens > 0 and token_count < min_tokens
             above_max_tokens = max_tokens is not None and token_count > max_tokens
-            
+
             if below_min_chars or above_max_chars or below_min_tokens or above_max_tokens:
                 logger.debug(
                     f"String out of bounds at {path or 'root'}: length={length}, tokens={token_count}, "
                     f"char_limits=[{min_chars}, {max_chars}], token_limits=[{min_tokens}, {max_tokens}]"
                 )
-                
+
                 # BLOCK MODE: Return violation immediately
                 if strategy == "block":
                     location = f" at {path}" if path else ""
-                    
+
                     # Determine violation type
                     if above_max_tokens:
                         violation = PluginViolation(
@@ -824,9 +824,9 @@ def _process_structured_data(
                             mcp_error_code=-32000,
                         )
                         logger.debug(f"🚫 BLOCKING: String at {path or 'root'} below minimum limits")
-                    
+
                     return data, False, violation
-                
+
                 # TRUNCATE MODE: Only truncate if above max
                 if above_max_chars or above_max_tokens:
                     truncated = _truncate(
@@ -835,10 +835,10 @@ def _process_structured_data(
                     )
                     was_modified = truncated != data
                     return truncated, was_modified, None
-            
+
             # Within bounds - return unchanged
             return data, False, None
-    
+
         # Recursive case: list - process each element
         if isinstance(data, list):
             # Security: Check structure size
@@ -847,7 +847,7 @@ def _process_structured_data(
                     f"List size {len(data)} exceeds maximum {max_structure_size} at path: {path}"
                 )
                 return data, False, None
-            
+
             modified = False
             result = []
             for idx, item in enumerate(data):
@@ -858,16 +858,16 @@ def _process_structured_data(
                     max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations,
                     limit_mode
                 )
-                
+
                 # In block mode, return violation immediately
                 if violation:
                     return data, False, violation
-                
+
                 result.append(processed_item)
                 if item_modified:
                     modified = True
             return result, modified, None
-        
+
         # Recursive case: dict - process each value
         if isinstance(data, dict):
             # Security: Check structure size
@@ -876,7 +876,7 @@ def _process_structured_data(
                     f"Dict size {len(data)} exceeds maximum {max_structure_size} at path: {path}"
                 )
                 return data, False, None
-            
+
             modified = False
             result = {}
             for key, value in data.items():
@@ -887,19 +887,19 @@ def _process_structured_data(
                     max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations,
                     limit_mode
                 )
-                
+
                 # In block mode, return violation immediately
                 if violation:
                     return data, False, violation
-                
+
                 result[key] = processed_value
                 if value_modified:
                     modified = True
             return result, modified, None
-        
+
         # Other types (int, bool, None, etc.) - pass through unchanged
         return data, False, None
-    
+
     except RecursionError as e:
         logger.error(
             f"RecursionError in _process_structured_data: {str(e)}",
@@ -938,19 +938,19 @@ def _process_structured_data(
 
 def _generate_text_representation(data: Any) -> str:
     """Generate a formatted text representation of structured data.
-    
+
     For single-key dicts (like {"result": [...]}), extracts and formats just the value.
     For simple strings, returns them directly without JSON encoding.
     Uses Python's json.dumps for clean, readable formatting of lists and dicts.
     Falls back to repr() for other types.
-    
+
     Args:
         data: The data to represent as text.
-    
+
     Returns:
         Formatted string representation. Returns error message string if
         representation fails.
-        
+
     Note:
         All exceptions are caught and handled internally. On error, attempts
         fallback to repr(), then returns error message string. Handles:
@@ -960,18 +960,18 @@ def _generate_text_representation(data: Any) -> str:
         # Special case: simple string - return as-is without JSON encoding
         if isinstance(data, str):
             return data
-        
+
         # Special case: single-key dict - extract the value for cleaner display
         if isinstance(data, dict) and len(data) == 1:
             # Get the single value (e.g., from {"result": [...]})
             value = next(iter(data.values()))
             # Recursively format the value
             return _generate_text_representation(value)
-        
+
         # Use JSON for lists and dicts for clean formatting
         if isinstance(data, (list, dict)):
             return json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-        
+
         # For other types, use repr
         return repr(data)
     except (TypeError, ValueError, AttributeError, KeyError) as e:
@@ -1009,7 +1009,7 @@ class OutputLengthGuardPlugin(Plugin):
         """
         super().__init__(config)
         self._cfg = OutputLengthGuardConfig(**(config.config or {}))
-        
+
         # Log plugin initialization with configuration summary
         logger.info(
             f"OutputLengthGuard initialized: mode={self._cfg.limit_mode}, "
@@ -1029,7 +1029,7 @@ class OutputLengthGuardPlugin(Plugin):
         Returns:
             Result with length enforcement applied. On error, returns result
             that passes through original data with error metadata.
-            
+
         Note:
             All exceptions are caught and handled internally. On error, passes
             through original result unchanged with error metadata, and logs the
@@ -1037,7 +1037,7 @@ class OutputLengthGuardPlugin(Plugin):
         """
         try:
             cfg = self._cfg
-            
+
             # Log hook invocation
             result_type = type(payload.result).__name__
             logger.info(f"OutputLengthGuard processing tool '{payload.name}' with result type: {result_type}")
@@ -1058,13 +1058,13 @@ class OutputLengthGuardPlugin(Plugin):
                     if not isinstance(text, str):
                         logger.error(f"Invalid text type in handle_text: {type(text).__name__}")
                         return str(text) if text is not None else "", {"error": "invalid_type"}, None
-                    
+
                     # Check if text is numeric (int, float, scientific notation) - if so, don't truncate
                     if _is_numeric_string(text):
                         logger.debug(f"Preserving numeric string: length={len(text)}, value_preview={text[:50]}...")
                         meta = {"original_length": len(text), "numeric": True, "within_bounds": True}
                         return text, meta, None
-                    
+
                     length = _length(text)
                     meta = {"original_length": length}
 
@@ -1072,8 +1072,8 @@ class OutputLengthGuardPlugin(Plugin):
                     # When min_chars=0, we want to skip the minimum check (not treat 0 as False)
                     below_min = cfg.min_chars > 0 and length < cfg.min_chars
                     above_max = cfg.max_chars is not None and length > cfg.max_chars
-                    
-                    
+
+
                     if not (below_min or above_max):
                         logger.debug(f"Text within bounds: length={length}, limits=[{cfg.min_chars}, {cfg.max_chars}]")
                         meta.update({"within_bounds": True})
@@ -1120,7 +1120,7 @@ class OutputLengthGuardPlugin(Plugin):
                     logger.debug(f"Text below minimum but allowing through (truncate mode): length={length}, min={cfg.min_chars}")
                     meta.update({"truncated": False, "new_length": length})
                     return text, meta, None
-                
+
                 except (TypeError, ValueError, AttributeError) as e:
                     logger.error(
                         f"Exception in handle_text: {type(e).__name__}: {str(e)}",
@@ -1142,9 +1142,9 @@ class OutputLengthGuardPlugin(Plugin):
                     return text if isinstance(text, str) else "", {"error": "unexpected_exception"}, None
 
             result = payload.result
-        
+
             result = payload.result
-        
+
             # Case 0: MCP CallToolResult as dict (from model_dump with 'content' key)
             # This is the most common case when tools return MCP-formatted results
             if isinstance(result, dict) and 'content' in result and isinstance(result.get('content'), list):
@@ -1152,14 +1152,14 @@ class OutputLengthGuardPlugin(Plugin):
                 struct_key = None
                 struct_modified = False
                 truncated_struct = None
-            
+
                 if 'structuredContent' in result:
                     struct_key = 'structuredContent'
                 elif 'structured_content' in result:
                     struct_key = 'structured_content'
-            
+
                 if struct_key:
-                
+
                     # Recursively process all strings in structured data (truncate or block)
                     truncated_struct, struct_modified, violation = _process_structured_data(
                         result[struct_key],
@@ -1179,7 +1179,7 @@ class OutputLengthGuardPlugin(Plugin):
                         cfg.max_binary_search_iterations,
                         cfg.limit_mode
                     )
-                
+
                     # If blocking mode triggered a violation, return it immediately
                     if violation:
                         logger.debug(f"🚫 Blocking due to violation in {struct_key}")
@@ -1194,19 +1194,19 @@ class OutputLengthGuardPlugin(Plugin):
                                 "chars_per_token": cfg.chars_per_token
                             }
                         )
-                
+
                     if struct_modified:
                         # Create new result dict
                         new_result = dict(result)
                         new_result[struct_key] = truncated_struct
-                    
+
                         # Regenerate content[0].text from truncated structured data
                         # This content should NOT be truncated - it already contains
                         # the properly truncated strings from structuredContent processing
                         new_text = _generate_text_representation(truncated_struct)
                         new_result['content'] = [{"type": "text", "text": new_text}]
-                    
-                    
+
+
                         return ToolPostInvokeResult(
                             modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result),
                             metadata={
@@ -1220,27 +1220,27 @@ class OutputLengthGuardPlugin(Plugin):
                         )
                     else:
                         return ToolPostInvokeResult(metadata={"mcp_result_processed": True, "items_modified": False, "structured_content_processed": False})
-            
+
                 # NO structuredContent: Process content array normally
                 modified = False
                 out = []
-            
+
                 for item in result['content']:
                     # Check if it's a text content dict (has type='text' and 'text' key)
                     if isinstance(item, dict) and item.get('type') == 'text' and 'text' in item:
                         current_text = item['text']
                         new_text, meta, violation = handle_text(current_text)
-                    
+
                         if violation:
                             return ToolPostInvokeResult(continue_processing=False, violation=violation, metadata=meta)
-                    
+
                         if new_text != current_text:
                             modified = True
                             # Create new dict with modified text, preserving other fields
                             new_item = dict(item)
                             new_item['text'] = new_text
                             out.append(new_item)
-                        
+
                             if hasattr(context, 'logger'):
                                 context.logger.debug(
                                     f"OutputLengthGuard: Truncated text content from {len(current_text)} to {len(new_text)} chars"
@@ -1250,12 +1250,12 @@ class OutputLengthGuardPlugin(Plugin):
                     else:
                         # Non-text content item (image, audio, etc.), pass through
                         out.append(item)
-            
+
                 if modified:
                     # Create new result dict with modified content
                     new_result = dict(result)
                     new_result['content'] = out
-                
+
                     return ToolPostInvokeResult(
                         modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result),
                         metadata={"mcp_result_processed": True, "items_modified": True, "structured_content_processed": False}
@@ -1296,15 +1296,15 @@ class OutputLengthGuardPlugin(Plugin):
                 # MCP format - process text content items
                 modified = False
                 out = []
-            
+
                 for item in result:
                     if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
                         current_text = item["text"]
                         new_text, meta, violation = handle_text(current_text)
-                    
+
                         if violation:
                             return ToolPostInvokeResult(continue_processing=False, violation=violation, metadata=meta)
-                    
+
                         if new_text != current_text:
                             modified = True
                             new_item = dict(item)
@@ -1315,14 +1315,14 @@ class OutputLengthGuardPlugin(Plugin):
                     else:
                         # Non-text content item, pass through
                         out.append(item)
-            
+
                 if modified:
                     return ToolPostInvokeResult(
                         modified_payload=ToolPostInvokePayload(name=payload.name, result=out),
                         metadata={"mcp_content_processed": True}
                     )
                 return ToolPostInvokeResult(metadata={"mcp_content_processed": True})
-        
+
             # Case 4: List of strings
             if isinstance(result, list) and all(isinstance(x, str) for x in result):
                 texts: List[str] = result
@@ -1382,7 +1382,7 @@ class OutputLengthGuardPlugin(Plugin):
                 continue_processing=True,
                 metadata={"skipped": True, "reason": f"unsupported_type_{result_type}"}
             )
-        
+
         except (TypeError, ValueError, AttributeError, KeyError) as e:
             logger.error(
                 f"Exception in tool_post_invoke: {type(e).__name__}: {str(e)}",
