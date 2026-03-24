@@ -848,16 +848,26 @@ class TestToolDescriptionForbiddenPatterns:
     """Tests for configurable forbidden pattern validation on tool descriptions."""
 
     def test_default_patterns_block_forbidden_chars(self, monkeypatch):
-        """Default forbidden patterns reject known unsafe substrings."""
+        """Default forbidden patterns reject known unsafe substrings in strict mode."""
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$(", "|", "> ", "< "])
+        monkeypatch.setattr(settings, "validation_strict", True)
         for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"description with {pat} inside")
 
+    def test_non_strict_mode_warns_instead_of_rejecting(self, monkeypatch):
+        """When VALIDATION_STRICT=false, forbidden patterns produce a warning, not an error."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";"])
+        monkeypatch.setattr(settings, "validation_strict", False)
+        result = ToolCreate.validate_description("run && something")
+        assert result is not None
+
     def test_disabled_allows_any_description(self, monkeypatch):
         """Disabling forbidden patterns allows descriptions with any content."""
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", False)
+        monkeypatch.setattr(settings, "validation_strict", True)
         result = ToolCreate.validate_description("run; rm -rf / && $(evil)")
         assert result is not None
 
@@ -865,6 +875,7 @@ class TestToolDescriptionForbiddenPatterns:
         """Custom pattern list replaces the default list entirely."""
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["EVIL"])
+        monkeypatch.setattr(settings, "validation_strict", True)
         # Default patterns like ";" are no longer blocked
         result = ToolCreate.validate_description("run; something")
         assert ";" in result
