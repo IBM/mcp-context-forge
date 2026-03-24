@@ -1542,6 +1542,25 @@ async def test_streamable_http_auth_requires_auth_for_servers_mcp_sse(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_requires_auth_for_servers_mcp_message(monkeypatch):
+    """Auth should require authentication for /servers/{id}/mcp/message paths."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    scope = _make_scope("/servers/test-server-id/mcp/message")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert len(called) == 2  # http.response.start + http.response.body
+    assert called[0]["type"] == "http.response.start"
+    assert called[0]["status"] == 401
+    assert called[1]["type"] == "http.response.body"
+    assert b"Authentication required" in called[1]["body"]
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_allows_mcp_sse_with_valid_token(monkeypatch):
     """Auth should allow /mcp/sse with valid Bearer token."""
     # Standard

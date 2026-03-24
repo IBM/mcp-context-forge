@@ -3006,10 +3006,11 @@ class _StreamableHttpAuthHandler:
     async def authenticate(self) -> bool:
         """Perform authentication check in middleware context (ASGI scope).
 
-        Authenticates only requests targeting paths ending in "/mcp" or "/mcp/".
+        Authenticates requests targeting MCP transport paths: ``/mcp``, ``/mcp/``,
+        ``/mcp/sse``, and ``/mcp/message`` (including ``/servers/{id}/...`` prefixed variants).
 
         Behavior:
-        - If the path does not end with "/mcp", authentication is skipped.
+        - If the path is not an MCP transport path, authentication is skipped.
         - If mcp_require_auth=True (strict mode): requests without valid auth are rejected with 401.
         - If mcp_require_auth=False (permissive mode):
           - Requests without auth are allowed but get public-only access (token_teams=[]).
