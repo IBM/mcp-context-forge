@@ -14645,12 +14645,16 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     name="max_members"
                     id="team-max-members"
                     min="1"
-                    max="1000"
-                    value="50"
+                    {% if not is_admin %}max="{{ max_members_per_team }}"{% endif %}
+                    value="{{ [50, max_members_per_team] | min }}"
                     class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   />
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Optional, defaults to 50
+                    {% if is_admin %}
+                    Optional. Admins can set any limit.
+                    {% else %}
+                    Optional, defaults to {{ [50, max_members_per_team] | min }}.
+                    {% endif %}
                   </p>
                 </div>
               </div>
