@@ -482,10 +482,12 @@ class TestHealthAndInfrastructure:
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
 
-    def test_health_check_db_error(self):
+    @pytest.mark.asyncio
+    async def test_health_check_db_error(self):
         """Test health check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
+        from starlette.responses import Response as FastAPIResponse
 
         class DummySession:
             def __init__(self):
@@ -508,8 +510,9 @@ class TestHealthAndInfrastructure:
 
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
-            response = mcpgateway_main.healthcheck()
-        assert response["status"] == "unhealthy"
+            response_obj = FastAPIResponse()
+            result = await mcpgateway_main.healthcheck(response_obj)
+        assert result.status == "unhealthy"
         assert session.invalidate_called is True
 
     @pytest.mark.asyncio
