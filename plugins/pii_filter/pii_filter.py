@@ -130,9 +130,9 @@ class PIIFilterConfig(BaseModel):
     include_detection_details: bool = Field(default=True, description="Include detection details in metadata")
 
     # Resource limits for the Rust implementation
-    max_text_bytes: int = Field(default=256 * 1024, gt=0, description="Maximum text payload size accepted by the Rust detector")
-    max_nested_depth: int = Field(default=32, gt=0, description="Maximum nested depth accepted by the Rust detector")
-    max_collection_items: int = Field(default=4096, gt=0, description="Maximum list or mapping size accepted by the Rust detector")
+    max_text_bytes: int = Field(default=256 * 1024, gt=0, le=100 * 1024 * 1024, description="Maximum text payload size accepted by the Rust detector (max 100MB)")
+    max_nested_depth: int = Field(default=32, gt=0, le=1000, description="Maximum nested depth accepted by the Rust detector (max 1000)")
+    max_collection_items: int = Field(default=4096, gt=0, le=1_000_000, description="Maximum list or mapping size accepted by the Rust detector (max 1M)")
 
     # Custom patterns
     custom_patterns: List[PIIPattern] = Field(default_factory=list, description="Custom PII patterns to detect")

@@ -205,6 +205,15 @@ config:
       enabled: true
 ```
 
+**Custom Pattern Complexity Limits (DoS Prevention):**
+
+To prevent Regular Expression Denial of Service (ReDoS) attacks, custom patterns are subject to the following limits:
+- **Maximum pattern length:** 256 characters
+- **Maximum alternations (`|`):** 16
+- **Maximum quantifiers (`*`, `+`, `?`, `{}`):** 24
+
+These limits ensure that custom patterns cannot create pathological regex behavior that could consume excessive CPU resources. Patterns exceeding these limits will be rejected during configuration validation.
+
 Test the custom pattern:
 ```python
 from plugins.pii_filter.pii_filter import PIIFilterPlugin, PIIFilterConfig, PIIDetector
