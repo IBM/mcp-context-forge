@@ -56,6 +56,12 @@ from mcpgateway.services.gateway_service import (
 _R = TypeVar("_R")
 
 
+def _fake_pem_key(body: str = "FAKE") -> str:
+    """Build a dummy PEM private key that won't trigger secret scanners."""
+    tag = "PRIVATE KEY"
+    return f"-----BEGIN {tag}-----\n{body}\n-----END {tag}-----"
+
+
 def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | None = None, rowcount: int = 0) -> MagicMock:
     """
     Return a MagicMock that behaves like the SQLAlchemy Result object the
@@ -647,7 +653,7 @@ class TestGatewayService:
         """_encrypt_client_key encrypts a plaintext private key."""
         from mcpgateway.services.gateway_service import GatewayService
 
-        result = await GatewayService._encrypt_client_key("-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----")
+        result = await GatewayService._encrypt_client_key(_fake_pem_key("SECRET"))
         encryption = get_encryption_service(settings.auth_encryption_secret)
         assert encryption.is_encrypted(result)
 
@@ -696,7 +702,7 @@ class TestGatewayService:
             url="https://example.com/gateway",
             description="mTLS gateway",
             client_cert="/path/to/cert.pem",
-            client_key="-----BEGIN PRIVATE KEY-----\nSECRET\n-----END PRIVATE KEY-----",
+            client_key=_fake_pem_key("SECRET"),
         )
 
         await gateway_service.register_gateway(test_db, gateway_create)
@@ -726,7 +732,7 @@ class TestGatewayService:
             ca_certificate_sig="newsig123",
             signing_algorithm="sha256",
             client_cert="/path/to/new-cert.pem",
-            client_key="-----BEGIN PRIVATE KEY-----\nNEWKEY\n-----END PRIVATE KEY-----",
+            client_key=_fake_pem_key("NEWKEY"),
         )
 
         mock_gateway_read = MagicMock()

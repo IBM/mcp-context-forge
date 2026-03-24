@@ -11,7 +11,7 @@ Gateways page object for MCP Server & Federated Gateway management.
 import logging
 
 # Third-Party
-from playwright.sync_api import expect, Locator
+from playwright.sync_api import Error as PlaywrightError, expect, Locator
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
@@ -675,6 +675,8 @@ class GatewaysPage(BasePage):
         avoiding the issue where client-side search filtering hides rows via CSS
         but gateway_rows.nth(0) still returns the first DOM row (possibly hidden).
 
+        Retries on detached-element errors caused by HTMX table swaps.
+
         Args:
             gateway_name: Name of the gateway to delete
             confirm: Whether to confirm the deletion dialog (default: True)
@@ -682,18 +684,24 @@ class GatewaysPage(BasePage):
         Returns:
             True if gateway was found and deleted, False if not found
         """
-        # Check if gateway exists
         if not self.gateway_exists(gateway_name):
             return False
 
-        # Find the specific row by name and click its delete button
-        gateway_row = self.get_gateway_row_by_name(gateway_name)
-        gateway_row.first.scroll_into_view_if_needed()
+        for attempt in range(3):
+            try:
+                gateway_row = self.get_gateway_row_by_name(gateway_name)
+                gateway_row.first.wait_for(state="attached", timeout=5000)
+                gateway_row.first.scroll_into_view_if_needed()
+                delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
+                self._click_delete_and_wait(delete_btn, confirm)
+                return True
+            except PlaywrightError as exc:
+                if "not attached to the DOM" in str(exc) and attempt < 2:
+                    self.page.wait_for_timeout(500)
+                    continue
+                raise
 
-        delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
-        self._click_delete_and_wait(delete_btn, confirm)
-
-        return True
+        return False
 
     def delete_gateway_by_url(self, gateway_url: str, confirm: bool = True) -> bool:
         """Delete ALL gateways with the specified URL.

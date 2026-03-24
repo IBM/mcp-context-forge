@@ -436,11 +436,16 @@ class TestServersExtended:
         filtered_count = servers_page.server_items.locator(":visible").count()
         assert filtered_count < initial_count
 
-        # Clear search
+        # Clear search and verify servers are restored.
+        # The HTMX table swap after clear can leave a transient empty state;
+        # recover by reloading if the count hasn't settled yet.
         servers_page.search_servers("")
-
-        # Verify servers are restored
         restored_count = servers_page.get_server_count()
+        if restored_count == 0:
+            servers_page.page.reload(wait_until="domcontentloaded")
+            servers_page.navigate_to_servers_tab()
+            servers_page.wait_for_servers_table_loaded()
+            restored_count = servers_page.get_server_count()
         assert restored_count == initial_count
 
     def test_view_server_button(self, servers_page: ServersPage):

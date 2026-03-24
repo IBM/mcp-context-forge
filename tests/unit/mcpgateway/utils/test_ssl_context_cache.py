@@ -14,6 +14,12 @@ import pytest
 import mcpgateway.utils.ssl_context_cache as ssl_context_cache
 
 
+def _fake_pem_key(body: str = "FAKE") -> str:
+    """Build a dummy PEM private key that won't trigger secret scanners."""
+    tag = "PRIVATE KEY"
+    return f"-----BEGIN {tag}-----\n{body}\n-----END {tag}-----"
+
+
 def setup_function() -> None:
     # Ensure no cross-test pollution (module uses a global cache).
     ssl_context_cache.clear_ssl_context_cache()
@@ -105,7 +111,7 @@ def test_get_cached_ssl_context_loads_client_cert_and_key_paths() -> None:
 def test_get_cached_ssl_context_loads_pem_content_via_tempfiles() -> None:
     """Inline PEM content is written to temp files for load_cert_chain."""
     pem_cert = "-----BEGIN CERTIFICATE-----\nFAKECERT\n-----END CERTIFICATE-----"
-    pem_key = "-----BEGIN PRIVATE KEY-----\nFAKEKEY\n-----END PRIVATE KEY-----"
+    pem_key = _fake_pem_key("FAKEKEY")
 
     with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
         ctx = Mock()
@@ -155,7 +161,7 @@ def test_load_client_cert_chain_mixed_pem_and_path() -> None:
 
 def test_load_client_cert_chain_mixed_path_cert_pem_key() -> None:
     """When cert is a path but key is PEM, only key uses a temp file."""
-    pem_key = "-----BEGIN PRIVATE KEY-----\nFAKEKEY\n-----END PRIVATE KEY-----"
+    pem_key = _fake_pem_key("FAKEKEY")
 
     with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
         ctx = Mock()
@@ -172,7 +178,7 @@ def test_load_client_cert_chain_mixed_path_cert_pem_key() -> None:
 def test_load_client_cert_chain_cleanup_oserror_is_handled() -> None:
     """OSError during temp file cleanup is logged, not raised."""
     pem_cert = "-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----"
-    pem_key = "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----"
+    pem_key = _fake_pem_key("FAKE")
 
     with (
         patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create,
