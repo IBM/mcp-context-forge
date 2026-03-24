@@ -1601,6 +1601,22 @@ async def test_streamable_http_auth_allows_mcp_message_with_valid_token(monkeypa
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/mcp/sse/", "/mcp/message/", "/servers/test-id/mcp/sse/", "/servers/test-id/mcp/message/"])
+async def test_streamable_http_auth_requires_auth_for_trailing_slash_variants(monkeypatch, path):
+    """Auth must not be bypassed by appending a trailing slash to MCP transport paths."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    scope = _make_scope(path)
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False, f"Path {path} should require auth but was allowed through"
+    assert called[0]["status"] == 401
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_skips_cors_preflight():
     """Auth returns True for CORS preflight requests (OPTIONS with Origin and Access-Control-Request-Method)."""
     # CORS preflight requests cannot carry Authorization headers, so they must be exempt from auth
