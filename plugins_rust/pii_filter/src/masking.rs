@@ -165,7 +165,7 @@ fn hash_mask(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
     let result = hasher.finalize();
-    format!("[HASH:{}]", &format!("{:x}", result)[..8])
+    format!("[HASH:{}]", &format!("{:x}", result)[..16])
 }
 
 /// Tokenize using UUID v4
@@ -202,7 +202,7 @@ mod tests {
         let result = hash_mask("sensitive");
         assert!(result.starts_with("[HASH:"));
         assert!(result.ends_with("]"));
-        assert_eq!(result.len(), 15); // [HASH:xxxxxxxx]
+        assert_eq!(result.len(), 23); // [HASH:xxxxxxxxxxxxxxxx]
     }
 
     #[test]
@@ -245,6 +245,9 @@ mod tests {
         );
 
         let result = mask_pii(text, &detections, &config);
-        assert_eq!(result, "Contact J**é at jose@example.com and Jose Alvarez tomorrow");
+        assert_eq!(
+            result,
+            "Contact J**é at jose@example.com and Jose Alvarez tomorrow"
+        );
     }
 }

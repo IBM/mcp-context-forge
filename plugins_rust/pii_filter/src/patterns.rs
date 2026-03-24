@@ -31,28 +31,27 @@ type PatternDef = (&'static str, &'static str, MaskingStrategy);
 
 // SSN patterns
 static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(
-        r"\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b",
-        "US Social Security Number",
-        MaskingStrategy::Partial,
-    )]
-});
-
-// BSN patterns (Dutch Burgerservicenummer)
-// Match 9-digit numbers with BSN context keywords to avoid false positives
-// Positive context: BSN, Citizen ID, Burgerservicenummer, ID, Order, Invoice, Tracking, Numbers, etc.
-// Note: Removed negative lookbehind (not supported by standard regex crate)
-// Phone numbers are filtered by the phone detector which runs first
-static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![
         (
-            r"\b(?:BSN|Citizen\s+ID|Burgerservicenummer)[:\s#]*\d{9}\b",
-            "Dutch BSN with explicit context",
+            r"\b\d{3}-\d{2}-\d{4}\b",
+            "US Social Security Number",
             MaskingStrategy::Partial,
         ),
         (
-            r"\b(?:ID|Order|Invoice|Tracking|Numbers?)[:\s#]*\d{9}\b",
-            "9-digit ID with generic context",
+            r"\b(?:SSN|Social\s+Security(?:\s+Number)?)[:\s#-]*\d{9}\b",
+            "US Social Security Number with explicit context",
+            MaskingStrategy::Partial,
+        ),
+    ]
+});
+
+// BSN patterns (Dutch Burgerservicenummer)
+// Match 9-digit numbers only with explicit BSN-style context to avoid broad false positives.
+static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
+    vec![
+        (
+            r"\b(?:BSN|Citizen\s+ID|Citizen\s+Service\s+Number|Burgerservicenummer)[:\s#]*\d{9}\b",
+            "Dutch BSN with explicit context",
             MaskingStrategy::Partial,
         ),
         (
@@ -64,14 +63,13 @@ static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 });
 
 // Credit card patterns
-static CREDIT_CARD_PATTERNS: Lazy<Vec<PatternDef>> =
-    Lazy::new(|| {
-        vec![(
-            r"\b(?:\d{4}[-\s]?){3}\d{4}\b",
-            "Credit card number",
-            MaskingStrategy::Partial,
-        )]
-    });
+static CREDIT_CARD_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
+    vec![(
+        r"\b(?:\d{4}[-\s]?){3}\d{4}\b",
+        "Credit card number",
+        MaskingStrategy::Partial,
+    )]
+});
 
 // Email patterns
 static EMAIL_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
@@ -131,14 +129,13 @@ static DOB_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 });
 
 // Passport patterns
-static PASSPORT_PATTERNS: Lazy<Vec<PatternDef>> =
-    Lazy::new(|| {
-        vec![(
-            r"\b[A-Z]{1,2}\d{6,9}\b",
-            "Passport number",
-            MaskingStrategy::Redact,
-        )]
-    });
+static PASSPORT_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
+    vec![(
+        r"\b(?:Passport|Passport\s+No|Passport\s+Number)[#:\s-]+[A-Z0-9]{6,9}\b",
+        "Passport number with explicit context",
+        MaskingStrategy::Redact,
+    )]
+});
 
 // Driver's license patterns
 static DRIVER_LICENSE_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
@@ -153,8 +150,8 @@ static DRIVER_LICENSE_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 static BANK_ACCOUNT_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![
         (
-            r"\b\d{8,17}\b",
-            "Bank account number",
+            r"\b(?:Account|Acct|Bank\s+Account|Account\s+Number|Routing\s+Account)[#:\s-]*\d{8,17}\b",
+            "Bank account number with explicit context",
             MaskingStrategy::Redact,
         ),
         (
@@ -183,8 +180,8 @@ static AWS_KEY_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
             MaskingStrategy::Redact,
         ),
         (
-            r"\b[A-Za-z0-9/+=]{40}\b",
-            "AWS Secret Access Key",
+            r#"\b(?:aws[_\s-]*secret(?:[_\s-]*access)?[_\s-]*key|secret[_\s-]*access[_\s-]*key)[:=\s'"]+[A-Za-z0-9/+=]{40}\b"#,
+            "AWS Secret Access Key with explicit context",
             MaskingStrategy::Redact,
         ),
     ]
@@ -272,6 +269,8 @@ pub fn compile_patterns(config: &PIIConfig) -> Result<CompiledPatterns, String> 
     // Add custom patterns
     for custom in &config.custom_patterns {
         if custom.enabled {
+            validate_custom_pattern(&custom.pattern)?;
+
             // Add case-insensitive flag to pattern string for RegexSet
             pattern_strings.push(format!("(?i){}", custom.pattern));
             let regex = regex::RegexBuilder::new(&custom.pattern)
@@ -319,6 +318,45 @@ pub fn compile_patterns(config: &PIIConfig) -> Result<CompiledPatterns, String> 
     })
 }
 
+fn validate_custom_pattern(pattern: &str) -> Result<(), String> {
+    const MAX_CUSTOM_PATTERN_LEN: usize = 256;
+    const MAX_ALTERNATIONS: usize = 16;
+    const MAX_QUANTIFIERS: usize = 24;
+
+    if pattern.trim().is_empty() {
+        return Err("Custom pattern cannot be empty".to_string());
+    }
+
+    if pattern.len() > MAX_CUSTOM_PATTERN_LEN {
+        return Err(format!(
+            "Custom pattern exceeds {} characters",
+            MAX_CUSTOM_PATTERN_LEN
+        ));
+    }
+
+    let alternations = pattern.matches('|').count();
+    if alternations > MAX_ALTERNATIONS {
+        return Err(format!(
+            "Custom pattern has too many alternations (max {})",
+            MAX_ALTERNATIONS
+        ));
+    }
+
+    let quantifiers = pattern
+        .chars()
+        .filter(|ch| matches!(ch, '*' | '+' | '?'))
+        .count()
+        + pattern.matches('{').count();
+    if quantifiers > MAX_QUANTIFIERS {
+        return Err(format!(
+            "Custom pattern has too many quantifiers (max {})",
+            MAX_QUANTIFIERS
+        ));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,6 +386,30 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_regex_set_when_all_detectors_disabled() {
+        let config = PIIConfig {
+            detect_ssn: false,
+            detect_bsn: false,
+            detect_credit_card: false,
+            detect_email: false,
+            detect_phone: false,
+            detect_ip_address: false,
+            detect_date_of_birth: false,
+            detect_passport: false,
+            detect_driver_license: false,
+            detect_bank_account: false,
+            detect_medical_record: false,
+            detect_aws_keys: false,
+            detect_api_keys: false,
+            ..Default::default()
+        };
+
+        let compiled = compile_patterns(&config).unwrap();
+        assert!(compiled.regex_set.is_empty());
+        assert!(compiled.patterns.is_empty());
+    }
+
+    #[test]
     fn test_email_pattern() {
         let config = PIIConfig {
             detect_email: true,
@@ -359,5 +421,19 @@ mod tests {
         let matches: Vec<_> = compiled.regex_set.matches(text).into_iter().collect();
 
         assert!(!matches.is_empty());
+    }
+
+    #[test]
+    fn test_rejects_overly_complex_custom_pattern() {
+        let mut config = PIIConfig::default();
+        config.custom_patterns.push(super::super::config::CustomPattern {
+            pattern: "(foo|bar|baz|qux|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen)".to_string(),
+            description: "Too many branches".to_string(),
+            mask_strategy: MaskingStrategy::Redact,
+            enabled: true,
+        });
+
+        let err = compile_patterns(&config).err().unwrap();
+        assert!(err.contains("too many alternations"));
     }
 }
