@@ -12390,6 +12390,9 @@ async def test_cache_invalidation_endpoints(monkeypatch, mock_db, allow_permissi
     cache = MagicMock()
     cache.stats.return_value = {"hits": 1}
     monkeypatch.setattr("mcpgateway.admin.global_config_cache", cache)
+    # invalidate_passthrough_header_caches() calls global_config_cache.invalidate()
+    # via its own module reference, so patch there too.
+    monkeypatch.setattr("mcpgateway.utils.passthrough_headers.global_config_cache", cache)
 
     result = await _unwrap(invalidate_passthrough_headers_cache)(_user={"email": "user@example.com", "db": mock_db})
     assert result["status"] == "invalidated"

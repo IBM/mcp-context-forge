@@ -1685,7 +1685,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             internal_base_url = internal_loopback_base_url()
             async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                 # Build headers for internal request - forward original headers
-                # but add x-forwarded-internally to prevent infinite loops
+                # but add x-forwarded-internally to prevent infinite loops.
+                # Relies on the originating transport having already filtered
+                # passthrough headers via extract_headers_for_loopback (#3640).
                 internal_headers = dict(headers)
                 internal_headers["x-forwarded-internally"] = "true"
                 # Ensure content-type is set
@@ -1771,7 +1773,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
             logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
 
-            # Add internal forwarding headers to prevent loops
+            # Add internal forwarding headers to prevent loops.
+            # Relies on the originating transport having already filtered
+            # passthrough headers via extract_headers_for_loopback (#3640).
             internal_headers = dict(headers)
             internal_headers["x-forwarded-internally"] = "true"
             internal_headers["x-original-worker"] = request.get("original_worker", "unknown")

@@ -2614,6 +2614,11 @@ class SessionManagerWrapper:
                     # Copy auth header if present
                     if "authorization" in headers:
                         rpc_headers["authorization"] = headers["authorization"]
+                    # Forward passthrough headers for upstream MCP servers (see #3640).
+                    # First-Party
+                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
                     response = await client.post(
                         f"{internal_loopback_base_url()}/rpc",
@@ -2775,6 +2780,11 @@ class SessionManagerWrapper:
                             }
                             if "authorization" in headers:
                                 rpc_headers["authorization"] = headers["authorization"]
+                            # Forward passthrough headers for upstream MCP servers (see #3640).
+                            # First-Party
+                            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
                             response = await client.post(
                                 f"{internal_loopback_base_url()}/rpc",
