@@ -10828,7 +10828,7 @@ async def test_read_resource_oauth_enforcement_with_authenticated_context(monkey
 async def test_call_tool_oauth_enforcement_with_authenticated_context(monkeypatch):
     """call_tool calls _check_server_oauth_enforcement in permissive mode."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, user_context_var
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
     monkeypatch.setattr(
