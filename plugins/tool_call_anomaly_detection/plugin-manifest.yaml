@@ -1,0 +1,21 @@
+description: "Detects anomalous tool-calling patterns per user/agent using behavioral baselines — burst detection, novel tool access, frequency deviation, and off-hours scoring."
+author: "Anuj Shrivastava"
+version: "0.1.0"
+tags: ["security", "anomaly-detection", "behavioral", "audit"]
+available_hooks:
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_config:
+  learning_window_seconds: 3600
+  burst_window_seconds: 60
+  burst_threshold: 20
+  novelty_score_weight: 0.35
+  burst_score_weight: 0.35
+  frequency_score_weight: 0.15
+  block_threshold: 0.8
+  warn_threshold: 0.5
+  max_history_per_user: 1000
+  off_hours_start: 22
+  off_hours_end: 6
+  off_hours_score_bonus: 0.15
+  action: "warn"
