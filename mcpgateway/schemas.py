@@ -8049,6 +8049,20 @@ class CacheMetricsSchema(BaseModel):
     keyspace_hits: int = Field(0, description="Successful key lookups")
     keyspace_misses: int = Field(0, description="Failed key lookups")
 
+class HealthStatusItem(BaseModel):
+    """Individual health status item for a service component."""
+
+    name: str = Field(..., description="Component name (e.g., 'Database', 'Redis')")
+    statusCode: int = Field(..., description="HTTP status code (200 for healthy, 503 for unhealthy)")
+    message: str = Field(..., description="Status message describing the component state")
+
+
+class HealthCheckResponse(BaseModel):
+    """Health check response containing status of all monitored components."""
+
+    status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'unhealthy' otherwise")
+    statusItems: List[HealthStatusItem] = Field(..., description="List of component health statuses")
+
 
 class GunicornMetricsSchema(BaseModel):
     """Gunicorn server metrics."""
