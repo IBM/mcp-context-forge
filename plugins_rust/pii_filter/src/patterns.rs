@@ -89,7 +89,7 @@ static PHONE_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
             MaskingStrategy::Partial,
         ),
         (
-            r"\b\+[1-9]\d{9,14}\b",
+            r"\+[1-9]\d{9,14}\b",
             "International phone number",
             MaskingStrategy::Partial,
         ),
@@ -190,7 +190,7 @@ static AWS_KEY_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 // API key patterns
 static API_KEY_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
-        r#"\b(?:api[_-]?key|apikey|api_token|access[_-]?token)[:\s]+['"]?[A-Za-z0-9\-_]{20,}['"]?\b"#,
+        r#"\b(?:[A-Za-z0-9_]*_)?(?:api[_-]?key|apikey|api_token|access[_-]?token)\s*[:=]\s*['"]?[A-Za-z0-9\-_]{20,}['"]?\b"#,
         "Generic API key",
         MaskingStrategy::Redact,
     )]

@@ -191,6 +191,8 @@ impl PIIDetectorRust {
     /// # Returns
     /// Masked text with PII replaced
     pub fn mask(&self, text: &str, detections: &Bound<'_, PyAny>) -> PyResult<String> {
+        validate_text_size(text, self.config.max_text_bytes)?;
+
         // Convert Python detections back to Rust format
         let rust_detections = self.py_detections_to_rust(detections)?;
 
@@ -1181,9 +1183,67 @@ mod tests {
             data.append("a@example.com").unwrap();
             data.append("b@example.com").unwrap();
 
-            let err = detector.process_nested(py, &data.into_any(), "").unwrap_err();
+            let err = detector
+                .process_nested(py, &data.into_any(), "")
+                .unwrap_err();
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });
+    }
+
+    #[test]
+    fn test_detects_api_key_assignment_syntax() {
+        let config = PIIConfig {
+            detect_ssn: false,
+            detect_bsn: false,
+            detect_credit_card: false,
+            detect_email: false,
+            detect_phone: false,
+            detect_ip_address: false,
+            detect_date_of_birth: false,
+            detect_passport: false,
+            detect_driver_license: false,
+            detect_bank_account: false,
+            detect_medical_record: false,
+            detect_aws_keys: false,
+            detect_api_keys: true,
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+
+        assert!(
+            detector
+                .detect_internal("OPENAI_API_KEY=fake_token_value_1234567890")
+                .contains_key(&PIIType::ApiKey)
+        );
+    }
+
+    #[test]
+    fn test_detects_plus_prefixed_international_phone_number() {
+        let config = PIIConfig {
+            detect_ssn: false,
+            detect_bsn: false,
+            detect_credit_card: false,
+            detect_email: false,
+            detect_phone: true,
+            detect_ip_address: false,
+            detect_date_of_birth: false,
+            detect_passport: false,
+            detect_driver_license: false,
+            detect_bank_account: false,
+            detect_medical_record: false,
+            detect_aws_keys: false,
+            detect_api_keys: false,
+            ..Default::default()
+        };
+        let patterns = compile_patterns(&config).unwrap();
+        let detector = PIIDetectorRust { patterns, config };
+
+        assert!(
+            detector
+                .detect_internal("+353871234567")
+                .contains_key(&PIIType::Phone)
+        );
     }
 
     #[test]
@@ -1200,9 +1260,7 @@ mod tests {
             let detections = PyDict::new(py);
             let items = PyList::empty(py);
             let bad_detection = PyDict::new(py);
-            bad_detection
-                .set_item("value", "john@example.com")
-                .unwrap();
+            bad_detection.set_item("value", "john@example.com").unwrap();
             bad_detection.set_item("start", 0).unwrap();
             bad_detection.set_item("end", 16).unwrap();
             items.append(bad_detection).unwrap();
@@ -1210,6 +1268,32 @@ mod tests {
 
             let err = detector
                 .mask("john@example.com", &detections.into_any())
+                .unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+        });
+    }
+
+    #[test]
+    fn test_mask_rejects_oversized_input() {
+        Python::initialize();
+        Python::attach(|py| {
+            let config = PyDict::new(py);
+            config.set_item("detect_email", true).unwrap();
+            config.set_item("max_text_bytes", 8).unwrap();
+
+            let detector = PIIDetectorRust::new(&config.into_any()).unwrap();
+            let detections = PyDict::new(py);
+            let items = PyList::empty(py);
+            let detection = PyDict::new(py);
+            detection.set_item("value", "123456789").unwrap();
+            detection.set_item("start", 0).unwrap();
+            detection.set_item("end", 9).unwrap();
+            detection.set_item("mask_strategy", "redact").unwrap();
+            items.append(detection).unwrap();
+            detections.set_item("custom", items).unwrap();
+
+            let err = detector
+                .mask("123456789", &detections.into_any())
                 .unwrap_err();
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });

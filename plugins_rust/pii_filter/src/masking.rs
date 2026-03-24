@@ -79,7 +79,9 @@ fn validate_detection_ranges(
             }
 
             if !text.is_char_boundary(detection.start) || !text.is_char_boundary(detection.end) {
-                return Err("Invalid detection range: offsets must align to UTF-8 boundaries".to_string());
+                return Err(
+                    "Invalid detection range: offsets must align to UTF-8 boundaries".to_string(),
+                );
             }
 
             ranges.push((detection.start, detection.end));
