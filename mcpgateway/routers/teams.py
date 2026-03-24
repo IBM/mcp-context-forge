@@ -388,7 +388,7 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
                 )
 
         success = await service.update_team(
-            team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=bool(current_user.get("is_admin"))
+            team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=is_admin
         )
 
         if not success:

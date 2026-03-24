@@ -1203,6 +1203,25 @@ class TestTeamsRouter:
             assert "max_members cannot exceed 100" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
+    async def test_update_team_non_admin_max_members_at_limit(self, mock_user_context, mock_team, mock_db):
+        """Non-admin users can set max_members exactly at the configured limit on update."""
+        team_id = str(uuid4())
+        request = TeamUpdateRequest(max_members=100)
+
+        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_settings.max_members_per_team = 100
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.update_team = AsyncMock(return_value=True)
+            mock_service.get_team_by_id = AsyncMock(return_value=mock_team)
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import update_team
+
+            result = await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
+            assert result.id == mock_team.id
+
+    @pytest.mark.asyncio
     async def test_update_team_admin_can_exceed_max_members(self, mock_admin_context, mock_team, mock_db):
         """Admin users can set max_members above the configured limit on update."""
         team_id = str(uuid4())
