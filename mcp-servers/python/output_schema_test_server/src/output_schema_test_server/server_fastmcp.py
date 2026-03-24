@@ -10,11 +10,13 @@ MCP server for testing the outputSchema field support in tools.
 Implements tools with explicit output schemas to verify the complete workflow.
 """
 
+# Standard
 import argparse
 import logging
 import sys
-from typing import Any, List, Dict
+from typing import Any
 
+# Third-Party
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -79,15 +81,11 @@ async def multiply_numbers(
 ) -> CalculationResult:
     """Multiply two numbers and return a structured result."""
     logger.info(f"Multiplying {a} * {b}")
-    return CalculationResult(
-        result=a * b, operation="multiplication", operands=[a, b], success=True
-    )
+    return CalculationResult(result=a * b, operation="multiplication", operands=[a, b], success=True)
 
 
 @mcp.tool(description="Divide two numbers with error handling in output")
-async def divide_numbers(
-    a: float = Field(..., description="Numerator"), b: float = Field(..., description="Denominator")
-) -> CalculationResult:
+async def divide_numbers(a: float = Field(..., description="Numerator"), b: float = Field(..., description="Denominator")) -> CalculationResult:
     """Divide two numbers with error handling."""
     logger.info(f"Dividing {a} / {b}")
 
@@ -122,6 +120,7 @@ async def validate_email(
     email: str = Field(..., description="Email address to validate"),
 ) -> ValidationResult:
     """Validate an email address and return structured validation result."""
+    # Standard
     import re
 
     email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
@@ -206,24 +205,23 @@ async def echo(message: str = Field(..., description="Message to echo back")) ->
     return f"Echo: {message}"
 
 
-
-
 @mcp.tool(description="Inspectable echo tool")
-async def echo_back(message: str) -> str|int:
+async def echo_back(message: str) -> str:
+    """Echo a message back as-is for inspection."""
     return f"{message}"
 
 
 class NestedData(BaseModel):
     """Example of nested data with lists and dictionaries."""
+
     message: str = Field(..., description="A simple string message")
     num: str = Field(..., description="A large number as string")
-    nested_list: List[Any] = Field(..., description="A nested list, can contain strings or lists")
-    nested_dict: Dict[str, Any] = Field(..., description="A nested dictionary, can contain strings, lists, or dicts")
+    nested_list: list[Any] = Field(..., description="A nested list, can contain strings or lists")
+    nested_dict: dict[str, Any] = Field(..., description="A nested dictionary, can contain strings, lists, or dicts")
+
 
 @mcp.tool(description="Echo nested list and dictionary structure")
-async def echo_nested(
-    data: NestedData
-) -> NestedData:
+async def echo_nested(data: NestedData) -> NestedData:
     """
     Accepts a nested structure and returns it as-is.
     Demonstrates nested list and dict support in MCP output schema.
@@ -261,9 +259,7 @@ async def get_server_info() -> dict[str, Any]:
 
 def main() -> None:
     """Main server entry point with transport selection."""
-    parser = argparse.ArgumentParser(
-        description="Output Schema Test MCP Server - Tests outputSchema field support"
-    )
+    parser = argparse.ArgumentParser(description="Output Schema Test MCP Server - Tests outputSchema field support")
     parser.add_argument(
         "--transport",
         choices=["stdio", "http"],
@@ -271,9 +267,7 @@ def main() -> None:
         help="Transport mode (stdio or http)",
     )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host (only for http transport)")
-    parser.add_argument(
-        "--port", type=int, default=9100, help="HTTP port (only for http transport)"
-    )
+    parser.add_argument("--port", type=int, default=9100, help="HTTP port (only for http transport)")
 
     args = parser.parse_args()
 
