@@ -1195,6 +1195,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
+            # Invalidate loopback passthrough cache when a new gateway has passthrough headers (#3640)
+            if gateway.passthrough_headers:
+                # First-Party
+                from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
+
+                invalidate_passthrough_header_caches()
+
             logger.info(f"Registered gateway: {SecurityValidator.sanitize_log_message(gateway.name)}")
 
             # Structured logging: Audit trail for gateway creation
@@ -2332,6 +2339,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 await admin_stats_cache.invalidate_tags()
 
+                # Invalidate loopback passthrough cache when gateway headers change (#3640)
+                if gateway_update.passthrough_headers is not None:
+                    # First-Party
+                    from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
+
+                    invalidate_passthrough_header_caches()
+
                 # Notify subscribers
                 await self._notify_gateway_updated(gateway)
 
@@ -3030,6 +3044,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
+
+            # Invalidate loopback passthrough cache when a gateway is deleted (#3640)
+            # First-Party
+            from mcpgateway.utils.passthrough_headers import invalidate_passthrough_header_caches  # pylint: disable=import-outside-toplevel
+
+            invalidate_passthrough_header_caches()
 
             # Update tracking
             self._active_gateways.discard(gateway_url)

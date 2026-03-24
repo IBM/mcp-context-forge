@@ -3986,6 +3986,13 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
         user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
+        # Capture passthrough headers from the original SSE request for loopback /rpc calls.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        user_with_token["_passthrough_headers"] = safe_extract_headers_for_loopback(dict(request.headers), "SSE")
+
         # Defensive cleanup callback - runs immediately on client disconnect
         async def on_disconnect_cleanup() -> None:
             """Clean up session when SSE client disconnects."""
@@ -9814,6 +9821,13 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=1008, reason=str(e.detail))
             return
 
+        # Capture passthrough headers from the WebSocket handshake request.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import filter_loopback_skip_headers, safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        ws_passthrough_headers = safe_extract_headers_for_loopback(dict(websocket.headers), "WebSocket")
+
         await websocket.accept()
         while True:
             try:
@@ -9826,6 +9840,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     rpc_headers["Authorization"] = f"Bearer {auth_token}"
                 if proxy_user:
                     rpc_headers[settings.proxy_user_header] = proxy_user
+                # Forward passthrough headers captured from the WebSocket handshake (see #3640).
+                # Defense-in-depth: filter via filter_loopback_skip_headers() so passthrough
+                # can never override the gateway's internal auth, content-type, or session/routing headers.
+                if ws_passthrough_headers:
+                    rpc_headers.update(filter_loopback_skip_headers(ws_passthrough_headers))
 
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
@@ -9926,6 +9945,13 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["auth_token"] = auth_token
         user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
+
+        # Capture passthrough headers from the original SSE request for loopback /rpc calls.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        user_with_token["_passthrough_headers"] = safe_extract_headers_for_loopback(dict(request.headers), "SSE")
 
         # Create respond task and register for cancellation on disconnect
         respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id))

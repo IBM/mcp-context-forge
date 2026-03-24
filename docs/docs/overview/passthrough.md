@@ -195,6 +195,20 @@ Authorization: Bearer <your-jwt-token>
 3. **Conflict Check**: System verifies no conflicts with existing auth headers
 4. **Forwarding**: Allowed headers are added to requests sent to backing MCP servers
 
+### Transport Coverage
+
+Passthrough headers are forwarded consistently across all transports:
+
+| Transport | Path | Mechanism |
+|-----------|------|-----------|
+| REST `/rpc` | Direct | Headers captured per HTTP request |
+| Streamable HTTP `/mcp` | Direct | Headers stored in `request_headers_var` context variable |
+| SSE `/servers/{id}/sse` | Loopback | Headers captured at connection time, forwarded in internal `/rpc` calls |
+| WebSocket `/ws` | Loopback | Headers captured at WebSocket handshake, forwarded in internal `/rpc` calls |
+| Streamable HTTP (affinity) | Loopback | Headers extracted per request and forwarded to the affinity target |
+
+For loopback transports (SSE, WebSocket, Streamable HTTP affinity), gateway-internal headers (`Authorization`, `Content-Type`, session IDs, proxy-user identity) are never forwarded — they are filtered at both extraction and merge time for defense-in-depth.
+
 ### Configuration Hierarchy
 
 The system follows this priority order:
@@ -512,12 +526,18 @@ sequenceDiagram
 - ✅ **Check**: Did you restart the gateway after setting the flag?
 - ✅ **Check**: Are you seeing "Header passthrough is disabled" in debug logs?
 
+**Note**: `X-Upstream-Authorization` is always forwarded regardless of the `ENABLE_HEADER_PASSTHROUGH` flag. If only `X-Upstream-Authorization` is missing, check the transport-specific notes below.
+
 **Other Causes**:
 
 - Verify header names in configuration match exactly (case-insensitive matching)
 - Check for authentication conflicts in logs
 - Ensure gateway configuration overrides aren't blocking headers
 - Verify header names pass validation (only letters, numbers, hyphens allowed)
+
+**Transport-Specific Notes**:
+
+All transports (REST, SSE, WebSocket, Streamable HTTP) forward passthrough headers consistently. For SSE and WebSocket, headers are captured once at connection/handshake time and reused for the lifetime of the session. If you change passthrough header configuration, existing SSE/WebSocket connections will not pick up the new configuration until the client reconnects.
 
 #### Authentication Conflicts
 If you see warnings like:
@@ -566,6 +586,9 @@ Look for log entries containing:
 - `Adding passthrough header` - Header successfully forwarded
 - `Invalid header name` - Header name validation failed
 - `Header value became empty after sanitization` - Header value was sanitized away
+- `Extracted N passthrough header(s) for loopback` - Headers captured for SSE/WebSocket/Streamable HTTP loopback
+- `Failed to extract passthrough headers` - Error during loopback header extraction (upstream auth may not reach MCP servers)
+- `Invalidated global_config_cache and _loopback_allowlist_cache` - Passthrough configuration caches refreshed
 
 ## API Reference
 
