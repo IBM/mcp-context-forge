@@ -1,16 +1,17 @@
 # ===============================================================
-# s390x Wheel Builder
+# Wheel Builder (Multiplatform)
 # ===============================================================
 #
-# Builds native Python wheels for packages that lack pre-built
-# s390x binaries on PyPI, then pushes the resulting container
-# image to ghcr.io so downstream Containerfile stages can
-# COPY the wheels out.
+# Builds a multiplatform container image with pre-built Python
+# wheels. Only the s390x variant contains actual wheels (for
+# packages that lack pre-built s390x binaries on PyPI); all other
+# platforms get an empty /wheels directory so downstream stages
+# can COPY --from unconditionally.
 #
 # Trigger: manual only (workflow_dispatch)
 # ===============================================================
 
-name: s390x Wheel Builder
+name: Wheel Builder
 
 on:
   workflow_dispatch:
@@ -25,13 +26,36 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  # Pushed as a separate "-s390x-wheels" image alongside the main repo image
-  IMAGE_NAME: ${{ github.repository }}-s390x-wheels
+  IMAGE_NAME: ${{ github.repository }}-wheels
 
 jobs:
-  build-and-push:
-    name: Build s390x wheels
-    runs-on: ubuntu-24.04-s390x
+  # ---------------------------------------------------------------
+  # Build each platform in parallel
+  # ---------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.suffix }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            suffix: amd64
+            containerfile: infra/wheels/Containerfile.default
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            suffix: arm64
+            containerfile: infra/wheels/Containerfile.default
+          - platform: linux/s390x
+            runner: ubuntu-24.04-s390x
+            suffix: s390x
+            containerfile: infra/wheels/Containerfile.s390x
+          - platform: linux/ppc64le
+            runner: ubuntu-24.04-ppc64le
+            suffix: ppc64le
+            containerfile: infra/wheels/Containerfile.default
+
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
 
     steps:
@@ -59,18 +83,60 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ github.sha }}
-            type=raw,value={{date 'YYYYMMDD'}}
+            type=raw,value=${{ matrix.suffix }}-${{ github.sha }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: infra/s390x
-          file: infra/s390x/Containerfile
-          platforms: linux/s390x
+          context: infra/wheels
+          file: ${{ matrix.containerfile }}
+          platforms: ${{ matrix.platform }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=s390x-wheels
-          cache-to: type=gha,mode=max,scope=s390x-wheels
+          cache-from: type=gha,scope=wheels-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=wheels-${{ matrix.suffix }}
+
+  # ---------------------------------------------------------------
+  # Create multiplatform manifest
+  # ---------------------------------------------------------------
+  manifest:
+    name: Create Manifest
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Set image name lowercase
+        run: |
+          IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifest
+        run: |
+          SHA=${{ github.sha }}
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          DATE=$(date +%Y%m%d)
+
+          IMAGES="${IMAGE}:amd64-${SHA} ${IMAGE}:arm64-${SHA} ${IMAGE}:s390x-${SHA} ${IMAGE}:ppc64le-${SHA}"
+
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${SHA}" \
+            --tag "${IMAGE}:${DATE}" \
+            --tag "${IMAGE}:latest" \
+            $IMAGES
+
+      - name: Inspect manifest
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          docker buildx imagetools inspect "${IMAGE}:latest"

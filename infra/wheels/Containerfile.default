@@ -1,0 +1,9 @@
+###############################################################################
+# Default (empty) wheel container
+#
+# Provides an empty /wheels directory so downstream Containerfile stages can
+# unconditionally COPY --from the wheels image regardless of architecture.
+###############################################################################
+
+FROM busybox
+RUN mkdir /wheels
