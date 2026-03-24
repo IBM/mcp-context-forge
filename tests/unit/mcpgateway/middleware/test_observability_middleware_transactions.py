@@ -266,9 +266,41 @@ async def test_observability_data_lost_on_error_is_acceptable():
 
 
 @pytest.mark.asyncio
+async def test_get_db_invalidates_broken_connection_double_failure():
+    """
+    Test 7: Verify get_db() handles case where both rollback AND invalidate fail.
+
+    In extreme cases (e.g., complete database crash), both rollback() and
+    invalidate() may fail. The code should handle this gracefully and still
+    re-raise the original exception.
+    """
+    from mcpgateway.main import get_db
+
+    mock_request = MagicMock(spec=Request)
+    mock_session = MagicMock()
+    mock_session.is_active = True
+    mock_request.state.db = mock_session
+
+    # Simulate both rollback AND invalidate failing
+    mock_session.rollback.side_effect = Exception("Rollback failed")
+    mock_session.invalidate.side_effect = Exception("Invalidate also failed")
+
+    gen = get_db(request=mock_request)
+    db = next(gen)
+
+    # Simulate exception in route handler
+    with pytest.raises(ValueError):
+        gen.throw(ValueError("Validation failed"))
+
+    # Verify both were attempted
+    mock_session.rollback.assert_called_once()
+    mock_session.invalidate.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_get_db_inactive_session_skips_commit():
     """
-    Test 7: Verify get_db() skips commit if session becomes inactive.
+    Test 8: Verify get_db() skips commit if session becomes inactive.
 
     In some cases (e.g., CancelledError during async cleanup), the session
     may become inactive before get_db() attempts to commit. This is handled
