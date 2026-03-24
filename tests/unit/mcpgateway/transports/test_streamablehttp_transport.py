@@ -32,6 +32,7 @@ from fastapi import HTTPException
 import httpx
 import pytest
 from starlette.types import Scope
+from mcp.types import PromptArgument
 
 # First-Party
 # ---------------------------------------------------------------------------
@@ -40,6 +41,9 @@ from starlette.types import Scope
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.transports.streamablehttp_transport import _MCPGATEWAY_CONTEXT_KEY
+from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service, user_context_var
+from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service
+from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service
 
 InMemoryEventStore = tr.InMemoryEventStore  # alias
 streamable_http_auth = tr.streamable_http_auth
@@ -635,12 +639,6 @@ async def test_validate_streamable_session_access_skips_when_rust_already_valida
 @pytest.mark.asyncio
 async def test_list_tools_with_server_id(monkeypatch):
     """Test list_tools returns tools for a server_id."""
-    # Standard
-    from unittest.mock import patch
-
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service, user_context_var
-
     mock_db = MagicMock()
     mock_tool = MagicMock()
     mock_tool.name = "t"
@@ -659,14 +657,14 @@ async def test_list_tools_with_server_id(monkeypatch):
     # Set authenticated user context to bypass OAuth enforcement
     user_token = user_context_var.set({"is_authenticated": True, "sub": "test@example.com"})
     server_token = server_id_var.set("123")
-    try:
-        result = await list_tools()
-    finally:
-        server_id_var.reset(server_token)
-        user_context_var.reset(user_token)
+    result = await list_tools()
+
     assert isinstance(result, list)
     assert result[0].name == "t"
     assert result[0].description == "desc"
+
+    server_id_var.reset(server_token)
+    user_context_var.reset(user_token)
 
 
 @pytest.mark.asyncio
@@ -725,8 +723,6 @@ async def test_list_tools_exception_no_server_id(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_list_tools_exception_with_server_id(monkeypatch, caplog):
     """Test list_tools returns [] and logs exception on error when server_id is set."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service, user_context_var
 
     mock_db = MagicMock()
 
@@ -740,14 +736,14 @@ async def test_list_tools_exception_with_server_id(monkeypatch, caplog):
     # Set authenticated user context to bypass OAuth enforcement
     user_token = user_context_var.set({"is_authenticated": True, "sub": "test@example.com"})
     server_token = server_id_var.set("test-server-id")
-    try:
-        with caplog.at_level("ERROR"):
-            result = await list_tools()
-            assert result == []
-            assert "Error listing tools:server fail!" in caplog.text
-    finally:
-        server_id_var.reset(server_token)
-        user_context_var.reset(user_token)
+
+    with caplog.at_level("ERROR"):
+        result = await list_tools()
+        assert result == []
+        assert "Error listing tools:server fail!" in caplog.text
+
+    server_id_var.reset(server_token)
+    user_context_var.reset(user_token)
 
 
 # ---------------------------------------------------------------------------
@@ -758,11 +754,6 @@ async def test_list_tools_exception_with_server_id(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_list_prompts_with_server_id(monkeypatch):
     """Test list_prompts returns prompts for a server_id."""
-    # Third-Party
-    from mcp.types import PromptArgument
-
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_prompt = MagicMock()
@@ -780,11 +771,10 @@ async def test_list_prompts_with_server_id(monkeypatch):
     # Set authenticated user context to bypass OAuth enforcement
     user_token = user_context_var.set({"is_authenticated": True, "sub": "test@example.com"})
     server_token = server_id_var.set("test-server")
-    try:
-        result = await list_prompts()
-    finally:
-        server_id_var.reset(server_token)
-        user_context_var.reset(user_token)
+
+    result = await list_prompts()
+    server_id_var.reset(server_token)
+    user_context_var.reset(user_token)
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -826,8 +816,6 @@ async def test_list_prompts_no_server_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_prompts_exception_with_server_id(monkeypatch, caplog):
     """Test list_prompts returns [] and logs exception when server_id is set."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
 
@@ -841,14 +829,14 @@ async def test_list_prompts_exception_with_server_id(monkeypatch, caplog):
     # Set authenticated user context to bypass OAuth enforcement
     user_token = user_context_var.set({"is_authenticated": True, "sub": "test@example.com"})
     server_token = server_id_var.set("test-server")
-    try:
-        with caplog.at_level("ERROR"):
-            result = await list_prompts()
-            assert result == []
-            assert "Error listing Prompts:server prompt fail!" in caplog.text
-    finally:
-        server_id_var.reset(server_token)
-        user_context_var.reset(user_token)
+
+    with caplog.at_level("ERROR"):
+        result = await list_prompts()
+        assert result == []
+        assert "Error listing Prompts:server prompt fail!" in caplog.text
+
+    server_id_var.reset(server_token)
+    user_context_var.reset(user_token)
 
 
 @pytest.mark.asyncio
@@ -1005,8 +993,6 @@ async def test_get_prompt_outer_exception(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_list_resources_with_server_id(monkeypatch):
     """Test list_resources returns resources for a server_id."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_resource = MagicMock()
@@ -1025,11 +1011,11 @@ async def test_list_resources_with_server_id(monkeypatch):
     # Set authenticated user context to bypass OAuth enforcement
     user_token = user_context_var.set({"is_authenticated": True, "sub": "test@example.com"})
     server_token = server_id_var.set("test-server")
-    try:
-        result = await list_resources()
-    finally:
-        server_id_var.reset(server_token)
-        user_context_var.reset(user_token)
+
+    result = await list_resources()
+
+    server_id_var.reset(server_token)
+    user_context_var.reset(user_token)
 
     assert isinstance(result, list)
     assert len(result) == 1
@@ -1071,8 +1057,6 @@ async def test_list_resources_no_server_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resources_exception_with_server_id(monkeypatch, caplog):
     """Test list_resources returns [] and logs exception when server_id is set."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
 
@@ -1086,14 +1070,14 @@ async def test_list_resources_exception_with_server_id(monkeypatch, caplog):
     # Set authenticated user context to bypass OAuth enforcement
     user_token = user_context_var.set({"is_authenticated": True, "sub": "test@example.com"})
     server_token = server_id_var.set("test-server")
-    try:
-        with caplog.at_level("ERROR"):
-            result = await list_resources()
-            assert result == []
-            assert "Error listing Resources:server resource fail!" in caplog.text
-    finally:
-        server_id_var.reset(server_token)
-        user_context_var.reset(user_token)
+
+    with caplog.at_level("ERROR"):
+        result = await list_resources()
+        assert result == []
+        assert "Error listing Resources:server resource fail!" in caplog.text
+
+    server_id_var.reset(server_token)
+    user_context_var.reset(user_token)
 
 
 @pytest.mark.asyncio
@@ -1591,9 +1575,6 @@ async def test_streamable_http_auth_allows_mcp_sse_with_valid_token(monkeypatch)
 @pytest.mark.asyncio
 async def test_streamable_http_auth_allows_mcp_message_with_valid_token(monkeypatch):
     """Auth should allow /mcp/message with valid Bearer token."""
-    # Standard
-    from unittest.mock import patch
-
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.auth_cache_batch_queries", False)
 
@@ -9224,20 +9205,19 @@ async def test_list_resources_gateway_found_not_direct_proxy_mode(monkeypatch):
     server_token = server_id_var.set("server-123")
     headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-cache"})
 
-    try:
-        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
-            with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
-                mock_rs.list_server_resources = AsyncMock(return_value=[])
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+            mock_rs.list_server_resources = AsyncMock(return_value=[])
 
-                # This triggers the "Gateway found but not in direct_proxy mode" log path
-                await list_resources()
+            # This triggers the "Gateway found but not in direct_proxy mode" log path
+            await list_resources()
 
-                # Should fall back to cache mode
-                mock_rs.list_server_resources.assert_called_once()
-    finally:
-        server_id_var.reset(server_token)
-        request_headers_var.reset(headers_token)
-        user_context_var.reset(user_token)
+            # Should fall back to cache mode
+            mock_rs.list_server_resources.assert_called_once()
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+    user_context_var.reset(user_token)
 
 
 @pytest.mark.asyncio
