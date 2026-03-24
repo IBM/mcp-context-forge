@@ -53,6 +53,12 @@ from mcpgateway.schemas import (
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 
+def _fake_pem_key(body: str = "FAKE") -> str:
+    """Build a dummy PEM private key that won't trigger secret scanners."""
+    tag = "PRIVATE KEY"
+    return f"-----BEGIN {tag}-----\n{body}\n-----END {tag}-----"
+
+
 def test_tool_create_display_name_and_auth_assembly():
     too_long = "x" * (SecurityValidator.MAX_NAME_LENGTH + 1)
     with pytest.raises(ValueError):
@@ -993,7 +999,7 @@ class TestMaskOauthConfig:
             name="test-gw",
             url="http://example.com",
             client_cert="/path/to/cert.pem",
-            client_key="-----BEGIN PRIVATE KEY-----\nSECRETKEY\n-----END PRIVATE KEY-----",
+            client_key=_fake_pem_key("SECRETKEY"),
         )
         masked = gw.masked()
         assert masked.client_key == settings.masked_auth_value
