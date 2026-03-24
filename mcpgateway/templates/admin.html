@@ -6564,14 +6564,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                                 </div>
                                 <div class="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
                                     <p class="mb-1">
-                                        Tokens created without selecting a team will have access to <span class="font-semibold">public resources only</span>.
+                                        Tokens created without selecting a team are <span class="font-semibold">not scoped to any team</span>.
+                                        Admin users retain full access; non-admin users can only see <span class="font-semibold">public resources</span>.
                                     </p>
                                     <p class="mb-1"><span class="font-semibold">✅ This token CAN access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
                                         <li>Public servers (virtual servers marked as public)</li>
                                         <li>Public tools, resources, and prompts</li>
+                                        <li>All resources (admin users only)</li>
                                     </ul>
-                                    <p class="mt-2 mb-1"><span class="font-semibold">❌ This token CANNOT access:</span></p>
+                                    <p class="mt-2 mb-1"><span class="font-semibold">❌ Non-admin tokens CANNOT access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
                                         <li>Your own private or team-scoped resources</li>
                                         <li>Team-scoped servers, tools, resources, and prompts</li>
