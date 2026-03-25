@@ -974,7 +974,7 @@ plugins:
     priority: 200  # Run late to capture all context
     conditions: []  # Apply to all tools
     config:
-      export_full_payload: true
+      export_full_payload: false  # opt in only if you explicitly want result content in telemetry
       max_payload_bytes_size: 10000
 
   # TOON Encoder - Convert JSON to TOON format for token efficiency
