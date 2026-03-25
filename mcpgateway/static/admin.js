@@ -9880,6 +9880,19 @@ function initToolSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            // Re-query the button by ID to ensure we get the current button (not a stale reference)
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating tool select:", error);
         }
@@ -10010,16 +10023,11 @@ function initToolSelect(
                 allToolIds.forEach((id) => editSel.add(String(id)));
 
                 update();
-
-                newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
             } catch (error) {
                 console.error("Error in Select All:", error);
                 alert("Failed to select all tools. Please try again.");
                 newSelectBtn.disabled = false;
-                newSelectBtn.textContent = originalText;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
