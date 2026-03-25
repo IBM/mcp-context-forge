@@ -9940,7 +9940,6 @@ function initToolSelect(
 
         newSelectBtn.addEventListener("click", async () => {
             // Disable button and show loading state
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all tools...";
 
