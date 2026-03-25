@@ -431,11 +431,11 @@ class TestRustFallback:
 
     @pytest.mark.asyncio
     async def test_python_fallback_when_rust_unavailable(self):
-        """With _RUST patched to None the Python path must still retry correctly."""
+        """With _rust patched to None the Python path must still retry correctly."""
         plugin = make_plugin()
         ctx = make_context()
 
-        with patch.object(_plugin_mod, "_RUST", None):
+        with patch.object(plugin, "_rust", None):
             r1 = await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
             assert r1.retry_delay_ms > 0, "Python fallback should request a retry on first failure"
 
@@ -449,12 +449,12 @@ class TestRustFallback:
         plugin = make_plugin()
         ctx = make_context()
 
-        # _RUST is a real object if the extension is installed; mock it so
-        # we can assert it was called, regardless of whether the .so is present.
+        # Mock the instance-level _rust so we can assert it was called,
+        # regardless of whether the .so is present.
         mock_rust = MagicMock()
         mock_rust.check_and_update.return_value = (True, 300)
 
-        with patch.object(_plugin_mod, "_RUST", mock_rust):
+        with patch.object(plugin, "_rust", mock_rust):
             r = await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
 
         mock_rust.check_and_update.assert_called_once()
@@ -470,7 +470,7 @@ class TestRustFallback:
         mock_rust = MagicMock()
         mock_rust.check_and_update.return_value = (True, 300)
 
-        with patch.object(_plugin_mod, "_RUST", mock_rust):
+        with patch.object(plugin, "_rust", mock_rust):
             await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
 
         mock_rust.check_and_update.assert_not_called()

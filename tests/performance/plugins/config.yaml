@@ -360,10 +360,10 @@ plugins:
     hooks: [tool_post_invoke, resource_post_fetch]
     tags: [reliability, retry]
     mode: permissive
-    priority: 175
+    priority: 170
     conditions: []
     config:
-      max_retries: 3
+      max_retries: 2
       backoff_base_ms: 200
       max_backoff_ms: 5000
       retry_on_status: [429, 500, 502, 503, 504]

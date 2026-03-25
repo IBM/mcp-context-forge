@@ -46,22 +46,27 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Optional Rust accelerator
 #
-# If the compiled extension is installed, one RetryStateManager instance is
-# shared for the lifetime of the process.  If it's absent (e.g. dev machine
-# without the Rust toolchain, or a pure-Python wheel), the plugin silently
-# falls back to the Python implementation below.
+# If the compiled extension is installed, a RetryStateManager instance is
+# created per plugin instance (in __init__), with config baked in so the
+# hot check_and_update call only passes the four dynamic args:
+#   tool, request_id, is_error, status_code
+#
+# If it's absent (e.g. dev machine without the Rust toolchain, or a
+# pure-Python wheel), the plugin silently falls back to the Python
+# implementation below.
 #
 # The try/except ImportError pattern is the standard Python idiom for
 # optional compiled extensions.  It imposes zero cost when Rust IS present
-# (the import succeeds and _RUST is set once at module load), and makes the
-# plugin fully portable when it is NOT.
+# (the import succeeds and _RUST_AVAILABLE is set once at module load), and
+# makes the plugin fully portable when it is NOT.
 # ---------------------------------------------------------------------------
 try:
     from retry_with_backoff_rust import RetryStateManager as _RustRetryStateManager
-    _RUST: _RustRetryStateManager | None = _RustRetryStateManager()
-    log.debug("retry_with_backoff: Rust extension loaded (%s)", _RUST.ping())
+    _RUST_AVAILABLE = True
+    log.debug("retry_with_backoff: Rust extension loaded")
 except ImportError:
-    _RUST = None
+    _RustRetryStateManager = None  # type: ignore[assignment,misc]
+    _RUST_AVAILABLE = False
     log.debug("retry_with_backoff: Rust extension not available, using Python fallback")
 
 
@@ -102,7 +107,7 @@ def _del_state(tool: str, request_id: str) -> None:
 class RetryConfig(BaseModel):
     """Per-plugin configuration, read from config.yaml under the plugin's config: key."""
 
-    max_retries: int = Field(default=3, ge=0, description="Max consecutive retries before giving up")
+    max_retries: int = Field(default=2, ge=0, description="Max consecutive retries before giving up")
     backoff_base_ms: int = Field(default=200, ge=1, description="Initial backoff in milliseconds")
     max_backoff_ms: int = Field(default=5000, ge=1, description="Ceiling for computed backoff in milliseconds")
     retry_on_status: list[int] = Field(
@@ -255,6 +260,31 @@ class RetryWithBackoffPlugin(Plugin):
 
         self._cfg = raw_cfg
 
+        # Build Rust instances with config baked in so the hot check_and_update
+        # call only crosses the FFI boundary with 4 dynamic args instead of 9.
+        # One instance per unique config: base + one per tool override.
+        if _RUST_AVAILABLE:
+            self._rust: Any = _RustRetryStateManager(
+                self._cfg.max_retries,
+                self._cfg.backoff_base_ms,
+                self._cfg.max_backoff_ms,
+                self._cfg.jitter,
+                self._cfg.retry_on_status,
+            )
+            self._rust_overrides: Dict[str, Any] = {
+                tool_name: _RustRetryStateManager(
+                    overrides.get("max_retries", self._cfg.max_retries),
+                    overrides.get("backoff_base_ms", self._cfg.backoff_base_ms),
+                    overrides.get("max_backoff_ms", self._cfg.max_backoff_ms),
+                    overrides.get("jitter", self._cfg.jitter),
+                    overrides.get("retry_on_status", self._cfg.retry_on_status),
+                )
+                for tool_name, overrides in self._cfg.tool_overrides.items()
+            }
+        else:
+            self._rust = None
+            self._rust_overrides = {}
+
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Detect failure and return retry_delay_ms > 0 to request a retry.
 
@@ -283,8 +313,11 @@ class RetryWithBackoffPlugin(Plugin):
         # the FFI boundary.  Passing a raw PyDict into Rust would be slower
         # and require more PyO3 boilerplate.  Two attribute lookups in Python
         # are cheap and keep the Rust code purely typed.
+        #
+        # Config is already baked into the Rust instance — the hot call only
+        # passes the four dynamic args: tool, request_id, is_error, status_code.
         # ------------------------------------------------------------------
-        if _RUST is not None and not cfg.check_text_content:
+        if self._rust is not None and not cfg.check_text_content:
             is_error: bool = isinstance(result, dict) and result.get("isError") is True
             status_code: int | None = None
             if isinstance(result, dict):
@@ -296,10 +329,9 @@ class RetryWithBackoffPlugin(Plugin):
                     if isinstance(sc, int):
                         status_code = sc
 
-            should_retry, delay_ms = _RUST.check_and_update(
+            rust_inst = self._rust_overrides.get(tool, self._rust)
+            should_retry, delay_ms = rust_inst.check_and_update(
                 tool, request_id, is_error, status_code,
-                cfg.max_retries, cfg.backoff_base_ms, cfg.max_backoff_ms,
-                cfg.jitter, cfg.retry_on_status,
             )
             if should_retry:
                 log.debug(

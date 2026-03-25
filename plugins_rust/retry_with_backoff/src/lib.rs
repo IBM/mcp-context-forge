@@ -1,7 +1,7 @@
 // Copyright 2025
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use rand::Rng;
@@ -57,7 +57,7 @@ fn compute_delay_ms(attempt: u32, base_ms: u64, max_ms: u64, jitter: bool) -> u6
 fn is_failure_from_signals(
     is_error: bool,
     status_code: Option<i32>,
-    retry_on_status: &[i32],
+    retry_on_status: &HashSet<i32>,
 ) -> bool {
     if is_error {
         return true;
@@ -69,16 +69,32 @@ fn is_failure_from_signals(
 }
 
 // ---------------------------------------------------------------------------
-// Python-visible class.  No fields — all state lives in the global STATE map.
+// Python-visible class.
+// Config is stored in the struct — set once at construction, never
+// re-allocated on the hot path.  retry_on_status is kept as a HashSet for
+// O(1) membership tests instead of the O(n) Vec scan it replaced.
 // ---------------------------------------------------------------------------
 #[pyclass]
-pub struct RetryStateManager;
+pub struct RetryStateManager {
+    max_retries: u32,
+    base_ms: u64,
+    max_ms: u64,
+    jitter: bool,
+    retry_on_status: HashSet<i32>,
+}
 
 #[pymethods]
 impl RetryStateManager {
     #[new]
-    fn new() -> Self {
-        RetryStateManager
+    fn new(max_retries: u32, base_ms: u64, max_ms: u64, jitter: bool, retry_on_status: Vec<i32>) -> Self {
+        RetryStateManager {
+            max_retries,
+            base_ms,
+            max_ms,
+            jitter,
+            // Vec → HashSet: one-time allocation at construction; O(1) lookups thereafter.
+            retry_on_status: retry_on_status.into_iter().collect(),
+        }
     }
 
     fn ping(&self) -> &str {
@@ -129,24 +145,24 @@ impl RetryStateManager {
     fn compute_delay(
         &self,
         attempt: u32,
-        base_ms: u64,
-        max_ms: u64,
-        jitter: bool,
     ) -> u64 {
-        compute_delay_ms(attempt, base_ms, max_ms, jitter)
+        compute_delay_ms(attempt, self.base_ms, self.max_ms, self.jitter)
     }
 
     fn check_failure(
         &self,
         is_error: bool,
         status_code: Option<i32>,
-        retry_on_status: Vec<i32>,
     ) -> bool {
-        is_failure_from_signals(is_error, status_code, &retry_on_status)
+        is_failure_from_signals(is_error, status_code, &self.retry_on_status)
     }
 
     // -----------------------------------------------------------------------
     // Main API called by the Python plugin on every post-invoke hook.
+    //
+    // Config (max_retries, base_ms, max_ms, jitter, retry_on_status) lives in
+    // self — no per-call allocations or list conversions cross the FFI boundary.
+    // Only the four truly dynamic arguments are passed.
     //
     // Returns (should_retry, delay_ms):
     //   (true,  delay)  — failure within budget; caller should schedule retry
@@ -155,20 +171,14 @@ impl RetryStateManager {
     // The Mutex is held for the entire method to make the check-then-act
     // sequence atomic.
     // -----------------------------------------------------------------------
-    #[allow(clippy::too_many_arguments)]
     fn check_and_update(
         &self,
         tool: &str,
         request_id: &str,
         is_error: bool,
         status_code: Option<i32>,
-        max_retries: u32,
-        base_ms: u64,
-        max_ms: u64,
-        jitter: bool,
-        retry_on_status: Vec<i32>,
     ) -> (bool, u64) {
-        let failed = is_failure_from_signals(is_error, status_code, &retry_on_status);
+        let failed = is_failure_from_signals(is_error, status_code, &self.retry_on_status);
 
         // Acquire the lock once for the entire check-then-act sequence.
         let mut map = state_map().lock().unwrap();
@@ -182,10 +192,10 @@ impl RetryStateManager {
                 .unwrap()
                 .as_secs_f64();
 
-            if state.consecutive_failures <= max_retries {
+            if state.consecutive_failures <= self.max_retries {
                 // attempt index is 0-based; saturating_sub guards against underflow.
                 let attempt = state.consecutive_failures.saturating_sub(1);
-                let delay = compute_delay_ms(attempt, base_ms, max_ms, jitter);
+                let delay = compute_delay_ms(attempt, self.base_ms, self.max_ms, self.jitter);
                 (true, delay)
             } else {
                 map.remove(&key);
