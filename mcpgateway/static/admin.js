@@ -502,16 +502,17 @@ document.addEventListener("DOMContentLoaded", function () {
         "agents-table": "a2a-agents",
     };
 
-    // Re-initialize search inputs when HTMX content loads
-    // Only re-initialize if the swap affects search-related content
+    // Update available tags when HTMX content loads a table swap.
+    // Search inputs live outside the swapped table, so they do NOT need
+    // re-initialization here — doing so was causing an infinite loop
+    // (clone → set value → input event → reload → swap → repeat).
     document.body.addEventListener("htmx:afterSwap", function (event) {
         const targetId = event.detail.target && event.detail.target.id;
         if (targetId && tableToEntityType[targetId]) {
             console.log(
-                `📝 HTMX swap detected in ${targetId}, resetting search state`,
+                `📝 HTMX swap detected in ${targetId}`,
             );
-            resetSearchInputsState();
-            initializeSearchInputsDebounced();
+            updateFilterStatus();
         }
     });
 
@@ -18961,22 +18962,20 @@ function initializeSearchInputs() {
         }
 
         const searchState = getPanelSearchStateFromUrl(panelConfig.tableName);
-        if (searchState.query) {
+
+        // Set values BEFORE attaching event listener to avoid triggering
+        // a reload during initialization (setting .value fires the input event)
+        if (searchState.query && searchInput.value !== searchState.query) {
             searchInput.value = searchState.query;
         }
-        if (tagInput && searchState.tags) {
+        if (tagInput && searchState.tags && tagInput.value !== searchState.tags) {
             tagInput.value = searchState.tags;
         }
 
+        // Attach event listener AFTER setting value so initialization doesn't trigger reload
         searchInput.addEventListener("input", () => {
             queueSearchablePanelReload(entityType, 250);
         });
-
-        const panel = document.getElementById(`${entityType}-panel`);
-        const isVisible = Boolean(panel && !panel.classList.contains("hidden"));
-        if (isVisible && (searchState.query || searchState.tags)) {
-            queueSearchablePanelReload(entityType, 0);
-        }
     });
 
     // Tokens search (server-side, not part of PANEL_SEARCH_CONFIG)
@@ -19046,8 +19045,8 @@ document.addEventListener("htmx:afterSettle", function (evt) {
     const isPaginationSwap = target.id.endsWith("-pagination-controls");
 
     if (isTableSwap || isPaginationSwap) {
-        resetSearchInputsState();
-        initializeSearchInputsMemoized();
+        // Search inputs live outside the swapped table content, so they
+        // persist across partial refreshes. Only update filter status UI.
         updateFilterStatus();
     }
 });
