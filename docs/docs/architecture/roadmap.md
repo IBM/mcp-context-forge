@@ -365,7 +365,7 @@
 ???+ info "🔒 Security - Remaining (9)"
 
     - ⏳ [**#536**](https://github.com/IBM/mcp-context-forge/issues/536) - [FEATURE][SECURITY]: Generic IP-based access control (allowlist)
-    - ⏳ [**#2216**](https://github.com/IBM/mcp-context-forge/issues/2216) - [FEATURE][SECURITY]: Container vulnerability scanner - Trivy/Grype integration
+    - ⏳ [**#2216**](https://github.com/IBM/mcp-context-forge/issues/2216) - [FEATURE][SECURITY]: Container vulnerability scanner integration
     - ⏳ [**#2217**](https://github.com/IBM/mcp-context-forge/issues/2217) - [FEATURE][SECURITY]: MCP server source code scanner - Semgrep/Bandit integration
     - ⏳ [**#2218**](https://github.com/IBM/mcp-context-forge/issues/2218) - [FEATURE][SECURITY]: SBOM generator - CycloneDX/SPDX for MCP servers
     - ⏳ [**#2219**](https://github.com/IBM/mcp-context-forge/issues/2219) - [FEATURE][SECURITY]: MCP server security policy engine - Configurable compliance gates

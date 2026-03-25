@@ -125,7 +125,7 @@ clean-volumes: ## Remove data volumes
 
 # Security scanning
 scan: ## Scan container for vulnerabilities
-	trivy image $(IMAGE_NAME):$(IMAGE_TAG)
+	grype $(IMAGE_NAME):$(IMAGE_TAG) --scope all-layers
 
 # Example usage
 example: ## Run example evaluation

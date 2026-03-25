@@ -3282,7 +3282,7 @@ Setting up GitHub repo, CI/CD with GitHub Actions, templates, `good first issue`
 
 #### 🛠️ Developer & CI tooling
 * 📝 **Comprehensive Makefile** (80 + targets), linting, > 400 tests, CI pipelines & badges
-* ⚙️ **Dev & CI helpers** - hot-reload dev server, Ruff/Black/Mypy/Bandit, Trivy image scan, SBOM generation, SonarQube helpers
+* ⚙️ **Dev & CI helpers** - hot-reload dev server, Ruff/Black/Mypy/Bandit, container image scanning, SBOM generation, SonarQube helpers
 
 #### 🗄️ Persistence & performance
 * 🐘 **SQLAlchemy ORM** with pluggable back-ends (SQLite default; PostgreSQL, MySQL, etc.)
