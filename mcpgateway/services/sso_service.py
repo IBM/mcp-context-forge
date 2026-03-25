@@ -529,6 +529,9 @@ class SSOService:
 
     async def _apply_team_mapping(self, user_email: str, user_info: Dict[str, Any], provider: Optional[SSOProvider]) -> None:
         """Apply provider team mappings based on SSO group claims.
+        
+        Reconciles team memberships: grants new SSO-based memberships and revokes
+        stale ones when groups are removed from the identity provider.
 
         Args:
             user_email: Authenticated user email to map into teams.
@@ -553,15 +556,65 @@ class SSOService:
         else:
             groups = []
 
-        if not groups:
-            return
-
         normalized_groups = {group.lower() for group in groups}
 
         # First-Party
-        from mcpgateway.services.team_management_service import MemberAlreadyExistsError, TeamManagementError, TeamManagementService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.team_management_service import (  # pylint: disable=import-outside-toplevel
+            MemberAlreadyExistsError,
+            TeamManagementError,
+            TeamManagementService,
+        )
 
         team_service = TeamManagementService(self.db)
+
+        # Get current SSO-granted team memberships for this user
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+        
+        stmt = select(EmailTeamMember).where(
+            EmailTeamMember.user_email == user_email,
+            EmailTeamMember.grant_source == "sso",
+            EmailTeamMember.is_active == True,  # noqa: E712
+        )
+        result = self.db.execute(stmt)
+        current_sso_memberships = result.scalars().all()
+
+        # Build set of desired team IDs from current groups + team_mapping
+        desired_team_ids = set()
+        for source_group, target in mapping.items():
+            if not isinstance(source_group, str):
+                continue
+            source_group_normalized = source_group.strip().lower()
+            if not source_group_normalized:
+                continue
+            
+            if source_group_normalized in normalized_groups:
+                team_id, _ = self._resolve_team_mapping_target(target)
+                if team_id:
+                    desired_team_ids.add(team_id)
+
+        # Revoke SSO memberships that are no longer in desired set
+        for membership in current_sso_memberships:
+            if membership.team_id not in desired_team_ids:
+                try:
+                    await team_service.remove_member_from_team(
+                        team_id=membership.team_id,
+                        user_email=user_email,
+                    )
+                    logger.info(
+                        "Revoked SSO team membership for %s from team %s (group no longer in claims)",
+                        SecurityValidator.sanitize_log_message(user_email),
+                        membership.team_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to revoke SSO team membership for %s from team %s: %s",
+                        SecurityValidator.sanitize_log_message(user_email),
+                        membership.team_id,
+                        exc,
+                    )
+
+        # Grant new SSO memberships
         for source_group, target in mapping.items():
             if not isinstance(source_group, str):
                 continue
@@ -571,17 +624,50 @@ class SSOService:
 
             team_id, role = self._resolve_team_mapping_target(target)
             if not team_id:
-                logger.warning("Skipping invalid SSO team_mapping entry for provider %s and group '%s'", provider.id, source_group)
+                logger.warning(
+                    "Skipping invalid SSO team_mapping entry for provider %s and group '%s'",
+                    provider.id,
+                    source_group,
+                )
                 continue
 
             try:
-                await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=role, invited_by=user_email)
+                await team_service.add_member_to_team(
+                    team_id=team_id,
+                    user_email=user_email,
+                    role=role,
+                    invited_by=user_email,
+                    grant_source="sso",
+                )
+                logger.info(
+                    "Granted SSO team membership for %s to team %s via group '%s'",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    team_id,
+                    source_group,
+                )
             except MemberAlreadyExistsError:
-                logger.debug("SSO team_mapping: user %s already member of team %s", user_email, team_id)
+                logger.debug(
+                    "SSO team_mapping: user %s already member of team %s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    team_id,
+                )
             except TeamManagementError as exc:
-                logger.warning("SSO team_mapping failed for user %s, group '%s', team '%s': %s", user_email, source_group, team_id, exc)
+                logger.warning(
+                    "SSO team_mapping failed for user %s, group '%s', team '%s': %s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    source_group,
+                    team_id,
+                    exc,
+                )
             except Exception as exc:
-                logger.warning("Unexpected SSO team_mapping error for user %s and team '%s': %s", user_email, team_id, exc)
+                logger.error(
+                    "Unexpected error in SSO team_mapping for user %s, group '%s': %s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    source_group,
+                    exc,
+                    exc_info=True,
+                )
+
 
     async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
         """Create new SSO provider configuration.

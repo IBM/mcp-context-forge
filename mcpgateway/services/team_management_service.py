@@ -678,7 +678,7 @@ class TeamManagementService:
             logger.error(f"Failed to delete team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
             return False
 
-    async def add_member_to_team(self, team_id: str, user_email: str, role: str = "member", invited_by: Optional[str] = None) -> EmailTeamMember:
+    async def add_member_to_team(self, team_id: str, user_email: str, role: str = "member", invited_by: Optional[str] = None, grant_source: Optional[str] = None) -> EmailTeamMember:
         """Add a member to a team.
 
         Args:
@@ -686,6 +686,7 @@ class TeamManagementService:
             user_email: Email of the user to add
             role: Role to assign (owner, member)
             invited_by: Email of user who added this member
+            grant_source: Origin of grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
         Returns:
             EmailTeamMember: The created or reactivated team member object
@@ -756,7 +757,7 @@ class TeamManagementService:
                 self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
                 member = existing_membership
             else:
-                membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, is_active=True)
+                membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, grant_source=grant_source, is_active=True)
                 self.db.add(membership)
                 self.db.commit()
                 self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)

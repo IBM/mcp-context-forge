@@ -2182,6 +2182,7 @@ class TestAuthenticateOrCreateUser:
             user_email="user@test.com",
             role="owner",
             invited_by="user@test.com",
+            grant_source="sso",
         )
 
     def test_resolve_team_mapping_target_string_and_invalid(self, sso_service):
@@ -2212,6 +2213,7 @@ class TestAuthenticateOrCreateUser:
             user_email="user@test.com",
             role="member",
             invited_by="user@test.com",
+            grant_source="sso",
         )
 
     @pytest.mark.asyncio

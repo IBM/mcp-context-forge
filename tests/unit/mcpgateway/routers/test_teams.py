@@ -126,6 +126,7 @@ class TestTeamsRouter:
         member.joined_at = datetime.now(timezone.utc)
         member.invited_by = "owner@example.com"
         member.is_active = True
+        member.grant_source = None
         return member
 
     @pytest.fixture
