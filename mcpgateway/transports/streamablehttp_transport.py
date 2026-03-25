@@ -212,6 +212,7 @@ def _extract_server_id(match: re.Match) -> str:
     """
     return match.group("server_id") or match.group("mcp_server_id")
 
+
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
 

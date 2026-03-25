@@ -525,7 +525,8 @@ class TestWebSocketAuthentication:
             "path": "/servers/123/mcp",
             "headers": [],
         }
-        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings, \
+             patch("mcpgateway.transports.streamablehttp_transport._check_server_oauth_enforcement", new_callable=AsyncMock, return_value=None):
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
             mock_settings.trust_proxy_auth_dangerously = True
