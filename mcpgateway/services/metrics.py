@@ -111,6 +111,13 @@ content_type_violations_counter = Counter(
     ["content_type", "mime_type"],  # content_type: "resource" or "prompt", mime_type: the rejected type
 )
 
+# MCP Auth Cache Metrics
+mcp_auth_cache_events_counter = Counter(
+    "mcp_auth_cache_events_total",
+    "Total number of MCP auth cache events by outcome",
+    ["outcome"],
+)
+
 
 def setup_metrics(app):
     """
