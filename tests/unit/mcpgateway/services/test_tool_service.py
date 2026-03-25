@@ -3779,6 +3779,64 @@ class TestToolService:
 
         await tool_service._plugin_manager.shutdown()
 
+    @pytest.mark.asyncio
+    async def test_invoke_tool_plugin_retry_delay_triggers_retry(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test that when plugin returns retry_delay_ms > 0 the tool is retried after the delay."""
+        # First-Party
+        from mcpgateway.plugins.framework import ToolHookType
+        from mcpgateway.plugins.framework.models import PluginResult
+        from mcpgateway.schemas import ToolResult
+        from mcpgateway.common.models import TextContent
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "first attempt"})
+        tool_service._http_client.request.return_value = mock_response
+
+        tool_service._plugin_manager = Mock()
+
+        post_invoke_count = [0]
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+            # POST_INVOKE: first call requests a retry, subsequent calls succeed
+            post_invoke_count[0] += 1
+            delay = 100 if post_invoke_count[0] == 1 else 0
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=None, retry_delay_ms=delay), None)
+
+        tool_service._plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
+
+        # Intercept the recursive retry call so it returns immediately on retry_attempt > 0
+        retry_result = ToolResult(content=[TextContent(type="text", text="retry succeeded")])
+        original_invoke = tool_service.invoke_tool
+
+        async def spy_invoke(db, name, arguments=None, **kwargs):
+            if kwargs.get("retry_attempt", 0) > 0:
+                return retry_result
+            return await original_invoke(db, name, arguments, **kwargs)
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "first attempt"}),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch.object(tool_service, "invoke_tool", side_effect=spy_invoke),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify the retry delay sleep was triggered
+        mock_sleep.assert_awaited_once()
+        assert mock_sleep.call_args[0][0] == pytest.approx(0.1)  # 100ms → 0.1s
+        # Verify the result is from the retry call
+        assert result.content[0].text == "retry succeeded"
+
 
 # --------------------------------------------------------------------------- #
 #                               extract_using_jq                              #
