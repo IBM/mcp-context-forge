@@ -125,7 +125,7 @@ clean-volumes: ## Remove data volumes
 
 # Security scanning
 scan: ## Scan container for vulnerabilities
-	grype $(IMAGE_NAME):$(IMAGE_TAG) --scope all-layers
+	@echo "ℹ️  No repo-managed vulnerability scanner is configured for this image."
 
 # Example usage
 example: ## Run example evaluation

@@ -57,7 +57,7 @@ jobs:
       - name: Install build tool
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install build   # PyPA-endorsed PEP 517 builder
+          python3 -m pip install build uv==0.11.1   # PyPA builder + pinned uv for make venv
 
       - name: Bootstrap project venv
         run: make venv

@@ -177,7 +177,7 @@ The project maintains production-grade quality through comprehensive GitHub Acti
 - **Secure Docker Build** (`docker-image.yml`):
 
   - SBOM generation with **Syft** (SPDX format)
-  - Vulnerability scanning with **Grype** (critical and high CVEs)
+  - SBOM generation and container review in CI
   - Image signing and attestation with **Cosign** (keyless OIDC)
   - BuildKit layer caching for faster rebuilds
   - Weekly scheduled scans (Tuesday 18:17 UTC)

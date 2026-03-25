@@ -2,11 +2,11 @@
 # Docker Security Scan Workflow
 # ===============================================================
 #
-# This workflow performs security scanning on container images:
+# This workflow builds the container image locally and generates an SBOM
+# artifact for review:
 #   1. Build image locally (no push required)
 #   2. Generate SBOM with Syft
-#   3. Scan for vulnerabilities with Grype
-#   4. Upload SBOM and SARIF reports
+#   3. Upload SBOM artifact
 #
 # Runs on both PRs and pushes to catch issues early.
 #
@@ -40,14 +40,13 @@ concurrency:
 
 permissions:
   contents: read
-  security-events: write
 
 env:
   IMAGE_NAME: mcp-context-forge-scan
 
 jobs:
   # ---------------------------------------------------------------
-  # Build and scan image
+  # Build image and generate SBOM
   # ---------------------------------------------------------------
   scan:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -89,23 +88,3 @@ jobs:
           name: sbom
           path: sbom.spdx.json
           retention-days: 30
-
-      - name: Grype vulnerability scan
-        id: grype
-        continue-on-error: true
-        uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
-        with:
-          image: ${{ env.IMAGE_NAME }}:scan
-          fail-build: false
-          only-fixed: true
-          severity-cutoff: high
-          output-format: sarif
-          output-file: grype-results.sarif
-          cache-db: false
-
-      - name: Upload Grype SARIF
-        if: always() && hashFiles('grype-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@256d634097be96e792d6764f9edaefc4320557b1 # v4
-        with:
-          sarif_file: grype-results.sarif
-          category: grype

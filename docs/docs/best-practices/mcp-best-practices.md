@@ -59,7 +59,7 @@ Make targets are grouped by functionality. Use `make help` to see them all in yo
 
 | Target         | Description |
 |----------------|-------------|
-| `make grype-scan` | Scan the container image for vulnerabilities using Grype. |
+| `make security-scan` | Show current local container review guidance. |
 
 > **Tip:** These commands should work out-of-the-box after cloning a repo and running `make venv install serve`.
 

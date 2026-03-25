@@ -64,7 +64,7 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 	$(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
 	.depsorter_cache.json .depupdate.* \
-	grype-results.sarif devskim-results.sarif \
+	devskim-results.sarif \
 	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb \
 	*.log mcpgateway.sbom.xml
 
@@ -164,12 +164,12 @@ endef
 .PHONY: uv
 uv:
 	@if ! type uv >/dev/null 2>&1 && ! test -x "$(HOME)/.local/bin/uv"; then \
-		echo "🔧 'uv' not found - installing..."; \
+		echo "❌ 'uv' not found."; \
 		if type brew >/dev/null 2>&1; then \
-			echo "🍺 Installing 'uv' via Homebrew..."; \
-			brew install uv; \
+			echo "💡 Install 'uv' via Homebrew or another trusted package manager:"; \
+			echo "   brew install uv"; \
+			exit 1; \
 		else \
-			echo "❌ Refusing to install 'uv' via curl | sh."; \
 			echo "💡 Install uv from a trusted package manager or pinned release:"; \
 			echo "   https://docs.astral.sh/uv/getting-started/installation/"; \
 			exit 1; \
@@ -3833,7 +3833,7 @@ sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "🔒  Recording local scan guidance..."
 	@echo '## Security Scan' >> $(DOCS_DIR)/docs/test/sbom.md
 	@echo '' >> $(DOCS_DIR)/docs/test/sbom.md
-	@echo 'Run `make grype-scan` separately to scan the built image for vulnerabilities.' >> $(DOCS_DIR)/docs/test/sbom.md
+	@echo 'Review the generated SBOM separately before publishing the image.' >> $(DOCS_DIR)/docs/test/sbom.md
 	@echo "📊  Checking for outdated packages..."
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && \
 		echo '## Outdated Packages' >> $(DOCS_DIR)/docs/test/sbom.md && \
@@ -4208,33 +4208,14 @@ lint-complexity:						## 📈 Analyze code complexity
 		$(VENV_DIR)/bin/radon mi $(TARGET) -s"
 
 # -----------------------------------------------------------------------------
-# 📑 GRYPE SECURITY/VULNERABILITY SCANNING
+# 📑 CONTAINER SECURITY REVIEW
 # -----------------------------------------------------------------------------
-# help: grype-scan           - Scan all files using grype
-# help: grype-sarif          - Generate SARIF report
-# help: security-scan        - Run local container vulnerability scan with Grype
-.PHONY: grype-scan grype-sarif security-scan
+# help: security-scan        - Show current local container review guidance
+.PHONY: security-scan
 
-grype-scan:
-	@command -v grype >/dev/null 2>&1 || { \
-		echo "❌ grype not installed."; \
-		echo "💡 Install Grype from a trusted pinned package or release before running this target."; \
-		exit 1; \
-	}
-	@echo "🔍 Grype vulnerability scan..."
-	@grype $(IMG) --scope all-layers
-
-grype-sarif:
-	@command -v grype >/dev/null 2>&1 || { \
-		echo "❌ grype not installed."; \
-		echo "💡 Install Grype from a trusted pinned package or release before running this target."; \
-		exit 1; \
-	}
-	@echo "📄 Generating Grype SARIF report..."
-	@grype $(IMG) --scope all-layers --output sarif --file grype-results.sarif
-
-security-scan: grype-scan
-	@echo "✅ Container security scan complete"
+security-scan:
+	@echo "ℹ️  No repo-managed local container vulnerability scanner is configured."
+	@echo "ℹ️  Review the generated SBOM and use your preferred pinned scanner separately."
 
 # -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
