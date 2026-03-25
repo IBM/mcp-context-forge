@@ -1,7 +1,7 @@
 # Benchmark Suite
 
 Use the benchmark suite when you want repeatable, scenario-driven benchmark runs
-against the Docker/Compose stack instead of ad hoc Locust commands.
+against the Docker/Compose stack from a fully Rust-owned toolchain.
 
 The suite now distinguishes three lanes:
 
@@ -21,13 +21,14 @@ Each scenario runs against the real containerized testing stack:
 - PgBouncer
 - gateway
 - nginx
-- Locust as the load driver
-- optional `py-spy` and `memray` in a separate profiling pass
+- `contextforge_goose` as the load driver
+- optional `perf`, `flamegraph`, and other Rust-friendly profiling tools in a
+  separate profiling pass
 
 The runner is:
 
 ```bash
-python3 -m benchmarks.contextforge
+cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml --
 ```
 
 Committed scenarios now live in:
@@ -40,6 +41,12 @@ The benchmark launcher now lives in:
 
 ```bash
 tools_rust/benchmark_console/
+```
+
+The Goose driver now lives in:
+
+```bash
+tools_rust/contextforge_goose/
 ```
 
 ## Quick Start
@@ -75,19 +82,19 @@ make container-build CONTAINER_FILE=benchmarks/contextforge/Containerfile ENABLE
 Validate the suite:
 
 ```bash
-python3 -m benchmarks.contextforge --scenario modular-design-300 --validate
+cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- validate --scenario modular-design-300
 ```
 
 Run the smoke suite:
 
 ```bash
-python3 -m benchmarks.contextforge --scenario a2a-invoke-300 --smoke
+cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- run --scenario a2a-invoke-300 --smoke
 ```
 
 Run the suite:
 
 ```bash
-python3 -m benchmarks.contextforge --scenario modular-design-300
+cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- run --scenario modular-design-300
 ```
 
 The TUI discovers committed scenarios automatically from
@@ -128,16 +135,19 @@ Unsupported keys now fail validation instead of being silently accepted.
 - `execution.capture_logs`
   Persist service logs on failed runs.
 - `measurement.*`
-  Warmup, measurement, and cooldown are applied to Locust history when building
+  Warmup, measurement, and cooldown are applied to Goose history when building
   the aggregated summary.
+- `profiling.tools`
+  Use Rust-native profiling tools such as `perf`, `flamegraph`, and
+  `process_stats`.
 - `suite.baseline_run`
   Optional path to a prior `run_summary.json` used for threshold-based
   comparison output.
 
 ## Request Mixes
 
-The benchmark-aware Locust file at
-`benchmarks/contextforge/locust/locustfile_benchmark_ab.py` uses real request families:
+The Rust Goose driver in `tools_rust/contextforge_goose/` uses real request
+families:
 
 - health checks
 - admin plugin UI
@@ -183,11 +193,11 @@ Key reporting behaviors:
 Re-render a saved run:
 
 ```bash
-python3 -m benchmarks.contextforge --report-run reports/benchmarks/<run-dir>
+cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- regenerate-report --run-dir reports/benchmarks/<run-dir>
 ```
 
 Rebuild comparisons for a saved run:
 
 ```bash
-python3 -m benchmarks.contextforge --compare-run reports/benchmarks/<run-dir>
+cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- compare-run --run-dir reports/benchmarks/<run-dir>
 ```

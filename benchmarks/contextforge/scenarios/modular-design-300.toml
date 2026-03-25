@@ -44,9 +44,6 @@ log_level = "ERROR"
 
 # Optional per-scenario overrides:
 # [scenario.build]
-# repo_url = "https://github.com/IBM/mcp-context-forge"
-# git_ref = "modular-design"
-# git_commit = "abcdef1234567890"
 #
 # [scenario.build.args]
 # ENABLE_RUST_MCP_RMCP = "true"
@@ -59,8 +56,7 @@ log_level = "ERROR"
 # expected_mcp_runtime_mode = "rust-managed"
 
 [defaults.load]
-locustfile = "benchmarks/contextforge/locust/locustfile_benchmark_ab.py"
-user_class = ""
+driver = "contextforge_goose"
 headless = true
 only_summary = true
 html_report = false
@@ -68,7 +64,6 @@ users = 300
 spawn_rate = 60
 run_time = "180s"
 target_service = "nginx"
-extra_args = ["--reset-stats"]
 
 [defaults.load.env]
 BENCH_MCP_SESSION_MODE = "reuse"
@@ -139,8 +134,7 @@ cooldown_seconds = 30
 
 [defaults.profiling]
 enabled = false
-tools = []
-py_spy = false
+tools = ["perf", "flamegraph"]
 duration_seconds = 0
 required = false
 
@@ -166,9 +160,6 @@ expected_mcp_runtime = "rust"
 expected_mcp_runtime_mode = "rust-managed"
 
 [scenario.build]
-repo_url = "https://github.com/IBM/mcp-context-forge"
-git_ref = "modular-design"
-git_commit = "46ef0806393d7aedc6d10974e567ec023aa254f4"
 rust_plugins = true
 image_tag = "benchmark-suite-rust-mcp-pr3617"
 
