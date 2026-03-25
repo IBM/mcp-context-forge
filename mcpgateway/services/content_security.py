@@ -27,11 +27,14 @@ try:
 except ImportError:
     # Metrics not available in test environment - create no-op counters
     class NoOpCounter:
+        """No-op counter for test environments where metrics are unavailable."""
+
         def labels(self, **kwargs):
+            """Return self to allow method chaining."""
             return self
 
         def inc(self, amount=1):
-            pass
+            """No-op increment method."""
 
     content_size_violations_counter = NoOpCounter()
     content_type_violations_counter = NoOpCounter()
