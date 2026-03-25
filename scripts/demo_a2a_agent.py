@@ -16,17 +16,19 @@ Press Ctrl+C to stop the server and unregister the agent.
 """
 
 import atexit
+import json
 import os
 import random
 import signal
 import socket
 import sys
 from contextlib import closing
+from typing import Optional
 
 import httpx
 import jwt
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 # ============================================================================
@@ -124,8 +126,8 @@ agent = SimpleAgent("Demo-A2A-Agent")
 class Parameters(BaseModel):
     """Parameters object containing the actual query."""
 
-    query: str = ""
-    message: str = ""
+    query: Optional[str] = None
+    message: Optional[str] = None
 
 
 class A2ARequest(BaseModel):
@@ -139,12 +141,12 @@ class A2ARequest(BaseModel):
     }
     """
 
-    interaction_type: str = ""
-    parameters: Parameters | None = None
-    protocol_version: str = ""
+    interaction_type: Optional[str] = None
+    parameters: Optional[Parameters] = None
+    protocol_version: Optional[str] = None
     # Also support direct query/message for simple testing
-    query: str = ""
-    message: str = ""
+    query: Optional[str] = None
+    message: Optional[str] = None
 
 
 class Response(BaseModel):
@@ -154,20 +156,54 @@ class Response(BaseModel):
 
 
 @app.post("/run")
-def run_agent(req: A2ARequest) -> Response:
+async def run_agent(request: Request) -> Response:
     """Execute a query against the agent.
 
-    Supports both:
-    - A2A protocol format: {"parameters": {"query": "..."}}
-    - Simple format: {"query": "..."}
+    Supports multiple formats:
+    - JSONRPC: {"jsonrpc": "2.0", "method": "...", "params": {"query": "..."}}
+    - A2A protocol: {"parameters": {"query": "..."}}
+    - Simple: {"query": "..."}
     """
-    # Extract query from A2A protocol format (parameters.query)
-    # or fall back to direct query/message fields
+    # Parse request body
+    body = await request.body()
+    body_dict = json.loads(body)
+
     query_text = ""
-    if req.parameters:
-        query_text = req.parameters.query or req.parameters.message
+
+    # Handle JSONRPC format (ContextForge sends this for agents with URLs ending in /)
+    if "jsonrpc" in body_dict:
+        params = body_dict.get("params", {})
+
+        # Handle nested message structure from Admin UI test
+        if "message" in params and isinstance(params["message"], dict):
+            message_obj = params["message"]
+            # Extract text from parts array
+            if "parts" in message_obj and isinstance(message_obj["parts"], list):
+                for part in message_obj["parts"]:
+                    if isinstance(part, dict) and part.get("kind") == "text":
+                        query_text = part.get("text", "")
+                        break
+            print("Extracted query from JSONRPC message.parts")
+        else:
+            # Simple query or message string
+            query_text = params.get("query") or params.get("message", "")
+            print("Extracted query from JSONRPC params")
+    # Handle A2A protocol format
+    elif "parameters" in body_dict and isinstance(body_dict["parameters"], dict):
+        params = body_dict["parameters"]
+        query_text = params.get("query") or params.get("message", "")
+        print("Extracted query from A2A parameters")
+    # Handle simple format
+    elif "query" in body_dict:
+        query_text = body_dict["query"]
+        print("Extracted query from query field")
+    elif "message" in body_dict:
+        query_text = body_dict["message"]
+        print("Extracted query from message field")
+
     if not query_text:
-        query_text = req.query or req.message or "Hello"
+        query_text = "Hello"
+        print("No query found, using default: Hello")
 
     response = agent.run(query_text)
     return Response(response=response)
