@@ -529,7 +529,7 @@ class SSOService:
 
     async def _apply_team_mapping(self, user_email: str, user_info: Dict[str, Any], provider: Optional[SSOProvider]) -> None:
         """Apply provider team mappings based on SSO group claims.
-        
+
         Reconciles team memberships: grants new SSO-based memberships and revokes
         stale ones when groups are removed from the identity provider.
 
@@ -568,13 +568,13 @@ class SSOService:
         team_service = TeamManagementService(self.db)
 
         # Get current SSO-granted team memberships for this user
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+        # First-Party
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
-        
+
         stmt = select(EmailTeamMember).where(
             EmailTeamMember.user_email == user_email,
             EmailTeamMember.grant_source == "sso",
-            EmailTeamMember.is_active == True,  # noqa: E712
+            EmailTeamMember.is_active.is_(True),
         )
         result = self.db.execute(stmt)
         current_sso_memberships = result.scalars().all()
@@ -587,7 +587,7 @@ class SSOService:
             source_group_normalized = source_group.strip().lower()
             if not source_group_normalized:
                 continue
-            
+
             if source_group_normalized in normalized_groups:
                 team_id, _ = self._resolve_team_mapping_target(target)
                 if team_id:
@@ -667,7 +667,6 @@ class SSOService:
                     exc,
                     exc_info=True,
                 )
-
 
     async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
         """Create new SSO provider configuration.
