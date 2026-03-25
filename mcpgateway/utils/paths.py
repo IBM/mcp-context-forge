@@ -33,7 +33,7 @@ def resolve_root_path(request: Request, *, fallback: str | None = None) -> str:
     the path is non-empty, and any trailing ``/`` is stripped.
 
     Args:
-        request: Incoming ASGI request whose scope is inspected.
+        request: Incoming ASGI request whose scope is inspected. Should not be none.
         fallback: Optional explicit fallback string.  When *None* (default)
             ``settings.app_root_path`` is used as the fallback.
 
