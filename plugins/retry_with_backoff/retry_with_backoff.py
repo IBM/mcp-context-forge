@@ -90,6 +90,7 @@ _STATE: Dict[str, _ToolRetryState] = {}
 
 
 def _get_state(tool: str, request_id: str) -> _ToolRetryState:
+    """Return the retry state entry for a given (tool, request_id) pair, creating it if absent."""
     key = f"{tool}:{request_id}"
     if key not in _STATE:
         _STATE[key] = _ToolRetryState()
@@ -97,6 +98,7 @@ def _get_state(tool: str, request_id: str) -> _ToolRetryState:
 
 
 def _del_state(tool: str, request_id: str) -> None:
+    """Remove the retry state entry for a given (tool, request_id) pair, if it exists."""
     _STATE.pop(f"{tool}:{request_id}", None)
 
 
@@ -236,6 +238,7 @@ class RetryWithBackoffPlugin(Plugin):
     """
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialise the plugin, clamp max_retries to the gateway ceiling, and prepare Rust state managers."""
         super().__init__(config)
         raw_cfg = RetryConfig(**(config.config or {}))
 
@@ -376,7 +379,7 @@ class RetryWithBackoffPlugin(Plugin):
         _del_state(tool, request_id)
         return ToolPostInvokeResult(retry_delay_ms=0, metadata=retry_policy_meta)
 
-    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:  # pylint: disable=unused-argument
         """Attach retry policy metadata after resource fetch."""
         return ResourcePostFetchResult(
             metadata={

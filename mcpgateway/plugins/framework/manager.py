@@ -226,8 +226,7 @@ class PluginExecutor:
             )
 
             # Propagate retry signal — take the largest delay requested by any plugin
-            if result.retry_delay_ms > max_retry_delay_ms:
-                max_retry_delay_ms = result.retry_delay_ms
+            max_retry_delay_ms = max(max_retry_delay_ms, result.retry_delay_ms)
 
             # Apply policy-based controlled merge (per-plugin)
             if result.modified_payload is not None:

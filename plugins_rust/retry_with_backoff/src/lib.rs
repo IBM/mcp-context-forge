@@ -4,8 +4,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
-use rand::Rng;
 use pyo3::prelude::*;
+use rand::Rng;
 
 // ---------------------------------------------------------------------------
 // State struct — mirrors Python's _ToolRetryState dataclass.
@@ -44,7 +44,9 @@ fn make_key(tool: &str, request_id: &str) -> String {
 
 // Exponential backoff with optional jitter, capped at max_ms.
 fn compute_delay_ms(attempt: u32, base_ms: u64, max_ms: u64, jitter: bool) -> u64 {
-    let ceiling = base_ms.saturating_mul(2u64.saturating_pow(attempt)).min(max_ms);
+    let ceiling = base_ms
+        .saturating_mul(2u64.saturating_pow(attempt))
+        .min(max_ms);
     if jitter {
         rand::thread_rng().gen_range(0..=ceiling)
     } else {
@@ -86,7 +88,13 @@ pub struct RetryStateManager {
 #[pymethods]
 impl RetryStateManager {
     #[new]
-    fn new(max_retries: u32, base_ms: u64, max_ms: u64, jitter: bool, retry_on_status: Vec<i32>) -> Self {
+    fn new(
+        max_retries: u32,
+        base_ms: u64,
+        max_ms: u64,
+        jitter: bool,
+        retry_on_status: Vec<i32>,
+    ) -> Self {
         RetryStateManager {
             max_retries,
             base_ms,
@@ -142,18 +150,11 @@ impl RetryStateManager {
         state_map().lock().unwrap().len()
     }
 
-    fn compute_delay(
-        &self,
-        attempt: u32,
-    ) -> u64 {
+    fn compute_delay(&self, attempt: u32) -> u64 {
         compute_delay_ms(attempt, self.base_ms, self.max_ms, self.jitter)
     }
 
-    fn check_failure(
-        &self,
-        is_error: bool,
-        status_code: Option<i32>,
-    ) -> bool {
+    fn check_failure(&self, is_error: bool, status_code: Option<i32>) -> bool {
         is_failure_from_signals(is_error, status_code, &self.retry_on_status)
     }
 
