@@ -435,6 +435,7 @@ class ResourceService(BaseService):
             ResourceURIConflictError: If a resource with the same URI already exists.
             ResourceError: For other resource registration errors
             ContentSizeError: For content size exceed
+            ContentTypeError: If the MIME type is not allowed
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -2807,6 +2808,7 @@ class ResourceService(BaseService):
             IntegrityError: If a database integrity error occurs.
             Exception: For unexpected errors
             ContentSizeError: For content size exceed
+            ContentTypeError: If the MIME type is not allowed
 
         Example:
             >>> from mcpgateway.services.resource_service import ResourceService

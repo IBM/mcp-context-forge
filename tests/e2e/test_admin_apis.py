@@ -620,8 +620,21 @@ class TestAdminResourceAPIs:
         response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
 
-    async def test_admin_add_resource_accepts_parameterized_mime_types(self, client: AsyncClient, mock_settings):
+    async def test_admin_add_resource_accepts_parameterized_mime_types(self, client: AsyncClient, mock_settings, monkeypatch):
         """Test admin resource create/list accepts and persists parameterized MIME types."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        # Ensure text/html is in the allowed MIME types for this test
+        allowed_types = [
+            "text/plain",
+            "text/markdown",
+            "text/html",
+            "application/json",
+            "application/xml",
+        ]
+        monkeypatch.setattr(settings, "content_allowed_resource_mimetypes", allowed_types)
+
         accepted_mime_types = [
             "text/plain; charset=utf-8",
             "application/json; charset=utf-8",

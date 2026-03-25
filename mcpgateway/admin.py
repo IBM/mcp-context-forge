@@ -139,7 +139,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
-from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
+from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
@@ -12864,6 +12864,16 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_add_prompt: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
+        if isinstance(ex, PromptArgumentsJSONError):
+            LOGGER.error(f"PromptArgumentsJSONError in admin_add_prompt: {ex}")
+            return ORJSONResponse(
+                status_code=422,
+                content={
+                    "message": f"Invalid JSON in {ex.field_name}: {ex.json_error}",
+                    "field": ex.field_name,
+                    "success": False,
+                },
+            )
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_add_prompt: {ex}")
             return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
@@ -12975,6 +12985,16 @@ async def admin_edit_prompt(
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_edit_prompt: {ex}")
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
+        if isinstance(ex, PromptArgumentsJSONError):
+            LOGGER.error(f"PromptArgumentsJSONError in admin_edit_prompt: {ex}")
+            return ORJSONResponse(
+                status_code=422,
+                content={
+                    "message": f"Invalid JSON in {ex.field_name}: {ex.json_error}",
+                    "field": ex.field_name,
+                    "success": False,
+                },
+            )
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_edit_prompt: {ex}")
             return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})

@@ -30,7 +30,14 @@ except ImportError:
         """No-op counter for test environments where metrics are unavailable."""
 
         def labels(self, **_kwargs):
-            """Return self to allow method chaining."""
+            """Return self to allow method chaining.
+
+            Args:
+                **_kwargs: Arbitrary keyword arguments (ignored)
+
+            Returns:
+                self: Returns self for method chaining
+            """
             return self
 
         def inc(self, _amount=1):
@@ -321,14 +328,17 @@ class ContentSecurityService:
 
         allowed_types: List[str] = settings.content_allowed_resource_mimetypes
 
-        # Fast path: exact match in allowlist
-        if mime_type in allowed_types:
+        # Strip parameters from MIME type for comparison (e.g., "text/plain; charset=utf-8" -> "text/plain")
+        base_mime_type = mime_type.split(";")[0].strip()
+
+        # Fast path: exact match in allowlist (check both full and base MIME type)
+        if mime_type in allowed_types or base_mime_type in allowed_types:
             logger.debug("Resource MIME type validation passed: %s", mime_type)
             return
 
         # Always permit vendor types and structured-syntax suffix types to
         # avoid breaking legitimate content that is not in the default list.
-        if mime_type.startswith(("application/x-", "text/x-")) or "+" in mime_type:
+        if base_mime_type.startswith(("application/x-", "text/x-")) or "+" in base_mime_type:
             logger.debug("Resource MIME type permitted (vendor/suffix): %s", mime_type)
             return
 
