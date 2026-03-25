@@ -9843,10 +9843,14 @@ function initToolSelect(
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
 
+            // Check if pills are expanded
+            const isExpanded = pillsBox.dataset.expanded === "true";
+            const itemsToShow = isExpanded ? count : Math.min(count, maxPillsToShow);
+
             // Determine which pills to display based on mode
             if (pillsData.length > 0) {
                 // In Add Server or Edit Server mode with persisted/store data, show pills from selections
-                pillsData.slice(0, maxPillsToShow).forEach((item) => {
+                pillsData.slice(0, itemsToShow).forEach((item) => {
                     const span = document.createElement("span");
                     span.className = pillClasses;
                     span.textContent = item.name || "Unnamed";
@@ -9855,7 +9859,7 @@ function initToolSelect(
                 });
             } else {
                 // Default: show pills from currently checked checkboxes
-                checked.slice(0, maxPillsToShow).forEach((cb) => {
+                checked.slice(0, itemsToShow).forEach((cb) => {
                     const span = document.createElement("span");
                     span.className = pillClasses;
                     span.textContent =
@@ -9864,13 +9868,26 @@ function initToolSelect(
                 });
             }
 
-            // If more than maxPillsToShow, show a summary pill
+            // If more than maxPillsToShow, show expand/collapse button
             if (count > maxPillsToShow) {
                 const span = document.createElement("span");
-                span.className = pillClasses + " cursor-pointer";
-                span.title = "Click to see all selected tools";
-                const remaining = count - maxPillsToShow;
-                span.textContent = `+${remaining} more`;
+                span.className = pillClasses + " cursor-pointer hover:bg-green-200 dark:hover:bg-green-800";
+
+                if (isExpanded) {
+                    span.textContent = "show less";
+                    span.title = "Click to collapse";
+                } else {
+                    const remaining = count - maxPillsToShow;
+                    span.textContent = `+${remaining} more`;
+                    span.title = "Click to see all selected tools";
+                }
+
+                // Add click handler to toggle expansion
+                span.addEventListener("click", () => {
+                    pillsBox.dataset.expanded = isExpanded ? "false" : "true";
+                    update();
+                });
+
                 pillsBox.appendChild(span);
             }
 
@@ -9879,6 +9896,19 @@ function initToolSelect(
                 warnBox.textContent = `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.`;
             } else {
                 warnBox.textContent = "";
+            }
+
+            // Update the Select All button text to show count
+            // Re-query the button by ID to ensure we get the current button (not a stale reference)
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
             }
         } catch (error) {
             console.error("Error updating tool select:", error);
@@ -9927,7 +9957,6 @@ function initToolSelect(
 
         newSelectBtn.addEventListener("click", async () => {
             // Disable button and show loading state
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all tools...";
 
@@ -10010,16 +10039,11 @@ function initToolSelect(
                 allToolIds.forEach((id) => editSel.add(String(id)));
 
                 update();
-
-                newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
             } catch (error) {
                 console.error("Error in Select All:", error);
                 alert("Failed to select all tools. Please try again.");
                 newSelectBtn.disabled = false;
-                newSelectBtn.textContent = originalText;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
