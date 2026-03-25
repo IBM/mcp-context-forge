@@ -2364,20 +2364,6 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
     return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
-@app.exception_handler(ContentSizeError)
-async def content_size_exception_handler(_request: Request, exc: ContentSizeError):
-    """Handle content size limit violations globally.
-
-    Args:
-        _request: The incoming request (unused, required by FastAPI handler interface).
-        exc: The ContentSizeError with actual_size, max_size, and content_type.
-
-    Returns:
-        ORJSONResponse: A 413 Payload Too Large response with structured error details.
-    """
-    return ORJSONResponse(status_code=413, content={"detail": {"error": f"{exc.content_type} size limit exceeded", "message": str(exc), "actual_size": exc.actual_size, "max_size": exc.max_size}})
-
-
 @app.exception_handler(ContentTypeError)
 async def content_type_exception_handler(_request: Request, exc: ContentTypeError):
     """Handle MIME type validation failures globally.

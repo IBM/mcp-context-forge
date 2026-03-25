@@ -29,11 +29,11 @@ except ImportError:
     class NoOpCounter:
         """No-op counter for test environments where metrics are unavailable."""
 
-        def labels(self, **kwargs):
+        def labels(self, **_kwargs):
             """Return self to allow method chaining."""
             return self
 
-        def inc(self, amount=1):
+        def inc(self, _amount=1):
             """No-op increment method."""
 
     content_size_violations_counter = NoOpCounter()
