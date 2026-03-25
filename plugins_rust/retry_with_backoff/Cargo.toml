@@ -1,0 +1,28 @@
+[package]
+name = "retry_with_backoff"
+version = "0.1.0"
+edition = "2024"
+authors = ["ContextForge Contributors"]
+license = "Apache-2.0"
+description = "Rust-accelerated retry state manager for the retry-with-backoff plugin"
+
+[lib]
+# cdylib = C-compatible dynamic library (what Python loads as a .so)
+# rlib   = Rust static library (needed for tests / benchmarks)
+name = "retry_with_backoff_rust"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# pyo3: the bridge between Python and Rust
+# abi3-py311 = compile once, works on Python 3.11+
+pyo3 = { version = "0.24", features = ["abi3-py311"] }
+
+# rand: random number generation — needed for full-jitter backoff
+# ≈ Python's random.uniform()
+rand = "0.8"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
