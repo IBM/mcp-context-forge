@@ -9845,7 +9845,9 @@ function initToolSelect(
 
             // Check if pills are expanded
             const isExpanded = pillsBox.dataset.expanded === "true";
-            const itemsToShow = isExpanded ? count : Math.min(count, maxPillsToShow);
+            const itemsToShow = isExpanded
+                ? count
+                : Math.min(count, maxPillsToShow);
 
             // Determine which pills to display based on mode
             if (pillsData.length > 0) {
@@ -9871,7 +9873,9 @@ function initToolSelect(
             // If more than maxPillsToShow, show expand/collapse button
             if (count > maxPillsToShow) {
                 const span = document.createElement("span");
-                span.className = pillClasses + " cursor-pointer hover:bg-green-200 dark:hover:bg-green-800";
+                span.className =
+                    pillClasses +
+                    " cursor-pointer hover:bg-green-200 dark:hover:bg-green-800";
 
                 if (isExpanded) {
                     span.textContent = "show less";
