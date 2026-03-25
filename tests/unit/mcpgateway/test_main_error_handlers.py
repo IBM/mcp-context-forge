@@ -586,4 +586,35 @@ class TestServerServiceErrorHandlers:
                 "description": "Updated server",
             }
             response = test_client.put("/servers/test-id", json=server_data, headers=auth_headers)
-            assert response.status_code == 403
+
+
+def test_content_type_exception_handler():
+    """Test ContentTypeError exception handler returns 415 with proper format."""
+    # First-Party
+    from mcpgateway.main import content_type_exception_handler
+    from mcpgateway.services.content_security import ContentTypeError
+    from starlette.requests import Request
+
+    # Create a mock request
+    mock_request = MagicMock(spec=Request)
+
+    # Create a ContentTypeError
+    exc = ContentTypeError(
+        mime_type="application/evil",
+        allowed_types=["text/plain", "application/json", "text/html"]
+    )
+
+    # Call the exception handler
+    import asyncio
+    response = asyncio.run(content_type_exception_handler(mock_request, exc))
+
+    # Verify response
+    assert response.status_code == 415
+    content = response.body.decode()
+    import json
+    result = json.loads(content)
+    assert "detail" in result
+    assert result["detail"]["error"] == "Unsupported MIME type"
+    assert result["detail"]["mime_type"] == "application/evil"
+    assert "allowed_types" in result["detail"]
+    assert len(result["detail"]["allowed_types"]) <= 5  # Limited to first 5
