@@ -509,9 +509,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.body.addEventListener("htmx:afterSwap", function (event) {
         const targetId = event.detail.target && event.detail.target.id;
         if (targetId && tableToEntityType[targetId]) {
-            console.log(
-                `📝 HTMX swap detected in ${targetId}`,
-            );
+            console.log(`📝 HTMX swap detected in ${targetId}`);
             updateFilterStatus();
         }
     });
@@ -18968,7 +18966,12 @@ function initializeSearchInputs() {
         if (searchState.query && searchInput.value !== searchState.query) {
             searchInput.value = searchState.query;
         }
-        if (tagInput && searchState.tags && tagInput.value !== searchState.tags) {
+
+        if (
+            tagInput &&
+            searchState.tags &&
+            tagInput.value !== searchState.tags
+        ) {
             tagInput.value = searchState.tags;
         }
 

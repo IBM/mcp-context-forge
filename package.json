@@ -27,6 +27,7 @@
         "test:ui": "vitest --ui"
     },
     "overrides": {
+        "flatted": ">=3.4.2",
         "keyv": "5.1.0",
         "minimatch": ">=10.2.1",
         "undici": "^7.24.5"
