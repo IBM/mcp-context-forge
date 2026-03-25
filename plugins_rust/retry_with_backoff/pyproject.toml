@@ -12,4 +12,5 @@ requires-python = ">=3.11"
 [tool.maturin]
 # The Python module name: `import retry_with_backoff_rust`
 module-name = "retry_with_backoff_rust"
+python-source = "python"
 features = ["pyo3/extension-module"]

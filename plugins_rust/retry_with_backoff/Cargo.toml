@@ -12,10 +12,15 @@ description = "Rust-accelerated retry state manager for the retry-with-backoff p
 name = "retry_with_backoff_rust"
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "stub_gen"
+path = "src/bin/stub_gen.rs"
+
 [dependencies]
 # pyo3: the bridge between Python and Rust
 # abi3-py311 = compile once, works on Python 3.11+
-pyo3 = { version = "0.24", features = ["abi3-py311"] }
+pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
+pyo3-stub-gen = "0.19"
 
 # rand: random number generation — needed for full-jitter backoff
 # ≈ Python's random.uniform()

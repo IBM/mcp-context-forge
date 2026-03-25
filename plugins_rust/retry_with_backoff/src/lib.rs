@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::define_stub_info_gatherer;
+use pyo3_stub_gen::derive::*;
 use rand::Rng;
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,7 @@ fn is_failure_from_signals(
 // re-allocated on the hot path.  retry_on_status is kept as a HashSet for
 // O(1) membership tests instead of the O(n) Vec scan it replaced.
 // ---------------------------------------------------------------------------
+#[gen_stub_pyclass]
 #[pyclass]
 pub struct RetryStateManager {
     max_retries: u32,
@@ -85,6 +88,7 @@ pub struct RetryStateManager {
     retry_on_status: HashSet<i32>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl RetryStateManager {
     #[new]
@@ -217,3 +221,5 @@ fn retry_with_backoff_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RetryStateManager>()?;
     Ok(())
 }
+
+define_stub_info_gatherer!(stub_info);

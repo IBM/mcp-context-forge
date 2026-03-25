@@ -85,20 +85,26 @@ test-all: test test-python
 # help: 🛠 BUILD
 # help: build                 - Build release extension (no install)
 # help: build-target          - Build for specific target (use TARGET=...)
+# help: stub-gen              - Generate Python type stubs (.pyi files)
 # help: install               - Build and install wheel
-.PHONY: build build-target install
+.PHONY: stub-gen build build-target install
 
-build:
+stub-gen:
+	@echo "$(GREEN)Generating Python type stubs...$(NC)"
+	@cargo run --bin stub_gen
+	@echo "$(GREEN)Type stubs generated$(NC)"
+
+build: stub-gen
 	@echo "$(GREEN)Building $(PACKAGE_NAME)...$(NC)"
 	@cd ../.. && uv run maturin build --release --manifest-path plugins_rust/retry_with_backoff/Cargo.toml
 	@echo "$(GREEN)Build complete$(NC)"
 
-build-target:
+build-target: stub-gen
 	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"
 	@uv run maturin build --release --target $(TARGET)
 	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
 
-install:
+install: stub-gen
 	@echo "$(GREEN)Installing $(PACKAGE_NAME) plugin...$(NC)"
 	@cd ../.. && uv run maturin develop --release --manifest-path plugins_rust/retry_with_backoff/Cargo.toml
 	@echo "$(GREEN)Installation complete$(NC)"
