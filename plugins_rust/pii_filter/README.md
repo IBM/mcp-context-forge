@@ -152,12 +152,14 @@ This section describes the current Rust detector behavior so users know what is 
 **Covers**
 - User-defined regex patterns for organization-specific identifiers
 - Explicit per-pattern masking strategies
-- Guardrails that reject patterns that are too long or too complex
+- Guardrails that reject patterns that are too long or too complex for maintainable admin-authored configuration
 
 **Does not cover**
 - Unlimited regex expressiveness
 - Automatic tuning of custom patterns for precision or recall
 - Protection against poor pattern choices that are syntactically valid but semantically too broad
+
+Custom patterns are intended for trusted operators editing plugin configuration, not untrusted end-user input. The Rust implementation relies on the [`regex`](https://docs.rs/regex/latest/regex/) crate, which avoids catastrophic backtracking during matching, and then applies additional length and complexity limits to keep custom expressions readable and cheap to compile.
 
 ## Secret Detection
 
@@ -166,8 +168,13 @@ The Rust plugin also detects AWS keys and generic API-key style assignments, but
 ## Security Notes
 
 - Whitelist patterns are compiled case-insensitively.
-- Custom patterns must stay within basic length and complexity limits.
+- Custom patterns must stay within basic length and complexity limits and are meant for trusted admin-authored configuration.
 - Very large strings and oversized nested collections are rejected instead of being scanned indefinitely.
+
+## Masking Notes
+
+- `HASH` masking emits the first 16 hexadecimal characters of the SHA-256 digest, for example `[HASH:8f434346648f6b96]`.
+- Earlier releases emitted 8 hexadecimal characters. Update downstream parsers if they assumed the shorter fixed-width placeholder.
 
 ## Testing
 

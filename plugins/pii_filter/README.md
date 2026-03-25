@@ -25,7 +25,7 @@ A plugin for detecting and masking Personally Identifiable Information (PII) in 
 ### Masking Strategies
 - **REDACT** - Complete replacement with `[REDACTED]` or custom text
 - **PARTIAL** - Show partial info (e.g., `***-**-1234` for SSN, `j***e@example.com` for email)
-- **HASH** - Replace with hash value for consistency
+- **HASH** - Replace with a deterministic SHA-256-derived placeholder such as `[HASH:8f434346648f6b96]`
 - **TOKENIZE** - Replace with unique token for reversibility
 - **REMOVE** - Complete removal of PII
 
@@ -212,7 +212,7 @@ To prevent Regular Expression Denial of Service (ReDoS) attacks, custom patterns
 - **Maximum alternations (`|`):** 16
 - **Maximum quantifiers (`*`, `+`, `?`, `{}`):** 24
 
-These limits ensure that custom patterns cannot create pathological regex behavior that could consume excessive CPU resources. Patterns exceeding these limits will be rejected during configuration validation.
+Custom patterns are expected to be written by trusted operators in plugin configuration, not supplied by end users at request time. The Rust detector uses the `regex` crate's linear-time matching engine, and these limits add extra guardrails for maintainability and compilation cost. Patterns exceeding these limits will be rejected during configuration validation.
 
 Test the custom pattern:
 ```python

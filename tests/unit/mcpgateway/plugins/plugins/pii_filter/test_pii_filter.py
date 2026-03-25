@@ -913,11 +913,15 @@ class TestRustPIIDetectorSpecific:
 
         # Generate 10,000 lines of text with PII
         lines = []
-        for i in range(10000):
-            area = (i % 799) + 100
-            if area == 666:
-                area = 667
-            lines.append(f"User {i}: SSN {area:03d}-45-6789, Email user{i}@example.com")
+        area = 100
+        while len(lines) < 10000:
+            if area != 666:
+                i = len(lines)
+                lines.append(f"User {i}: SSN {area:03d}-45-6789, Email user{i}@example.com")
+
+            area += 1
+            if area >= 900:
+                area = 100
         text = "\n".join(lines)
 
         start = time.time()

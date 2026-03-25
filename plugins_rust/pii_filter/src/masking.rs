@@ -79,9 +79,12 @@ fn validate_detection_ranges(
             }
 
             if !text.is_char_boundary(detection.start) || !text.is_char_boundary(detection.end) {
-                return Err(
-                    "Invalid detection range: offsets must align to UTF-8 boundaries".to_string(),
-                );
+                return Err(format!(
+                    "Invalid detection range: offsets {}..{} must align to UTF-8 boundaries (text len: {})",
+                    detection.start,
+                    detection.end,
+                    text.len()
+                ));
             }
 
             ranges.push((detection.start, detection.end));
@@ -326,5 +329,25 @@ mod tests {
 
         let err = mask_pii(text, &detections, &config).unwrap_err();
         assert!(err.contains("Overlapping detection ranges"));
+    }
+
+    #[test]
+    fn test_mask_pii_reports_utf8_boundary_offsets() {
+        let config = PIIConfig::default();
+        let text = "Joé";
+        let mut detections = HashMap::new();
+        detections.insert(
+            PIIType::Custom,
+            vec![Detection {
+                value: "o".to_string(),
+                start: 3,
+                end: 3,
+                mask_strategy: MaskingStrategy::Redact,
+            }],
+        );
+
+        let err = mask_pii(text, &detections, &config).unwrap_err();
+        assert!(err.contains("offsets 3..3"));
+        assert!(err.contains(&format!("text len: {}", text.len())));
     }
 }

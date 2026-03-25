@@ -321,6 +321,12 @@ pub fn compile_patterns(config: &PIIConfig) -> Result<CompiledPatterns, String> 
     })
 }
 
+/// Validate admin-authored custom patterns before compilation.
+///
+/// These patterns come from trusted plugin configuration rather than end-user input.
+/// The Rust `regex` crate uses a linear-time engine without catastrophic backtracking,
+/// so these limits are lightweight guardrails for readability, compile cost, and
+/// obvious mistakes instead of a full regex sandbox.
 fn validate_custom_pattern(pattern: &str) -> Result<(), String> {
     const MAX_CUSTOM_PATTERN_LEN: usize = 256;
     const MAX_ALTERNATIONS: usize = 16;
