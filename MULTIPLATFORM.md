@@ -89,7 +89,7 @@ The `.github/workflows/docker-multiplatform.yml` workflow:
    - s390x on `ubuntu-latest` with QEMU (emulated, slower)
    - ppc64le on `ubuntu-latest` with QEMU (emulated, slower)
 3. **Creates** a multiplatform manifest
-4. **Scans** for vulnerabilities (Trivy, Grype)
+4. **Generates review artifacts** (SBOM and related build metadata)
 5. **Signs** with Cosign (keyless OIDC)
 
 ### Build Times

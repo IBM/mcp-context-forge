@@ -46,9 +46,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
-  actions: read
-  id-token: write
 
 env:
   REGISTRY: ghcr.io
@@ -69,25 +66,36 @@ jobs:
             runner: ubuntu-latest
             suffix: amd64
             cache_mode: max
+            qemu: false
+            tag_only: false
             run_on_pr: true   # Always build amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             suffix: arm64
             cache_mode: max
+            qemu: false
+            tag_only: false
             run_on_pr: false  # Skip on PRs to speed up CI
           - platform: linux/s390x
             runner: ubuntu-24.04-s390x
             suffix: s390x
             cache_mode: max
+            qemu: false
+            tag_only: false
             run_on_pr: false
           - platform: linux/ppc64le
             runner: ubuntu-24.04-ppc64le
             suffix: ppc64le
             cache_mode: max
+            qemu: false
+            tag_only: false
             run_on_pr: false
 
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
 
     # Skip non-amd64 builds on PRs for faster CI feedback
     # Skip tag_only builds on non-tag pushes
@@ -95,29 +103,31 @@ jobs:
     steps:
       - name: Checkout code
         if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Set image name lowercase
         if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         run: |
           IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
+          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> "${GITHUB_ENV}"
 
       # QEMU is not currently triggered (native runners are used for all platforms)
       # but is retained so it can be re-enabled via matrix.qemu if needed.
       - name: Set up QEMU
         if: matrix.qemu && (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: ${{ matrix.platform }}
 
       - name: Set up Docker Buildx
         if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
         if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request' && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -126,7 +136,7 @@ jobs:
       - name: Extract metadata
         if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           tags: |
@@ -135,7 +145,7 @@ jobs:
       - name: Build and push
         if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: Containerfile.lite
@@ -146,8 +156,8 @@ jobs:
 
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=build-${{ matrix.suffix }}
-          cache-to: type=gha,mode=${{ matrix.cache_mode }},scope=build-${{ matrix.suffix }}
+          cache-from: type=gha,scope=publish-build-${{ matrix.suffix }}
+          cache-to: type=gha,mode=${{ matrix.cache_mode }},scope=publish-build-${{ matrix.suffix }}
           provenance: false
 
       - name: Export digest
@@ -160,7 +170,7 @@ jobs:
 
       - name: Upload digest
         if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request' && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digest-${{ matrix.suffix }}
           path: /tmp/digests/*
@@ -176,18 +186,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Set image name lowercase
         run: |
           IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
+          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> "${GITHUB_ENV}"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -196,25 +209,43 @@ jobs:
       - name: Create and push manifest
         run: |
           SHA=${{ github.sha }}
+          REF_NAME=${{ github.ref_name }}
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
 
           echo "Creating multiplatform manifest..."
 
           # All four architectures are built on every non-PR push
-          IMAGES="${IMAGE}:amd64-${SHA} ${IMAGE}:arm64-${SHA} ${IMAGE}:s390x-${SHA} ${IMAGE}:ppc64le-${SHA}"
+          IMAGES=(
+            "${IMAGE}:amd64-${SHA}"
+            "${IMAGE}:arm64-${SHA}"
+            "${IMAGE}:s390x-${SHA}"
+            "${IMAGE}:ppc64le-${SHA}"
+          )
 
-          docker buildx imagetools create \
-            --tag "${IMAGE}:${SHA}" \
-            --tag "${IMAGE}:latest" \
-            $IMAGES
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            docker buildx imagetools create \
+              --tag "${IMAGE}:${SHA}" \
+              --tag "${IMAGE}:${REF_NAME}" \
+              --tag "${IMAGE}:latest" \
+              "${IMAGES[@]}"
+          else
+            docker buildx imagetools create \
+              --tag "${IMAGE}:${SHA}" \
+              "${IMAGES[@]}"
+          fi
 
           echo "Manifest created successfully"
 
       - name: Inspect manifest
         run: |
+          REF_NAME=${{ github.ref_name }}
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           echo "Inspecting multiplatform manifest..."
-          docker buildx imagetools inspect "${IMAGE}:latest"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            docker buildx imagetools inspect "${IMAGE}:${REF_NAME}"
+          else
+            docker buildx imagetools inspect "${IMAGE}:${{ github.sha }}"
+          fi
 
   # ---------------------------------------------------------------
   # Sign images with Cosign (keyless OIDC)
@@ -225,18 +256,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
 
     steps:
       - name: Set image name lowercase
         run: |
           IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
+          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> "${GITHUB_ENV}"
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9 # v3
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -244,12 +279,16 @@ jobs:
 
       - name: Pull image for SBOM generation
         run: |
-          docker pull --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            docker pull --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.ref_name }}
+          else
+            docker pull --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.sha }}
+          fi
 
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
           output-file: sbom.spdx.json
 
       - name: Sign and attest multiplatform image
@@ -258,8 +297,12 @@ jobs:
         run: |
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
           SHA=${{ github.sha }}
+          REFS=("${IMAGE}:${SHA}")
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            REFS+=("${IMAGE}:${GITHUB_REF_NAME}" "${IMAGE}:latest")
+          fi
 
-          for REF in "${IMAGE}:latest" "${IMAGE}:${SHA}"; do
+          for REF in "${REFS[@]}"; do
             echo "Signing ${REF}"
             cosign sign --recursive --yes "${REF}"
 

@@ -69,8 +69,8 @@ plugins_rust/
 ### Option 1: Build from Source (Recommended)
 
 ```bash
-# Install Rust toolchain
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Install Rust toolchain using the official instructions:
+# https://rustup.rs/
 
 # Build specific plugin
 cd plugins_rust/[plugin_name]
@@ -184,7 +184,7 @@ WARNING - 💡 Build Rust plugins for better performance
 
 ### Prerequisites
 
-- Rust 1.70+ (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
+- Rust 1.70+ (install via the official `rustup` instructions at <https://rustup.rs/>)
 - Python 3.11+
 - maturin (`pip install maturin`)
 

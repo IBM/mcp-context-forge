@@ -23,6 +23,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   rust-checks:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -35,7 +38,9 @@ jobs:
         os: [ubuntu-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust components
         run: |
@@ -44,7 +49,7 @@ jobs:
           rustup default stable
 
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -79,7 +84,9 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust stable
         run: rustup default stable
@@ -111,7 +118,9 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust stable and components
         run: |

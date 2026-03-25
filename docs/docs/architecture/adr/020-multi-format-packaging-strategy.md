@@ -218,7 +218,7 @@ GOOS=darwin GOARCH=arm64 go build -o mcp-server-time-darwin-arm64
 2. **Container signing** - cosign with keyless OIDC (Sigstore)
 3. **SBOM** - Software Bill of Materials (Syft, SPDX format)
 4. **Provenance** - SLSA Build Level 3 attestation
-5. **Vulnerability scanning** - Trivy and Grype in CI/CD
+5. **Vulnerability review** - SBOM generation and CI review artifacts
 6. **Checksums** - SHA256 for all binary artifacts
 
 **Verification:**

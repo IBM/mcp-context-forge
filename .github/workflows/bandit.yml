@@ -32,6 +32,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   bandit:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
@@ -48,7 +51,9 @@ jobs:
       # 0️⃣  Check out the repository
       # -----------------------------------------------------------
       - name: ⬇️  Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       # -----------------------------------------------------------
       # 1️⃣  Run Bandit with custom filters

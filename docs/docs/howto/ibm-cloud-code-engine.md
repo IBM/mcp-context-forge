@@ -168,8 +168,9 @@ make podman ibmcloud-tag ibmcloud-push ibmcloud-deploy
 ## 4 - Workflow B - Manual IBM Cloud CLI
 
 ```bash
-# 1 - Install CLI + plugins
-curl -fsSL https://clis.cloud.ibm.com/install/linux | sh
+# 1 - Install the IBM Cloud CLI using the official instructions:
+#     https://cloud.ibm.com/docs/cli?topic=cli-getting-started
+#     Then install the required plugins:
 ibmcloud plugin install container-registry -f
 ibmcloud plugin install code-engine      -f
 

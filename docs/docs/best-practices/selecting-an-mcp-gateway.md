@@ -644,7 +644,7 @@ flowchart LR
 
 **ContextForge delivers (current + roadmap):**
 
-- Container vulnerability scanning (Trivy/Grype integration)
+- Container review artifacts (SBOM generation and CI metadata)
 - SBOM generation (CycloneDX/SPDX format)
 - Source code scanning (Semgrep/Bandit integration)
 - Supply chain attack detection (typosquatting, dependency confusion)

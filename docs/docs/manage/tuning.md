@@ -1051,7 +1051,7 @@ PERFORMANCE_TRACKING_ENABLED=true
 
 * Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens-use `.env.example` as a template.
 * Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.
-* If you enable `gevent`/`eventlet`, pin their versions and run **bandit** or **trivy** scans.
+* If you enable `gevent`/`eventlet`, pin their versions and run **bandit** plus your preferred dependency or container review checks.
 
 ---
 

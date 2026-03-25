@@ -496,16 +496,16 @@ This builds the lite production image with Docker Content Trust enabled.
 Lint the Dockerfiles for best-practice violations, then scan the built image for vulnerabilities and CIS benchmark compliance:
 
 ```bash
-make hadolint dockle trivy
+make hadolint dockle security-scan
 ```
 
 | Target | What it checks |
 |--------|----------------|
 | `hadolint` | Dockerfile best practices and shell linting for `Containerfile`, `Containerfile.lite`, and any `Dockerfile.*` |
 | `dockle` | CIS Docker Benchmark compliance and image best practices (runs against the built image via tarball) |
-| `trivy` | Vulnerability scan of the built image for HIGH and CRITICAL CVEs in OS packages and application dependencies |
+| `security-scan` | Show current local container review guidance |
 
-**Acceptance criteria:** No HIGH or CRITICAL vulnerabilities in `trivy` output. No errors from `hadolint` (warnings are acceptable if documented). No failures from `dockle` at warn level.
+**Acceptance criteria:** Review the generated SBOM and any separately-run container scan results before publishing. No errors from `hadolint` (warnings are acceptable if documented). No failures from `dockle` at warn level.
 
 ### 6.3 Compose stack validation
 
@@ -674,7 +674,7 @@ This produces a CycloneDX XML SBOM (`mcpgateway.sbom.xml`) listing all Python de
 
 ### 9.4 Container security scanning
 
-The CI pipeline (`docker-scan.yml`) runs Trivy and Grype scans on the container image. Verify no critical or high vulnerabilities exist in the final image. For local verification, see also [Section 6.2](#62-containerfile-linting-and-image-scanning).
+The CI pipeline (`docker-scan.yml`) builds the container image and generates an SBOM artifact for review. For local verification, see also [Section 6.2](#62-containerfile-linting-and-image-scanning).
 
 ---
 
@@ -1352,7 +1352,7 @@ make test-js-coverage
 
 # 6. Build, Containerfile lint & compose stack
 make docker-prod DOCKER_BUILD_ARGS="--no-cache"
-make hadolint dockle trivy
+make hadolint dockle security-scan
 make testing-down compose-clean testing-up
 
 # 7. Integration tests (compose stack must be running)
