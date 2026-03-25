@@ -87,7 +87,7 @@
     - ⏳ [**#292**](https://github.com/IBM/mcp-context-forge/issues/292) - [CHORE]: Enable AI Alliance Analytics Stack Integration
     - ⏳ [**#318**](https://github.com/IBM/mcp-context-forge/issues/318) - [CHORE]: Publish Agents and Tools that leverage codebase and templates
     - ⏳ [**#408**](https://github.com/IBM/mcp-context-forge/issues/408) - [CHORE][CICD]: Add normalize script to pre-commit hooks
-    - ⏳ [**#414**](https://github.com/IBM/mcp-context-forge/issues/414) - [CHORE]: Restructure Makefile targets (ex: move grype to container scanning section), or have a dedicated security scanning section
+    - ⏳ [**#414**](https://github.com/IBM/mcp-context-forge/issues/414) - [CHORE]: Restructure container scanning targets into a dedicated section
     - ⏳ [**#574**](https://github.com/IBM/mcp-context-forge/issues/574) - [CHORE][PYTHON]: Run pyupgrade to modernize Python syntax
 
 ???+ info "✨ Features - Remaining (27)"
@@ -365,7 +365,7 @@
 ???+ info "🔒 Security - Remaining (9)"
 
     - ⏳ [**#536**](https://github.com/IBM/mcp-context-forge/issues/536) - [FEATURE][SECURITY]: Generic IP-based access control (allowlist)
-    - ⏳ [**#2216**](https://github.com/IBM/mcp-context-forge/issues/2216) - [FEATURE][SECURITY]: Container vulnerability scanner - Trivy/Grype integration
+    - ⏳ [**#2216**](https://github.com/IBM/mcp-context-forge/issues/2216) - [FEATURE][SECURITY]: Container vulnerability scanner integration
     - ⏳ [**#2217**](https://github.com/IBM/mcp-context-forge/issues/2217) - [FEATURE][SECURITY]: MCP server source code scanner - Semgrep/Bandit integration
     - ⏳ [**#2218**](https://github.com/IBM/mcp-context-forge/issues/2218) - [FEATURE][SECURITY]: SBOM generator - CycloneDX/SPDX for MCP servers
     - ⏳ [**#2219**](https://github.com/IBM/mcp-context-forge/issues/2219) - [FEATURE][SECURITY]: MCP server security policy engine - Configurable compliance gates
@@ -1863,7 +1863,7 @@
     - ✅ [**#375**](https://github.com/IBM/mcp-context-forge/issues/375) - [CHORE]: Fix yamllint to Ignore node_modules Directory
     - ✅ [**#362**](https://github.com/IBM/mcp-context-forge/issues/362) - [CHORE]: Implement Docker HEALTHCHECK
     - ✅ [**#305**](https://github.com/IBM/mcp-context-forge/issues/305) - [CHORE]: Add vulture (dead code detect) and unimport (unused import detect) to Makefile and GitHub Actions
-    - ✅ [**#279**](https://github.com/IBM/mcp-context-forge/issues/279) - [CHORE]: Implement security audit and vulnerability scanning with grype in Makefile and GitHub Actions
+    - ✅ [**#279**](https://github.com/IBM/mcp-context-forge/issues/279) - [CHORE]: Implement container vulnerability review in Makefile and GitHub Actions
     - ✅ [**#249**](https://github.com/IBM/mcp-context-forge/issues/249) - [CHORE]: Achieve 60% doctest coverage and add Makefile and CI/CD targets for doctest and coverage
     - ✅ [**#210**](https://github.com/IBM/mcp-context-forge/issues/210) - [CHORE]: Raise pylint from 9.16/10 -> 10/10
 

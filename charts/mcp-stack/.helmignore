@@ -118,7 +118,6 @@ hosts
 inventory
 
 # Security scanning
-.trivyignore
 .snyk
 
 # Custom values files (add your own patterns)

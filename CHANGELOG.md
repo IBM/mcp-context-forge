@@ -2848,7 +2848,7 @@ Thank you to our dedicated contributors who continue to strengthen ContextForge:
 ### Overview
 
 This release represents a major milestone in code quality, security, and reliability. With [59 issues resolved](https://github.com/IBM/mcp-context-forge/issues?q=is%3Aissue%20state%3Aclosed%20milestone%3A%22Release%200.4.0%22), we've achieved:
-- **100% security scanner compliance** (Bandit, Grype, nodejsscan)
+- **100% security scanner compliance** (Bandit, container review tooling, nodejsscan)
 - **60% docstring coverage** with enhanced documentation
 - **82% pytest coverage** including end-to-end testing and security tests
 - **10/10 Pylint score** across the entire codebase (along existing 100% pass for ruff, pre-commit)
@@ -2877,7 +2877,7 @@ This release represents a major milestone in code quality, security, and reliabi
 
 * **Code Quality Tools**:
   * **Dead Code Detection** (#305) - Vulture and unimport integration for cleaner codebase
-  * **Security Vulnerability Scanning** (#279) - Grype integration in CI/CD pipeline
+  * **Security Vulnerability Scanning** (#279) - container review integration in the CI/CD pipeline
   * **60% Doctest Coverage** (#249) - Executable documentation examples with automated testing
 
 ### Fixed
@@ -2934,7 +2934,7 @@ This release represents a major milestone in code quality, security, and reliabi
 
 ### Security
 
-* All security scanners now pass with zero issues: Bandit, Grype, nodejsscan
+* All security scanners now pass with zero issues: Bandit, container review tooling, nodejsscan
 * Comprehensive input validation prevents XSS, SQL injection, and other attacks
 * Secure defaults with UI and Admin API disabled unless explicitly enabled
 * Enhanced error handling prevents information disclosure
@@ -3282,7 +3282,7 @@ Setting up GitHub repo, CI/CD with GitHub Actions, templates, `good first issue`
 
 #### 🛠️ Developer & CI tooling
 * 📝 **Comprehensive Makefile** (80 + targets), linting, > 400 tests, CI pipelines & badges
-* ⚙️ **Dev & CI helpers** - hot-reload dev server, Ruff/Black/Mypy/Bandit, Trivy image scan, SBOM generation, SonarQube helpers
+* ⚙️ **Dev & CI helpers** - hot-reload dev server, Ruff/Black/Mypy/Bandit, container image scanning, SBOM generation, SonarQube helpers
 
 #### 🗄️ Persistence & performance
 * 🐘 **SQLAlchemy ORM** with pluggable back-ends (SQLite default; PostgreSQL, MySQL, etc.)

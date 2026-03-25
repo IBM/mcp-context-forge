@@ -41,6 +41,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # -----------------------------------------------------------------------
   # Lint – always runs to catch chart issues early
@@ -56,10 +59,12 @@ jobs:
 
     steps:
       - name: ⬇️  Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: 🛠️  Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
 
       - name: 🔍  Lint chart (strict)
         run: helm lint charts/mcp-stack --strict
@@ -93,10 +98,12 @@ jobs:
 
     steps:
       - name: ⬇️  Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: 🛠️  Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
 
       # ----------------------------------------------------------------
       # Read the canonical chart version from Chart.yaml so the packaged
@@ -125,7 +132,7 @@ jobs:
           ls -lh dist/
 
       - name: 🔐  Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

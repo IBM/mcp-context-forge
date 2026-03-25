@@ -59,7 +59,7 @@ Make targets are grouped by functionality. Use `make help` to see them all in yo
 
 | Target         | Description |
 |----------------|-------------|
-| `make trivy`   | Scan the container image for vulnerabilities using [Trivy](https://aquasecurity.github.io/trivy/). |
+| `make security-scan` | Show current local container review guidance. |
 
 > **Tip:** These commands should work out-of-the-box after cloning a repo and running `make venv install serve`.
 

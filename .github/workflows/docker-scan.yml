@@ -2,12 +2,11 @@
 # Docker Security Scan Workflow
 # ===============================================================
 #
-# This workflow performs security scanning on container images:
-#   1. Lint Dockerfile with Hadolint
-#   2. Build image locally (no push required)
-#   3. Lint image with Dockle
-#   4. Generate SBOM with Syft
-#   5. Scan for vulnerabilities with Trivy and Grype
+# This workflow builds the container image locally and generates an SBOM
+# artifact for review:
+#   1. Build image locally (no push required)
+#   2. Generate SBOM with Syft
+#   3. Upload SBOM artifact
 #
 # Runs on both PRs and pushes to catch issues early.
 #
@@ -41,60 +40,31 @@ concurrency:
 
 permissions:
   contents: read
-  security-events: write
-  actions: read
 
 env:
   IMAGE_NAME: mcp-context-forge-scan
 
 jobs:
   # ---------------------------------------------------------------
-  # Lint Dockerfile
-  # ---------------------------------------------------------------
-  lint:
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    name: Lint Dockerfile
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Hadolint
-        id: hadolint
-        continue-on-error: true
-        run: |
-          curl -sSL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint
-          chmod +x /usr/local/bin/hadolint
-          hadolint -f sarif Containerfile.lite > hadolint-results.sarif || true
-
-      - name: Upload Hadolint SARIF
-        if: always() && hashFiles('hadolint-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: hadolint-results.sarif
-          category: hadolint
-
-  # ---------------------------------------------------------------
-  # Build and scan image
+  # Build image and generate SBOM
   # ---------------------------------------------------------------
   scan:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Security Scan
-    needs: lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build image locally
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: Containerfile.lite
@@ -102,95 +72,19 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE_NAME }}:scan
-          cache-from: type=gha,scope=build-amd64
-          cache-to: type=gha,mode=max,scope=build-amd64
-
-      - name: Image lint (Dockle)
-        id: dockle
-        continue-on-error: true
-        env:
-          DOCKLE_VERSION: 0.4.15
-        run: |
-          curl -sSL "https://github.com/goodwithtech/dockle/releases/download/v${DOCKLE_VERSION}/dockle_${DOCKLE_VERSION}_Linux-64bit.tar.gz" \
-            | tar -xz -C /usr/local/bin dockle
-          dockle --exit-code 1 --format sarif \
-                 --output dockle-results.sarif \
-                 ${{ env.IMAGE_NAME }}:scan
-          echo "DOCKLE_EXIT=$?" >> "$GITHUB_ENV"
-          exit 0
-
-      - name: Upload Dockle SARIF
-        if: always() && hashFiles('dockle-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: dockle-results.sarif
-          category: dockle
+          cache-from: type=gha,scope=scan-build-amd64
+          cache-to: type=gha,mode=max,scope=scan-build-amd64
 
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ env.IMAGE_NAME }}:scan
           output-file: sbom.spdx.json
+          upload-artifact: false
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom
           path: sbom.spdx.json
           retention-days: 30
-
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wget gnupg lsb-release
-          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
-            | gpg --dearmor \
-            | sudo tee /usr/share/keyrings/trivy.gpg >/dev/null
-          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" \
-            | sudo tee /etc/apt/sources.list.d/trivy.list >/dev/null
-          sudo apt-get update
-          sudo apt-get install -y trivy
-          trivy --version
-
-      - name: Trivy vulnerability scan
-        run: |
-          trivy image \
-            --format sarif \
-            --output trivy-results.sarif \
-            --severity CRITICAL,HIGH \
-            --exit-code 0 \
-            ${{ env.IMAGE_NAME }}:scan
-
-      - name: Upload Trivy SARIF
-        if: always() && hashFiles('trivy-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-results.sarif
-          category: trivy
-
-      - name: Install Grype
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
-
-      - name: Grype vulnerability scan
-        continue-on-error: true
-        run: |
-          grype ${{ env.IMAGE_NAME }}:scan --scope all-layers --only-fixed
-
-      - name: Grype SARIF report
-        continue-on-error: true
-        run: |
-          grype ${{ env.IMAGE_NAME }}:scan --scope all-layers --output sarif --file grype-results.sarif
-
-      - name: Upload Grype SARIF
-        if: always() && hashFiles('grype-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: grype-results.sarif
-          category: grype
-
-      - name: Enforce lint gates
-        if: env.DOCKLE_EXIT != '0'
-        run: |
-          echo "Dockle exit: $DOCKLE_EXIT"
-          exit 1

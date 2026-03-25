@@ -93,13 +93,13 @@ Our security pipeline operates at multiple levels:
 
 **Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, Dodgy for hardcoded secrets detection, and detect-private-key for catching committed private keys, along with type checking and code quality enforcement. Pre-commit hooks also enforce **AI content integrity** (preventing AI-generated artifacts such as hallucinated citations, stock phrases, and malformed code fences) and **Unicode safety** (fixing smart quotes, ligatures, and forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)). Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
 
-**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including CodeQL and Semgrep for semantic analysis, Gitleaks and TruffleHog for secret detection, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, container security assessment with Trivy, Grype, Dockle, and Hadolint, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
+**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including Semgrep for semantic analysis, Gitleaks and TruffleHog for secret detection, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, SBOM generation, and Hadolint-style linting where configured, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
 **Supply Chain Security**: We maintain strict oversight of our software supply chain through automated dependency vulnerability scanning, Software Bill of Materials (SBOM) generation, and license compliance checking to ensure all components meet security standards. Automated dependency update PRs are managed via Renovate bot, and Snyk custom rules enforce detection of hardcoded JWT secrets and basic auth credentials (CWE-798). License policies explicitly deny strong-copyleft licenses (GPL-3.0, AGPL-3.0, SSPL) and flag licenses requiring review (MPL-2.0, LGPL-2.0, CC-BY-SA-4.0).
 
-**Container Security Hardening**: Our containerized deployments follow security best practices including multi-stage builds, minimal base images (UBI Micro) with the latest updates, non-root user execution, read-only filesystems, and comprehensive container scanning with tools like Trivy, Grype, Dockle, and OSV-Scanner.
+**Container Security Hardening**: Our containerized deployments follow security best practices including multi-stage builds, minimal base images (UBI Micro) with the latest updates, non-root user execution, read-only filesystems, and SBOM-based review with complementary dependency and OS/package analysis where configured.
 
 **Runtime Security Monitoring**: Beyond build-time security, we implement runtime monitoring and security policies to detect and respond to potential threats in production environments.
 
@@ -109,8 +109,8 @@ Our security toolchain includes **40+ different security and quality tools**, ea
 
 - **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, DevSkim (Microsoft security anti-patterns), and multiple type checkers
 - **Secret Detection**: Gitleaks for git history scanning, TruffleHog for filesystem-level secret scanning, Dodgy for hardcoded secrets in code, detect-private-key for committed private keys, and Snyk custom rules for hardcoded JWT secrets and credentials (CWE-798)
-- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, pip-audit, npm audit, cargo audit (Rust), govulncheck (Go), and GitHub dependency review with license policy enforcement
-- **Container Security**: Hadolint for Dockerfile linting, Dockle for container security, and Trivy/Grype for vulnerability scanning
+- **Dependency Vulnerability Scanning**: OSV-Scanner, pip-audit, npm audit, cargo audit (Rust), govulncheck (Go), and GitHub dependency review with license policy enforcement
+- **Container Security**: Dockerfile linting, SBOM generation, and Dockle where used
 - **Infrastructure as Code (IaC) Security**: Checkov for IaC security scanning (Dockerfiles, Helm charts, docker-compose), kube-linter for Kubernetes/Helm manifest best practices
 - **CI/CD Pipeline Security**: Zizmor for GitHub Actions workflow security linting, actionlint for workflow syntax validation
 - **Go Security**: gosec for Go static security analysis, golangci-lint with security rules, govulncheck for Go vulnerability database checking
@@ -147,8 +147,7 @@ We believe that security should enhance rather than hinder the development proce
 - `make prospector` - Comprehensive code analysis combining multiple tools
 - `make pyupgrade` - Modernize Python syntax for security improvements
 - `make pip-audit` - Python dependency vulnerability scanning
-- `make trivy` - Container vulnerability scanning
-- `make grype-scan` - Container security audit and vulnerability scanning
+- `make security-scan` - Show current local container review guidance
 - `make dockle` - Container security and best practices analysis
 - `make hadolint` - Dockerfile linting for security issues
 - `make osv-scan` - Open Source Vulnerability database scanning
@@ -524,9 +523,8 @@ flowchart TD
 
     S --> S1[Hadolint - Dockerfile Linting]
     S --> S2[Dockle - Container Security]
-    S --> S3[Trivy - Vulnerability Scanner]
-    S --> S4[Grype - Security Audit]
-    S --> S5[OSV-Scanner - Open Source Vulns]
+    S --> S3[Container review guidance]
+    S --> S4[OSV-Scanner - Open Source Vulns]
 
     T[Local Development] --> U[Make Targets]
 
@@ -552,12 +550,11 @@ flowchart TD
     W --> W11[make pyupgrade - Modernize Syntax]
     W --> W12[make pip-audit - Dependency Scanning]
     W --> W13[make osv-scan - Vulnerability Check]
-    W --> W14[make trivy - Container Security]
-    W --> W15[make grype-scan - Container Vulnerability]
-    W --> W16[make dockle - Image Analysis]
-    W --> W17[make hadolint - Dockerfile Linting]
-    W --> W18[make devskim - Security Anti-patterns]
-    W --> W19[make linting-security-trufflehog]
+    W --> W14[make security-scan - Container Review]
+    W --> W15[make dockle - Image Analysis]
+    W --> W16[make hadolint - Dockerfile Linting]
+    W --> W17[make devskim - Security Anti-patterns]
+    W --> W18[make linting-security-trufflehog]
     W --> W20[make linting-security-checkov]
     W --> W21[make linting-security-kube-linter]
     W --> W22[make linting-workflow-zizmor]

@@ -71,7 +71,7 @@ If not using Dev Containers, set up manually:
 ???+ check "Additional tools"
 
     - [ ] `helm` installed for Kubernetes deployments ([Helm install docs](https://helm.sh/docs/intro/install/))
-    - [ ] Security tools in `$PATH`: `hadolint`, `dockle`, `trivy`, `osv-scanner`
+    - [ ] Security tools in `$PATH`: `hadolint`, `dockle`, `osv-scanner`
 
 ???+ check "Useful VS Code extensions"
 
@@ -160,7 +160,7 @@ If not using Dev Containers, set up manually:
 
     - [ ] Run:
         ```bash
-        make hadolint dockle osv-scan trivy pip-audit
+        make hadolint dockle osv-scan security-scan pip-audit
         ```
 
 ???+ check "SonarQube analysis"

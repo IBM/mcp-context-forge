@@ -509,7 +509,6 @@ toolchain
 Toolchain
 Tooltips
 toplevel
-Trivy
 TTL
 TTP
 TTP

@@ -119,17 +119,10 @@ flowchart TD
 
     === "Linux"
 
-        ```bash
-        # Helm
-        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        Install Helm and `kubectl` using your distribution packages or the official install docs:
 
-        # kubectl
-        curl -LO "https://dl.k8s.io/release/$(curl -sSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-        chmod +x kubectl
-        sudo mv kubectl /usr/local/bin
-        ```
-
-        Installs latest stable versions directly from official sources.
+        - Helm: <https://helm.sh/docs/intro/install/>
+        - kubectl: <https://kubernetes.io/docs/tasks/tools/>
 
     === "Windows (PowerShell)"
 
