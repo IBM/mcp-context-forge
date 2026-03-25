@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 const MAX_TEXT_BYTES_LIMIT: usize = 100 * 1024 * 1024;
 const MAX_NESTED_DEPTH_LIMIT: usize = 1000;
 const MAX_COLLECTION_ITEMS_LIMIT: usize = 1_000_000;
+const DEFAULT_MAX_TEXT_BYTES: usize = 10 * 1024 * 1024;
+const DEFAULT_MAX_NESTED_DEPTH: usize = 32;
+const DEFAULT_MAX_COLLECTION_ITEMS: usize = 4096;
 
 /// PII types that can be detected
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -147,9 +150,9 @@ impl Default for PIIConfig {
             include_detection_details: true,
 
             // Default resource limits
-            max_text_bytes: 10 * 1024 * 1024,
-            max_nested_depth: 32,
-            max_collection_items: 4096,
+            max_text_bytes: DEFAULT_MAX_TEXT_BYTES,
+            max_nested_depth: DEFAULT_MAX_NESTED_DEPTH,
+            max_collection_items: DEFAULT_MAX_COLLECTION_ITEMS,
 
             // Custom patterns
             custom_patterns: Vec::new(),
@@ -342,9 +345,9 @@ mod tests {
         assert!(config.detect_email);
         assert_eq!(config.redaction_text, "[REDACTED]");
         assert_eq!(config.default_mask_strategy, MaskingStrategy::Redact);
-        assert_eq!(config.max_text_bytes, 10 * 1024 * 1024);
-        assert_eq!(config.max_nested_depth, 32);
-        assert_eq!(config.max_collection_items, 4096);
+        assert_eq!(config.max_text_bytes, DEFAULT_MAX_TEXT_BYTES);
+        assert_eq!(config.max_nested_depth, DEFAULT_MAX_NESTED_DEPTH);
+        assert_eq!(config.max_collection_items, DEFAULT_MAX_COLLECTION_ITEMS);
     }
 
     #[test]

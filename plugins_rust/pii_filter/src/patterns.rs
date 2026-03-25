@@ -473,12 +473,14 @@ mod tests {
     #[test]
     fn test_accepts_escaped_literals_in_custom_pattern_complexity_check() {
         let mut config = PIIConfig::default();
-        config.custom_patterns.push(super::super::config::CustomPattern {
-            pattern: r"foo\|bar\+\?\{baz\}".to_string(),
-            description: "Escaped regex metacharacters".to_string(),
-            mask_strategy: MaskingStrategy::Redact,
-            enabled: true,
-        });
+        config
+            .custom_patterns
+            .push(super::super::config::CustomPattern {
+                pattern: r"foo\|bar\+\?\{baz\}".to_string(),
+                description: "Escaped regex metacharacters".to_string(),
+                mask_strategy: MaskingStrategy::Redact,
+                enabled: true,
+            });
 
         let compiled = compile_patterns(&config);
         assert!(compiled.is_ok());
