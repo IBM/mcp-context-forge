@@ -1115,6 +1115,47 @@ class TestObservability:
         assert sent_messages[0]["status"] == 204
 
     @pytest.mark.asyncio
+    async def test_open_telemetry_request_middleware_supports_custom_path_filter(self):
+        """Test OTEL request middleware can be reused with runtime-specific path filters."""
+        sent_messages = []
+        span = MagicMock()
+        span_context = MagicMock()
+        span_context.__enter__ = MagicMock(return_value=span)
+        span_context.__exit__ = MagicMock(return_value=None)
+        tracer = MagicMock()
+        tracer.start_as_current_span.return_value = span_context
+
+        # First-Party
+        import mcpgateway.observability
+
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = tracer
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = OpenTelemetryRequestMiddleware(app, should_trace_request_path=lambda path: path == "/custom")
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/custom",
+            "headers": [],
+            "query_string": b"",
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent_messages.append(message)
+
+        await middleware(scope, receive, send)
+
+        tracer.start_as_current_span.assert_called_once()
+        assert sent_messages[0]["status"] == 200
+
+    @pytest.mark.asyncio
     @patch("mcpgateway.observability.otel_extract", return_value="parent-context")
     async def test_open_telemetry_request_middleware_creates_server_span(self, mock_extract):
         """Test OTEL request middleware creates a root server span for /rpc."""

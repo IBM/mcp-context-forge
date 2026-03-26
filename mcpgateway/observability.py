@@ -591,8 +591,18 @@ def _should_trace_request_path(path: str) -> bool:
 class OpenTelemetryRequestMiddleware:
     """Raw ASGI middleware that creates request-root spans for gateway transport flows."""
 
-    def __init__(self, app: Any):
+    def __init__(self, app: Any, should_trace_request_path: Optional[Callable[[str], bool]] = None):
         self.app = app
+        self.should_trace_request_path = should_trace_request_path or _should_trace_request_path
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy attribute access to the wrapped ASGI app.
+
+        This preserves access to app-specific attributes such as ``routes`` when
+        the middleware is used as the top-level object passed to uvicorn.
+        """
+
+        return getattr(self.app, name)
 
     async def __call__(self, scope: Mapping[str, Any], receive: Any, send: Any) -> None:
         if scope.get("type") != "http" or _TRACER is None:
@@ -600,7 +610,7 @@ class OpenTelemetryRequestMiddleware:
             return
 
         path = str(scope.get("path", "") or "")
-        if not _should_trace_request_path(path):
+        if not self.should_trace_request_path(path):
             await self.app(scope, receive, send)
             return
 
