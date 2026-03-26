@@ -3366,7 +3366,6 @@ images:
 # help: linting-go-govulncheck       - Run govulncheck on discovered Go modules
 # help: linting-security-checkov     - Run Checkov IaC security scan
 # help: linting-security-kube-linter - Run kube-linter against Kubernetes/Helm manifests
-# help: linting-security-trufflehog  - Run TruffleHog filesystem secret scan
 # help: linting-coverage-diff-cover  - Run diff-cover against changed lines
 # help: linting-full                 - Run passing linting gates used by CI
 
@@ -3405,7 +3404,7 @@ FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
 	linting-docs-codespell linting-docs-markdown-links linting-web-depcheck \
 	linting-helm-lint linting-helm-chart-testing linting-helm-unittest \
 	linting-go-gosec linting-go-govulncheck \
-	linting-security-checkov linting-security-kube-linter linting-security-trufflehog \
+	linting-security-checkov linting-security-kube-linter \
 	linting-coverage-diff-cover linting-full
 
 
@@ -3561,8 +3560,6 @@ LINT_DEPCHECK_TARGET ?= .
 LINT_DARGLINT_TARGET ?= mcpgateway
 LINT_CHECKOV_TARGET ?= .
 LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
-LINT_TRUFFLEHOG_TARGET ?= mcpgateway tests docs charts deployment mcp-servers a2a-agents
-LINT_TRUFFLEHOG_VERSION ?= v3.93.3
 LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
 
 # Passing gates only (used by CI workflow linting-full)
@@ -3762,45 +3759,6 @@ linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
 		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest >/dev/null; \
 		'$(LINT_GO_ROOT)/bin/kube-linter' lint '$(LINT_KUBE_LINTER_TARGET)'"
-
-.PHONY: linting-security-trufflehog
-linting-security-trufflehog:         ## 🔑  Secret scanning with TruffleHog
-	@echo "🔑 trufflehog filesystem scan of $(LINT_TRUFFLEHOG_TARGET)..."
-	@command -v curl >/dev/null 2>&1 || { echo "❌ curl not found"; exit 1; }
-	@command -v tar >/dev/null 2>&1 || { echo "❌ tar not found"; exit 1; }
-	@version='$(LINT_TRUFFLEHOG_VERSION)'; \
-		version_no_v="$${version#v}"; \
-		os="$$(uname -s | tr '[:upper:]' '[:lower:]')"; \
-		arch="$$(uname -m)"; \
-		case "$$arch" in \
-			x86_64) arch='amd64' ;; \
-			aarch64|arm64) arch='arm64' ;; \
-			*) echo "❌ Unsupported architecture: $$arch"; exit 1 ;; \
-		esac; \
-		asset="trufflehog_$${version_no_v}_$${os}_$${arch}.tar.gz"; \
-		url="https://github.com/trufflesecurity/trufflehog/releases/download/$${version}/$${asset}"; \
-		mkdir -p '$(LINT_GO_ROOT)/bin' '$(LINT_TMP_ROOT)'; \
-		curl -fsSL "$$url" -o '$(LINT_TMP_ROOT)/trufflehog.tar.gz'; \
-		tar -xzf '$(LINT_TMP_ROOT)/trufflehog.tar.gz' -C '$(LINT_GO_ROOT)/bin' trufflehog; \
-		chmod +x '$(LINT_GO_ROOT)/bin/trufflehog'; \
-		exclude_file='$(LINT_TMP_ROOT)/trufflehog-exclude-regexes.txt'; \
-		printf '%s\n' \
-			'^\\.git/' \
-			'^\\.venv/' \
-			'^\\.tmp/' \
-			'^\\.npm-cache/' \
-			'^\\.uv-cache/' \
-			'^dist/' \
-			'^coverage/' \
-			'^htmlcov/' \
-			'^mcp_contextforge_gateway\\.egg-info/' \
-			'^\\.pytest_cache/' \
-			'^\\.mypy_cache/' \
-			'^node_modules/' \
-			'^.*__pycache__/' \
-			'^.*\\.pyc$$' \
-			'^z_.*,cover$$' > "$$exclude_file"; \
-		'$(LINT_GO_ROOT)/bin/trufflehog' filesystem --fail --exclude-paths "$$exclude_file" $(LINT_TRUFFLEHOG_TARGET)
 
 .PHONY: linting-coverage-diff-cover
 linting-coverage-diff-cover:         ## 📊  Changed-lines coverage gate

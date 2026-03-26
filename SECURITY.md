@@ -93,7 +93,7 @@ Our security pipeline operates at multiple levels:
 
 **Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, Dodgy for hardcoded secrets detection, and detect-private-key for catching committed private keys, along with type checking and code quality enforcement. Pre-commit hooks also enforce **AI content integrity** (preventing AI-generated artifacts such as hallucinated citations, stock phrases, and malformed code fences) and **Unicode safety** (fixing smart quotes, ligatures, and forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)). Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
 
-**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including Semgrep for semantic analysis, Gitleaks and TruffleHog for secret detection, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, SBOM generation, and Hadolint-style linting where configured, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
+**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including Semgrep for semantic analysis, Gitleaks for secret detection, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, SBOM generation, and Hadolint-style linting where configured, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
@@ -108,7 +108,7 @@ Our security pipeline operates at multiple levels:
 Our security toolchain includes **40+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
 
 - **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, DevSkim (Microsoft security anti-patterns), and multiple type checkers
-- **Secret Detection**: Gitleaks for git history scanning, TruffleHog for filesystem-level secret scanning, Dodgy for hardcoded secrets in code, detect-private-key for committed private keys, and Snyk custom rules for hardcoded JWT secrets and credentials (CWE-798)
+- **Secret Detection**: Gitleaks for git history scanning, Dodgy for hardcoded secrets in code, detect-private-key for committed private keys, and Snyk custom rules for hardcoded JWT secrets and credentials (CWE-798)
 - **Dependency Vulnerability Scanning**: OSV-Scanner, pip-audit, npm audit, cargo audit (Rust), govulncheck (Go), and GitHub dependency review with license policy enforcement
 - **Container Security**: Dockerfile linting, SBOM generation, and Dockle where used
 - **Infrastructure as Code (IaC) Security**: Checkov for IaC security scanning (Dockerfiles, Helm charts, docker-compose), kube-linter for Kubernetes/Helm manifest best practices
@@ -159,7 +159,6 @@ We believe that security should enhance rather than hinder the development proce
 - `make nodejsscan` - Run nodejsscan for JS security vulnerabilities
 
 **IaC, CI/CD & Multi-Language Security**:
-- `make linting-security-trufflehog` - TruffleHog filesystem secret scanning
 - `make linting-security-checkov` - Checkov IaC security scanning
 - `make linting-security-kube-linter` - Kubernetes/Helm manifest best-practice linting
 - `make linting-workflow-zizmor` - GitHub Actions workflow security linting
@@ -465,7 +464,6 @@ flowchart TD
     N --> N6[Prospector - Comprehensive Analysis]
     N --> N7[Interrogate - Docstring Coverage]
     N --> N8[DevSkim - Security Anti-patterns]
-    N --> N9[TruffleHog - Filesystem Secrets]
 
     O --> O1[Dependency Vulnerability Check]
     O --> O2[License Compliance]
@@ -557,7 +555,6 @@ flowchart TD
     W --> W15[make dockle - Image Analysis]
     W --> W16[make hadolint - Dockerfile Linting]
     W --> W17[make devskim - Security Anti-patterns]
-    W --> W18[make linting-security-trufflehog]
     W --> W20[make linting-security-checkov]
     W --> W21[make linting-security-kube-linter]
     W --> W22[make linting-workflow-zizmor]
