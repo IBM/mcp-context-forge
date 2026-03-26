@@ -135,7 +135,10 @@ impl RetryStateManager {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        debug!("record_failure: tool={tool} request_id={request_id} consecutive_failures={}", state.consecutive_failures);
+        debug!(
+            "record_failure: tool={tool} request_id={request_id} consecutive_failures={}",
+            state.consecutive_failures
+        );
         state.consecutive_failures
     }
 
@@ -224,7 +227,9 @@ impl RetryStateManager {
                 (false, 0)
             }
         } else {
-            debug!("check_and_update: tool={tool} request_id={request_id} — success, state cleared");
+            debug!(
+                "check_and_update: tool={tool} request_id={request_id} — success, state cleared"
+            );
             let _ = map.remove(&key);
             (false, 0)
         }
@@ -303,14 +308,30 @@ mod tests {
 
     #[test]
     fn failure_when_status_code_in_retry_set() {
-        assert!(is_failure_from_signals(false, Some(500), &status_set(&[500, 503])));
-        assert!(is_failure_from_signals(false, Some(503), &status_set(&[500, 503])));
+        assert!(is_failure_from_signals(
+            false,
+            Some(500),
+            &status_set(&[500, 503])
+        ));
+        assert!(is_failure_from_signals(
+            false,
+            Some(503),
+            &status_set(&[500, 503])
+        ));
     }
 
     #[test]
     fn no_failure_when_status_code_not_in_retry_set() {
-        assert!(!is_failure_from_signals(false, Some(200), &status_set(&[500, 503])));
-        assert!(!is_failure_from_signals(false, Some(404), &status_set(&[500, 503])));
+        assert!(!is_failure_from_signals(
+            false,
+            Some(200),
+            &status_set(&[500, 503])
+        ));
+        assert!(!is_failure_from_signals(
+            false,
+            Some(404),
+            &status_set(&[500, 503])
+        ));
     }
 
     #[test]
