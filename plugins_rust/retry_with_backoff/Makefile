@@ -80,6 +80,31 @@ test-python:
 test-all: test test-python
 
 # =============================================================================
+# 📊 COVERAGE
+# =============================================================================
+# help: 📊 COVERAGE
+# help: coverage-tools        - Install cargo-llvm-cov and llvm-tools-preview
+# help: coverage              - Generate code coverage report with llvm-cov
+# help: coverage-summary      - Generate code coverage summary (aliases: cs, cov-sum)
+.PHONY: coverage-tools coverage cov cv coverage-summary cs cov-sum
+
+coverage-tools:
+	@echo "$(GREEN)Installing cargo-llvm-cov and llvm-tools-preview...$(NC)"
+	@cargo install cargo-llvm-cov
+	@rustup component add llvm-tools-preview
+	@echo "$(GREEN)Coverage tools installed$(NC)"
+
+coverage cov cv: coverage-tools
+	@echo "$(GREEN)Generating code coverage report...$(NC)"
+	@cargo llvm-cov --html --ignore-filename-regex "src/bin/.*"
+	@echo "$(GREEN)Coverage report generated at target/llvm-cov/html/index.html$(NC)"
+	@xdg-open target/llvm-cov/html/index.html 2>/dev/null || true
+
+coverage-summary cs cov-sum: coverage-tools
+	@echo "$(GREEN)Generating code coverage summary...$(NC)"
+	@cargo llvm-cov --summary --ignore-filename-regex "src/bin/.*"
+
+# =============================================================================
 # 🛠 BUILD (maturin for Python extension)
 # =============================================================================
 # help: 🛠 BUILD
