@@ -846,15 +846,15 @@ plugins:
     conditions: []
     config:
       webhooks:
-        # Webhook.site for testing - UPDATE WITH YOUR UNIQUE URL
-        - url: "https://webhook.site/38df7ac1-672a-4e49-9b55-3c0ed469e9d0"
+        # Example placeholder only. Replace with your own endpoint before enabling.
+        - url: "https://example.invalid/webhook"
           events: ["violation", "tool_success", "tool_error", "rate_limit_exceeded", "pii_detected"]
           authentication:
             type: "none"
           retry_attempts: 2
           retry_delay: 1000
           timeout: 10
-          enabled: true
+          enabled: false
 
       # Simple default template
       default_template: |
@@ -977,7 +977,7 @@ plugins:
     priority: 200  # Run late to capture all context
     conditions: []  # Apply to all tools
     config:
-      export_full_payload: true
+      export_full_payload: false  # opt in only if you explicitly want result content in telemetry
       max_payload_bytes_size: 10000
 
   # TOON Encoder - Convert JSON to TOON format for token efficiency

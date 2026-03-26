@@ -5,5 +5,5 @@ available_hooks:
   - "tool_pre_invoke"
   - "tool_post_invoke"
 default_configs:
-  export_full_payload: true
+  export_full_payload: false
   max_payload_bytes_size: 10000  # (10 KB default)
