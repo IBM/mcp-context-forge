@@ -1894,7 +1894,7 @@ services:
         echo "Registering fast_test_server with gateway..."
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
 
         # Register using Python
         python3 -c "
