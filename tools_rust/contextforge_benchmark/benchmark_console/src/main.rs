@@ -1,8 +1,10 @@
 use std::env;
 use std::fs;
-use std::io::{self, Stdout};
+use std::io::{self, BufRead, BufReader, Stdout};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 use std::time::Duration;
 
 use crossterm::cursor::{Hide, Show};
@@ -20,6 +22,27 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tab
 use toml::Value as TomlValue;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
+const MAX_LOG_LINES: usize = 500;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LogSource {
+    Stdout,
+    Stderr,
+    System,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LogLine {
+    source: LogSource,
+    text: String,
+}
+
+#[derive(Debug)]
+struct RunningCommand {
+    child: Child,
+    receiver: Receiver<LogLine>,
+    command_label: String,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SuiteSummary {
@@ -67,13 +90,57 @@ struct SelectionSummary {
     extra_args_label: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AppView {
+    Launcher,
+    SuiteInspector,
+    RunMonitor,
+    Generator,
+}
+
+impl AppView {
+    const ALL: [AppView; 4] = [
+        AppView::Launcher,
+        AppView::SuiteInspector,
+        AppView::RunMonitor,
+        AppView::Generator,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            AppView::Launcher => "Launcher",
+            AppView::SuiteInspector => "Inspector",
+            AppView::RunMonitor => "Run Monitor",
+            AppView::Generator => "Generator",
+        }
+    }
+
+    fn supports_suite_navigation(self) -> bool {
+        matches!(self, AppView::Launcher | AppView::SuiteInspector)
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct SuiteDetailSummary {
+struct ScenarioCardSummary {
+    name: String,
+    description: String,
+    scenario_type: String,
+    settings: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SuiteInspectorSummary {
     suite_name: String,
     suite_description: String,
     scenario_count_label: String,
-    comparison_label: String,
-    focus_label: String,
+    comparison_question: String,
+    scenario_cards: Vec<ScenarioCardSummary>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct RunScenarioSummary {
+    name: String,
+    status: String,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1247,7 +1314,9 @@ impl GeneratorState {
 }
 
 struct App {
+    active_view: AppView,
     action_index: usize,
+    last_standard_action_index: usize,
     scenario_index: usize,
     scenarios: Vec<SuiteSummary>,
     run_path: String,
@@ -1258,12 +1327,23 @@ struct App {
     status: String,
     should_quit: bool,
     generator: GeneratorState,
+    log_lines: Vec<LogLine>,
+    dropped_log_lines: usize,
+    log_scroll: usize,
+    running_command: Option<RunningCommand>,
+    current_run_scenario: Option<String>,
+    run_scenarios: Vec<RunScenarioSummary>,
+    last_command_label: Option<String>,
+    last_run_dir: Option<String>,
+    last_run_outcome: Option<String>,
 }
 
 impl App {
     fn new(scenarios: Vec<SuiteSummary>) -> Self {
         Self {
+            active_view: AppView::Launcher,
             action_index: 0,
+            last_standard_action_index: 0,
             scenario_index: 0,
             scenarios,
             run_path: String::new(),
@@ -1274,6 +1354,15 @@ impl App {
             status: "Use 1-8 or left/right for action, Enter to run, g=save template when Generate is selected.".to_string(),
             should_quit: false,
             generator: GeneratorState::new(),
+            log_lines: Vec::new(),
+            dropped_log_lines: 0,
+            log_scroll: 0,
+            running_command: None,
+            current_run_scenario: None,
+            run_scenarios: Vec::new(),
+            last_command_label: None,
+            last_run_dir: None,
+            last_run_outcome: None,
         }
     }
 
@@ -1294,11 +1383,19 @@ impl App {
 
     fn set_action_index(&mut self, index: usize) {
         self.action_index = index % Action::ALL.len();
+        if self.action() != Action::Generate {
+            self.last_standard_action_index = self.action_index;
+        }
         if !self.action().supports_all() {
             self.all = false;
         }
         if !self.action().supports_clean() {
             self.clean = false;
+        }
+        if self.action() == Action::Generate {
+            self.active_view = AppView::Generator;
+        } else if self.active_view == AppView::Generator {
+            self.active_view = AppView::Launcher;
         }
         self.status = self.action().help().to_string();
     }
@@ -1316,6 +1413,103 @@ impl App {
         let len = self.scenarios.len() as isize;
         self.scenario_index = (self.scenario_index as isize + delta).rem_euclid(len) as usize;
         self.status = format!("Selected scenario: {}", self.scenario());
+    }
+
+    fn set_view(&mut self, view: AppView) {
+        self.active_view = view;
+        match view {
+            AppView::Generator => {
+                if self.action() != Action::Generate {
+                    self.last_standard_action_index = self.action_index;
+                    self.action_index = Action::ALL
+                        .iter()
+                        .position(|action| *action == Action::Generate)
+                        .unwrap_or(self.action_index);
+                }
+            }
+            _ => {
+                if self.action() == Action::Generate {
+                    self.action_index = self.last_standard_action_index;
+                }
+            }
+        }
+        self.status = match self.active_view {
+            AppView::Launcher => "Launcher view: choose a suite and action.".to_string(),
+            AppView::SuiteInspector => {
+                "Suite Inspector: compare scenario cards for the selected suite.".to_string()
+            }
+            AppView::RunMonitor => {
+                "Run Monitor: follow live logs and per-scenario progress.".to_string()
+            }
+            AppView::Generator => "Generator: edit and save a benchmark template.".to_string(),
+        };
+    }
+
+    fn cycle_view(&mut self, delta: isize) {
+        let views = if self.running_command.is_some() {
+            vec![
+                AppView::Launcher,
+                AppView::SuiteInspector,
+                AppView::RunMonitor,
+                AppView::Generator,
+            ]
+        } else {
+            vec![
+                AppView::Launcher,
+                AppView::SuiteInspector,
+                AppView::RunMonitor,
+                AppView::Generator,
+            ]
+        };
+        let current = views
+            .iter()
+            .position(|view| *view == self.active_view)
+            .unwrap_or(0) as isize;
+        let next = (current + delta).rem_euclid(views.len() as isize) as usize;
+        self.set_view(views[next]);
+    }
+
+    fn push_log_line(&mut self, source: LogSource, text: String) {
+        if text.trim().is_empty() {
+            return;
+        }
+        self.apply_progress_line(&text);
+        self.status = text.clone();
+        self.log_lines.push(LogLine { source, text });
+        self.log_scroll = 0;
+        if self.log_lines.len() > MAX_LOG_LINES {
+            let drop_count = self.log_lines.len() - MAX_LOG_LINES;
+            self.log_lines.drain(0..drop_count);
+            self.dropped_log_lines += drop_count;
+        }
+    }
+
+    fn apply_progress_line(&mut self, text: &str) {
+        if let Some(name) = parse_scenario_start(text) {
+            self.current_run_scenario = Some(name.clone());
+            self.upsert_run_scenario(&name, "running");
+        }
+        if let Some((name, status)) = parse_scenario_completion(text) {
+            self.current_run_scenario = None;
+            self.upsert_run_scenario(&name, &status);
+        }
+        if let Some(run_dir) = parse_run_dir(text) {
+            self.last_run_dir = Some(run_dir);
+        }
+        if let Some(outcome) = parse_run_outcome(text) {
+            self.last_run_outcome = Some(outcome);
+        }
+    }
+
+    fn upsert_run_scenario(&mut self, name: &str, status: &str) {
+        if let Some(item) = self.run_scenarios.iter_mut().find(|item| item.name == name) {
+            item.status = status.to_string();
+            return;
+        }
+        self.run_scenarios.push(RunScenarioSummary {
+            name: name.to_string(),
+            status: status.to_string(),
+        });
     }
 }
 
@@ -1527,45 +1721,197 @@ fn build_selection_summary(app: &App) -> SelectionSummary {
     }
 }
 
-fn build_suite_detail_summary(app: &App, root: &Path) -> AppResult<SuiteDetailSummary> {
+fn build_suite_inspector_summary(app: &App, root: &Path) -> AppResult<SuiteInspectorSummary> {
     let Some(suite) = app.selected_suite() else {
-        return Ok(SuiteDetailSummary {
+        return Ok(SuiteInspectorSummary {
             suite_name: "(none selected)".to_string(),
             suite_description: "Choose a suite to see its benchmark intent and comparison shape."
                 .to_string(),
             scenario_count_label: "0 scenarios".to_string(),
-            comparison_label: "No comparison loaded".to_string(),
-            focus_label: "No active suite".to_string(),
+            comparison_question: "No active suite".to_string(),
+            scenario_cards: Vec::new(),
         });
     };
 
-    let mut summary = SuiteDetailSummary {
+    let mut summary = SuiteInspectorSummary {
         suite_name: suite.suite_name().to_string(),
         suite_description: suite.description().to_string(),
         scenario_count_label: "0 scenarios".to_string(),
-        comparison_label: "No comparison loaded".to_string(),
-        focus_label: app.action().help().to_string(),
+        comparison_question: suite.description().to_string(),
+        scenario_cards: Vec::new(),
     };
 
     if let Some(doc) = load_selected_suite_doc(root, app)? {
+        let defaults = doc.get("defaults");
         if let Some(scenarios) = doc.get("scenario").and_then(TomlValue::as_array) {
             summary.scenario_count_label = format!("{} scenario(s)", scenarios.len());
-            let names = scenarios
-                .iter()
-                .filter_map(|scenario| {
-                    scenario
-                        .get("name")
-                        .and_then(TomlValue::as_str)
-                        .map(ToString::to_string)
-                })
-                .collect::<Vec<_>>();
-            if !names.is_empty() {
-                summary.comparison_label = names.join(" vs ");
+            for scenario in scenarios {
+                summary
+                    .scenario_cards
+                    .push(build_scenario_card_summary(defaults, scenario));
             }
         }
     }
 
     Ok(summary)
+}
+
+fn build_scenario_card_summary(defaults: Option<&TomlValue>, scenario: &TomlValue) -> ScenarioCardSummary {
+    let name = scenario
+        .get("name")
+        .and_then(TomlValue::as_str)
+        .unwrap_or("(unnamed scenario)")
+        .to_string();
+    let description = scenario
+        .get("description")
+        .and_then(TomlValue::as_str)
+        .unwrap_or("No scenario description is defined yet.")
+        .to_string();
+    let scenario_type = scenario
+        .get("scenario_type")
+        .and_then(TomlValue::as_str)
+        .unwrap_or("(no type)")
+        .to_string();
+    let mut settings = Vec::new();
+
+    if let Some(value) = merged_bool(defaults, scenario, "setup", "plugins_enabled") {
+        settings.push(("plugins_enabled".to_string(), value.to_string()));
+    }
+    if let Some(value) = merged_bool(defaults, scenario, "build", "rust_plugins") {
+        settings.push(("rust_plugins".to_string(), value.to_string()));
+    }
+    if let Some(value) = merged_string(defaults, scenario, "setup", "auth_mode") {
+        settings.push(("auth_mode".to_string(), value));
+    }
+    if let Some(value) = merged_string(defaults, scenario, "runtime", "http_server") {
+        settings.push(("http_server".to_string(), value));
+    }
+    if let Some(value) = merged_string(defaults, scenario, "build", "image_tag") {
+        settings.push(("image_tag".to_string(), value));
+    }
+    if let Some(value) = merged_string(defaults, scenario, "load", "target_service") {
+        settings.push(("target_service".to_string(), value));
+    }
+    for key in ["users", "spawn_rate", "run_time"] {
+        if let Some(value) = merged_scalar_string(defaults, scenario, "load", key) {
+            settings.push((key.to_string(), value));
+        }
+    }
+    if let Some(value) = merged_bool(defaults, scenario, "profiling", "enabled") {
+        settings.push(("profiling.enabled".to_string(), value.to_string()));
+    }
+    if let Some(value) = merged_bool(defaults, scenario, "execution", "retry_enabled") {
+        settings.push(("retry_enabled".to_string(), value.to_string()));
+    }
+    for key in [
+        "expected_mcp_runtime",
+        "expected_mcp_runtime_mode",
+        "expected_a2a_runtime",
+    ] {
+        if let Some(value) = merged_string(defaults, scenario, "setup", key) {
+            settings.push((key.to_string(), value));
+        }
+    }
+    for key in [
+        "EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED",
+        "RUST_MCP_MODE",
+        "RUST_MCP_LOG",
+    ] {
+        if let Some(value) = merged_nested_string(defaults, scenario, "gateway", "environment", key)
+        {
+            settings.push((key.to_string(), value));
+        }
+    }
+
+    ScenarioCardSummary {
+        name,
+        description,
+        scenario_type,
+        settings,
+    }
+}
+
+fn merged_bool(defaults: Option<&TomlValue>, scenario: &TomlValue, section: &str, key: &str) -> Option<bool> {
+    scenario
+        .get(section)
+        .and_then(|value| value.get(key))
+        .and_then(TomlValue::as_bool)
+        .or_else(|| {
+            defaults
+                .and_then(|value| value.get(section))
+                .and_then(|value| value.get(key))
+                .and_then(TomlValue::as_bool)
+        })
+}
+
+fn merged_string(
+    defaults: Option<&TomlValue>,
+    scenario: &TomlValue,
+    section: &str,
+    key: &str,
+) -> Option<String> {
+    scenario
+        .get(section)
+        .and_then(|value| value.get(key))
+        .and_then(TomlValue::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            defaults
+                .and_then(|value| value.get(section))
+                .and_then(|value| value.get(key))
+                .and_then(TomlValue::as_str)
+                .map(ToString::to_string)
+        })
+}
+
+fn merged_nested_string(
+    defaults: Option<&TomlValue>,
+    scenario: &TomlValue,
+    section: &str,
+    nested: &str,
+    key: &str,
+) -> Option<String> {
+    scenario
+        .get(section)
+        .and_then(|value| value.get(nested))
+        .and_then(|value| value.get(key))
+        .and_then(TomlValue::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            defaults
+                .and_then(|value| value.get(section))
+                .and_then(|value| value.get(nested))
+                .and_then(|value| value.get(key))
+                .and_then(TomlValue::as_str)
+                .map(ToString::to_string)
+        })
+}
+
+fn merged_scalar_string(
+    defaults: Option<&TomlValue>,
+    scenario: &TomlValue,
+    section: &str,
+    key: &str,
+) -> Option<String> {
+    fn format_value(value: &TomlValue) -> Option<String> {
+        value
+            .as_str()
+            .map(ToString::to_string)
+            .or_else(|| value.as_integer().map(|v| v.to_string()))
+            .or_else(|| value.as_float().map(|v| v.to_string()))
+            .or_else(|| value.as_bool().map(|v| v.to_string()))
+    }
+
+    scenario
+        .get(section)
+        .and_then(|value| value.get(key))
+        .and_then(format_value)
+        .or_else(|| {
+            defaults
+                .and_then(|value| value.get(section))
+                .and_then(|value| value.get(key))
+                .and_then(format_value)
+        })
 }
 
 fn build_generator_focus_summary(app: &App) -> GeneratorFocusSummary {
@@ -1610,6 +1956,7 @@ fn run_app(
     root: &Path,
 ) -> AppResult<()> {
     while !app.should_quit {
+        drain_running_command(&mut app)?;
         terminal.draw(|frame| draw(frame, &app))?;
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
@@ -1640,16 +1987,22 @@ fn handle_normal_mode(
     root: &Path,
     terminal: &mut Terminal<CrosstermBackend<Stdout>>,
 ) -> AppResult<()> {
-    if app.action() == Action::Generate {
+    if app.active_view == AppView::Generator {
         return handle_generate_mode(app, key, root);
     }
 
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        KeyCode::Tab => app.cycle_view(1),
+        KeyCode::BackTab => app.cycle_view(-1),
         KeyCode::Left => app.move_action(-1),
         KeyCode::Right => app.move_action(1),
-        KeyCode::Up | KeyCode::Char('k') => app.move_scenario(-1),
-        KeyCode::Down | KeyCode::Char('j') => app.move_scenario(1),
+        KeyCode::Up | KeyCode::Char('k') if app.active_view.supports_suite_navigation() => {
+            app.move_scenario(-1)
+        }
+        KeyCode::Down | KeyCode::Char('j') if app.active_view.supports_suite_navigation() => {
+            app.move_scenario(1)
+        }
         KeyCode::Char('1') => app.set_action_index(0),
         KeyCode::Char('2') => app.set_action_index(1),
         KeyCode::Char('3') => app.set_action_index(2),
@@ -1658,6 +2011,20 @@ fn handle_normal_mode(
         KeyCode::Char('6') => app.set_action_index(5),
         KeyCode::Char('7') => app.set_action_index(6),
         KeyCode::Char('8') => app.set_action_index(7),
+        KeyCode::Char('i') => app.set_view(AppView::SuiteInspector),
+        KeyCode::Char('l') => app.set_view(AppView::Launcher),
+        KeyCode::Char('m') => app.set_view(AppView::RunMonitor),
+        KeyCode::PageUp | KeyCode::Char('[') if app.active_view == AppView::RunMonitor => {
+            app.log_scroll = app
+                .log_scroll
+                .saturating_add(10)
+                .min(app.log_lines.len().saturating_sub(1));
+            app.status = format!("Log scroll offset: {}", app.log_scroll);
+        }
+        KeyCode::PageDown | KeyCode::Char(']') if app.active_view == AppView::RunMonitor => {
+            app.log_scroll = app.log_scroll.saturating_sub(10);
+            app.status = format!("Log scroll offset: {}", app.log_scroll);
+        }
         KeyCode::Char('a') => {
             if app.action().supports_all() {
                 app.all = !app.all;
@@ -1697,6 +2064,8 @@ fn handle_normal_mode(
 fn handle_generate_mode(app: &mut App, key: KeyEvent, root: &Path) -> AppResult<()> {
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        KeyCode::Tab => app.cycle_view(1),
+        KeyCode::BackTab => app.cycle_view(-1),
         KeyCode::Left => app.move_action(-1),
         KeyCode::Right => app.move_action(1),
         KeyCode::Char('[') | KeyCode::PageUp => {
@@ -1774,36 +2143,25 @@ fn handle_text_input(app: &mut App, key: KeyEvent, mode: InputMode) -> AppResult
 fn launch_action(
     app: &mut App,
     root: &Path,
-    terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    _terminal: &mut Terminal<CrosstermBackend<Stdout>>,
 ) -> AppResult<()> {
-    let mut command_spec = build_command(app, root)?;
-    if app.clean && app.action().supports_clean() {
-        suspend_tui(terminal)?;
-        let cleanup_status = run_cleanup()?;
-        if !cleanup_status.success() {
-            println!("Cleanup exited with status: {cleanup_status}");
-        }
-        prompt_to_continue()?;
-        resume_tui(terminal)?;
+    let command_spec = build_command(app, root)?;
+    if app.running_command.is_some() {
+        app.status = "A benchmark command is already running.".to_string();
+        return Ok(());
     }
-
-    suspend_tui(terminal)?;
-    println!(
-        "\nRunning: {}\n",
-        format_command(&command_spec.command, &command_spec.args)
-    );
-    let status = Command::new(&command_spec.command)
-        .args(&command_spec.args)
-        .envs(command_spec.env.drain(..))
-        .current_dir(root)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()?;
-    println!("\nCommand exited with status: {status}\n");
-    prompt_to_continue()?;
-    resume_tui(terminal)?;
-    app.status = format!("Last command exited with status: {status}");
+    if app.clean && app.action().supports_clean() {
+        app.push_log_line(
+            LogSource::System,
+            "Cleanup: removing prior benchmark containers and staging artifacts.".to_string(),
+        );
+        let cleanup_status = run_cleanup()?;
+        app.push_log_line(
+            LogSource::System,
+            format!("Cleanup finished with status: {cleanup_status}"),
+        );
+    }
+    start_command_capture(app, command_spec, root)?;
     Ok(())
 }
 
@@ -2622,27 +2980,6 @@ fn escape_toml(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn suspend_tui(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> AppResult<()> {
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), Show, LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-    Ok(())
-}
-
-fn resume_tui(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> AppResult<()> {
-    enable_raw_mode()?;
-    execute!(terminal.backend_mut(), EnterAlternateScreen, Hide)?;
-    Ok(())
-}
-
-fn prompt_to_continue() -> AppResult<()> {
-    // Previously this paused for user input:
-    // println!("Press Enter to return to the benchmark console...");
-    // io::stdin().read_line(&mut String::new())?;
-    // The console now resumes immediately after commands complete.
-    Ok(())
-}
-
 fn format_command(command: &str, args: &[String]) -> String {
     std::iter::once(command.to_string())
         .chain(args.iter().cloned())
@@ -2650,15 +2987,145 @@ fn format_command(command: &str, args: &[String]) -> String {
         .join(" ")
 }
 
+fn start_command_capture(app: &mut App, command_spec: CommandSpec, root: &Path) -> AppResult<()> {
+    let command_label = format_command(&command_spec.command, &command_spec.args);
+    let mut child = Command::new(&command_spec.command)
+        .args(&command_spec.args)
+        .envs(command_spec.env.clone())
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child.stdout.take().ok_or("Could not capture child stdout")?;
+    let stderr = child.stderr.take().ok_or("Could not capture child stderr")?;
+    let (sender, receiver) = mpsc::channel::<LogLine>();
+    spawn_log_reader(stdout, LogSource::Stdout, sender.clone());
+    spawn_log_reader(stderr, LogSource::Stderr, sender);
+    app.run_scenarios.clear();
+    app.current_run_scenario = None;
+    app.last_run_dir = None;
+    app.last_run_outcome = None;
+    app.log_lines.clear();
+    app.dropped_log_lines = 0;
+    app.log_scroll = 0;
+    app.last_command_label = Some(command_label.clone());
+    app.push_log_line(
+        LogSource::System,
+        format!("Started command inside console: {command_label}"),
+    );
+    app.running_command = Some(RunningCommand {
+        child,
+        receiver,
+        command_label,
+    });
+    app.active_view = AppView::RunMonitor;
+    Ok(())
+}
+
+fn spawn_log_reader<R>(reader: R, source: LogSource, sender: mpsc::Sender<LogLine>)
+where
+    R: std::io::Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let reader = BufReader::new(reader);
+        for line in reader.lines() {
+            match line {
+                Ok(text) => {
+                    let _ = sender.send(LogLine { source, text });
+                }
+                Err(error) => {
+                    let _ = sender.send(LogLine {
+                        source: LogSource::System,
+                        text: format!("Log capture error: {error}"),
+                    });
+                    break;
+                }
+            }
+        }
+    });
+}
+
+fn drain_running_command(app: &mut App) -> AppResult<()> {
+    let Some(mut running) = app.running_command.take() else {
+        return Ok(());
+    };
+
+    while let Ok(line) = running.receiver.try_recv() {
+        app.push_log_line(line.source, line.text);
+    }
+
+    match running.child.try_wait()? {
+        Some(status) => {
+            while let Ok(line) = running.receiver.try_recv() {
+                app.push_log_line(line.source, line.text);
+            }
+            let outcome = if status.success() { "finished" } else { "failed" };
+            app.push_log_line(
+                LogSource::System,
+                format!("Command {outcome} with status {status}: {}", running.command_label),
+            );
+        }
+        None => {
+            app.running_command = Some(running);
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_scenario_start(text: &str) -> Option<String> {
+    text.split("starting: ")
+        .nth(1)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn parse_scenario_completion(text: &str) -> Option<(String, String)> {
+    let prefix = "Scenario '";
+    let rest = text.strip_prefix("[benchmark] ").unwrap_or(text);
+    let rest = rest.strip_prefix(prefix)?;
+    if let Some((name, suffix)) = rest.split_once("' completed with status ") {
+        return Some((name.to_string(), suffix.trim().to_string()));
+    }
+    if let Some((name, _)) = rest.split_once("' failed:") {
+        return Some((name.to_string(), "failed".to_string()));
+    }
+    None
+}
+
+fn parse_run_dir(text: &str) -> Option<String> {
+    if text.contains("reports/benchmarks/") {
+        return text
+            .split_whitespace()
+            .find(|part| part.contains("reports/benchmarks/"))
+            .map(|value| value.trim().to_string());
+    }
+    None
+}
+
+fn parse_run_outcome(text: &str) -> Option<String> {
+    let rest = text.strip_prefix("[benchmark] ").unwrap_or(text);
+    if rest.starts_with("Benchmark run completed successfully") {
+        return Some("ok".to_string());
+    }
+    if rest.starts_with("Benchmark run completed with failed scenarios") {
+        return Some("failed".to_string());
+    }
+    None
+}
+
 fn yes_no(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
 }
 
 fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
-    let chunks = if app.action() == Action::Generate {
+    let chunks = if app.active_view == AppView::Generator {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
+                Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(5),
@@ -2670,6 +3137,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
+                Constraint::Length(3),
                 Constraint::Length(3),
                 Constraint::Length(14),
                 Constraint::Length(5),
@@ -2691,6 +3159,27 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     .block(Block::default().borders(Borders::ALL).title("Console"));
     frame.render_widget(header, chunks[0]);
 
+    let view_tabs = Tabs::new(
+        AppView::ALL
+            .iter()
+            .map(|view| Line::from(view.label().to_string()))
+            .collect::<Vec<_>>(),
+    )
+    .select(
+        AppView::ALL
+            .iter()
+            .position(|view| *view == app.active_view)
+            .unwrap_or(0),
+    )
+    .block(Block::default().borders(Borders::ALL).title("Views"))
+    .highlight_style(
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    );
+    frame.render_widget(view_tabs, chunks[1]);
+
     let tabs = Tabs::new(
         Action::ALL
             .iter()
@@ -2706,16 +3195,16 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             .bg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     );
-    frame.render_widget(tabs, chunks[1]);
+    frame.render_widget(tabs, chunks[2]);
 
-    draw_status_banner(frame, chunks[2], app);
+    draw_status_banner(frame, chunks[3], app);
 
-    if app.action() == Action::Generate {
-        draw_generator_sections(frame, chunks[1], app);
+    if app.active_view == AppView::Generator {
+        draw_generator_sections(frame, chunks[2], app);
         let body = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(56), Constraint::Percentage(44)])
-            .split(chunks[3]);
+            .split(chunks[4]);
         let left = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(10), Constraint::Length(11)])
@@ -2724,24 +3213,14 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         draw_generator_selection(frame, left[1], app);
         draw_generator_reference(frame, body[1], app);
     } else {
-        let body = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
-            .split(chunks[3]);
-        draw_scenarios(frame, body[0], app);
-        let right = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(12), Constraint::Min(10)])
-            .split(body[1]);
-        let top_right = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-            .split(right[0]);
-        draw_selection(frame, top_right[0], app);
-        draw_suite_details(frame, top_right[1], app);
-        draw_preview(frame, right[1], app);
+        match app.active_view {
+            AppView::Launcher => draw_launcher_view(frame, chunks[4], app),
+            AppView::SuiteInspector => draw_suite_inspector_view(frame, chunks[4], app),
+            AppView::RunMonitor => draw_run_monitor_view(frame, chunks[4], app),
+            AppView::Generator => {}
+        }
     }
-    draw_help(frame, chunks[4], app);
+    draw_help(frame, chunks[5], app);
 }
 
 fn draw_status_banner(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2759,6 +3238,14 @@ fn draw_status_banner(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw("   "),
+            Span::styled("View ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                app.active_view.label(),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
             Span::styled("Suite ", Style::default().fg(Color::Gray)),
             Span::styled(
                 selected_suite,
@@ -2771,8 +3258,28 @@ fn draw_status_banner(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Span::styled("Status ", Style::default().fg(Color::Gray)),
             Span::styled(
                 app.status.as_str(),
+                Style::default().fg(if app.running_command.is_some() {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                })
+                .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Live Run ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                if app.running_command.is_some() {
+                    "active"
+                } else {
+                    "idle"
+                },
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(if app.running_command.is_some() {
+                        Color::LightYellow
+                    } else {
+                        Color::DarkGray
+                    })
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
@@ -2845,6 +3352,43 @@ fn draw_scenarios(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+fn draw_launcher_view(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(36), Constraint::Percentage(64)])
+        .split(area);
+    draw_scenarios(frame, body[0], app);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(12), Constraint::Min(10)])
+        .split(body[1]);
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .split(right[0]);
+    draw_selection(frame, top[0], app);
+    draw_launcher_summary(frame, top[1], app);
+    draw_preview(frame, right[1], app);
+}
+
+fn draw_suite_inspector_view(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let body = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(8), Constraint::Min(14)])
+        .split(area);
+    draw_inspector_header(frame, body[0], app);
+    draw_scenario_cards(frame, body[1], app);
+}
+
+fn draw_run_monitor_view(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let body = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(10), Constraint::Min(14)])
+        .split(area);
+    draw_run_monitor_summary(frame, body[0], app);
+    draw_live_logs(frame, body[1], app);
+}
+
 fn draw_selection(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let summary = build_selection_summary(app);
     let lines = vec![
@@ -2865,8 +3409,8 @@ fn draw_selection(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     frame.render_widget(widget, area);
 }
 
-fn draw_suite_details(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let summary = build_suite_detail_summary(app, Path::new(".")).unwrap_or_default();
+fn draw_launcher_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let summary = build_suite_inspector_summary(app, Path::new(".")).unwrap_or_default();
     let lines = vec![
         Line::from(Span::styled(
             summary.suite_name,
@@ -2877,15 +3421,130 @@ fn draw_suite_details(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Line::from(""),
         line_pair("Intent", &summary.suite_description),
         line_pair("Comparison Set", &summary.scenario_count_label),
-        line_pair("Variants", &summary.comparison_label),
-        line_pair("Current Focus", &summary.focus_label),
+        line_pair(
+            "Inspector",
+            "Press 'i' or Tab to open full scenario comparison cards",
+        ),
     ];
     let widget = Paragraph::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Suite Context"),
+                .title("Suite Summary"),
         )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, area);
+}
+
+fn draw_inspector_header(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let summary = build_suite_inspector_summary(app, Path::new(".")).unwrap_or_default();
+    let lines = vec![
+        Line::from(Span::styled(
+            summary.suite_name,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(summary.suite_description),
+        Line::from(""),
+        line_pair("Comparison Set", &summary.scenario_count_label),
+        line_pair("Question", &summary.comparison_question),
+    ];
+    let widget = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Suite Inspector"))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, area);
+}
+
+fn draw_scenario_cards(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let summary = build_suite_inspector_summary(app, Path::new(".")).unwrap_or_default();
+    if summary.scenario_cards.is_empty() {
+        let widget = Paragraph::new("No scenarios found for the selected suite.")
+            .block(Block::default().borders(Borders::ALL).title("Scenario Comparison"));
+        frame.render_widget(widget, area);
+        return;
+    }
+
+    let constraints = vec![Constraint::Ratio(1, summary.scenario_cards.len() as u32); summary.scenario_cards.len()];
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+
+    for (index, card) in summary.scenario_cards.iter().enumerate() {
+        let is_active = app.current_run_scenario.as_deref() == Some(card.name.as_str());
+        let mut lines = vec![
+            Line::from(Span::styled(
+                card.name.clone(),
+                Style::default()
+                    .fg(if is_active { Color::Yellow } else { Color::White })
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(card.description.clone()),
+            Line::from(format!("Type: {}", card.scenario_type)),
+        ];
+        if card.settings.is_empty() {
+            lines.push(Line::from("Settings: inherits suite defaults"));
+        } else {
+            lines.push(Line::from("Settings:"));
+            lines.extend(card.settings.iter().map(|(key, value)| {
+                Line::from(format!("  {} = {}", key, value))
+            }));
+        }
+        let title = if is_active {
+            format!("Scenario {} (active)", index + 1)
+        } else {
+            format!("Scenario {}", index + 1)
+        };
+        let widget = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(widget, chunks[index]);
+    }
+}
+
+fn draw_run_monitor_summary(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let selected_suite = app
+        .selected_suite()
+        .map(SuiteSummary::suite_name)
+        .unwrap_or("(none)");
+    let current = app.current_run_scenario.as_deref().unwrap_or("(idle)");
+    let buffered_logs = app.log_lines.len().to_string();
+    let dropped_logs = app.dropped_log_lines.to_string();
+    let statuses = if app.run_scenarios.is_empty() {
+        vec![Line::from("No run scenarios recorded yet.")]
+    } else {
+        app.run_scenarios
+            .iter()
+            .map(|item| Line::from(format!("{} -> {}", item.name, item.status)))
+            .collect::<Vec<_>>()
+    };
+    let mut lines = vec![
+        line_pair("Suite", selected_suite),
+        line_pair(
+            "Command",
+            app.last_command_label.as_deref().unwrap_or("(no command launched)"),
+        ),
+        line_pair("Current Scenario", current),
+        line_pair(
+            "Run Dir",
+            app.last_run_dir.as_deref().unwrap_or("(pending)"),
+        ),
+        line_pair(
+            "Outcome",
+            app.last_run_outcome.as_deref().unwrap_or("(running or pending)"),
+        ),
+        line_pair("Buffered Logs", &buffered_logs),
+        line_pair("Dropped Logs", &dropped_logs),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Scenario Status",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    lines.extend(statuses);
+    let widget = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Run Monitor"))
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
@@ -2936,6 +3595,46 @@ fn draw_preview(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Block::default()
                 .borders(Borders::ALL)
                 .title("Execution Dashboard"),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, area);
+}
+
+fn draw_live_logs(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let total = app.log_lines.len();
+    let end = total.saturating_sub(app.log_scroll);
+    let start = end.saturating_sub(visible_height);
+    let lines = app.log_lines[start..end]
+        .iter()
+        .map(|line| {
+            let prefix = match line.source {
+                LogSource::Stdout => ("OUT", Color::Green),
+                LogSource::Stderr => ("ERR", Color::Red),
+                LogSource::System => ("SYS", Color::Cyan),
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("[{}] ", prefix.0),
+                    Style::default().fg(prefix.1).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(line.text.clone()),
+            ])
+        })
+        .collect::<Vec<_>>();
+    let empty = vec![Line::from(Span::styled(
+        "Run a benchmark action to see live logs here.",
+        Style::default().fg(Color::DarkGray),
+    ))];
+    let widget = Paragraph::new(if lines.is_empty() { empty } else { lines })
+        .block(
+            Block::default().borders(Borders::ALL).title(format!(
+                "Live Logs ({}/{}, scroll {}, dropped {})",
+                end.saturating_sub(start),
+                total,
+                app.log_scroll,
+                app.dropped_log_lines
+            )),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
@@ -4039,11 +4738,11 @@ fn draw_help(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         InputMode::EditRunPath | InputMode::EditExtraArgs | InputMode::EditGeneratorField => {
             "Type text, Backspace deletes, Enter saves, Esc cancels"
         }
-        InputMode::Normal if app.action() == Action::Generate => {
-            "1-8/left-right: action  [ ] or PgUp/PgDn: section  j/k: field  e/Enter: edit  t: toggle/cycle  g or s: save template  use ',' CSV and ' | ' raw TOML lines  q: quit"
+        InputMode::Normal if app.active_view == AppView::Generator => {
+            "Tab/BackTab: switch view  1-8/left-right: action  [ ] or PgUp/PgDn: section  j/k: field  e/Enter: edit  t: toggle/cycle  g or s: save template  q: quit"
         }
         _ => {
-            "1-8/left-right: action  j/k or up/down: scenario  a: toggle all  c: toggle clean  p: edit run path  e: edit extra args  Enter/r: run  q: quit"
+            "Tab/BackTab: switch view  1-8/left-right: action  j/k: suite (launcher/inspector)  i: inspector  m: monitor  l: launcher  a: all  c: clean  p: run path  e: extra args  PgUp/PgDn or [ ]: scroll logs in monitor  Enter/r: run  q: quit"
         }
     };
     let widget = Paragraph::new(help)
@@ -4171,6 +4870,133 @@ name = "variant-scenario"
     }
 
     #[test]
+    fn app_view_switching_tracks_generator_and_monitor_modes() {
+        let mut app = App::new(Vec::new());
+        assert_eq!(app.active_view, AppView::Launcher);
+
+        app.set_view(AppView::SuiteInspector);
+        assert_eq!(app.active_view, AppView::SuiteInspector);
+
+        app.set_view(AppView::Generator);
+        assert_eq!(app.active_view, AppView::Generator);
+        assert_eq!(app.action(), Action::Generate);
+
+        app.set_view(AppView::Launcher);
+        assert_eq!(app.active_view, AppView::Launcher);
+        assert_ne!(app.action(), Action::Generate);
+    }
+
+    #[test]
+    fn suite_navigation_is_blocked_outside_suite_focused_views() {
+        let mut app = App::new(vec![
+            SuiteSummary {
+                file_stem: "suite-one".to_string(),
+                suite_name: "suite-one".to_string(),
+                description: "First suite".to_string(),
+            },
+            SuiteSummary {
+                file_stem: "suite-two".to_string(),
+                suite_name: "suite-two".to_string(),
+                description: "Second suite".to_string(),
+            },
+        ]);
+        let root = std::env::temp_dir();
+        let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout())).unwrap();
+
+        app.set_view(AppView::RunMonitor);
+        handle_normal_mode(
+            &mut app,
+            KeyEvent::from(KeyCode::Char('j')),
+            &root,
+            &mut terminal,
+        )
+        .unwrap();
+        assert_eq!(app.scenario_index, 0);
+
+        app.set_view(AppView::SuiteInspector);
+        handle_normal_mode(
+            &mut app,
+            KeyEvent::from(KeyCode::Char('j')),
+            &root,
+            &mut terminal,
+        )
+        .unwrap();
+        assert_eq!(app.scenario_index, 1);
+
+        let _ = terminal.show_cursor();
+    }
+
+    #[test]
+    fn suite_inspector_summary_builds_scenario_cards_with_settings() {
+        let tempdir = std::env::temp_dir().join("benchmark-console-suite-inspector");
+        let _ = std::fs::remove_dir_all(&tempdir);
+        std::fs::create_dir_all(tempdir.join("tools_rust/contextforge_benchmark/assets/scenarios"))
+            .unwrap();
+        std::fs::write(
+            tempdir.join("tools_rust/contextforge_benchmark/assets/scenarios/example-suite.toml"),
+            r#"
+[suite]
+name = "benchmark-example-suite"
+description = "Compare Python and Rust runtime paths."
+
+[defaults.setup]
+plugins_enabled = false
+
+[defaults.build]
+rust_plugins = false
+
+[[scenario]]
+name = "baseline-scenario"
+description = "Python baseline"
+scenario_type = "baseline"
+
+[[scenario]]
+name = "rust-scenario"
+description = "Rust comparison"
+scenario_type = "compare"
+
+[scenario.setup]
+expected_mcp_runtime = "rust"
+expected_mcp_runtime_mode = "rust-managed"
+
+[scenario.build]
+rust_plugins = true
+
+[scenario.gateway.environment]
+EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED = "true"
+RUST_MCP_MODE = "edge"
+"#,
+        )
+        .unwrap();
+
+        let app = App::new(discover_scenarios(&tempdir).unwrap());
+        let summary = build_suite_inspector_summary(&app, &tempdir).unwrap();
+
+        assert_eq!(summary.scenario_cards.len(), 2);
+        assert_eq!(summary.scenario_cards[0].name, "baseline-scenario");
+        assert!(
+            summary.scenario_cards[1]
+                .settings
+                .iter()
+                .any(|(key, value)| key == "expected_mcp_runtime" && value == "rust")
+        );
+        assert!(
+            summary.scenario_cards[0]
+                .settings
+                .iter()
+                .any(|(key, value)| key == "rust_plugins" && value == "false")
+        );
+        assert!(
+            summary.scenario_cards[1]
+                .settings
+                .iter()
+                .any(|(key, value)| key == "RUST_MCP_MODE" && value == "edge")
+        );
+
+        let _ = std::fs::remove_dir_all(&tempdir);
+    }
+
+    #[test]
     fn generator_focus_summary_exposes_field_guidance() {
         let app = App::new(Vec::new());
         let summary = build_generator_focus_summary(&app);
@@ -4231,5 +5057,130 @@ name = "variant-scenario"
         assert!(generator_example("driver").contains("contextforge_goose"));
         assert!(generator_example("profiling_tools").contains("perf,flamegraph"));
         assert!(generator_example("scenario_profiling_snippet").contains("perf"));
+    }
+
+    #[test]
+    fn app_log_buffer_keeps_recent_entries_and_updates_status() {
+        let mut app = App::new(Vec::new());
+        app.push_log_line(LogSource::Stdout, "first line".to_string());
+        for index in 0..520 {
+            app.push_log_line(LogSource::Stdout, format!("line {index}"));
+        }
+
+        assert_eq!(app.log_lines.len(), MAX_LOG_LINES);
+        assert!(
+            app.log_lines
+                .last()
+                .map(|line| line.text.as_str())
+                .unwrap_or_default()
+                .contains("line 519")
+        );
+        assert_eq!(app.dropped_log_lines, 21);
+        assert!(app.status.contains("line 519"));
+    }
+
+    #[test]
+    fn progress_parsing_tracks_failed_scenarios_and_run_outcome() {
+        let mut app = App::new(Vec::new());
+        app.push_log_line(
+            LogSource::System,
+            "[benchmark] Scenario 2/4 starting: gunicorn-rest-discovery-rust-runtime".to_string(),
+        );
+        app.push_log_line(
+            LogSource::System,
+            "[benchmark] Scenario 'gunicorn-rest-discovery-rust-runtime' failed: compose command failed".to_string(),
+        );
+        app.push_log_line(
+            LogSource::System,
+            "[benchmark] Benchmark run completed with failed scenarios [gunicorn-rest-discovery-rust-runtime]: reports/benchmarks/example".to_string(),
+        );
+
+        assert_eq!(app.current_run_scenario, None);
+        assert_eq!(
+            app.run_scenarios,
+            vec![RunScenarioSummary {
+                name: "gunicorn-rest-discovery-rust-runtime".to_string(),
+                status: "failed".to_string(),
+            }]
+        );
+        assert_eq!(app.last_run_outcome.as_deref(), Some("failed"));
+        assert_eq!(
+            app.last_run_dir.as_deref(),
+            Some("reports/benchmarks/example")
+        );
+    }
+
+    #[test]
+    fn launcher_command_runs_inside_console_capture() {
+        let mut app = App::new(vec![SuiteSummary {
+            file_stem: "rest-discovery-300".to_string(),
+            suite_name: "benchmark-rest-discovery".to_string(),
+            description: "Exercises discovery endpoints.".to_string(),
+        }]);
+        let command = CommandSpec {
+            command: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "printf 'hello from stdout\\n'; printf 'hello from stderr\\n' >&2".to_string(),
+            ],
+            env: vec![],
+        };
+
+        start_command_capture(&mut app, command, Path::new(".")).unwrap();
+        for _ in 0..40 {
+            drain_running_command(&mut app).unwrap();
+            if app.running_command.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+
+        assert!(app.running_command.is_none());
+        assert_eq!(app.active_view, AppView::RunMonitor);
+        let combined = app
+            .log_lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(combined.contains("hello from stdout"));
+        assert!(combined.contains("hello from stderr"));
+        assert!(app.status.contains("finished"));
+    }
+
+    #[test]
+    fn start_command_capture_resets_run_monitor_state() {
+        let mut app = App::new(vec![SuiteSummary {
+            file_stem: "rest-discovery-300".to_string(),
+            suite_name: "benchmark-rest-discovery".to_string(),
+            description: "Exercises discovery endpoints.".to_string(),
+        }]);
+        app.log_lines.push(LogLine {
+            source: LogSource::System,
+            text: "old log".to_string(),
+        });
+        app.dropped_log_lines = 9;
+        app.last_run_outcome = Some("failed".to_string());
+        app.last_run_dir = Some("reports/benchmarks/old".to_string());
+        app.run_scenarios.push(RunScenarioSummary {
+            name: "old-scenario".to_string(),
+            status: "failed".to_string(),
+        });
+
+        let command = CommandSpec {
+            command: "sh".to_string(),
+            args: vec!["-c".to_string(), "printf 'hello\\n'".to_string()],
+            env: vec![],
+        };
+
+        start_command_capture(&mut app, command, Path::new(".")).unwrap();
+
+        assert_eq!(app.dropped_log_lines, 0);
+        assert_eq!(app.last_run_outcome, None);
+        assert_eq!(app.last_run_dir, None);
+        assert!(app.run_scenarios.is_empty());
+        assert_eq!(app.log_scroll, 0);
+        assert_eq!(app.log_lines.len(), 1);
+        assert!(app.log_lines[0].text.contains("Started command inside console"));
     }
 }

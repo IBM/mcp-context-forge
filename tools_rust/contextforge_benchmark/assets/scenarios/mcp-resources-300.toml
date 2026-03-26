@@ -1,6 +1,6 @@
 [suite]
 name = "benchmark-gunicorn-mcp-resources-compare"
-description = "Exercises MCP resource listing and resource read traffic against the time-service fixtures, then compares the baseline benchmark image against the rust-plugin benchmark image to show whether resource-heavy MCP paths change under the Rust extension."
+description = "Exercises MCP resource listing and resource read traffic against the time-service fixtures, then compares the default Python MCP path against a Rust-managed MCP runtime variant to show whether resource-heavy MCP traffic improves or regresses when the Rust runtime owns /mcp."
 output_root = "reports/benchmarks"
 continue_on_failure = false
 save_intermediate_artifacts = true
@@ -115,7 +115,7 @@ reuse_stack = true
 
 [[scenario]]
 name = "gunicorn-mcp-resources-baseline"
-description = "MCP resources benchmark on the baseline benchmark image"
+description = "MCP resources benchmark on the default Python-managed /mcp path"
 scenario_type = "mcp_resources_baseline"
 
 [scenario.build]
@@ -123,10 +123,19 @@ rust_plugins = false
 image_tag = "benchmark-suite-mcp-resources-baseline"
 
 [[scenario]]
-name = "gunicorn-mcp-resources-rust-plugins"
-description = "MCP resources benchmark on the rust-plugin benchmark image"
-scenario_type = "mcp_resources_rust_plugins_compare"
+name = "gunicorn-mcp-resources-rust-runtime"
+description = "MCP resources benchmark with the Rust-managed /mcp runtime enabled for the same resource-heavy workload"
+scenario_type = "mcp_resources_rust_runtime_compare"
+
+[scenario.setup]
+expected_mcp_runtime = "rust"
+expected_mcp_runtime_mode = "rust-managed"
 
 [scenario.build]
 rust_plugins = true
-image_tag = "benchmark-suite-mcp-resources-rust"
+image_tag = "benchmark-suite-mcp-resources-rust-runtime"
+
+[scenario.gateway.environment]
+EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED = "true"
+RUST_MCP_MODE = "edge"
+RUST_MCP_LOG = "warn"

@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,6 +17,11 @@ use toml::Value as TomlValue;
 pub const DEFAULT_SCENARIO_DIR: &str = "tools_rust/contextforge_benchmark/assets/scenarios";
 pub const DEFAULT_OUTPUT_ROOT: &str = "reports/benchmarks";
 pub const DEFAULT_GOSE_BIN: &str = "contextforge_goose";
+
+fn log_progress(message: impl AsRef<str>) {
+    println!("[benchmark] {}", message.as_ref());
+    let _ = std::io::stdout().flush();
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SuiteDocument {
@@ -1225,7 +1232,6 @@ pub fn build_goose_command(
                 .to_string(),
             "--root".to_string(),
             "--".to_string(),
-            "--quiet".to_string(),
             "--host".to_string(),
             target_host(&scenario.load),
             "--users".to_string(),
@@ -1265,7 +1271,6 @@ pub fn build_goose_command(
             DEFAULT_GOSE_BIN.to_string(),
             "--release".to_string(),
             "--".to_string(),
-            "--quiet".to_string(),
             "--host".to_string(),
             target_host(&scenario.load),
             "--users".to_string(),
@@ -1367,6 +1372,11 @@ pub fn run_benchmark(
     check_runtime_only: bool,
 ) -> Result<PathBuf> {
     let runtime = detect_runtime()?;
+    log_progress(format!(
+        "Runtime detected: {} via {}",
+        runtime.engine,
+        runtime.compose_cmd.join(" ")
+    ));
     let scenarios = if run_all {
         discover_scenarios(root)?
     } else {
@@ -1398,20 +1408,47 @@ pub fn run_benchmark(
         Utc::now().format("%Y%m%d_%H%M%S")
     ));
     fs::create_dir_all(&run_dir)?;
+    log_progress(format!("Writing benchmark artifacts to {}", run_dir.display()));
 
     let mut summaries = Vec::new();
-    for scenario in &suite.scenarios {
+    let mut failed_scenarios = Vec::new();
+    for (index, scenario) in suite.scenarios.iter().enumerate() {
+        log_progress(format!(
+            "Scenario {}/{} starting: {}",
+            index + 1,
+            suite.scenarios.len(),
+            scenario.name
+        ));
         let scenario_dir = run_dir.join("scenarios").join(&scenario.name);
         fs::create_dir_all(&scenario_dir)?;
-        let summary = if check_runtime_only {
-            run_runtime_check(root, &runtime, scenario, &scenario_dir)?
+        let result = if check_runtime_only {
+            run_runtime_check(root, &runtime, scenario, &scenario_dir)
         } else if validate_only {
-            build_validation_summary(scenario)
+            Ok(build_validation_summary(scenario))
         } else {
-            execute_scenario(root, &runtime, scenario, &scenario_dir)?
+            execute_scenario(root, &runtime, scenario, &scenario_dir)
         };
-        write_json(&scenario_dir.join("summary.json"), &summary)?;
-        summaries.push(summary);
+
+        match result {
+            Ok(summary) => {
+                log_progress(format!(
+                    "Scenario '{}' completed with status {}",
+                    scenario.name, summary.status
+                ));
+                if summary.status != "ok" && summary.status != "validated" {
+                    failed_scenarios.push(scenario.name.clone());
+                }
+                write_json(&scenario_dir.join("summary.json"), &summary)?;
+                summaries.push(summary);
+            }
+            Err(error) => {
+                log_progress(format!("Scenario '{}' failed: {error}", scenario.name));
+                failed_scenarios.push(scenario.name.clone());
+                let summary = build_error_summary(scenario, &error);
+                write_json(&scenario_dir.join("summary.json"), &summary)?;
+                summaries.push(summary);
+            }
+        }
     }
     let run_summary = build_run_summary(&suite.suite, &summaries);
     write_json(&run_dir.join("run_summary.json"), &run_summary)?;
@@ -1432,6 +1469,15 @@ pub fn run_benchmark(
         &run_dir.join("scenario_comparison_report.html"),
         &render_comparison_html(&comparison),
     )?;
+    if failed_scenarios.is_empty() {
+        log_progress(format!("Benchmark run completed successfully: {}", run_dir.display()));
+    } else {
+        log_progress(format!(
+            "Benchmark run completed with failed scenarios [{}]: {}",
+            failed_scenarios.join(", "),
+            run_dir.display()
+        ));
+    }
     Ok(run_dir)
 }
 
@@ -1447,6 +1493,26 @@ fn build_validation_summary(scenario: &ResolvedScenario) -> ScenarioSummary {
         goose: json!({"status":"omitted","reason":"Validation mode"}),
         endpoint_metrics: json!({"status":"omitted","reason":"Validation mode"}),
         flamegraph_run: json!({"status":"omitted","reason":"Validation mode"}),
+        log_paths: Vec::new(),
+        artifacts: BTreeMap::new(),
+    }
+}
+
+fn build_error_summary(scenario: &ResolvedScenario, error: &anyhow::Error) -> ScenarioSummary {
+    ScenarioSummary {
+        scenario: scenario.name.clone(),
+        status: "failed".to_string(),
+        setup: scenario.setup.clone(),
+        runtime: scenario.runtime.clone(),
+        load: scenario.load.clone(),
+        measurement: scenario.measurement.clone(),
+        profiling: scenario.profiling.clone(),
+        goose: json!({
+            "status":"failed",
+            "error": error.to_string(),
+        }),
+        endpoint_metrics: json!({"status":"unavailable","reason":"scenario failed before metrics collection"}),
+        flamegraph_run: json!({"status":"omitted","reason":"scenario failed"}),
         log_paths: Vec::new(),
         artifacts: BTreeMap::new(),
     }
@@ -1487,56 +1553,81 @@ fn execute_scenario(
     scenario: &ResolvedScenario,
     scenario_dir: &Path,
 ) -> Result<ScenarioSummary> {
+    log_progress(format!("Starting stack for scenario '{}'", scenario.name));
     let (compose_args, _project) = start_stack(root, runtime, scenario, scenario_dir)?;
-    let token = benchmark_token(&compose_args).ok();
-    let artifact_prefix = "goose";
-    let command = build_goose_command(root, scenario, scenario_dir, artifact_prefix, false);
-    let goose_result = run_command_spec(root, &command, token.as_deref())?;
-    let request_log = scenario_dir.join("goose_requests.csv");
-    let csv_prefix = scenario_dir.join("goose");
-    write_goose_stats_csv(&request_log, &csv_prefix)?;
-    let endpoint_metrics = collect_endpoint_metrics(&csv_prefix, &scenario.measurement)?;
-    let mut flamegraph_run = json!({"status":"omitted","reason":"profiling disabled"});
-    let mut artifacts = BTreeMap::new();
-    if scenario.load.html_report {
-        artifacts.insert(
-            "goose_html".to_string(),
-            scenario_dir.join("goose_report.html").display().to_string(),
-        );
-    }
-    if scenario.profiling.enabled {
-        flamegraph_run = run_flamegraph(root, scenario, scenario_dir, token.as_deref())?;
-        if let Some(path) = flamegraph_run.get("svg").and_then(Value::as_str) {
-            if Path::new(path).exists() {
-                artifacts.insert("goose_flamegraph".to_string(), path.to_string());
+    let result = (|| -> Result<ScenarioSummary> {
+        let token = benchmark_token(&compose_args).ok();
+        let artifact_prefix = "goose";
+        let command = build_goose_command(root, scenario, scenario_dir, artifact_prefix, false);
+        log_progress(format!(
+            "Launching Goose for scenario '{}': {} {}",
+            scenario.name, command.command, command.args.join(" ")
+        ));
+        let goose_result = run_command_spec(root, &command, token.as_deref())?;
+        let request_log = scenario_dir.join("goose_requests.csv");
+        let csv_prefix = scenario_dir.join("goose");
+        write_goose_stats_csv(&request_log, &csv_prefix)?;
+        let endpoint_metrics = collect_endpoint_metrics(&csv_prefix, &scenario.measurement)?;
+        let scenario_success = determine_scenario_success(goose_result.success, &endpoint_metrics);
+        let mut flamegraph_run = json!({"status":"omitted","reason":"profiling disabled"});
+        let mut artifacts = BTreeMap::new();
+        if scenario.load.html_report {
+            artifacts.insert(
+                "goose_html".to_string(),
+                scenario_dir.join("goose_report.html").display().to_string(),
+            );
+        }
+        if scenario.profiling.enabled {
+            log_progress(format!("Collecting flamegraph for scenario '{}'", scenario.name));
+            flamegraph_run = run_flamegraph(root, scenario, scenario_dir, token.as_deref())?;
+            if let Some(path) = flamegraph_run.get("svg").and_then(Value::as_str) {
+                if Path::new(path).exists() {
+                    artifacts.insert("goose_flamegraph".to_string(), path.to_string());
+                }
             }
         }
-    }
+        Ok(ScenarioSummary {
+            scenario: scenario.name.clone(),
+            status: if scenario_success {
+                "ok".to_string()
+            } else {
+                "failed".to_string()
+            },
+            setup: scenario.setup.clone(),
+            runtime: scenario.runtime.clone(),
+            load: scenario.load.clone(),
+            measurement: scenario.measurement.clone(),
+            profiling: scenario.profiling.clone(),
+            goose: json!({
+                "status": if scenario_success { "ok" } else { "failed" },
+                "stdout": goose_result.stdout,
+                "stderr": goose_result.stderr,
+                "html_report": scenario_dir.join("goose_report.html").display().to_string(),
+                "csv_prefix": csv_prefix.display().to_string(),
+            }),
+            endpoint_metrics,
+            flamegraph_run,
+            log_paths: Vec::new(),
+            artifacts,
+        })
+    })();
+    log_progress(format!("Stopping stack for scenario '{}'", scenario.name));
     stop_stack(&compose_args);
-    Ok(ScenarioSummary {
-        scenario: scenario.name.clone(),
-        status: if goose_result.success {
-            "ok".to_string()
-        } else {
-            "failed".to_string()
-        },
-        setup: scenario.setup.clone(),
-        runtime: scenario.runtime.clone(),
-        load: scenario.load.clone(),
-        measurement: scenario.measurement.clone(),
-        profiling: scenario.profiling.clone(),
-        goose: json!({
-            "status": if goose_result.success { "ok" } else { "failed" },
-            "stdout": goose_result.stdout,
-            "stderr": goose_result.stderr,
-            "html_report": scenario_dir.join("goose_report.html").display().to_string(),
-            "csv_prefix": csv_prefix.display().to_string(),
-        }),
-        endpoint_metrics,
-        flamegraph_run,
-        log_paths: Vec::new(),
-        artifacts,
-    })
+    result
+}
+
+fn determine_scenario_success(process_success: bool, endpoint_metrics: &Value) -> bool {
+    process_success && !has_endpoint_failures(endpoint_metrics)
+}
+
+fn has_endpoint_failures(endpoint_metrics: &Value) -> bool {
+    endpoint_metrics
+        .get("aggregated")
+        .and_then(|value| value.get("Failure Count"))
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
+        > 0
 }
 
 #[derive(Debug)]
@@ -1559,11 +1650,74 @@ fn run_command_spec(root: &Path, spec: &CommandSpec, token: Option<&str>) -> Res
     if let Some(token) = token {
         command.env("MCPGATEWAY_BEARER_TOKEN", token);
     }
-    let output = command.output()?;
+    run_command_streaming(&mut command, |stream, line| {
+        log_progress(format!("{stream}: {line}"));
+    })
+}
+
+fn run_command_streaming<F>(command: &mut Command, mut on_line: F) -> Result<RunOutput>
+where
+    F: FnMut(&str, &str),
+{
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let stdout = child.stdout.take().ok_or_else(|| anyhow!("missing child stdout"))?;
+    let stderr = child.stderr.take().ok_or_else(|| anyhow!("missing child stderr"))?;
+    let (sender, receiver) = mpsc::channel::<(&'static str, String)>();
+
+    let stdout_sender = sender.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            match line {
+                Ok(value) => {
+                    let _ = stdout_sender.send(("stdout", value));
+                }
+                Err(error) => {
+                    let _ = stdout_sender.send(("stderr", format!("stdout read error: {error}")));
+                    break;
+                }
+            }
+        }
+    });
+
+    let stderr_sender = sender.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            match line {
+                Ok(value) => {
+                    let _ = stderr_sender.send(("stderr", value));
+                }
+                Err(error) => {
+                    let _ = stderr_sender.send(("stderr", format!("stderr read error: {error}")));
+                    break;
+                }
+            }
+        }
+    });
+    drop(sender);
+
+    let mut stdout_log = String::new();
+    let mut stderr_log = String::new();
+    for (stream, line) in receiver {
+        on_line(stream, &line);
+        match stream {
+            "stdout" => {
+                stdout_log.push_str(&line);
+                stdout_log.push('\n');
+            }
+            "stderr" => {
+                stderr_log.push_str(&line);
+                stderr_log.push('\n');
+            }
+            _ => {}
+        }
+    }
+
+    let status = child.wait()?;
     Ok(RunOutput {
-        success: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        success: status.success(),
+        stdout: stdout_log,
+        stderr: stderr_log,
     })
 }
 
@@ -1617,7 +1771,9 @@ fn start_stack(
         services.push("nginx");
     }
     for service in ["postgres", "redis", "pgbouncer", "gateway"] {
+        log_progress(format!("Compose up: {service}"));
         run_compose(root, &compose, &["up", "-d", "--no-build", service])?;
+        log_progress(format!("Waiting for service health: {service}"));
         wait_for_service(runtime, &compose, service, 120)?;
     }
     if !wait_for_gateway_health(&compose, 120)? {
@@ -1627,12 +1783,15 @@ fn start_stack(
         );
     }
     if uses_fast_time_fixture(scenario) {
+        log_progress("Compose up: fast_time_server");
         run_compose(
             root,
             &compose,
             &["up", "-d", "--no-build", "fast_time_server"],
         )?;
+        log_progress("Waiting for service health: fast_time_server");
         wait_for_service(runtime, &compose, "fast_time_server", 60)?;
+        log_progress("Compose up: register_fast_time");
         run_compose(
             root,
             &compose,
@@ -1640,12 +1799,15 @@ fn start_stack(
         )?;
     }
     if uses_a2a_fixture(scenario) {
+        log_progress("Compose up: a2a_echo_agent");
         run_compose(
             root,
             &compose,
             &["up", "-d", "--no-build", "a2a_echo_agent"],
         )?;
+        log_progress("Waiting for service health: a2a_echo_agent");
         wait_for_service(runtime, &compose, "a2a_echo_agent", 60)?;
+        log_progress("Compose up: register_a2a_echo");
         run_compose(
             root,
             &compose,
@@ -1653,7 +1815,9 @@ fn start_stack(
         )?;
     }
     if scenario.load.target_service != "gateway" {
+        log_progress("Compose up: nginx");
         run_compose(root, &compose, &["up", "-d", "--no-build", "nginx"])?;
+        log_progress("Waiting for service health: nginx");
         wait_for_service(runtime, &compose, "nginx", 60)?;
     }
     Ok((compose, project))
@@ -1711,6 +1875,7 @@ fn ensure_benchmark_image(
             .map(|s| s.success())
             .unwrap_or(false)
     {
+        log_progress(format!("Using existing benchmark image {image_name}"));
         return Ok(image_name);
     }
     let container_file = if scenario.build.container_file.is_empty() {
@@ -1748,6 +1913,7 @@ fn ensure_benchmark_image(
         command.arg("--build-arg").arg(format!("{key}={value}"));
     }
     command.arg(".");
+    log_progress(format!("Building benchmark image {image_name}"));
     let status = command.status()?;
     if !status.success() {
         bail!(
@@ -1830,7 +1996,11 @@ fn write_compose_override(
                 yaml_key("image"),
                 serde_yaml::Value::String(image_name.to_string()),
             );
-            service.insert(yaml_key("ports"), serde_yaml::to_value(vec!["14444:4444"])?);
+            if scenario.load.target_service == "gateway" {
+                service.insert(yaml_key("ports"), serde_yaml::to_value(vec!["14444:4444"])?);
+            } else {
+                service.remove(&yaml_key("ports"));
+            }
             service.insert(
                 yaml_key("cap_add"),
                 serde_yaml::to_value(vec!["SYS_PTRACE"])?,
@@ -2095,11 +2265,15 @@ fn wait_for_gateway_health(compose_args: &[String], timeout_secs: u64) -> Result
     Ok(false)
 }
 
+fn benchmark_token_command() -> String {
+    "python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --full-name 'Benchmark Admin' --exp 10080 --secret \"${JWT_SECRET_KEY}\" --algo HS256".to_string()
+}
+
 fn benchmark_token(compose_args: &[String]) -> Result<String> {
-    let command = "python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --full-name 'Benchmark Admin' --exp 10080 --secret my-test-key --algo HS256";
+    let command = benchmark_token_command();
     let output = Command::new(&compose_args[0])
         .args(&compose_args[1..])
-        .args(["exec", "-T", "gateway", "sh", "-lc", command])
+        .args(["exec", "-T", "gateway", "sh", "-lc", &command])
         .output()?;
     if !output.status.success() {
         bail!("failed to mint benchmark token");
@@ -2796,6 +2970,176 @@ name = "legacy-extra-args-scenario"
             let resolved = load_suite(root, suite, false).unwrap();
             assert_eq!(resolved.scenarios.len(), 2, "{suite}");
         }
+    }
+
+    #[test]
+    fn mcp_focused_suites_compare_python_and_rust_runtime() {
+        let root = fixture_repo_root();
+        for suite in [
+            "rust-mcp-runtime-300",
+            "rest-discovery-300",
+            "mcp-resources-300",
+            "mcp-prompts-300",
+        ] {
+            let resolved = load_suite(root, suite, false).unwrap();
+            let baseline = &resolved.scenarios[0];
+            let variant = &resolved.scenarios[1];
+
+            assert_eq!(baseline.setup.expected_mcp_runtime.as_deref(), None, "{suite}");
+            assert_eq!(
+                variant.setup.expected_mcp_runtime.as_deref(),
+                Some("rust"),
+                "{suite}"
+            );
+            assert_eq!(
+                variant.setup.expected_mcp_runtime_mode.as_deref(),
+                Some("rust-managed"),
+                "{suite}"
+            );
+            assert_eq!(
+                variant
+                    .gateway
+                    .environment
+                    .get("EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED")
+                    .map(String::as_str),
+                Some("true"),
+                "{suite}"
+            );
+            assert_eq!(
+                variant
+                    .gateway
+                    .environment
+                    .get("RUST_MCP_MODE")
+                    .map(String::as_str),
+                Some("edge"),
+                "{suite}"
+            );
+        }
+    }
+
+    #[test]
+    fn streaming_command_reports_live_stdout_and_stderr_lines() {
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "printf 'alpha\\n'; sleep 0.1; printf 'beta\\n' >&2; sleep 0.1; printf 'gamma\\n'",
+        ]);
+        let mut events = Vec::new();
+
+        let result = run_command_streaming(&mut command, |stream, line| {
+            events.push(format!("{stream}:{line}"));
+        })
+        .unwrap();
+
+        assert!(result.success);
+        assert_eq!(
+            events,
+            vec![
+                "stdout:alpha".to_string(),
+                "stderr:beta".to_string(),
+                "stdout:gamma".to_string()
+            ]
+        );
+        assert!(result.stdout.contains("alpha"));
+        assert!(result.stdout.contains("gamma"));
+        assert!(result.stderr.contains("beta"));
+    }
+
+    #[test]
+    fn scenario_status_fails_when_endpoint_metrics_report_failures() {
+        let metrics = json!({
+            "aggregated": {
+                "Failure Count": "5"
+            }
+        });
+
+        assert!(has_endpoint_failures(&metrics));
+        assert!(!determine_scenario_success(true, &metrics));
+    }
+
+    #[test]
+    fn benchmark_token_command_uses_gateway_jwt_secret_env() {
+        let command = benchmark_token_command();
+        assert!(command.contains("JWT_SECRET_KEY"));
+        assert!(!command.contains("my-test-key"));
+    }
+
+    #[test]
+    fn nginx_targeted_override_does_not_bind_gateway_host_port() {
+        let tempdir = std::env::temp_dir().join("benchmark-runner-compose-ports");
+        let _ = std::fs::remove_dir_all(&tempdir);
+        std::fs::create_dir_all(tempdir.join("reports/benchmarks/test-scenario")).unwrap();
+        std::fs::write(
+            tempdir.join("docker-compose.yml"),
+            r#"
+services:
+  postgres:
+    image: postgres:16
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+  pgbouncer:
+    image: edoburu/pgbouncer
+    ports: ["6432:6432"]
+  gateway:
+    image: mcpgateway/test:latest
+    environment:
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
+    ports: ["4444:4444"]
+  nginx:
+    image: nginx:latest
+    ports: ["8080:80"]
+networks: {}
+volumes: {}
+"#,
+        )
+        .unwrap();
+
+        let scenario_dir = tempdir.join("reports/benchmarks/test-scenario");
+        let scenario = ResolvedScenario {
+            name: "nginx-target".to_string(),
+            description: String::new(),
+            scenario_type: String::new(),
+            setup: SetupConfig::default(),
+            build: BuildConfig::default(),
+            runtime: RuntimeConfig::default(),
+            gateway: GatewayConfig::default(),
+            load: LoadConfig {
+                target_service: "nginx".to_string(),
+                ..LoadConfig::default()
+            },
+            measurement: MeasurementConfig::default(),
+            profiling: ProfilingConfig::default(),
+            execution: ExecutionConfig::default(),
+            requests: RequestsConfig::default(),
+        };
+
+        let override_path =
+            write_compose_override(&tempdir, &scenario, &scenario_dir, "mcpgateway/test:latest")
+                .unwrap();
+        let raw = std::fs::read_to_string(override_path).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&raw).unwrap();
+        let services = parsed
+            .get("services")
+            .and_then(serde_yaml::Value::as_mapping)
+            .unwrap();
+        let gateway = services
+            .get(serde_yaml::Value::String("gateway".to_string()))
+            .and_then(serde_yaml::Value::as_mapping)
+            .unwrap();
+        let nginx = services
+            .get(serde_yaml::Value::String("nginx".to_string()))
+            .and_then(serde_yaml::Value::as_mapping)
+            .unwrap();
+
+        assert!(gateway.get("ports").is_none());
+        assert_eq!(
+            yaml_strings(nginx.get("ports")),
+            vec!["18080:80".to_string()]
+        );
+
+        let _ = std::fs::remove_dir_all(&tempdir);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [suite]
 name = "benchmark-gunicorn-admin-plugins-compare"
-description = "Exercises the admin plugin inventory endpoint with plugins enabled and matched load settings, then compares the baseline benchmark image against the rust-plugin benchmark image to show whether plugin plumbing changes admin control-plane performance."
+description = "Exercises the admin plugin inventory endpoint with plugins enabled and matched load settings, then compares the default benchmark image against a Rust-artifact image to show whether plugin packaging changes admin control-plane performance. This suite is intentionally not a Python-vs-Rust runtime comparison because the admin plugin path does not move onto the Rust MCP runtime."
 output_root = "reports/benchmarks"
 continue_on_failure = false
 save_intermediate_artifacts = true
@@ -95,7 +95,7 @@ reuse_stack = true
 
 [[scenario]]
 name = "gunicorn-admin-plugins-baseline"
-description = "Admin plugin inventory benchmark on the baseline benchmark image"
+description = "Admin plugin inventory benchmark on the default benchmark image without extra Rust artifacts"
 scenario_type = "admin_plugins_baseline"
 
 [scenario.build]
@@ -104,7 +104,7 @@ image_tag = "benchmark-suite-admin-plugins-baseline"
 
 [[scenario]]
 name = "gunicorn-admin-plugins-rust-plugins"
-description = "Admin plugin inventory benchmark on the rust-plugin benchmark image"
+description = "Admin plugin inventory benchmark on the Rust-artifact benchmark image for control-plane packaging comparison"
 scenario_type = "admin_plugins_rust_plugins_compare"
 
 [scenario.build]
