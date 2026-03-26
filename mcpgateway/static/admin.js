@@ -9880,6 +9880,19 @@ function initToolSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            // Re-query the button by ID to ensure we get the current button (not a stale reference)
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating tool select:", error);
         }
@@ -9927,7 +9940,6 @@ function initToolSelect(
 
         newSelectBtn.addEventListener("click", async () => {
             // Disable button and show loading state
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all tools...";
 
@@ -10010,16 +10022,11 @@ function initToolSelect(
                 allToolIds.forEach((id) => editSel.add(String(id)));
 
                 update();
-
-                newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
             } catch (error) {
                 console.error("Error in Select All:", error);
                 alert("Failed to select all tools. Please try again.");
                 newSelectBtn.disabled = false;
-                newSelectBtn.textContent = originalText;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
@@ -10309,6 +10316,18 @@ function initResourceSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating resource select:", error);
         }
@@ -10355,7 +10374,6 @@ function initResourceSelect(
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
 
         newSelectBtn.addEventListener("click", async () => {
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all resources...";
 
@@ -10438,14 +10456,11 @@ function initResourceSelect(
                 allIds.forEach((id) => editSel.add(String(id)));
 
                 update();
-
-                newSelectBtn.textContent = `✓ All ${allIds.length} resources selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
             } catch (error) {
                 console.error("Error selecting all resources:", error);
                 alert("Failed to select all resources. Please try again.");
+                newSelectBtn.disabled = false;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
@@ -10724,6 +10739,18 @@ function initPromptSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating prompt select:", error);
         }
@@ -10769,7 +10796,6 @@ function initPromptSelect(
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
         newSelectBtn.addEventListener("click", async () => {
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all prompts...";
 
@@ -10852,14 +10878,11 @@ function initPromptSelect(
                 allIds.forEach((id) => editSel.add(String(id)));
 
                 update();
-
-                newSelectBtn.textContent = `✓ All ${allIds.length} prompts selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
             } catch (error) {
                 console.error("Error selecting all prompts:", error);
                 alert("Failed to select all prompts. Please try again.");
+                newSelectBtn.disabled = false;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
@@ -11118,6 +11141,18 @@ function initGatewaySelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating gateway select:", error);
         }
@@ -11165,7 +11200,6 @@ function initGatewaySelect(
 
         newSelectBtn.addEventListener("click", async () => {
             // Disable button and show loading state
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all gateways...";
 
@@ -11258,18 +11292,13 @@ function initGatewaySelect(
 
                 update();
 
-                newSelectBtn.textContent = `✓ All ${allGatewayIds.length} gateways selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
-
                 // Reload associated items after selecting all
                 reloadAssociatedItems();
             } catch (error) {
                 console.error("Error in Select All:", error);
                 alert("Failed to select all gateways. Please try again.");
                 newSelectBtn.disabled = false;
-                newSelectBtn.textContent = originalText;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
