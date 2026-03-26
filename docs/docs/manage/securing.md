@@ -609,7 +609,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
    ```bash
    make security-all        # Run all security tools
    make security-report     # Generate security report
-   make trivy              # Scan container vulnerabilities
+   make security-scan      # Show current local container review guidance
    ```
 
 2. **Validate Configuration**

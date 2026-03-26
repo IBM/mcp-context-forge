@@ -240,7 +240,7 @@ RUN set -euo pipefail \
 
 # ----------------------------------------------------------------------------
 # Remove package managers and unnecessary system tools from rootfs
-# - Keep RPM database for security scanning with Trivy/Dockle
+# - Keep RPM database for post-build package inventory and vulnerability scanning
 # - This keeps the final image size minimal while allowing vulnerability scanning
 # ----------------------------------------------------------------------------
 RUN rm -rf ${ROOTFS_PATH:?}/usr/bin/dnf* \
