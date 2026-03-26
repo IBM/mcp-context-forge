@@ -2342,6 +2342,145 @@ class TestResourceServiceContentTypeError:
             assert exc_info.value.mime_type == "application/x-custom"
 
 
+class TestResourceUpdateMimeTypeDetection:
+    """Tests for MIME type detection during resource updates."""
+
+    @pytest.mark.asyncio
+    async def test_update_resource_with_empty_mime_type_detects_from_uri(self, resource_service, mock_db):
+        """Test that empty MIME type triggers detection from URI."""
+        from mcpgateway.schemas import ResourceUpdate
+        from datetime import datetime, timezone
+        
+        # Create mock resource
+        mock_resource = MagicMock()
+        mock_resource.id = 1
+        mock_resource.uri = "test://document.txt"
+        mock_resource.name = "Test Resource"
+        mock_resource.mime_type = "application/octet-stream"
+        mock_resource.text_content = "original content"
+        mock_resource.binary_content = None
+        mock_resource.visibility = "private"
+        mock_resource.team_id = None
+        mock_resource.version = 1
+        
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        # Mock _detect_mime_type to return text/plain
+        with patch.object(resource_service, "_detect_mime_type", return_value="text/plain") as mock_detect:
+            with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
+                with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                    # Update with empty MIME type
+                    update = ResourceUpdate(mime_type="")
+                    
+                    await resource_service.update_resource(mock_db, 1, update)
+                    
+                    # Verify _detect_mime_type was called
+                    mock_detect.assert_called_once()
+                    # Verify MIME type was set to detected value
+                    assert mock_resource.mime_type == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_with_empty_mime_type_uses_content(self, resource_service, mock_db):
+        """Test that empty MIME type detection uses existing content."""
+        from mcpgateway.schemas import ResourceUpdate
+        
+        # Create mock resource with text content
+        mock_resource = MagicMock()
+        mock_resource.id = 1
+        mock_resource.uri = "test://unknown"  # No extension
+        mock_resource.name = "Test Resource"
+        mock_resource.mime_type = "application/octet-stream"
+        mock_resource.text_content = "some text content"
+        mock_resource.binary_content = None
+        mock_resource.visibility = "private"
+        mock_resource.team_id = None
+        mock_resource.version = 1
+        
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        with patch.object(resource_service, "_detect_mime_type", return_value="text/plain") as mock_detect:
+            with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
+                with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                    # Update with empty MIME type
+                    update = ResourceUpdate(mime_type="")
+                    
+                    await resource_service.update_resource(mock_db, 1, update)
+                    
+                    # Verify detection was called with existing content
+                    mock_detect.assert_called_once_with("test://unknown", "some text content")
+                    assert mock_resource.mime_type == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_with_explicit_mime_type_no_detection(self, resource_service, mock_db):
+        """Test that explicit MIME type is used without detection."""
+        from mcpgateway.schemas import ResourceUpdate
+        
+        mock_resource = MagicMock()
+        mock_resource.id = 1
+        mock_resource.uri = "test://document"
+        mock_resource.name = "Test Resource"
+        mock_resource.mime_type = "text/plain"
+        mock_resource.text_content = "content"
+        mock_resource.binary_content = None
+        mock_resource.visibility = "private"
+        mock_resource.team_id = None
+        mock_resource.version = 1
+        
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        with patch.object(resource_service, "_detect_mime_type") as mock_detect:
+            with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
+                with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                    # Update with explicit MIME type
+                    update = ResourceUpdate(mime_type="application/json")
+                    
+                    await resource_service.update_resource(mock_db, 1, update)
+                    
+                    # Verify detection was NOT called
+                    mock_detect.assert_not_called()
+                    # Verify explicit MIME type was set
+                    assert mock_resource.mime_type == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_without_mime_type_preserves_existing(self, resource_service, mock_db):
+        """Test that not providing MIME type preserves existing value."""
+        from mcpgateway.schemas import ResourceUpdate
+        
+        mock_resource = MagicMock()
+        mock_resource.id = 1
+        mock_resource.uri = "test://document"
+        mock_resource.name = "Test Resource"
+        mock_resource.mime_type = "text/markdown"
+        mock_resource.text_content = "content"
+        mock_resource.binary_content = None
+        mock_resource.visibility = "private"
+        mock_resource.team_id = None
+        mock_resource.version = 1
+        
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        with patch.object(resource_service, "_detect_mime_type") as mock_detect:
+            with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
+                with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                    # Update without MIME type field
+                    update = ResourceUpdate(name="Updated Name")
+                    
+                    await resource_service.update_resource(mock_db, 1, update)
+                    
+                    # Verify detection was NOT called
+                    mock_detect.assert_not_called()
+                    # Verify existing MIME type was preserved
+                    assert mock_resource.mime_type == "text/markdown"
+
+
 class TestResourceServiceMetricsExtended:
     """Extended tests for resource service metrics."""
 

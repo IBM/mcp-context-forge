@@ -2787,6 +2787,12 @@ class ResourceService(BaseService):
         """
         Update a resource.
 
+        When updating MIME type:
+        - If a non-empty MIME type is provided, it will be used and validated
+        - If an empty string is provided, MIME type will be auto-detected from URI/content
+        - If None/not provided, existing MIME type is preserved
+        - Auto-detection falls back to 'text/plain' for text content
+
         Args:
             db: Database session
             resource_id: Resource ID
@@ -2867,7 +2873,16 @@ class ResourceService(BaseService):
             if resource_update.description is not None:
                 resource.description = resource_update.description
             if resource_update.mime_type is not None:
-                resource.mime_type = resource_update.mime_type
+                # If mime_type is empty string, detect it from URI/content
+                if not resource_update.mime_type:
+                    # Use existing content or updated content for detection
+                    content_for_detection = resource_update.content if resource_update.content is not None else (resource.text_content or resource.binary_content)
+                    uri_for_detection = resource_update.uri if resource_update.uri is not None else resource.uri
+                    detected_mime_type = self._detect_mime_type(uri_for_detection, content_for_detection)
+                    logger.info(f"Auto-detected MIME type for resource {resource_id}: {detected_mime_type}")
+                    resource.mime_type = detected_mime_type
+                else:
+                    resource.mime_type = resource_update.mime_type
             if resource_update.uri_template is not None:
                 resource.uri_template = resource_update.uri_template
             if resource_update.visibility is not None:
@@ -2888,10 +2903,11 @@ class ResourceService(BaseService):
                     ip_address=modified_from_ip,
                 )
 
-                # Validate MIME type if provided
-                if resource_update.mime_type:
+                # Validate MIME type (use detected type if empty was provided)
+                mime_type_to_validate = resource.mime_type if resource_update.mime_type is not None else None
+                if mime_type_to_validate:
                     content_security.validate_resource_mime_type(
-                        mime_type=resource_update.mime_type,
+                        mime_type=mime_type_to_validate,
                         uri=resource_update.uri or resource.uri,
                         user_email=modified_by or user_email,
                         ip_address=modified_from_ip,
