@@ -2,7 +2,7 @@
  * Unit tests for admin.js async/fetch-related functions.
  */
 
-import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, test, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
 let win;
@@ -346,5 +346,59 @@ describe("fetchWithAuth", () => {
         const headers = callArgs[1].headers;
         expect(headers.get("X-Custom")).toBe("value");
         expect(headers.get("Authorization")).toBe("Bearer tok");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleA2ATestSubmit
+// ---------------------------------------------------------------------------
+describe("handleA2ATestSubmit", () => {
+    const f = () => win.handleA2ATestSubmit;
+
+    beforeEach(() => {
+        win.document.body.innerHTML = `
+            <input id="a2a-test-agent-id" />
+            <textarea id="a2a-test-query"></textarea>
+            <div id="a2a-test-loading" class="hidden"></div>
+            <div id="a2a-test-result" class="hidden"></div>
+            <div id="a2a-test-response-json"></div>
+            <button id="a2a-test-submit">Test</button>
+        `;
+        win.document.cookie =
+            "jwt_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        win.document.cookie =
+            "token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+        win.localStorage.removeItem("auth_token");
+        win.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT = 1000;
+    });
+
+    test("does not send Basic auth fallback when token is unavailable", async () => {
+        win.document.getElementById("a2a-test-agent-id").value = "agent-123";
+        win.document.getElementById("a2a-test-query").value = "hello";
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({ ok: true, status: 200, body: { success: true, result: { ok: true } }, contentType: "application/json" }),
+        );
+
+        await f()({ preventDefault() {} });
+
+        const callArgs = win.fetch.mock.calls[0];
+        expect(callArgs[0]).toContain("/admin/a2a/agent-123/test");
+        expect(callArgs[1].headers.Authorization).toBeUndefined();
+        expect(callArgs[1].headers["Content-Type"]).toBe("application/json");
+    });
+
+    test("sends Bearer auth when a JS-readable token exists", async () => {
+        win.document.cookie = "jwt_token=test-token-123";
+        win.document.getElementById("a2a-test-agent-id").value = "agent-123";
+        win.document.getElementById("a2a-test-query").value = "hello";
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({ ok: true, status: 200, body: { success: true, result: { ok: true } }, contentType: "application/json" }),
+        );
+
+        await f()({ preventDefault() {} });
+
+        const callArgs = win.fetch.mock.calls[0];
+        expect(callArgs[1].headers.Authorization).toBe("Bearer test-token-123");
+        expect(callArgs[1].headers["Content-Type"]).toBe("application/json");
     });
 });

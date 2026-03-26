@@ -21980,16 +21980,11 @@ async function handleA2ATestSubmit(e) {
             throw new Error("Agent ID is missing");
         }
 
-        // Get auth token
-        const token = await getAuthToken();
-        const headers = { "Content-Type": "application/json" };
-        if (token) {
-            headers.Authorization = `Bearer ${token}`;
-        } else {
-            // Fallback to basic auth if JWT not available
-            console.warn("JWT token not found, attempting basic auth fallback");
-            headers.Authorization = "Basic " + btoa("admin:changeme");
-        }
+        // Reuse the standard admin auth helper:
+        // - sends Bearer auth when a JS-readable token exists
+        // - otherwise relies on same-origin cookie auth
+        // Never synthesize default credentials client-side.
+        const headers = await getAuthHeaders(true);
 
         // Send test request with user query
         const response = await fetchWithTimeout(

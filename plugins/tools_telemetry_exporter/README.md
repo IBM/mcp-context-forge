@@ -12,16 +12,17 @@ Export comprehensive tool invocation telemetry to OpenTelemetry for observabilit
 ## Config
 ```yaml
 config:
-  export_full_payload: true
+  export_full_payload: false
   max_payload_bytes_size: 10000  # 10 KB default
 ```
 
 ## Features
 
 - **Pre-Invocation Telemetry**: Captures request context, tool metadata, target MCP server details, and tool arguments
-- **Post-Invocation Telemetry**: Captures request context, tool results (optional), and error status
+- **Post-Invocation Telemetry**: Captures request context, optional tool results, and error status
 - **Automatic Payload Truncation**: Large results are truncated to respect size limits
 - **Graceful Degradation**: Automatically disables if OpenTelemetry is not available
+- **Sensitive Header Redaction**: Auth-bearing headers are masked before export
 
 ## Exported Attributes
 
@@ -29,7 +30,7 @@ config:
 - Request metadata: `request_id`, `user`, `tenant_id`, `server_id`
 - Target server: `target_mcp_server.id`, `target_mcp_server.name`, `target_mcp_server.url`
 - Tool info: `tool.name`, `tool.target_tool_name`, `tool.description`
-- Invocation data: `tool.invocation.args`, `headers`
+- Invocation data: `tool.invocation.args`, `headers` (sensitive values redacted)
 
 ### Post-Invocation (`tool.post_invoke`)
 - Request metadata: `request_id`, `user`, `tenant_id`, `server_id`
@@ -40,7 +41,7 @@ config:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `export_full_payload` | `true` | Export full tool results in post-invocation telemetry |
+| `export_full_payload` | `false` | Export full tool results in post-invocation telemetry |
 | `max_payload_bytes_size` | `10000` | Maximum payload size in bytes before truncation |
 
 ## Requirements
@@ -58,7 +59,7 @@ plugins:
     mode: "permissive"
     priority: 200  # Run late to capture all context
     config:
-        export_full_payload: true
+        export_full_payload: false
         max_payload_bytes_size: 10000
 ```
 
@@ -70,5 +71,6 @@ plugins:
 ## Security Notes
 
 - Tool arguments are always exported in pre-invocation telemetry
-- Consider running PII filter plugin before this plugin to sanitize data
-- Disable `export_full_payload` in production for sensitive workloads
+- Sensitive headers are redacted before export, including `Authorization`, `Cookie`, `X-API-Key`, `Proxy-Authorization`, and vault/delegation token headers
+- Consider running PII filter plugin before this plugin to sanitize tool arguments before export
+- Leave `export_full_payload` disabled unless you explicitly need result content in telemetry
