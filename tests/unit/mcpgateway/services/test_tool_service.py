@@ -31,6 +31,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.plugins.framework.hooks.tools import ToolHookType
+from mcpgateway.plugins.framework.models import PluginResult
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _decrypt_tool_header_value,
@@ -3782,12 +3783,6 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_invoke_tool_plugin_retry_delay_triggers_retry(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test that when plugin returns retry_delay_ms > 0 the tool is retried after the delay."""
-        # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-        from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.schemas import ToolResult
-        from mcpgateway.common.models import TextContent
-
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
         mock_tool.auth_value = None
@@ -3836,6 +3831,52 @@ class TestToolService:
         assert mock_sleep.call_args[0][0] == pytest.approx(0.1)  # 100ms → 0.1s
         # Verify the result is from the retry call
         assert result.content[0].text == "retry succeeded"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_exception_path_retry_fires(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """When a tool raises an exception the retry plugin's delay_ms must also trigger a retry."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        # HTTP client raises an exception (simulates network error)
+        tool_service._http_client.request.side_effect = RuntimeError("connection reset")
+
+        tool_service._plugin_manager = Mock()
+        tool_service._plugin_manager.has_hooks_for.return_value = True
+
+        # Plugin returns delay > 0 on first post-invoke, 0 on subsequent
+        post_invoke_count = [0]
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+            post_invoke_count[0] += 1
+            delay = 50 if post_invoke_count[0] == 1 else 0
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=None, retry_delay_ms=delay), None)
+
+        tool_service._plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
+
+        retry_result = ToolResult(content=[TextContent(type="text", text="recovered after exception")])
+        original_invoke = tool_service.invoke_tool
+
+        async def spy_invoke(db, name, arguments=None, **kwargs):
+            if kwargs.get("retry_attempt", 0) > 0:
+                return retry_result
+            return await original_invoke(db, name, arguments, **kwargs)
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            patch.object(tool_service, "invoke_tool", side_effect=spy_invoke),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        mock_sleep.assert_awaited_once()
+        assert mock_sleep.call_args[0][0] == pytest.approx(0.05)  # 50ms → 0.05s
+        assert result.content[0].text == "recovered after exception"
 
 
 # --------------------------------------------------------------------------- #

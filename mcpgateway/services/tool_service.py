@@ -4574,12 +4574,13 @@ class ToolService(BaseService):
                     span.set_attribute("error", True)
                     span.set_attribute("error.message", error_message)
 
-                # Notify plugins of the failure so circuit breaker can track it
-                # This ensures HTTP 4xx/5xx errors and MCP failures are counted
+                # Notify plugins of the failure so circuit breaker / retry plugin can track it.
+                # Capture the result so we can honour a retry_delay_ms signal from the retry plugin.
+                exc_post_result = None
                 if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
                     try:
                         exception_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation failed: {error_message}")], is_error=True)
-                        await self._plugin_manager.invoke_hook(
+                        exc_post_result, _ = await self._plugin_manager.invoke_hook(
                             ToolHookType.TOOL_POST_INVOKE,
                             payload=ToolPostInvokePayload(name=name, result=exception_error_result.model_dump(by_alias=True)),
                             global_context=global_context,
@@ -4588,6 +4589,30 @@ class ToolService(BaseService):
                         )
                     except Exception as plugin_exc:
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
+
+                # Retry if the plugin requested a delayed retry and we haven't hit the ceiling
+                if exc_post_result is not None and exc_post_result.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
+                    logger.debug(
+                        "tool_service: retry requested (exception path) for tool=%s attempt=%d/%d delay_ms=%d",
+                        name, retry_attempt + 1, settings.max_tool_retries, exc_post_result.retry_delay_ms,
+                    )
+                    await asyncio.sleep(exc_post_result.retry_delay_ms / 1000)
+                    with fresh_db_session() as retry_db:
+                        return await self.invoke_tool(
+                            db=retry_db,
+                            name=name,
+                            arguments=arguments,
+                            request_headers=request_headers,
+                            app_user_email=app_user_email,
+                            user_email=user_email,
+                            token_teams=token_teams,
+                            server_id=server_id,
+                            plugin_context_table=context_table,
+                            plugin_global_context=global_context,
+                            meta_data=meta_data,
+                            skip_pre_invoke=skip_pre_invoke,
+                            retry_attempt=retry_attempt + 1,
+                        )
 
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
             finally:
