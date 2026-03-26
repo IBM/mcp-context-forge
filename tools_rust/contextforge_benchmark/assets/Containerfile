@@ -87,12 +87,12 @@ COPY run-gunicorn.sh run-granian.sh run.sh /app/
 COPY gunicorn.config.py /app/
 COPY mcpgateway/ /app/mcpgateway/
 COPY plugins/ /app/plugins/
-COPY benchmarks/contextforge/ /app/benchmarks/contextforge/
+COPY tools_rust/contextforge_benchmark/assets/ /app/tools_rust/contextforge_benchmark/assets/
 COPY mcp-catalog.yml /app/
 
-RUN cp /app/benchmarks/contextforge/docker-entrypoint.sh /app/docker-entrypoint.sh \
-    && chmod +x /app/run-gunicorn.sh /app/run-granian.sh /app/docker-entrypoint.sh /app/run.sh /app/benchmarks/contextforge/run-uvicorn.sh \
-    && python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins /app/benchmarks/contextforge 2>/dev/null || true \
+RUN cp /app/tools_rust/contextforge_benchmark/assets/docker-entrypoint.sh /app/docker-entrypoint.sh \
+    && chmod +x /app/run-gunicorn.sh /app/run-granian.sh /app/docker-entrypoint.sh /app/run.sh /app/tools_rust/contextforge_benchmark/assets/run-uvicorn.sh \
+    && python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins /app/tools_rust/contextforge_benchmark/assets 2>/dev/null || true \
     && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true \
     && chown -R 1001:0 /app \
     && chmod -R g=u /app

@@ -15,7 +15,7 @@ case "${HTTP_SERVER}" in
         ;;
     uvicorn)
         echo "Starting ContextForge benchmark image with Uvicorn..."
-        exec ./benchmarks/contextforge/run-uvicorn.sh "$@"
+        exec ./tools_rust/contextforge_benchmark/assets/run-uvicorn.sh "$@"
         ;;
     *)
         echo "ERROR: Unknown HTTP_SERVER value: ${HTTP_SERVER}"

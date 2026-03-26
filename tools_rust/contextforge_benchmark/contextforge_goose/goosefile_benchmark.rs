@@ -136,7 +136,10 @@ async fn send_named_json_request(
     user.request(request).await
 }
 
-async fn initialize_mcp_session(user: &mut GooseUser, definition: &RequestDefinition) -> TransactionResult {
+async fn initialize_mcp_session(
+    user: &mut GooseUser,
+    definition: &RequestDefinition,
+) -> TransactionResult {
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "id": "benchmark-init",
@@ -162,7 +165,8 @@ async fn initialize_mcp_session(user: &mut GooseUser, definition: &RequestDefini
 }
 
 fn validate_json_body(body: &str, entry: &RequestPlanEntry) -> Result<(), String> {
-    let payload: Value = serde_json::from_str(body).map_err(|error| format!("invalid json: {error}"))?;
+    let payload: Value =
+        serde_json::from_str(body).map_err(|error| format!("invalid json: {error}"))?;
     let definition = &entry.request;
     let root = if matches!(definition.kind.as_str(), "rpc" | "mcp") {
         if payload.get("error").is_some() {
@@ -177,27 +181,39 @@ fn validate_json_body(body: &str, entry: &RequestPlanEntry) -> Result<(), String
     };
 
     if let Some(min_items) = definition.expect_list_min_items {
-        let items = root.as_array().ok_or_else(|| "expected list response".to_string())?;
+        let items = root
+            .as_array()
+            .ok_or_else(|| "expected list response".to_string())?;
         if items.len() < min_items {
             return Err(format!("expected at least {min_items} list items"));
         }
     }
     if let Some(expected_name) = &definition.expect_list_item_name {
-        let items = root.as_array().ok_or_else(|| "expected list response".to_string())?;
-        let found = items.iter().any(|item| item.get("name").and_then(Value::as_str) == Some(expected_name.as_str()));
+        let items = root
+            .as_array()
+            .ok_or_else(|| "expected list response".to_string())?;
+        let found = items
+            .iter()
+            .any(|item| item.get("name").and_then(Value::as_str) == Some(expected_name.as_str()));
         if !found {
             return Err(format!("expected item named {expected_name}"));
         }
     }
     if let Some(expected_key) = &definition.expect_result_key {
-        let result = root.as_object().ok_or_else(|| "expected object response".to_string())?;
+        let result = root
+            .as_object()
+            .ok_or_else(|| "expected object response".to_string())?;
         let value = result
             .get(expected_key)
             .ok_or_else(|| format!("expected result key '{expected_key}'"))?;
         if let Some(min_items) = definition.expect_result_min_items {
-            let items = value.as_array().ok_or_else(|| format!("expected array at result.{expected_key}"))?;
+            let items = value
+                .as_array()
+                .ok_or_else(|| format!("expected array at result.{expected_key}"))?;
             if items.len() < min_items {
-                return Err(format!("expected at least {min_items} items in result.{expected_key}"));
+                return Err(format!(
+                    "expected at least {min_items} items in result.{expected_key}"
+                ));
             }
         }
     }
@@ -206,7 +222,9 @@ fn validate_json_body(body: &str, entry: &RequestPlanEntry) -> Result<(), String
             .get("content")
             .and_then(Value::as_array)
             .ok_or_else(|| "expected content array".to_string())?;
-        let has_text = content.iter().any(|item| item.get("text").and_then(Value::as_str).is_some());
+        let has_text = content
+            .iter()
+            .any(|item| item.get("text").and_then(Value::as_str).is_some());
         if !has_text {
             return Err("expected text content".to_string());
         }
@@ -283,6 +301,9 @@ async fn main() -> Result<(), GooseError> {
         .set_wait_time(Duration::from_millis(0), Duration::from_millis(0))?
         .register_transaction(transaction!(execute_entry));
 
-    GooseAttack::initialize()?.register_scenario(scenario).execute().await?;
+    GooseAttack::initialize()?
+        .register_scenario(scenario)
+        .execute()
+        .await?;
     Ok(())
 }

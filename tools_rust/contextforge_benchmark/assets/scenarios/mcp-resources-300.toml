@@ -1,6 +1,6 @@
 [suite]
-name = "benchmark-gunicorn-mcp-compare"
-description = "Default Gunicorn benchmark suite comparing the local baseline branch against the Rust MCP runtime PR with the same MCP-heavy workload"
+name = "benchmark-gunicorn-mcp-resources-compare"
+description = "Exercises MCP resource listing and resource read traffic against the time-service fixtures, then compares the baseline benchmark image against the rust-plugin benchmark image to show whether resource-heavy MCP paths change under the Rust extension."
 output_root = "reports/benchmarks"
 continue_on_failure = false
 save_intermediate_artifacts = true
@@ -14,9 +14,9 @@ plugins_enabled = false
 [defaults.build]
 rust_plugins = false
 profiling_image = false
-container_file = "benchmarks/contextforge/Containerfile"
+container_file = "tools_rust/contextforge_benchmark/assets/Containerfile"
 image_name = "mcpgateway/mcpgateway"
-image_tag = "benchmark-suite-core"
+image_tag = "benchmark-suite-mcp-resources"
 rebuild_policy = "missing"
 
 [defaults.runtime]
@@ -42,19 +42,6 @@ structured_logging_database_enabled = false
 sqlalchemy_echo = false
 log_level = "ERROR"
 
-# Optional per-scenario overrides:
-# [scenario.build]
-#
-# [scenario.build.args]
-# ENABLE_RUST_MCP_RMCP = "true"
-#
-# [scenario.gateway.environment]
-# RUST_MCP_MODE = "edge"
-#
-# [scenario.setup]
-# expected_mcp_runtime = "rust"
-# expected_mcp_runtime_mode = "rust-managed"
-
 [defaults.load]
 driver = "contextforge_goose"
 headless = true
@@ -69,7 +56,7 @@ target_service = "nginx"
 BENCH_MCP_SESSION_MODE = "reuse"
 
 [defaults.load.workload]
-fallback_endpoint = "/mcp tools/list"
+fallback_endpoint = "/mcp resources/list"
 
 [defaults.load.workload.endpoints."/health"]
 enabled = false
@@ -81,8 +68,7 @@ enabled = false
 enabled = false
 
 [defaults.load.workload.endpoints."/servers"]
-enabled = true
-weight = 2
+enabled = false
 
 [defaults.load.workload.endpoints."/resources"]
 enabled = false
@@ -91,40 +77,22 @@ enabled = false
 enabled = false
 
 [defaults.load.workload.endpoints."/mcp tools/list"]
-enabled = true
-weight = 6
-
-[defaults.load.workload.endpoints."/mcp tools/call fast-time-get-system-time"]
-enabled = true
-weight = 14
-
-[defaults.load.workload.endpoints."/mcp tools/call fast-time-convert-time"]
-enabled = true
-weight = 12
+enabled = false
 
 [defaults.load.workload.endpoints."/mcp resources/list"]
 enabled = true
-weight = 4
+weight = 7
 
 [defaults.load.workload.endpoints."/mcp resources/read timezone://info"]
 enabled = true
-weight = 8
+weight = 10
 
 [defaults.load.workload.endpoints."/mcp resources/read time://current/world"]
 enabled = true
-weight = 6
+weight = 8
 
 [defaults.load.workload.endpoints."/mcp prompts/list"]
-enabled = true
-weight = 4
-
-[defaults.load.workload.endpoints."/mcp prompts/get fast-time-schedule-meeting"]
-enabled = true
-weight = 7
-
-[defaults.load.workload.endpoints."/mcp prompts/get fast-time-compare-timezones"]
-enabled = true
-weight = 6
+enabled = false
 
 [defaults.measurement]
 warmup_seconds = 30
@@ -146,28 +114,19 @@ save_raw_results = true
 reuse_stack = true
 
 [[scenario]]
-name = "gunicorn-mcp-baseline"
-description = "Current branch baseline on Gunicorn with the shared MCP-heavy benchmark workload"
-scenario_type = "mcp_runtime_baseline"
+name = "gunicorn-mcp-resources-baseline"
+description = "MCP resources benchmark on the baseline benchmark image"
+scenario_type = "mcp_resources_baseline"
+
+[scenario.build]
+rust_plugins = false
+image_tag = "benchmark-suite-mcp-resources-baseline"
 
 [[scenario]]
-name = "gunicorn-mcp-rust-pr3617"
-description = "PR 3617 Rust MCP runtime comparison on Gunicorn using the same MCP-heavy workload and edge-mode public /mcp routing"
-scenario_type = "mcp_runtime_compare"
-
-[scenario.setup]
-expected_mcp_runtime = "rust"
-expected_mcp_runtime_mode = "rust-managed"
+name = "gunicorn-mcp-resources-rust-plugins"
+description = "MCP resources benchmark on the rust-plugin benchmark image"
+scenario_type = "mcp_resources_rust_plugins_compare"
 
 [scenario.build]
 rust_plugins = true
-image_tag = "benchmark-suite-rust-mcp-pr3617"
-
-[scenario.gateway.environment]
-EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED = "true"
-RUST_MCP_MODE = "edge"
-RUST_MCP_LOG = "warn"
-
-[scenario.execution]
-retry_enabled = false
-max_attempts = 1
+image_tag = "benchmark-suite-mcp-resources-rust"

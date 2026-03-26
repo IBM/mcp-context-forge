@@ -17,8 +17,79 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap};
+use toml::Value as TomlValue;
 
 type AppResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SuiteSummary {
+    file_stem: String,
+    suite_name: String,
+    description: String,
+}
+
+impl SuiteSummary {
+    fn label(&self) -> &str {
+        &self.file_stem
+    }
+
+    fn suite_name(&self) -> &str {
+        if self.suite_name.is_empty() {
+            &self.file_stem
+        } else {
+            &self.suite_name
+        }
+    }
+
+    fn description(&self) -> &str {
+        if self.description.is_empty() {
+            "No suite description is defined in this scenario TOML yet."
+        } else {
+            &self.description
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct PreviewSections {
+    run_plan: Vec<String>,
+    execution: Vec<String>,
+    checks: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SelectionSummary {
+    action_label: String,
+    suite_label: String,
+    clean_label: String,
+    run_mode_label: String,
+    run_path_label: String,
+    extra_args_label: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SuiteDetailSummary {
+    suite_name: String,
+    suite_description: String,
+    scenario_count_label: String,
+    comparison_label: String,
+    focus_label: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct GeneratorFocusSummary {
+    section_filter: String,
+    field_label: String,
+    config_key: String,
+    value: String,
+    kind: String,
+    schema: String,
+    format_hint: String,
+    visibility: String,
+    purpose: String,
+    effect: String,
+    example: String,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
@@ -144,7 +215,7 @@ impl GeneratorState {
                     key: "file_stem",
                     kind: GeneratorFieldKind::Text,
                     value: "new-scenario".to_string(),
-                    help: "Output file name under benchmarks/contextforge/scenarios/.",
+                    help: "Output file name under tools_rust/contextforge_benchmark/assets/scenarios/.",
                 },
                 GeneratorField {
                     label: "Template Kind",
@@ -304,7 +375,7 @@ impl GeneratorState {
                     label: "Container File",
                     key: "container_file",
                     kind: GeneratorFieldKind::Text,
-                    value: "benchmarks/contextforge/Containerfile".to_string(),
+                    value: "tools_rust/contextforge_benchmark/assets/Containerfile".to_string(),
                     help: "defaults.build.container_file",
                 },
                 GeneratorField {
@@ -1178,7 +1249,7 @@ impl GeneratorState {
 struct App {
     action_index: usize,
     scenario_index: usize,
-    scenarios: Vec<String>,
+    scenarios: Vec<SuiteSummary>,
     run_path: String,
     extra_args: String,
     all: bool,
@@ -1190,7 +1261,7 @@ struct App {
 }
 
 impl App {
-    fn new(scenarios: Vec<String>) -> Self {
+    fn new(scenarios: Vec<SuiteSummary>) -> Self {
         Self {
             action_index: 0,
             scenario_index: 0,
@@ -1213,8 +1284,12 @@ impl App {
     fn scenario(&self) -> &str {
         self.scenarios
             .get(self.scenario_index)
-            .map(String::as_str)
-            .unwrap_or("modular-design-300")
+            .map(SuiteSummary::label)
+            .unwrap_or("rust-mcp-runtime-300")
+    }
+
+    fn selected_suite(&self) -> Option<&SuiteSummary> {
+        self.scenarios.get(self.scenario_index)
     }
 
     fn set_action_index(&mut self, index: usize) {
@@ -1250,7 +1325,7 @@ fn main() -> AppResult<()> {
 
     if env::args().nth(1).as_deref() == Some("--list-scenarios") {
         for scenario in scenarios {
-            println!("{scenario}");
+            println!("{}", scenario.label());
         }
         return Ok(());
     }
@@ -1261,20 +1336,258 @@ fn main() -> AppResult<()> {
     result
 }
 
-fn discover_scenarios(root: &Path) -> AppResult<Vec<String>> {
-    let mut scenarios = fs::read_dir(root.join("benchmarks/contextforge/scenarios"))?
-        .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("toml") {
-                return None;
-            }
-            path.file_stem()
-                .and_then(|value| value.to_str())
-                .map(|value| value.to_string())
-        })
-        .collect::<Vec<_>>();
-    scenarios.sort();
+fn discover_scenarios(root: &Path) -> AppResult<Vec<SuiteSummary>> {
+    let mut scenarios =
+        fs::read_dir(root.join("tools_rust/contextforge_benchmark/assets/scenarios"))?
+            .filter_map(|entry| {
+                let path = entry.ok()?.path();
+                if path.extension().and_then(|value| value.to_str()) != Some("toml") {
+                    return None;
+                }
+                let file_stem = path.file_stem()?.to_str()?.to_string();
+                let raw = fs::read_to_string(&path).ok()?;
+                let parsed = toml::from_str::<TomlValue>(&raw).ok()?;
+                let suite = parsed.get("suite")?.as_table()?;
+                Some(SuiteSummary {
+                    file_stem,
+                    suite_name: suite
+                        .get("name")
+                        .and_then(TomlValue::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    description: suite
+                        .get("description")
+                        .and_then(TomlValue::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                })
+            })
+            .collect::<Vec<_>>();
+    scenarios.sort_by(|left, right| left.file_stem.cmp(&right.file_stem));
     Ok(scenarios)
+}
+
+fn load_selected_suite_doc(root: &Path, app: &App) -> AppResult<Option<TomlValue>> {
+    let Some(selected) = app.selected_suite() else {
+        return Ok(None);
+    };
+    let path = root
+        .join("tools_rust/contextforge_benchmark/assets/scenarios")
+        .join(format!("{}.toml", selected.label()));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)?;
+    Ok(Some(toml::from_str::<TomlValue>(&raw)?))
+}
+
+fn build_preview_sections(app: &App, root: &Path) -> AppResult<PreviewSections> {
+    let mut preview = PreviewSections::default();
+    let selected_suite = app.selected_suite();
+
+    if let Some(suite) = selected_suite {
+        preview
+            .run_plan
+            .push(format!("Suite: {}", suite.suite_name()));
+        preview
+            .run_plan
+            .push(format!("Focus: {}", suite.description()));
+        if let Some(doc) = load_selected_suite_doc(root, app)? {
+            if let Some(scenarios) = doc.get("scenario").and_then(TomlValue::as_array) {
+                preview
+                    .run_plan
+                    .push(format!("Comparison set: {} scenario(s)", scenarios.len()));
+                let scenario_names = scenarios
+                    .iter()
+                    .filter_map(|scenario| {
+                        scenario
+                            .get("name")
+                            .and_then(TomlValue::as_str)
+                            .map(ToString::to_string)
+                    })
+                    .collect::<Vec<_>>();
+                if !scenario_names.is_empty() {
+                    preview
+                        .run_plan
+                        .push(format!("Variants: {}", scenario_names.join(" vs ")));
+                }
+            }
+        }
+    } else {
+        preview.run_plan.push("Suite: (none selected)".to_string());
+    }
+
+    match build_command(app, root) {
+        Ok(command) => {
+            preview.execution.push(format!(
+                "Command: {}",
+                format_command(&command.command, &command.args)
+            ));
+            preview.execution.push(format!(
+                "Runtime env: {}={}",
+                command.env[0].0, command.env[0].1
+            ));
+        }
+        Err(error) => {
+            preview.execution.push(format!("Command error: {error}"));
+        }
+    }
+
+    if app.action().supports_all() && app.all {
+        preview.checks.push(
+            "Run-all is enabled, so the selected suite entry will only seed the preview context."
+                .to_string(),
+        );
+    } else {
+        preview
+            .checks
+            .push(format!("Selected suite will run as '{}'.", app.scenario()));
+    }
+    if app.action().supports_clean() && app.clean {
+        preview
+            .checks
+            .push("Clean-first is enabled, so benchmark containers and report staging will be cleared before launch.".to_string());
+    }
+    if app.extra_args.trim().is_empty() {
+        preview.checks.push("No extra args are set.".to_string());
+    } else {
+        preview.checks.push(format!(
+            "Extra args will be appended exactly as typed: {}",
+            app.extra_args.trim()
+        ));
+    }
+    if app.action().needs_run_path() {
+        if app.run_path.trim().is_empty() {
+            preview.checks.push(
+                "This action requires a run path. Press 'p' to set it before running.".to_string(),
+            );
+        } else {
+            preview
+                .checks
+                .push(format!("Run path: {}", app.run_path.trim()));
+        }
+    } else {
+        preview
+            .checks
+            .push("Run path is ignored for this action.".to_string());
+    }
+    if app.action() == Action::Smoke {
+        preview
+            .checks
+            .push("Smoke mode cuts benchmark duration down to a fast validation run.".to_string());
+    }
+
+    Ok(preview)
+}
+
+fn build_selection_summary(app: &App) -> SelectionSummary {
+    let action_label = app.action().label().to_string();
+    let suite_label = if app.action().supports_scenario() {
+        app.scenario().to_string()
+    } else {
+        "(not used)".to_string()
+    };
+    let clean_label = if app.action().supports_clean() {
+        yes_no(app.clean).to_string()
+    } else {
+        "(not used)".to_string()
+    };
+    let run_mode_label = if app.action().supports_all() {
+        if app.all {
+            "all-scenarios"
+        } else {
+            "selected-suite"
+        }
+        .to_string()
+    } else {
+        "single-action".to_string()
+    };
+    let run_path_label = if app.action().needs_run_path() {
+        if app.run_path.trim().is_empty() {
+            "press 'p' to set".to_string()
+        } else {
+            app.run_path.trim().to_string()
+        }
+    } else {
+        "(not used)".to_string()
+    };
+    let extra_args_label = if app.extra_args.trim().is_empty() {
+        "press 'e' to edit".to_string()
+    } else {
+        app.extra_args.trim().to_string()
+    };
+
+    SelectionSummary {
+        action_label,
+        suite_label,
+        clean_label,
+        run_mode_label,
+        run_path_label,
+        extra_args_label,
+    }
+}
+
+fn build_suite_detail_summary(app: &App, root: &Path) -> AppResult<SuiteDetailSummary> {
+    let Some(suite) = app.selected_suite() else {
+        return Ok(SuiteDetailSummary {
+            suite_name: "(none selected)".to_string(),
+            suite_description: "Choose a suite to see its benchmark intent and comparison shape."
+                .to_string(),
+            scenario_count_label: "0 scenarios".to_string(),
+            comparison_label: "No comparison loaded".to_string(),
+            focus_label: "No active suite".to_string(),
+        });
+    };
+
+    let mut summary = SuiteDetailSummary {
+        suite_name: suite.suite_name().to_string(),
+        suite_description: suite.description().to_string(),
+        scenario_count_label: "0 scenarios".to_string(),
+        comparison_label: "No comparison loaded".to_string(),
+        focus_label: app.action().help().to_string(),
+    };
+
+    if let Some(doc) = load_selected_suite_doc(root, app)? {
+        if let Some(scenarios) = doc.get("scenario").and_then(TomlValue::as_array) {
+            summary.scenario_count_label = format!("{} scenario(s)", scenarios.len());
+            let names = scenarios
+                .iter()
+                .filter_map(|scenario| {
+                    scenario
+                        .get("name")
+                        .and_then(TomlValue::as_str)
+                        .map(ToString::to_string)
+                })
+                .collect::<Vec<_>>();
+            if !names.is_empty() {
+                summary.comparison_label = names.join(" vs ");
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+fn build_generator_focus_summary(app: &App) -> GeneratorFocusSummary {
+    let field = app.generator.selected_field();
+    let kind = match field.kind {
+        GeneratorFieldKind::Text => "text",
+        GeneratorFieldKind::Bool => "bool",
+        GeneratorFieldKind::Choice(_) => "choice",
+    };
+    GeneratorFocusSummary {
+        section_filter: app.generator.selected_section_name().to_string(),
+        field_label: field.label.to_string(),
+        config_key: generator_config_path(field.key).to_string(),
+        value: field.value.clone(),
+        kind: kind.to_string(),
+        schema: field.help.to_string(),
+        format_hint: generator_format_hint(field.key).to_string(),
+        visibility: generator_visibility_note(field.key).to_string(),
+        purpose: generator_explanation(field.key).to_string(),
+        effect: generator_change_reason(field.key).to_string(),
+        example: generator_example(field.key).to_string(),
+    }
 }
 
 fn setup_terminal() -> AppResult<Terminal<CrosstermBackend<Stdout>>> {
@@ -1506,7 +1819,7 @@ fn build_command(app: &App, _root: &Path) -> AppResult<CommandSpec> {
         "cargo".to_string(),
         "run".to_string(),
         "--manifest-path".to_string(),
-        "tools_rust/benchmark_runner/Cargo.toml".to_string(),
+        "tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml".to_string(),
         "--quiet".to_string(),
         "--".to_string(),
     ];
@@ -1639,7 +1952,7 @@ fn run_cleanup() -> AppResult<std::process::ExitStatus> {
                 .and_then(|value| value.to_str())
                 .unwrap_or("");
             if name.starts_with("all-scenarios_")
-                || name.starts_with("modular-design-300_")
+                || name.starts_with("rust-mcp-runtime-300_")
                 || name.starts_with("a2a-invoke-300_")
                 || name == "_runtime_staging"
             {
@@ -1657,12 +1970,12 @@ fn run_cleanup() -> AppResult<std::process::ExitStatus> {
 
 fn save_generated_template(
     root: &Path,
-    scenarios: &mut Vec<String>,
+    scenarios: &mut Vec<SuiteSummary>,
     generator: &GeneratorState,
 ) -> AppResult<PathBuf> {
     let file_stem = sanitize_file_stem(generator.get("file_stem"));
     let target = root
-        .join("benchmarks/contextforge/scenarios")
+        .join("tools_rust/contextforge_benchmark/assets/scenarios")
         .join(format!("{file_stem}.toml"));
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
@@ -2348,7 +2661,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             .constraints([
                 Constraint::Length(3),
                 Constraint::Length(3),
-                Constraint::Length(3),
+                Constraint::Length(5),
                 Constraint::Min(16),
                 Constraint::Length(4),
             ])
@@ -2358,8 +2671,8 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
-                Constraint::Length(3),
                 Constraint::Length(14),
+                Constraint::Length(5),
                 Constraint::Min(10),
                 Constraint::Length(4),
             ])
@@ -2375,7 +2688,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         )),
         Line::from(format!("Mode: {}", app.mode.label())),
     ])
-    .block(Block::default().borders(Borders::ALL).title("Launcher"));
+    .block(Block::default().borders(Borders::ALL).title("Console"));
     frame.render_widget(header, chunks[0]);
 
     let tabs = Tabs::new(
@@ -2395,15 +2708,17 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
     frame.render_widget(tabs, chunks[1]);
 
+    draw_status_banner(frame, chunks[2], app);
+
     if app.action() == Action::Generate {
-        draw_generator_sections(frame, chunks[2], app);
+        draw_generator_sections(frame, chunks[1], app);
         let body = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+            .constraints([Constraint::Percentage(56), Constraint::Percentage(44)])
             .split(chunks[3]);
         let left = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(10), Constraint::Length(10)])
+            .constraints([Constraint::Min(10), Constraint::Length(11)])
             .split(body[0]);
         draw_generator_fields(frame, left[0], app);
         draw_generator_selection(frame, left[1], app);
@@ -2411,13 +2726,65 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     } else {
         let body = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .split(chunks[2]);
+            .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+            .split(chunks[3]);
         draw_scenarios(frame, body[0], app);
-        draw_selection(frame, body[1], app);
-        draw_preview(frame, chunks[3], app);
+        let right = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(12), Constraint::Min(10)])
+            .split(body[1]);
+        let top_right = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+            .split(right[0]);
+        draw_selection(frame, top_right[0], app);
+        draw_suite_details(frame, top_right[1], app);
+        draw_preview(frame, right[1], app);
     }
     draw_help(frame, chunks[4], app);
+}
+
+fn draw_status_banner(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let selected_suite = app
+        .selected_suite()
+        .map(SuiteSummary::label)
+        .unwrap_or("(none)");
+    let status_lines = vec![
+        Line::from(vec![
+            Span::styled("Action ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                app.action().label(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            Span::styled("Suite ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                selected_suite,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Status ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                app.status.as_str(),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+    ];
+    let widget = Paragraph::new(status_lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Operator Status"),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, area);
 }
 
 fn draw_generator_sections(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2446,105 +2813,130 @@ fn draw_scenarios(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let items = app
         .scenarios
         .iter()
-        .map(|scenario| ListItem::new(scenario.clone()))
+        .map(|scenario| {
+            ListItem::new(vec![
+                Line::from(Span::styled(
+                    scenario.label().to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    scenario.suite_name().to_string(),
+                    Style::default().fg(Color::Gray),
+                )),
+            ])
+        })
         .collect::<Vec<_>>();
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Scenarios"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Benchmark Suites"),
+        )
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol(">> ");
+        .highlight_symbol(">> ")
+        .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
     let mut state = ListState::default();
     state.select(Some(app.scenario_index));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn draw_selection(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let summary = build_selection_summary(app);
     let lines = vec![
-        line_pair("Action", app.action().label()),
-        line_pair(
-            "Scenario",
-            if app.action().supports_scenario() {
-                app.scenario()
-            } else {
-                "(not used)"
-            },
-        ),
-        line_pair(
-            "Run all",
-            if app.action().supports_all() {
-                yes_no(app.all)
-            } else {
-                "(not used)"
-            },
-        ),
-        line_pair(
-            "Clean first",
-            if app.action().supports_clean() {
-                yes_no(app.clean)
-            } else {
-                "(not used)"
-            },
-        ),
-        line_pair(
-            "Run path",
-            if app.run_path.is_empty() {
-                if app.action().needs_run_path() {
-                    "press 'p' to set"
-                } else {
-                    "(not used)"
-                }
-            } else {
-                &app.run_path
-            },
-        ),
-        line_pair(
-            "Extra args",
-            if app.extra_args.is_empty() {
-                "press 'e' to edit"
-            } else {
-                &app.extra_args
-            },
-        ),
+        line_pair("Action", &summary.action_label),
+        line_pair("Suite", &summary.suite_label),
+        line_pair("Run Mode", &summary.run_mode_label),
+        line_pair("Clean First", &summary.clean_label),
+        line_pair("Run Path", &summary.run_path_label),
+        line_pair("Extra Args", &summary.extra_args_label),
     ];
     let widget = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Selection"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Selection State"),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, area);
+}
+
+fn draw_suite_details(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let summary = build_suite_detail_summary(app, Path::new(".")).unwrap_or_default();
+    let lines = vec![
+        Line::from(Span::styled(
+            summary.suite_name,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        line_pair("Intent", &summary.suite_description),
+        line_pair("Comparison Set", &summary.scenario_count_label),
+        line_pair("Variants", &summary.comparison_label),
+        line_pair("Current Focus", &summary.focus_label),
+    ];
+    let widget = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Suite Context"),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
 
 fn draw_preview(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let preview = build_preview_sections(app, Path::new(".")).unwrap_or_else(|error| {
+        let mut fallback = PreviewSections::default();
+        fallback.execution.push(format!(
+            "Command error: failed to build preview sections: {error}"
+        ));
+        fallback
+    });
     let mut lines = vec![Line::from(Span::styled(
         app.action().help(),
         Style::default().fg(Color::Cyan),
     ))];
-    match build_command(app, Path::new(".")) {
-        Ok(command) => {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "Command preview",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(format_command(&command.command, &command.args)));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Run Plan",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.extend(preview.run_plan.iter().map(|line| Line::from(line.clone())));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Execution",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.extend(preview.execution.iter().map(|line| {
+        if line.starts_with("Command error:") {
+            Line::from(Span::styled(line.clone(), Style::default().fg(Color::Red)))
+        } else {
+            Line::from(line.clone())
         }
-        Err(error) => {
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("Configuration error: {error}"),
-                Style::default().fg(Color::Red),
-            )));
-        }
-    }
+    }));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Checks",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.extend(preview.checks.iter().map(|line| Line::from(line.clone())));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         format!("Status: {}", app.status),
         Style::default().fg(Color::Magenta),
     )));
     let widget = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Preview"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Execution Dashboard"),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
@@ -2555,12 +2947,23 @@ fn draw_generator_fields(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
         .iter()
         .map(|index| {
             let field = &app.generator.fields[*index];
-            ListItem::new(format!(
-                "{}{}: {}",
-                generator_indent(field.key),
-                field.label,
-                field.value
-            ))
+            ListItem::new(vec![
+                Line::from(vec![
+                    Span::styled(
+                        format!("{}{}", generator_indent(field.key), field.label),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(
+                        generator_section(field.key),
+                        Style::default().fg(Color::Blue),
+                    ),
+                ]),
+                Line::from(Span::styled(
+                    field.value.clone(),
+                    Style::default().fg(Color::Green),
+                )),
+            ])
         })
         .collect::<Vec<_>>();
     let visible_pos = visible
@@ -2581,58 +2984,45 @@ fn draw_generator_fields(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) 
                 .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol(">> ");
+        .highlight_symbol(">> ")
+        .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
     let mut state = ListState::default();
     state.select(Some(visible_pos));
     frame.render_stateful_widget(list, area, &mut state);
 }
 
 fn draw_generator_selection(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let field = app.generator.selected_field();
+    let summary = build_generator_focus_summary(app);
     let lines = vec![
-        line_pair("Section Filter", app.generator.selected_section_name()),
-        line_pair("Section", generator_section(field.key)),
-        line_pair("Config Key", generator_config_path(field.key)),
-        line_pair("Field", field.label),
-        line_pair("Value", &field.value),
-        line_pair(
-            "Kind",
-            match field.kind {
-                GeneratorFieldKind::Text => "text",
-                GeneratorFieldKind::Bool => "bool",
-                GeneratorFieldKind::Choice(_) => "choice",
-            },
-        ),
-        line_pair("Schema", field.help),
-        line_pair("Format", generator_format_hint(field.key)),
-        line_pair("Visible Because", generator_visibility_note(field.key)),
-        line_pair("Edit", "Enter/e edits, t toggles bool/choice"),
+        line_pair("Section Filter", &summary.section_filter),
+        line_pair("Field", &summary.field_label),
+        line_pair("Config Key", &summary.config_key),
+        line_pair("Value", &summary.value),
+        line_pair("Kind", &summary.kind),
+        line_pair("Schema", &summary.schema),
+        line_pair("Format", &summary.format_hint),
+        line_pair("Visibility", &summary.visibility),
+        line_pair("Edit", "Enter/e edits, t toggles bool or choice"),
         line_pair("Save", "g or s writes the scenario file"),
     ];
     let widget = Paragraph::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Template Builder"),
+                .title("Current Field"),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
 
 fn draw_generator_reference(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let field = app.generator.selected_field();
+    let summary = build_generator_focus_summary(app);
     let detail = format!(
-        "Option:\n{} [{}]\n\nWhat it does:\n{}\n\nWhen to change it:\n{}\n\nAccepted values:\n{}\n\nVisibility:\n{}\n\nExample:\n{}",
-        field.label,
-        generator_config_path(field.key),
-        generator_explanation(field.key),
-        generator_change_reason(field.key),
-        generator_format_hint(field.key),
-        generator_visibility_note(field.key),
-        generator_example(field.key)
+        "What it is for:\n{}\n\nWhat it does:\n{}\n\nAccepted values:\n{}\n\nVisibility:\n{}\n\nExample:\n{}",
+        summary.purpose, summary.effect, summary.format_hint, summary.visibility, summary.example
     );
     let widget = Paragraph::new(detail)
-        .block(Block::default().borders(Borders::ALL).title("Option Guide"))
+        .block(Block::default().borders(Borders::ALL).title("Field Guide"))
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
@@ -3041,146 +3431,437 @@ fn generator_format_hint(key: &str) -> &'static str {
 
 fn generator_explanation(key: &str) -> &'static str {
     match key {
-        "file_stem" => {
-            "Sets the scenario file name written into benchmarks/contextforge/scenarios so the template becomes a committed, repeatable scenario."
+        "file_stem" => "Sets the filename stem used when the generator saves a scenario TOML.",
+        "template_kind" => "Chooses which starter benchmark shape the generator should prefill.",
+        "suite_name" => "Sets the suite title stored in `[suite].name`.",
+        "suite_description" => {
+            "Sets the operator-facing explanation stored in `[suite].description`."
         }
-        "template_kind" => {
-            "Seeds the workload block with a sensible starting shape. Blank leaves workload routing mostly open, mcp favors MCP-heavy endpoints, and a2a targets the A2A invoke path."
+        "output_root" => "Sets the root directory where this suite writes reports and artifacts.",
+        "continue_on_failure" => {
+            "Controls whether the suite continues running after one scenario fails."
         }
-        "baseline_run"
-        | "baseline_rps_drop_pct"
-        | "baseline_p95_regression_pct"
-        | "baseline_failure_increase" => {
-            "These suite baseline controls let the run compare itself against a previous saved run and flag regressions in throughput, latency, or failures."
+        "save_intermediate_artifacts" => {
+            "Controls whether intermediate raw outputs are kept between stages."
         }
-        "build_args" => {
-            "Build args become entries under defaults.build.args and are passed into the benchmark image build. Use them for build-time toggles like enabling Rust paths."
+        "flamegraph_enabled" => {
+            "Marks the suite as able to produce flamegraph-style profiling artifacts."
+        }
+        "baseline_run" => {
+            "Points the suite at a previously saved run summary that should act as the comparison baseline."
+        }
+        "baseline_rps_drop_pct" => {
+            "Sets the allowed throughput drop threshold when comparing the current run against the baseline run."
+        }
+        "baseline_p95_regression_pct" => {
+            "Sets the allowed p95 latency regression threshold when comparing the current run against the baseline run."
+        }
+        "baseline_failure_increase" => {
+            "Sets the allowed increase in failure rate when comparing the current run against the baseline run."
+        }
+        "scenario_name" => "Sets the scenario name stored in the first `[[scenario]]` entry.",
+        "scenario_description" => {
+            "Sets the scenario description stored in the first `[[scenario]]` entry."
+        }
+        "scenario_type" => "Sets the scenario classification label used in reports.",
+        "target_kind" => "Defines whether the benchmark is aimed at gateway or agent behavior.",
+        "auth_mode" => "Defines which authentication mode the generated scenario expects.",
+        "plugins_enabled" => "Defines whether plugin-aware setup is enabled by default.",
+        "expected_mcp_runtime" => "Defines the MCP runtime expectation stored in scenario setup.",
+        "expected_mcp_runtime_mode" => {
+            "Defines the expected MCP runtime mode when MCP runtime assertions are active."
+        }
+        "expected_a2a_runtime" => "Defines the A2A runtime expectation stored in scenario setup.",
+        "rust_plugins" => {
+            "Defines whether the benchmark image should include Rust plugin artifacts."
+        }
+        "profiling_image" => {
+            "Defines whether the benchmark image should contain profiling tooling."
+        }
+        "container_file" => "Defines which Containerfile the benchmark image build should use.",
+        "image_name" => "Defines the container image repository name for the benchmark image.",
+        "image_tag" => "Defines the container image tag used for this generated suite.",
+        "rebuild_policy" => "Defines when the runner is allowed to rebuild the benchmark image.",
+        "build_args" => "Defines additional build arguments passed into the benchmark image build.",
+        "http_server" => {
+            "Defines which application server implementation the benchmark image should run."
         }
         "runtime_host" => {
-            "This is the bind host used by the app process inside the benchmark container stack."
+            "Defines which host address the app binds to inside the benchmark container."
         }
-        "gateway_environment" | "load_env" => {
-            "These are environment variable maps written as TOML key-value lines. They let you inject runtime knobs without changing source code."
+        "transport_type" => {
+            "Defines which gateway transport path the benchmark traffic should exercise."
         }
+        "gunicorn_workers" => "Defines how many Gunicorn worker processes should be launched.",
+        "gunicorn_timeout" => "Defines Gunicorn's timeout for slow requests and worker startup.",
+        "gunicorn_graceful_timeout" => "Defines Gunicorn's graceful shutdown timeout.",
+        "gunicorn_keep_alive" => "Defines how long Gunicorn keeps idle connections open.",
+        "gunicorn_max_requests" => "Defines Gunicorn's worker recycling request limit.",
+        "gunicorn_max_requests_jitter" => {
+            "Defines the jitter applied to Gunicorn worker recycling."
+        }
+        "gunicorn_backlog" => "Defines the Gunicorn listen backlog size.",
+        "gunicorn_preload_app" => {
+            "Defines whether Gunicorn preloads the application before forking."
+        }
+        "gunicorn_dev_mode" => "Defines whether Gunicorn should use development-friendly behavior.",
+        "granian_workers" => "Defines how many Granian worker processes should be launched.",
+        "granian_runtime_mode" => "Defines Granian's runtime execution mode.",
+        "granian_runtime_threads" => "Defines how many runtime threads each Granian worker uses.",
+        "granian_blocking_threads" => "Defines how many blocking helper threads Granian can use.",
+        "granian_http" => "Defines which Granian HTTP stack should be used.",
+        "granian_loop" => "Defines which event loop implementation Granian should use.",
+        "granian_task_impl" => "Defines which async task runtime Granian should use internally.",
+        "granian_http1_pipeline_flush" => {
+            "Defines whether Granian flushes pipelined HTTP/1 responses aggressively."
+        }
+        "granian_http1_buffer_size" => "Defines the Granian HTTP/1 input buffer size.",
+        "granian_backlog" => "Defines the Granian listen backlog size.",
+        "granian_backpressure" => "Defines Granian's in-flight backpressure threshold.",
+        "granian_respawn_failed" => {
+            "Defines whether failed Granian workers are restarted automatically."
+        }
+        "granian_workers_lifetime" => "Defines a maximum lifetime for Granian workers.",
+        "granian_workers_max_rss" => "Defines an RSS threshold for Granian worker recycling.",
+        "granian_dev_mode" => "Defines whether Granian should use development-friendly behavior.",
+        "granian_log_level" => "Defines Granian's server log level.",
+        "uvicorn_workers" => "Defines how many Uvicorn worker processes should be launched.",
+        "uvicorn_loop" => "Defines which event loop implementation Uvicorn should use.",
+        "uvicorn_http" => "Defines which HTTP parser Uvicorn should use.",
+        "uvicorn_backlog" => "Defines the Uvicorn listen backlog size.",
+        "uvicorn_timeout_keep_alive" => "Defines Uvicorn's keep-alive timeout.",
+        "uvicorn_limit_max_requests" => "Defines Uvicorn's worker recycling request limit.",
+        "uvicorn_log_level" => "Defines Uvicorn's server log level.",
+        "uvicorn_dev_mode" => "Defines whether Uvicorn should use development-friendly behavior.",
+        "trust_proxy_auth" => {
+            "Defines whether proxy-provided auth headers are trusted by the gateway."
+        }
+        "disable_access_log" => {
+            "Defines whether request access logging is disabled during the run."
+        }
+        "templates_auto_reload" => {
+            "Defines whether templates auto-reload during the benchmark run."
+        }
+        "structured_logging_database_enabled" => {
+            "Defines whether structured database logging is enabled."
+        }
+        "sqlalchemy_echo" => "Defines whether SQLAlchemy emits SQL statements to logs.",
+        "gateway_log_level" => "Defines the gateway application's log verbosity.",
+        "gateway_environment" => {
+            "Defines extra environment variables injected into the gateway container."
+        }
+        "target_service" => "Defines which compose service receives benchmark traffic.",
+        "driver" => "Defines which Rust benchmark driver binary is invoked for load generation.",
+        "headless" => "Defines whether the load driver should minimize interactive output.",
+        "only_summary" => {
+            "Defines whether the load driver should prefer summary output over verbose logs."
+        }
+        "html_report" => "Defines whether the run should emit an HTML report artifact.",
+        "users" => "Defines the target number of concurrent simulated users.",
+        "spawn_rate" => "Defines how quickly those simulated users are started.",
+        "run_time" => "Defines the total wall-clock duration of the benchmark run.",
+        "request_count" => "Defines an explicit request-count stop condition for the run.",
+        "load_host" => "Defines an explicit host URL override for the load driver.",
+        "seed" => "Defines the random seed used when workload selection is randomized.",
+        "tags" => "Defines which tagged request-catalog entries should stay eligible.",
+        "exclude_tags" => "Defines which tagged request-catalog entries should be excluded.",
+        "load_extra_args" => "Defines raw CLI flags appended to the load driver invocation.",
+        "load_env" => "Defines extra environment variables passed to the load driver.",
+        "workload_selection" => "Defines how workload endpoints are selected or mixed.",
+        "fallback_endpoint" => "Defines the endpoint used when no other workload target is chosen.",
         "workload_endpoints" => {
-            "This defines explicit endpoint weights and enablement inside defaults.load.workload.endpoints. Use it when you want precise traffic mixes instead of the built-in presets."
+            "Defines explicit endpoint weights and enablement for the workload mix."
         }
-        "defaults_plugins_snippet" | "scenario_plugins_snippet" => {
-            "Plugin configuration is open-ended because plugin names vary. These fields let you define per-plugin tables while still staying inside the scenario generator."
+        "warmup_seconds" => "Defines how long the suite warms up before measuring.",
+        "measure_seconds" => "Defines how long the primary metrics window lasts.",
+        "profile_seconds" => "Defines how long the dedicated profiling window lasts.",
+        "cooldown_seconds" => "Defines how long the suite cools down after measurement ends.",
+        "enabled_groups" => "Defines which request-catalog groups are explicitly kept.",
+        "disabled_groups" => "Defines which request-catalog groups are explicitly removed.",
+        "enabled_endpoints" => "Defines which request-catalog endpoints are explicitly kept.",
+        "disabled_endpoints" => "Defines which request-catalog endpoints are explicitly removed.",
+        "enabled_tags" => "Defines which request-catalog tags are explicitly kept.",
+        "disabled_tags" => "Defines which request-catalog tags are explicitly removed.",
+        "include_admin_endpoints" => {
+            "Defines whether admin endpoints remain eligible in request selection."
         }
-        "scenario_setup_snippet"
-        | "scenario_build_snippet"
-        | "scenario_runtime_snippet"
-        | "scenario_gateway_snippet"
-        | "scenario_load_snippet"
-        | "scenario_measurement_snippet"
-        | "scenario_requests_snippet"
-        | "scenario_profiling_snippet"
-        | "scenario_execution_snippet" => {
-            "Scenario override blocks let one [[scenario]] diverge from the defaults table without duplicating the entire suite config."
+        "include_mcp_endpoints" => {
+            "Defines whether MCP endpoints remain eligible in request selection."
         }
-        _ if key.starts_with("gunicorn_") => {
-            "This tunes the Gunicorn runtime block used when http_server is set to gunicorn. It affects concurrency, connection handling, recycling, and developer-mode behavior."
+        "include_resource_endpoints" => {
+            "Defines whether resource endpoints remain eligible in request selection."
         }
-        _ if key.starts_with("granian_") => {
-            "This tunes the Granian runtime block used when http_server is set to granian. It controls worker counts, threading, protocol behavior, and safety knobs."
+        "include_prompt_endpoints" => {
+            "Defines whether prompt endpoints remain eligible in request selection."
         }
-        _ if key.starts_with("uvicorn_") => {
-            "This tunes the Uvicorn runtime block used when http_server is set to uvicorn. It covers workers, event loop, HTTP stack, backlog, and restart limits."
+        "include_tool_endpoints" => {
+            "Defines whether tool endpoints remain eligible in request selection."
         }
-        _ if key.starts_with("include_")
-            || matches!(
-                key,
-                "enabled_groups"
-                    | "disabled_groups"
-                    | "enabled_endpoints"
-                    | "disabled_endpoints"
-                    | "enabled_tags"
-                    | "disabled_tags"
-            ) =>
-        {
-            "These request filters constrain which benchmark request groups, endpoints, or tags are active in the generated scenario."
+        "profiling_enabled" => {
+            "Defines whether profiling behavior is active for the generated suite."
         }
-        _ if matches!(
-            key,
-            "users"
-                | "spawn_rate"
-                | "run_time"
-                | "request_count"
-                | "target_service"
-                | "driver"
-                | "headless"
-                | "only_summary"
-                | "html_report"
-                | "load_host"
-                | "seed"
-                | "tags"
-                | "exclude_tags"
-                | "load_extra_args"
-                | "workload_selection"
-                | "fallback_endpoint"
-        ) =>
-        {
-            "These load settings shape how Goose drives traffic: which driver runs, how many users hatch, how long the test lasts, and which requests are selected."
+        "profiling_tools" => "Defines which profiling tools the suite should request.",
+        "profiling_duration_seconds" => "Defines how long profiling should run when enabled.",
+        "profiling_required" => {
+            "Defines whether missing profiling artifacts should fail the scenario."
         }
-        _ if matches!(
-            key,
-            "profiling_enabled"
-                | "profiling_tools"
-                | "profiling_duration_seconds"
-                | "profiling_required"
-        ) =>
-        {
-            "These profiling settings decide whether runtime profiling is collected, which Rust-native profilers run, and whether a missing profile should fail the scenario."
+        "retry_enabled" => "Defines whether failed scenarios should be retried automatically.",
+        "max_attempts" => "Defines the maximum number of attempts allowed for a scenario.",
+        "capture_logs" => "Defines whether logs are captured into benchmark artifacts.",
+        "save_raw_results" => "Defines whether raw result files are preserved after a run.",
+        "reuse_stack" => "Defines whether scenarios are allowed to reuse the same running stack.",
+        "defaults_plugins_snippet" => {
+            "Defines a raw plugin configuration snippet under the defaults block."
         }
-        _ if matches!(
-            key,
-            "retry_enabled" | "max_attempts" | "capture_logs" | "save_raw_results" | "reuse_stack"
-        ) =>
-        {
-            "These execution settings control retries and artifact capture around the benchmark run itself."
+        "scenario_setup_snippet" => "Defines a raw setup override for the generated scenario.",
+        "scenario_build_snippet" => "Defines a raw build override for the generated scenario.",
+        "scenario_runtime_snippet" => "Defines a raw runtime override for the generated scenario.",
+        "scenario_gateway_snippet" => "Defines a raw gateway override for the generated scenario.",
+        "scenario_load_snippet" => "Defines a raw load override for the generated scenario.",
+        "scenario_measurement_snippet" => {
+            "Defines a raw measurement override for the generated scenario."
         }
-        _ => {
-            "This option maps directly to the benchmark scenario schema and is saved into the generated TOML as part of the suite or scenario definition."
+        "scenario_requests_snippet" => {
+            "Defines a raw request-selection override for the generated scenario."
         }
+        "scenario_profiling_snippet" => {
+            "Defines a raw profiling override for the generated scenario."
+        }
+        "scenario_execution_snippet" => {
+            "Defines a raw execution override for the generated scenario."
+        }
+        "scenario_plugins_snippet" => "Defines a raw plugin override for the generated scenario.",
+        _ => "Defines a generator field.",
     }
 }
 
 fn generator_change_reason(key: &str) -> &'static str {
     match key {
-        "file_stem" => {
-            "Change this when you want to create a new committed scenario instead of overwriting the default generated filename."
-        }
+        "file_stem" => "Changing it changes which scenario file is created or overwritten.",
         "template_kind" => {
-            "Change this first if you want the generator to start from an MCP-oriented or A2A-oriented workload mix."
+            "Changing it swaps in a different preset workload shape and default values."
         }
-        "driver" | "workload_endpoints" => {
-            "Change these when the Rust load driver or traffic shape itself is the thing you are experimenting with."
+        "suite_name" => "Changing it changes the suite title shown in metadata and reports.",
+        "suite_description" => {
+            "Changing it changes the explanation operators read in the console and TOML."
         }
-        "http_server" => {
-            "Change this when comparing Gunicorn, Granian, and Uvicorn under the same workload."
+        "output_root" => "Changing it moves where reports and artifacts are written.",
+        "continue_on_failure" => {
+            "Changing it changes whether later scenarios still run after an earlier failure."
         }
-        "users" | "spawn_rate" | "run_time" => {
-            "Change these when you want to scale concurrency, shorten smoke tests, or run longer steady-state benchmarks."
+        "save_intermediate_artifacts" => {
+            "Changing it changes whether transient artifacts are preserved."
         }
-        "baseline_run"
-        | "baseline_rps_drop_pct"
-        | "baseline_p95_regression_pct"
-        | "baseline_failure_increase" => {
-            "Change these when you need automated pass/fail gates against a known-good prior run."
+        "flamegraph_enabled" => {
+            "Changing it changes whether flamegraph-oriented suite behavior is expected."
         }
-        _ if key.starts_with("gunicorn_")
-            || key.starts_with("granian_")
-            || key.starts_with("uvicorn_") =>
-        {
-            "Change this when you are tuning server-process behavior, not the application code or load mix."
+        "baseline_run" => {
+            "Changing it points the suite at a different saved run to treat as the benchmark baseline."
         }
-        _ if key.starts_with("scenario_") => {
-            "Change this when only one scenario in the file should override the defaults block."
+        "baseline_rps_drop_pct" => {
+            "Changing it makes the suite more or less strict about tolerated throughput loss."
         }
-        _ => {
-            "Change this when the default generated value does not match the system, runtime, or traffic shape you want to test."
+        "baseline_p95_regression_pct" => {
+            "Changing it makes the suite more or less strict about tolerated p95 latency regression."
         }
+        "baseline_failure_increase" => {
+            "Changing it makes the suite more or less strict about tolerated failure-rate increase."
+        }
+        "scenario_name" => "Changing it renames the generated scenario in reports and logs.",
+        "scenario_description" => "Changing it changes how the scenario is explained to operators.",
+        "scenario_type" => "Changing it changes how the scenario is categorized downstream.",
+        "target_kind" => {
+            "Changing it changes whether the generated scenario targets gateway or agent behavior."
+        }
+        "auth_mode" => "Changing it changes which auth path the scenario is configured to use.",
+        "plugins_enabled" => {
+            "Changing it changes whether plugin-specific fields and setup matter in the template."
+        }
+        "expected_mcp_runtime" => {
+            "Changing it changes the MCP runtime assertion recorded in the scenario."
+        }
+        "expected_mcp_runtime_mode" => "Changing it changes the asserted MCP runtime mode.",
+        "expected_a2a_runtime" => {
+            "Changing it changes the A2A runtime assertion recorded in the scenario."
+        }
+        "rust_plugins" => {
+            "Changing it changes whether Rust plugin artifacts are built into the benchmark image."
+        }
+        "profiling_image" => {
+            "Changing it changes whether profiling tooling is installed into the benchmark image."
+        }
+        "container_file" => "Changing it changes which image definition file the build uses.",
+        "image_name" => "Changing it changes the image repository name used during build and run.",
+        "image_tag" => "Changing it changes which benchmark image tag is built or reused.",
+        "rebuild_policy" => "Changing it changes when the runner rebuilds the benchmark image.",
+        "build_args" => {
+            "Changing it changes the build-time feature flags or values passed into the image build."
+        }
+        "http_server" => "Changing it switches the server implementation under the same workload.",
+        "runtime_host" => {
+            "Changing it changes which interface the app binds to inside the container."
+        }
+        "transport_type" => {
+            "Changing it changes which gateway transport path the load test exercises."
+        }
+        "gunicorn_workers" => "Changing it changes Gunicorn process concurrency.",
+        "gunicorn_timeout" => {
+            "Changing it changes how long Gunicorn waits before timing out slow work."
+        }
+        "gunicorn_graceful_timeout" => "Changing it changes Gunicorn shutdown grace periods.",
+        "gunicorn_keep_alive" => "Changing it changes Gunicorn keep-alive behavior.",
+        "gunicorn_max_requests" => "Changing it changes Gunicorn worker recycling frequency.",
+        "gunicorn_max_requests_jitter" => {
+            "Changing it changes how staggered Gunicorn worker recycling is."
+        }
+        "gunicorn_backlog" => {
+            "Changing it changes how many pending connections Gunicorn can queue."
+        }
+        "gunicorn_preload_app" => {
+            "Changing it changes whether the app is loaded once before workers fork."
+        }
+        "gunicorn_dev_mode" => {
+            "Changing it changes whether Gunicorn behaves more like development mode."
+        }
+        "granian_workers" => "Changing it changes Granian process concurrency.",
+        "granian_runtime_mode" => "Changing it changes how Granian executes async work.",
+        "granian_runtime_threads" => {
+            "Changing it changes how many runtime threads each Granian worker gets."
+        }
+        "granian_blocking_threads" => {
+            "Changing it changes how much blocking work Granian can offload."
+        }
+        "granian_http" => "Changing it changes the Granian HTTP protocol stack.",
+        "granian_loop" => "Changing it changes the event loop implementation Granian uses.",
+        "granian_task_impl" => "Changing it changes the async runtime Granian uses internally.",
+        "granian_http1_pipeline_flush" => "Changing it changes Granian's HTTP/1 flush behavior.",
+        "granian_http1_buffer_size" => "Changing it changes Granian's HTTP/1 buffering behavior.",
+        "granian_backlog" => "Changing it changes how many pending connections Granian can queue.",
+        "granian_backpressure" => "Changing it changes when Granian starts applying backpressure.",
+        "granian_respawn_failed" => {
+            "Changing it changes whether failed Granian workers come back automatically."
+        }
+        "granian_workers_lifetime" => {
+            "Changing it changes how often Granian workers recycle by age."
+        }
+        "granian_workers_max_rss" => {
+            "Changing it changes when Granian workers recycle for memory growth."
+        }
+        "granian_dev_mode" => {
+            "Changing it changes whether Granian behaves more like development mode."
+        }
+        "granian_log_level" => "Changing it changes Granian's server log verbosity.",
+        "uvicorn_workers" => "Changing it changes Uvicorn process concurrency.",
+        "uvicorn_loop" => "Changing it changes the event loop implementation Uvicorn uses.",
+        "uvicorn_http" => "Changing it changes the HTTP parser Uvicorn uses.",
+        "uvicorn_backlog" => "Changing it changes how many pending connections Uvicorn can queue.",
+        "uvicorn_timeout_keep_alive" => "Changing it changes Uvicorn keep-alive behavior.",
+        "uvicorn_limit_max_requests" => "Changing it changes Uvicorn worker recycling frequency.",
+        "uvicorn_log_level" => "Changing it changes Uvicorn's server log verbosity.",
+        "uvicorn_dev_mode" => {
+            "Changing it changes whether Uvicorn behaves more like development mode."
+        }
+        "trust_proxy_auth" => {
+            "Changing it changes whether proxy auth headers are accepted as authoritative."
+        }
+        "disable_access_log" => {
+            "Changing it changes whether access logs are emitted during the run."
+        }
+        "templates_auto_reload" => "Changing it changes whether template files auto-reload.",
+        "structured_logging_database_enabled" => {
+            "Changing it changes whether structured logs are written to the database."
+        }
+        "sqlalchemy_echo" => "Changing it changes whether SQL statements appear in logs.",
+        "gateway_log_level" => "Changing it changes gateway log volume.",
+        "gateway_environment" => {
+            "Changing it changes which environment variables are injected into the gateway container."
+        }
+        "target_service" => "Changing it changes which service the load generator targets.",
+        "driver" => "Changing it changes which benchmark driver binary is executed.",
+        "headless" => "Changing it changes how interactive the load output is.",
+        "only_summary" => "Changing it changes how much output the load run prints.",
+        "html_report" => "Changing it changes whether an HTML report is requested.",
+        "users" => "Changing it changes target concurrency.",
+        "spawn_rate" => "Changing it changes ramp-up speed.",
+        "run_time" => "Changing it changes total benchmark duration.",
+        "request_count" => "Changing it changes whether the run stops after a fixed request total.",
+        "load_host" => "Changing it changes which host URL the load driver calls.",
+        "seed" => "Changing it changes the workload randomization sequence.",
+        "tags" => "Changing it changes which tagged requests remain active.",
+        "exclude_tags" => "Changing it changes which tagged requests are filtered out.",
+        "load_extra_args" => "Changing it changes the raw flags appended to the driver command.",
+        "load_env" => "Changing it changes the environment passed to the load driver.",
+        "workload_selection" => "Changing it changes how request targets are selected or weighted.",
+        "fallback_endpoint" => "Changing it changes the default endpoint used by the workload.",
+        "workload_endpoints" => "Changing it changes explicit endpoint weighting and enablement.",
+        "warmup_seconds" => {
+            "Changing it changes how long the run warms up before measurement starts."
+        }
+        "measure_seconds" => "Changing it changes how long the primary metrics window lasts.",
+        "profile_seconds" => "Changing it changes how long profiling stays active.",
+        "cooldown_seconds" => "Changing it changes how long the run cools down before teardown.",
+        "enabled_groups" => {
+            "Changing it changes which request groups are allowed into the workload."
+        }
+        "disabled_groups" => {
+            "Changing it changes which request groups are removed from the workload."
+        }
+        "enabled_endpoints" => "Changing it changes which endpoints are kept in the workload.",
+        "disabled_endpoints" => {
+            "Changing it changes which endpoints are removed from the workload."
+        }
+        "enabled_tags" => "Changing it changes which tagged endpoints remain active.",
+        "disabled_tags" => "Changing it changes which tagged endpoints are removed.",
+        "include_admin_endpoints" => "Changing it changes whether admin endpoints remain eligible.",
+        "include_mcp_endpoints" => "Changing it changes whether MCP endpoints remain eligible.",
+        "include_resource_endpoints" => {
+            "Changing it changes whether resource endpoints remain eligible."
+        }
+        "include_prompt_endpoints" => {
+            "Changing it changes whether prompt endpoints remain eligible."
+        }
+        "include_tool_endpoints" => "Changing it changes whether tool endpoints remain eligible.",
+        "profiling_enabled" => "Changing it turns profiling behavior on or off.",
+        "profiling_tools" => "Changing it changes which profiling tools the suite requests.",
+        "profiling_duration_seconds" => "Changing it changes requested profiling duration.",
+        "profiling_required" => "Changing it changes whether missing profiles fail the scenario.",
+        "retry_enabled" => "Changing it changes whether failed scenarios are retried.",
+        "max_attempts" => "Changing it changes how many attempts the runner may make.",
+        "capture_logs" => "Changing it changes whether logs are captured into artifacts.",
+        "save_raw_results" => "Changing it changes whether raw result files are preserved.",
+        "reuse_stack" => "Changing it changes whether scenarios can reuse the same running stack.",
+        "defaults_plugins_snippet" => {
+            "Changing it changes the raw plugin configuration written into the defaults block."
+        }
+        "scenario_setup_snippet" => {
+            "Changing it changes only the scenario-specific setup override."
+        }
+        "scenario_build_snippet" => {
+            "Changing it changes only the scenario-specific build override."
+        }
+        "scenario_runtime_snippet" => {
+            "Changing it changes only the scenario-specific runtime override."
+        }
+        "scenario_gateway_snippet" => {
+            "Changing it changes only the scenario-specific gateway override."
+        }
+        "scenario_load_snippet" => "Changing it changes only the scenario-specific load override.",
+        "scenario_measurement_snippet" => {
+            "Changing it changes only the scenario-specific measurement override."
+        }
+        "scenario_requests_snippet" => {
+            "Changing it changes only the scenario-specific request-selection override."
+        }
+        "scenario_profiling_snippet" => {
+            "Changing it changes only the scenario-specific profiling override."
+        }
+        "scenario_execution_snippet" => {
+            "Changing it changes only the scenario-specific execution override."
+        }
+        "scenario_plugins_snippet" => {
+            "Changing it changes only the scenario-specific plugin override."
+        }
+        _ => "Changing it changes the generated benchmark template.",
     }
 }
 
@@ -3260,7 +3941,7 @@ fn generator_example(key: &str) -> &'static str {
         "expected_a2a_runtime" => "rust",
         "rust_plugins" => "true",
         "profiling_image" => "false",
-        "container_file" => "benchmarks/contextforge/Containerfile",
+        "container_file" => "tools_rust/contextforge_benchmark/assets/Containerfile",
         "image_name" => "mcpgateway/mcpgateway",
         "image_tag" => "benchmark-suite-modular-design",
         "rebuild_policy" => "missing",
@@ -3374,6 +4055,162 @@ fn draw_help(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovers_suite_metadata_with_description() {
+        let tempdir = std::env::temp_dir().join("benchmark-console-suite-metadata");
+        let _ = std::fs::remove_dir_all(&tempdir);
+        std::fs::create_dir_all(tempdir.join("tools_rust/contextforge_benchmark/assets/scenarios"))
+            .unwrap();
+        std::fs::write(
+            tempdir.join("tools_rust/contextforge_benchmark/assets/scenarios/example-suite.toml"),
+            r#"
+[suite]
+name = "benchmark-example-suite"
+description = "Explains what this benchmark covers and what comparison it is meant to answer."
+"#,
+        )
+        .unwrap();
+
+        let suites = discover_scenarios(&tempdir).unwrap();
+        assert_eq!(suites.len(), 1);
+        assert_eq!(suites[0].file_stem, "example-suite");
+        assert_eq!(suites[0].suite_name, "benchmark-example-suite");
+        assert!(suites[0].description.contains("what this benchmark covers"));
+
+        let _ = std::fs::remove_dir_all(&tempdir);
+    }
+
+    #[test]
+    fn preview_summary_includes_run_plan_execution_and_checks() {
+        let tempdir = std::env::temp_dir().join("benchmark-console-preview-summary");
+        let _ = std::fs::remove_dir_all(&tempdir);
+        std::fs::create_dir_all(tempdir.join("tools_rust/contextforge_benchmark/assets/scenarios"))
+            .unwrap();
+        std::fs::write(
+            tempdir.join("tools_rust/contextforge_benchmark/assets/scenarios/example-suite.toml"),
+            r#"
+[suite]
+name = "benchmark-example-suite"
+description = "Exercises a representative benchmark flow."
+
+[[scenario]]
+name = "baseline-scenario"
+
+[[scenario]]
+name = "variant-scenario"
+"#,
+        )
+        .unwrap();
+
+        let mut app = App::new(discover_scenarios(&tempdir).unwrap());
+        app.action_index = 0;
+        app.clean = true;
+        app.extra_args = "--smoke-note enabled".to_string();
+
+        let preview = build_preview_sections(&app, &tempdir).unwrap();
+
+        assert!(
+            preview
+                .run_plan
+                .iter()
+                .any(|line| line.contains("benchmark-example-suite"))
+        );
+        assert!(
+            preview
+                .run_plan
+                .iter()
+                .any(|line| line.contains("2 scenario(s)"))
+        );
+        assert!(
+            preview
+                .run_plan
+                .iter()
+                .any(|line| line.contains("baseline-scenario vs variant-scenario"))
+        );
+        assert!(
+            preview
+                .execution
+                .iter()
+                .any(|line| line.contains("cargo run --manifest-path"))
+        );
+        assert!(
+            preview
+                .checks
+                .iter()
+                .any(|line| line.contains("Clean-first is enabled"))
+        );
+        assert!(
+            preview
+                .checks
+                .iter()
+                .any(|line| line.contains("Extra args will be appended"))
+        );
+
+        let _ = std::fs::remove_dir_all(&tempdir);
+    }
+
+    #[test]
+    fn selection_summary_tracks_toggle_state_and_inputs() {
+        let mut app = App::new(vec![SuiteSummary {
+            file_stem: "rest-discovery-300".to_string(),
+            suite_name: "benchmark-rest-discovery".to_string(),
+            description: "Exercises discovery endpoints.".to_string(),
+        }]);
+        app.all = true;
+        app.clean = true;
+        app.extra_args = "--profile brief".to_string();
+
+        let summary = build_selection_summary(&app);
+
+        assert_eq!(summary.action_label, "Run");
+        assert_eq!(summary.suite_label, "rest-discovery-300");
+        assert_eq!(summary.run_mode_label, "all-scenarios");
+        assert_eq!(summary.clean_label, "yes");
+        assert_eq!(summary.extra_args_label, "--profile brief");
+    }
+
+    #[test]
+    fn generator_focus_summary_exposes_field_guidance() {
+        let app = App::new(Vec::new());
+        let summary = build_generator_focus_summary(&app);
+
+        assert_eq!(summary.section_filter, "All");
+        assert_eq!(summary.field_label, "File Stem");
+        assert_eq!(summary.config_key, "output file name");
+        assert!(summary.purpose.contains("filename"));
+        assert!(summary.effect.contains("scenario file"));
+        assert!(summary.example.contains("a2a-invoke-300"));
+    }
+
+    #[test]
+    fn every_generator_field_has_specific_purpose_and_effect_copy() {
+        let generator = GeneratorState::new();
+        for field in &generator.fields {
+            let purpose = generator_explanation(field.key);
+            let effect = generator_change_reason(field.key);
+            assert!(
+                !purpose.contains("maps directly to the benchmark scenario schema"),
+                "generic purpose for {}",
+                field.key
+            );
+            assert_ne!(
+                purpose, "Defines a generator field.",
+                "fallback purpose for {}",
+                field.key
+            );
+            assert!(
+                !effect.contains("default generated value does not match"),
+                "generic effect for {}",
+                field.key
+            );
+            assert_ne!(
+                effect, "Changing it changes the generated benchmark template.",
+                "fallback effect for {}",
+                field.key
+            );
+        }
+    }
 
     #[test]
     fn generator_template_uses_rust_only_defaults() {

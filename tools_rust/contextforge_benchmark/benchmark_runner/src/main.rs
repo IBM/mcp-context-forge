@@ -8,7 +8,7 @@ use contextforge_benchmark_runner::{
 
 #[derive(Parser, Debug)]
 #[command(name = "contextforge-benchmark-runner")]
-#[command(about = "Rust-native benchmark runner for benchmarks/contextforge")]
+#[command(about = "Rust-native benchmark runner for tools_rust/contextforge_benchmark")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

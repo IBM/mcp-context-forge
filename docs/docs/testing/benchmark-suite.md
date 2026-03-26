@@ -28,25 +28,25 @@ Each scenario runs against the real containerized testing stack:
 The runner is:
 
 ```bash
-cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml --
+cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml --
 ```
 
 Committed scenarios now live in:
 
 ```bash
-benchmarks/contextforge/scenarios/
+tools_rust/contextforge_benchmark/assets/scenarios/
 ```
 
 The benchmark launcher now lives in:
 
 ```bash
-tools_rust/benchmark_console/
+tools_rust/contextforge_benchmark/benchmark_console/
 ```
 
 The Goose driver now lives in:
 
 ```bash
-tools_rust/contextforge_goose/
+tools_rust/contextforge_benchmark/contextforge_goose/
 ```
 
 ## Quick Start
@@ -69,36 +69,36 @@ Inside the launcher you can choose:
 - `Generate`
 
 The `Generate` action opens a template builder that saves a new scenario file
-under `benchmarks/contextforge/scenarios/`. It fills in the important fields in
+under `tools_rust/contextforge_benchmark/assets/scenarios/`. It fills in the important fields in
 the UI and writes a full TOML template containing all supported sections and
 keys, including commented optional settings for advanced tuning.
 
 Build the benchmark image expected by scenarios with `rebuild_policy = "never"`:
 
 ```bash
-make container-build CONTAINER_FILE=benchmarks/contextforge/Containerfile ENABLE_RUST_BUILD=1 ENABLE_PROFILING_BUILD=1 CONTAINER_RUNTIME=podman
+make container-build CONTAINER_FILE=tools_rust/contextforge_benchmark/assets/Containerfile ENABLE_RUST_BUILD=1 ENABLE_PROFILING_BUILD=1 CONTAINER_RUNTIME=podman
 ```
 
 Validate the suite:
 
 ```bash
-cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- validate --scenario modular-design-300
+cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- validate --scenario rust-mcp-runtime-300
 ```
 
 Run the smoke suite:
 
 ```bash
-cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- run --scenario a2a-invoke-300 --smoke
+cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- run --scenario a2a-invoke-300 --smoke
 ```
 
 Run the suite:
 
 ```bash
-cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- run --scenario modular-design-300
+cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- run --scenario rust-mcp-runtime-300
 ```
 
 The TUI discovers committed scenarios automatically from
-`benchmarks/contextforge/scenarios/`.
+`tools_rust/contextforge_benchmark/assets/scenarios/`.
 
 ## Scenario Contract
 
@@ -146,7 +146,7 @@ Unsupported keys now fail validation instead of being silently accepted.
 
 ## Request Mixes
 
-The Rust Goose driver in `tools_rust/contextforge_goose/` uses real request
+The Rust Goose driver in `tools_rust/contextforge_benchmark/contextforge_goose/` uses real request
 families:
 
 - health checks
@@ -154,7 +154,7 @@ families:
 - REST discovery (`/tools`, `/resources`, `/prompts`)
 - JSON-RPC discovery (`tools/list`, `resources/list`, `prompts/list`)
 - JSON-RPC prompt/resource/tool calls from payload fixtures in
-  `benchmarks/contextforge/payloads/`
+  `tools_rust/contextforge_benchmark/assets/payloads/`
 
 This means plugin-heavy profiles now hit real prompt/resource/tool code paths,
 not just health or admin endpoints.
@@ -193,11 +193,11 @@ Key reporting behaviors:
 Re-render a saved run:
 
 ```bash
-cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- regenerate-report --run-dir reports/benchmarks/<run-dir>
+cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- regenerate-report --run-dir reports/benchmarks/<run-dir>
 ```
 
 Rebuild comparisons for a saved run:
 
 ```bash
-cargo run --manifest-path tools_rust/benchmark_runner/Cargo.toml -- compare-run --run-dir reports/benchmarks/<run-dir>
+cargo run --manifest-path tools_rust/contextforge_benchmark/benchmark_runner/Cargo.toml -- compare-run --run-dir reports/benchmarks/<run-dir>
 ```

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use toml::Value as TomlValue;
 
-pub const DEFAULT_SCENARIO_DIR: &str = "benchmarks/contextforge/scenarios";
+pub const DEFAULT_SCENARIO_DIR: &str = "tools_rust/contextforge_benchmark/assets/scenarios";
 pub const DEFAULT_OUTPUT_ROOT: &str = "reports/benchmarks";
 pub const DEFAULT_GOSE_BIN: &str = "contextforge_goose";
 
@@ -772,7 +772,7 @@ pub fn validate_scenario(root: &Path, scenario: &ResolvedScenario) -> Result<()>
 }
 
 fn payload_root(root: &Path) -> PathBuf {
-    root.join("benchmarks/contextforge/payloads")
+    root.join("tools_rust/contextforge_benchmark/assets/payloads")
 }
 
 fn load_payload(root: &Path, group: &str, name: &str) -> Result<Value> {
@@ -1207,7 +1207,7 @@ pub fn build_goose_command(
     artifact_prefix: &str,
     profiling_mode: bool,
 ) -> CommandSpec {
-    let manifest = root.join("tools_rust/contextforge_goose/Cargo.toml");
+    let manifest = root.join("tools_rust/contextforge_benchmark/contextforge_goose/Cargo.toml");
     let request_log = scenario_dir.join(format!("{artifact_prefix}_requests.csv"));
     let transaction_log = scenario_dir.join(format!("{artifact_prefix}_transactions.csv"));
     let mut env = scenario_env(root, scenario).unwrap_or_default();
@@ -1714,7 +1714,7 @@ fn ensure_benchmark_image(
         return Ok(image_name);
     }
     let container_file = if scenario.build.container_file.is_empty() {
-        "benchmarks/contextforge/Containerfile".to_string()
+        "tools_rust/contextforge_benchmark/assets/Containerfile".to_string()
     } else {
         scenario.build.container_file.clone()
     };
@@ -2593,37 +2593,37 @@ fn slug(value: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn resolves_suite_with_driver_contract() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+    fn fixture_repo_root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
-            .unwrap();
-        let suite = load_suite(root, "modular-design-300", false).unwrap();
+            .unwrap()
+            .parent()
+            .unwrap()
+    }
+
+    #[test]
+    fn resolves_suite_with_driver_contract() {
+        let root = fixture_repo_root();
+        let suite = load_suite(root, "rust-mcp-runtime-300", false).unwrap();
         assert_eq!(suite.scenarios.len(), 2);
         assert_eq!(suite.scenarios[0].load.driver, DEFAULT_GOSE_BIN);
     }
 
     #[test]
     fn builds_goose_command_for_local_driver() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let scenario = load_suite(root, "modular-design-300", true)
+        let root = fixture_repo_root();
+        let scenario = load_suite(root, "rust-mcp-runtime-300", true)
             .unwrap()
             .scenarios
             .remove(0);
         let temp = std::env::temp_dir().join("benchmark-runner-tests");
         let spec = build_goose_command(root, &scenario, &temp, "goose_metrics", false);
         assert_eq!(spec.command, "cargo");
-        assert!(
-            spec.args
-                .iter()
-                .any(|part| part.ends_with("tools_rust/contextforge_goose/Cargo.toml"))
-        );
+        assert!(spec.args.iter().any(|part| {
+            part.ends_with("tools_rust/contextforge_benchmark/contextforge_goose/Cargo.toml")
+        }));
         assert!(
             spec.args
                 .iter()
@@ -2644,7 +2644,7 @@ mod tests {
 name = "legacy"
 
 [defaults.load]
-goosefile = "benchmarks/contextforge/goose/goosefile_benchmark.rs"
+goosefile = "legacy/goosefile_benchmark.rs"
 
 [[scenario]]
 name = "legacy-scenario"
@@ -2729,10 +2729,10 @@ name = "legacy-scenario"
     fn rejects_locust_only_goose_extra_args() {
         let tempdir = std::env::temp_dir().join("benchmark-runner-legacy-extra-args");
         let _ = std::fs::remove_dir_all(&tempdir);
-        std::fs::create_dir_all(tempdir.join("benchmarks/contextforge")).unwrap();
+        std::fs::create_dir_all(tempdir.join("tools_rust/contextforge_benchmark/assets")).unwrap();
         let path = tempdir.join("suite.toml");
         std::fs::write(
-            tempdir.join("benchmarks/contextforge/Containerfile"),
+            tempdir.join("tools_rust/contextforge_benchmark/assets/Containerfile"),
             "FROM scratch\n",
         )
         .unwrap();
@@ -2743,7 +2743,7 @@ name = "legacy-scenario"
 name = "legacy-extra-args"
 
 [defaults.build]
-container_file = "benchmarks/contextforge/Containerfile"
+container_file = "tools_rust/contextforge_benchmark/assets/Containerfile"
 
 [defaults.load]
 driver = "contextforge_goose"
@@ -2782,6 +2782,20 @@ name = "legacy-extra-args-scenario"
         assert!(stats.contains("Aggregated"));
         assert!(stats.contains("/mcp tools/list"));
         let _ = std::fs::remove_dir_all(&tempdir);
+    }
+
+    #[test]
+    fn resolves_new_uncharted_surface_suites() {
+        let root = fixture_repo_root();
+        for suite in [
+            "admin-plugins-300",
+            "rest-discovery-300",
+            "mcp-resources-300",
+            "mcp-prompts-300",
+        ] {
+            let resolved = load_suite(root, suite, false).unwrap();
+            assert_eq!(resolved.scenarios.len(), 2, "{suite}");
+        }
     }
 
     #[test]
