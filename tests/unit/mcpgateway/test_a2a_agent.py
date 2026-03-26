@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/mcpgateway/test_issue_840_a2a_agent.py
+"""Location: ./tests/unit/mcpgateway/test_a2a_agent.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 

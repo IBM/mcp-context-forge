@@ -2793,10 +2793,20 @@ class TestUpdateAgentQueryParamAuth:
 
     def _make_agent(self, **overrides):
         defaults = dict(
-            id="a1", name="ag", slug="ag", endpoint_url="https://example.com",
-            auth_type=None, auth_value=None, auth_query_params=None,
-            enabled=True, version=1, visibility="public", team_id=None,
-            owner_email=None, passthrough_headers=None, oauth_config=None,
+            id="a1",
+            name="ag",
+            slug="ag",
+            endpoint_url="https://example.com",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            enabled=True,
+            version=1,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            passthrough_headers=None,
+            oauth_config=None,
         )
         defaults.update(overrides)
         return SimpleNamespace(**defaults)
@@ -2841,7 +2851,9 @@ class TestUpdateAgentQueryParamAuth:
                 ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
 
                 update = A2AAgentUpdate.model_construct(
-                    auth_type="query_param", auth_query_param_key="api_key", auth_query_param_value="secret123",
+                    auth_type="query_param",
+                    auth_query_param_key="api_key",
+                    auth_query_param_value="secret123",
                 )
                 await service.update_agent(mock_db, "a1", update)
 
@@ -2875,7 +2887,8 @@ class TestUpdateAgentQueryParamAuth:
 
                 # Only value provided, no key — should reuse "existing_key"
                 update = A2AAgentUpdate.model_construct(
-                    auth_query_param_key=None, auth_query_param_value="new_value",
+                    auth_query_param_key=None,
+                    auth_query_param_value="new_value",
                 )
                 await service.update_agent(mock_db, "a1", update)
 
@@ -2912,7 +2925,8 @@ class TestUpdateAgentQueryParamAuth:
                 masked_value = MagicMock()
                 masked_value.get_secret_value.return_value = "****"
                 update = A2AAgentUpdate.model_construct(
-                    auth_query_param_key="api_key", auth_query_param_value=masked_value,
+                    auth_query_param_key="api_key",
+                    auth_query_param_value=masked_value,
                 )
                 await service.update_agent(mock_db, "a1", update)
 
@@ -2947,7 +2961,8 @@ class TestUpdateAgentQueryParamAuth:
                 masked_value = MagicMock()
                 masked_value.get_secret_value.return_value = "****"
                 update = A2AAgentUpdate.model_construct(
-                    auth_query_param_key="new_key", auth_query_param_value=masked_value,
+                    auth_query_param_key="new_key",
+                    auth_query_param_value=masked_value,
                 )
                 await service.update_agent(mock_db, "a1", update)
 
@@ -2981,7 +2996,8 @@ class TestUpdateAgentQueryParamAuth:
                 ts.update_tool_from_a2a_agent = AsyncMock(return_value=None)
 
                 update = A2AAgentUpdate.model_construct(
-                    auth_query_param_key="api_key", auth_query_param_value=None,
+                    auth_query_param_key="api_key",
+                    auth_query_param_value=None,
                 )
                 await service.update_agent(mock_db, "a1", update)
 
@@ -3010,7 +3026,8 @@ class TestUpdateAgentQueryParamAuth:
 
                 # Plain string, not a SecretStr
                 update = A2AAgentUpdate.model_construct(
-                    auth_query_param_key="api_key", auth_query_param_value="new_plain_value",
+                    auth_query_param_key="api_key",
+                    auth_query_param_value="new_plain_value",
                 )
                 await service.update_agent(mock_db, "a1", update)
 
