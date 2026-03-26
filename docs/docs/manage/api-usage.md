@@ -779,6 +779,7 @@ The `/resources` endpoint supports several query parameters for filtering and pa
 
 | Parameter | Description |
 |-----------|-------------|
+| `gateway_id` | Filter by gateway ID. Use `null` to match resources without a gateway. |
 | `tags` | Comma-separated list of tags to filter by (matches any). |
 | `visibility` | Filter by visibility: `private`, `team`, or `public`. |
 | `team_id` | Filter by team ID. |
@@ -790,6 +791,14 @@ The `/resources` endpoint supports several query parameters for filtering and pa
 **Examples:**
 
 ```bash
+# Filter by gateway (all resources from a specific gateway)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?gateway_id=<gateway-id>" | jq '.'
+
+# Get resources not associated with any gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?gateway_id=null" | jq '.'
+
 # Filter by visibility
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/resources?visibility=public" | jq '.'
@@ -938,6 +947,7 @@ The `/prompts` endpoint supports several query parameters for filtering and pagi
 
 | Parameter | Description |
 |-----------|-------------|
+| `gateway_id` | Filter by gateway ID. Use `null` to match prompts without a gateway. |
 | `tags` | Comma-separated list of tags to filter by (matches any). |
 | `visibility` | Filter by visibility: `private`, `team`, or `public`. |
 | `team_id` | Filter by team ID. |
@@ -949,6 +959,14 @@ The `/prompts` endpoint supports several query parameters for filtering and pagi
 **Examples:**
 
 ```bash
+# Filter by gateway (all prompts from a specific gateway)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?gateway_id=<gateway-id>" | jq '.'
+
+# Get prompts not associated with any gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?gateway_id=null" | jq '.'
+
 # Filter by visibility
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/prompts?visibility=public" | jq '.'
