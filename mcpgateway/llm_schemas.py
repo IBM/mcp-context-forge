@@ -45,6 +45,7 @@ class LLMProviderTypeEnum(str, Enum):
     MISTRAL = "mistral"
     GROQ = "groq"
     TOGETHER = "together"
+    MINIMAX = "minimax"
 
 
 class HealthStatus(str, Enum):

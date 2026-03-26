@@ -505,6 +505,18 @@ PROVIDER_CONFIGS: Dict[str, ProviderConfigDefinition] = {
         api_base_default="https://api.together.xyz/v1",
         config_fields=[],
     ),
+    "minimax": ProviderConfigDefinition(
+        provider_type="minimax",
+        display_name="MiniMax",
+        description="MiniMax AI models (MiniMax-M2.7, etc.)",
+        requires_api_key=True,
+        api_key_label="MiniMax API Key",
+        api_key_help="Get your API key from https://platform.minimaxi.com/",
+        requires_api_base=True,
+        api_base_default="https://api.minimax.io/v1",
+        api_base_help="Default: https://api.minimax.io/v1",
+        config_fields=[],
+    ),
 }
 
 
