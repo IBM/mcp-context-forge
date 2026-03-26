@@ -946,14 +946,18 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
 
         # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
         if request_headers:
-            with SessionLocal() as db:
-                passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
             headers = compute_passthrough_headers_cached(
                 request_headers,
                 headers,
                 passthrough_allowed,
                 gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
-                gateway_passthrough_headers=gateway.passthrough_headers if gateway.passthrough_headers else None,
+                gateway_passthrough_headers=gw_passthrough,
             )
 
         # Use MCP SDK to connect and list tools
@@ -994,14 +998,18 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
 
         # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
         if request_headers:
-            with SessionLocal() as db:
-                passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
             headers = compute_passthrough_headers_cached(
                 request_headers,
                 headers,
                 passthrough_allowed,
                 gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
-                gateway_passthrough_headers=gateway.passthrough_headers if gateway.passthrough_headers else None,
+                gateway_passthrough_headers=gw_passthrough,
             )
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
@@ -1056,14 +1064,18 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
 
         # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
         if request_headers:
-            with SessionLocal() as db:
-                passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
             headers = compute_passthrough_headers_cached(
                 request_headers,
                 headers,
                 passthrough_allowed,
                 gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
-                gateway_passthrough_headers=gateway.passthrough_headers if gateway.passthrough_headers else None,
+                gateway_passthrough_headers=gw_passthrough,
             )
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)

@@ -8784,6 +8784,69 @@ class TestProxyUpstreamAuthorizationRename:
         assert "Authorization" in captured
         assert captured["Authorization"] == "Bearer token-even-disabled"
 
+    @pytest.mark.asyncio
+    async def test_empty_passthrough_headers_does_not_fall_through_to_global(self):
+        """When gateway.passthrough_headers=[] (explicit empty), no global headers should leak through."""
+        gw = self._make_gateway(passthrough_headers=[])  # Explicitly empty
+        session = self._make_mocks("tools")
+        request_headers = {"x-tenant-id": "tenant-secret", "x-upstream-authorization": "Bearer upstream-tok"}
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                        mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
+                        mock_settings.mcpgateway_direct_proxy_timeout = 30
+                        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                            mock_ph_settings.enable_header_passthrough = True
+                            mock_ph_settings.enable_overwrite_base_headers = False
+                            await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
+
+        # X-Upstream-Authorization rename still works (always enabled)
+        assert "Authorization" in captured
+        assert captured["Authorization"] == "Bearer upstream-tok"
+        # But X-Tenant-Id from the global allowlist must NOT leak through
+        assert "X-Tenant-Id" not in captured
+
+    @pytest.mark.asyncio
+    async def test_db_failure_still_proxies_with_gateway_passthrough_headers(self):
+        """When gateway has explicit passthrough_headers, DB failure should not break the proxy."""
+        gw = self._make_gateway(passthrough_headers=["X-Tenant-Id"])
+        session = self._make_mocks("tools")
+        request_headers = {"x-tenant-id": "tenant-value"}
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        # Do NOT mock SessionLocal — if the code correctly skips the DB lookup
+        # when gateway.passthrough_headers is not None, SessionLocal is never called.
+        # If it IS called, an unmocked SessionLocal will raise, caught by the outer
+        # except, and the proxy returns []. We detect that via the captured headers.
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", side_effect=RuntimeError("DB is down")):
+                        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                            mock_settings.default_passthrough_headers = []
+                            mock_settings.mcpgateway_direct_proxy_timeout = 30
+                            with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                mock_ph_settings.enable_header_passthrough = True
+                                mock_ph_settings.enable_overwrite_base_headers = False
+                                result = await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
+
+        # Should succeed because gateway has explicit passthrough_headers — no DB needed
+        assert "X-Tenant-Id" in captured
+        assert captured["X-Tenant-Id"] == "tenant-value"
+
 
 # ---------------------------------------------------------------------------
 # Direct proxy mode integration tests for list_tools, list_resources, read_resource
