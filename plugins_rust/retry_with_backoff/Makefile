@@ -102,7 +102,7 @@ coverage cov cv: coverage-tools
 
 coverage-summary cs cov-sum: coverage-tools
 	@echo "$(GREEN)Generating code coverage summary...$(NC)"
-	@cargo llvm-cov --summary --ignore-filename-regex "src/bin/.*"
+	@cargo llvm-cov --summary-only --ignore-filename-regex "src/bin/.*"
 
 # =============================================================================
 # 🛠 BUILD (maturin for Python extension)
