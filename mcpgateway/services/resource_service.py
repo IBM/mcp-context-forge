@@ -447,16 +447,20 @@ class ResourceService(BaseService):
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> from mcpgateway.schemas import ResourceRead
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> resource = MagicMock()
+            >>> resource.uri = "test://example"
+            >>> resource.content = "test content"
+            >>> resource.mime_type = None
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> db.add = MagicMock()
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_resource_added = AsyncMock()
+            >>> service._detect_mime_type_from_uri = MagicMock(return_value=None)
             >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
@@ -488,9 +492,7 @@ class ResourceService(BaseService):
             if url_detected_mime:
                 mime_type = url_detected_mime
                 if resource.mime_type and resource.mime_type != url_detected_mime:
-                    logger.info(
-                        f"Using URL-detected MIME type '{url_detected_mime}' instead of user-provided '{resource.mime_type}' for URI: {resource.uri}"
-                    )
+                    logger.info(f"Using URL-detected MIME type '{url_detected_mime}' instead of user-provided '{resource.mime_type}' for URI: {resource.uri}")
             elif resource.mime_type:
                 # No URL detection possible, use user-provided
                 mime_type = resource.mime_type
@@ -2842,18 +2844,22 @@ class ResourceService(BaseService):
         Example:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock, AsyncMock
-            >>> from mcpgateway.schemas import ResourceRead
+            >>> from mcpgateway.schemas import ResourceRead, ResourceUpdate
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> resource = MagicMock()
+            >>> resource.uri = "test://example"
+            >>> resource.visibility = "private"
+            >>> resource.team_id = None
             >>> db.get.return_value = resource
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_resource_updated = AsyncMock()
+            >>> service._detect_mime_type_from_uri = MagicMock(return_value=None)
             >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.update_resource(db, 'resource_id', MagicMock()))
+            >>> asyncio.run(service.update_resource(db, 'resource_id', ResourceUpdate()))
             'resource_read'
         """
         try:
@@ -2899,13 +2905,11 @@ class ResourceService(BaseService):
                 # Prefer URL-detected MIME type over user-provided to ensure accuracy
                 uri_for_detection = resource_update.uri if resource_update.uri is not None else resource.uri
                 url_detected_mime = self._detect_mime_type_from_uri(uri_for_detection)
-                
+
                 if url_detected_mime:
                     # URL detection successful - use it
                     if resource_update.mime_type and resource_update.mime_type != url_detected_mime:
-                        logger.info(
-                            f"Using URL-detected MIME type '{url_detected_mime}' instead of user-provided '{resource_update.mime_type}' for resource {resource_id}"
-                        )
+                        logger.info(f"Using URL-detected MIME type '{url_detected_mime}' instead of user-provided '{resource_update.mime_type}' for resource {resource_id}")
                     resource.mime_type = url_detected_mime
                 elif resource_update.mime_type is not None:
                     # No URL detection, handle user-provided value
@@ -3534,7 +3538,7 @@ class ResourceService(BaseService):
             >>> service._detect_mime_type_from_uri("https://example.com/file.md")
             'text/markdown'
             >>> service._detect_mime_type_from_uri("https://example.com/unknown")
-            
+
         """
         mime_type, _ = mimetypes.guess_type(uri)
         return mime_type
