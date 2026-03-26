@@ -3,29 +3,13 @@
 
 import builtins
 import typing
-
 __all__ = [
     "RetryStateManager",
 ]
 
 @typing.final
 class RetryStateManager:
-    r"""
-    Rust-accelerated retry state manager for the retry-with-backoff plugin.
-
-    Stores per-(tool, request_id) failure counts and timestamps in a global
-    mutex-protected HashMap.  Config (thresholds, delays) is baked into the
-    struct at construction so the hot ``check_and_update`` call only passes
-    the four dynamic arguments.
-    """
-    def __new__(
-        cls,
-        max_retries: builtins.int,
-        base_ms: builtins.int,
-        max_ms: builtins.int,
-        jitter: builtins.bool,
-        retry_on_status: list[builtins.int],
-    ) -> RetryStateManager: ...
+    def __new__(cls, max_retries: builtins.int, base_ms: builtins.int, max_ms: builtins.int, jitter: builtins.bool, retry_on_status: typing.Sequence[builtins.int]) -> RetryStateManager: ...
     def ping(self) -> builtins.str: ...
     def get_failures(self, tool: builtins.str, request_id: builtins.str) -> builtins.int: ...
     def record_failure(self, tool: builtins.str, request_id: builtins.str) -> builtins.int: ...
@@ -34,10 +18,5 @@ class RetryStateManager:
     def state_count(self) -> builtins.int: ...
     def compute_delay(self, attempt: builtins.int) -> builtins.int: ...
     def check_failure(self, is_error: builtins.bool, status_code: typing.Optional[builtins.int]) -> builtins.bool: ...
-    def check_and_update(
-        self,
-        tool: builtins.str,
-        request_id: builtins.str,
-        is_error: builtins.bool,
-        status_code: typing.Optional[builtins.int],
-    ) -> tuple[builtins.bool, builtins.int]: ...
+    def check_and_update(self, tool: builtins.str, request_id: builtins.str, is_error: builtins.bool, status_code: typing.Optional[builtins.int]) -> tuple[builtins.bool, builtins.int]: ...
+

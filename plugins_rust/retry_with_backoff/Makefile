@@ -115,7 +115,9 @@ install: stub-gen
 # help: 📊 BENCHMARKS
 # help: bench                 - Run Criterion benchmarks (skipped — no benches)
 # help: bench-compare         - Compare against baseline
-.PHONY: bench bench-baseline bench-compare compare
+# help: benchmark             - Run Rust vs Python performance comparison
+# help: benchmark-quick       - Quick benchmark (100 iterations, 10 warmup)
+.PHONY: bench bench-baseline bench-compare compare benchmark benchmark-quick
 
 bench:
 	@echo "$(YELLOW)No Criterion benchmarks defined for $(PACKAGE_NAME) — skipping$(NC)"
@@ -127,7 +129,22 @@ bench-compare:
 	@echo "$(YELLOW)No benchmarks defined for $(PACKAGE_NAME) — skipping$(NC)"
 
 compare: install
-	@echo "$(YELLOW)No compare_performance.py script for $(PACKAGE_NAME) — skipping$(NC)"
+	@echo "$(GREEN)Running performance comparison (Python vs Rust)...$(NC)"
+	@echo "$(YELLOW)Installing plugin first...$(NC)"
+	@$(MAKE) --no-print-directory install
+	@echo ""
+	@echo "$(YELLOW)Running comparison script...$(NC)"
+	cd ../../ && uv run python3 plugins_rust/retry_with_backoff/compare_performance.py
+
+benchmark: install
+	@echo "$(GREEN)Running Rust vs Python performance comparison...$(NC)"
+	@echo ""
+	cd ../../ && uv run python3 plugins_rust/retry_with_backoff/compare_performance.py
+
+benchmark-quick: install
+	@echo "$(GREEN)Running quick performance comparison (100 iterations)...$(NC)"
+	@echo ""
+	cd ../../ && uv run python3 plugins_rust/retry_with_backoff/compare_performance.py --iterations 100 --warmup 10
 
 # =============================================================================
 # 🧹 CLEANUP
