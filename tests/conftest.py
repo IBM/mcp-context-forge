@@ -167,7 +167,7 @@ def test_settings():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def app():
     """Create a FastAPI test application with proper database setup."""
     # Use the existing app_with_temp_db fixture logic which works correctly
