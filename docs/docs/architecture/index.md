@@ -170,17 +170,14 @@ The project maintains production-grade quality through comprehensive GitHub Acti
 **Security Scanning:**
 
 - **Bandit Security** (`bandit.yml`): Python static analysis for security vulnerabilities (MEDIUM+ severity, HIGH confidence), SARIF upload for GitHub Security tab, weekly scheduled scans
-- **CodeQL Advanced** (`codeql.yml`): Multi-language analysis (JavaScript/TypeScript, Python, GitHub Actions), security vulnerability detection, code quality checks, weekly scheduled scans (Wednesday 21:15 UTC)
 - **Dependency Review** (`dependency-review.yml`): Automated dependency vulnerability scanning on pull requests
 
 **Container Security:**
 
 - **Secure Docker Build** (`docker-image.yml`):
 
-  - Dockerfile linting with **Hadolint** (SARIF reports)
-  - Image linting with **Dockle** (SARIF reports)
   - SBOM generation with **Syft** (SPDX format)
-  - Vulnerability scanning with **Trivy** and **Grype** (CRITICAL CVEs)
+  - SBOM generation and container review in CI
   - Image signing and attestation with **Cosign** (keyless OIDC)
   - BuildKit layer caching for faster rebuilds
   - Weekly scheduled scans (Tuesday 18:17 UTC)
@@ -193,10 +190,6 @@ The project maintains production-grade quality through comprehensive GitHub Acti
   - **Python Analysis**: Flake8, Ruff, Unimport, Vulture (dead code), Pylint (errors-only), Interrogate (100% docstring coverage), Radon (complexity metrics)
   - **Web Assets**: HTML/CSS/JS linting (`lint-web.yml`)
   - Each linter runs in isolated matrix jobs for fast-fail visibility
-
-**Deployment:**
-
-- **IBM Cloud Code Engine** (`ibm-cloud-code-engine.yml`): Automated deployment to IBM Cloud with environment configuration and health checks
 
 **Key CI/CD Features:**
 
