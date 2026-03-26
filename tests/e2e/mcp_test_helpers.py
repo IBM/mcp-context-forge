@@ -31,7 +31,7 @@ import pytest
 # Configuration
 # ---------------------------------------------------------------------------
 BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 TOKEN_EXPIRY = os.getenv("MCP_CLI_TOKEN_EXPIRY", "60")  # minutes
 MCP_CLI_TIMEOUT = int(os.getenv("MCP_CLI_TIMEOUT", "30"))  # seconds per command
