@@ -106,7 +106,7 @@ recursive-include plugins_rust *.py
 recursive-include plugins_rust *.pyi
 recursive-include plugins_rust *.json
 recursive-include plugins_rust Makefile
-include plugins_rust/*/Cargo.lock
+recursive-include plugins_rust *.lock
 prune plugins_rust/target
 recursive-exclude plugins_rust/*/target *
 
