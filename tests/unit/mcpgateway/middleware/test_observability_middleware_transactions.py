@@ -11,10 +11,15 @@ delegated to get_db() while middleware only manages session lifecycle
 described in issue #3731.
 """
 
+# Standard
+from unittest.mock import MagicMock, patch
+
+# Third-Party
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 from starlette.requests import Request
 from starlette.responses import Response
+
+# First-Party
 from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
 
 
@@ -47,13 +52,15 @@ async def test_middleware_does_not_commit_shared_session():
     mock_session.is_active = True
     mock_session.in_transaction.return_value = False
 
-    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session), \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False), \
-         patch.object(middleware.service, "start_trace", return_value="trace123"), \
-         patch.object(middleware.service, "start_span", return_value="span123"), \
-         patch.object(middleware.service, "end_span"), \
-         patch.object(middleware.service, "end_trace"), \
-         patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"):
+    with (
+        patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+    ):
 
         async def mock_call_next(request):
             return Response("OK", status_code=200)
@@ -76,6 +83,7 @@ async def test_get_db_commits_middleware_session_on_success():
     to maintain the transaction control contract. This ensures route
     handlers have predictable transaction semantics.
     """
+    # First-Party
     from mcpgateway.main import get_db
 
     mock_request = MagicMock(spec=Request)
@@ -110,6 +118,7 @@ async def test_get_db_rollsback_middleware_session_on_error():
     the session to prevent partial commits of invalid data. This is
     the core fix for issue #3731.
     """
+    # First-Party
     from mcpgateway.main import get_db
 
     mock_request = MagicMock(spec=Request)
@@ -144,6 +153,7 @@ async def test_get_db_invalidates_broken_connection_middleware_session():
     itself may fail. In this case, get_db() must invalidate the session
     to ensure the broken connection is removed from the pool.
     """
+    # First-Party
     from mcpgateway.main import get_db
 
     mock_request = MagicMock(spec=Request)
@@ -155,7 +165,7 @@ async def test_get_db_invalidates_broken_connection_middleware_session():
     mock_session.rollback.side_effect = Exception("Connection broken")
 
     gen = get_db(request=mock_request)
-    db = next(gen)
+    next(gen)
 
     # Simulate exception in route handler
     with pytest.raises(ValueError):
@@ -177,8 +187,9 @@ async def test_full_request_flow_with_observability():
     separation of concerns between lifecycle (middleware) and transactions
     (get_db()).
     """
-    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
+    # First-Party
     from mcpgateway.main import get_db
+    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
 
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     mock_request = create_mock_request()
@@ -186,18 +197,20 @@ async def test_full_request_flow_with_observability():
     mock_session.is_active = True
     mock_session.in_transaction.return_value = False
 
-    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session), \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False), \
-         patch.object(middleware.service, "start_trace", return_value="trace123"), \
-         patch.object(middleware.service, "start_span", return_value="span123"), \
-         patch.object(middleware.service, "end_span"), \
-         patch.object(middleware.service, "end_trace"), \
-         patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"):
+    with (
+        patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+    ):
 
         async def mock_call_next(request):
             # Simulate route handler using get_db()
             gen = get_db(request=request)
-            db = next(gen)
+            next(gen)
             # Do some work...
             # Complete successfully
             try:
@@ -225,8 +238,9 @@ async def test_observability_data_lost_on_error_is_acceptable():
     including any observability traces/spans that were written. This is an
     acceptable trade-off to maintain data integrity.
     """
-    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
+    # First-Party
     from mcpgateway.main import get_db
+    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
 
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     mock_request = create_mock_request()
@@ -234,18 +248,20 @@ async def test_observability_data_lost_on_error_is_acceptable():
     mock_session.is_active = True
     mock_session.in_transaction.return_value = False
 
-    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session), \
-         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False), \
-         patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start, \
-         patch.object(middleware.service, "start_span", return_value="span123"), \
-         patch.object(middleware.service, "end_span"), \
-         patch.object(middleware.service, "end_trace"), \
-         patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"):
+    with (
+        patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start,
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+    ):
 
         async def failing_call_next(request):
             # Simulate route handler using get_db()
             gen = get_db(request=request)
-            db = next(gen)
+            next(gen)
             # Simulate failure
             try:
                 gen.throw(ValueError("Validation failed"))
@@ -274,6 +290,7 @@ async def test_get_db_invalidates_broken_connection_double_failure():
     invalidate() may fail. The code should handle this gracefully and still
     re-raise the original exception.
     """
+    # First-Party
     from mcpgateway.main import get_db
 
     mock_request = MagicMock(spec=Request)
@@ -286,7 +303,7 @@ async def test_get_db_invalidates_broken_connection_double_failure():
     mock_session.invalidate.side_effect = Exception("Invalidate also failed")
 
     gen = get_db(request=mock_request)
-    db = next(gen)
+    next(gen)
 
     # Simulate exception in route handler
     with pytest.raises(ValueError):
@@ -306,6 +323,7 @@ async def test_get_db_inactive_session_skips_commit():
     may become inactive before get_db() attempts to commit. This is handled
     gracefully by checking is_active before committing.
     """
+    # First-Party
     from mcpgateway.main import get_db
 
     mock_request = MagicMock(spec=Request)
