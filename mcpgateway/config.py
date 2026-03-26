@@ -1591,7 +1591,7 @@ class Settings(BaseSettings):
             "video/mp4",
             "video/webm",
         ],
-        description="Allowed MIME types for resources. Vendor types (application/x-*, text/x-*) and structured-syntax suffix types (e.g. application/vnd.api+json) are always permitted regardless of this list.",
+        description="Allowed MIME types for resources. In strict mode, only types explicitly listed here are accepted. Vendor types (application/x-*, text/x-*) and suffix types (+json, +xml) must be explicitly added if needed.",
     )
     content_strict_mime_validation: bool = Field(
         default=False,

@@ -2273,8 +2273,12 @@ class TestResourceServiceContentTypeError:
             assert len(exc_info.value.allowed_types) > 0
 
     @pytest.mark.asyncio
-    async def test_register_resource_vendor_mime_type_allowed(self, resource_service, mock_db, sample_resource_create):
-        """Test that vendor MIME types (x- prefix) are always allowed."""
+    async def test_register_resource_vendor_mime_type_in_log_only_mode(self, resource_service, mock_db, sample_resource_create, monkeypatch):
+        """Test that vendor MIME types (x- prefix) are allowed in log-only mode."""
+        from mcpgateway import config
+        # Disable strict validation (log-only mode)
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
+        
         mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
 
         with (
@@ -2297,7 +2301,7 @@ class TestResourceServiceContentTypeError:
                 metrics={},
             )
 
-            # Vendor MIME type should be allowed
+            # Vendor MIME type should be allowed in log-only mode
             vendor_resource = sample_resource_create
             vendor_resource.mime_type = "application/x-custom"
 
@@ -2309,6 +2313,33 @@ class TestResourceServiceContentTypeError:
 
             # Should succeed without ContentTypeError
             assert result.mime_type == "application/x-custom"
+
+    @pytest.mark.asyncio
+    async def test_register_resource_vendor_mime_type_rejected_in_strict_mode(self, resource_service, mock_db, sample_resource_create, monkeypatch):
+        """Test that vendor MIME types are rejected in strict mode if not in allowlist."""
+        from mcpgateway import config
+        from mcpgateway.services.content_security import ContentTypeError
+        
+        # Enable strict validation
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
+        # Set allowlist without vendor type
+        monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain", "application/json"])
+        
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        with patch.object(resource_service, "_detect_mime_type", return_value="application/x-custom"):
+            # Vendor MIME type should be rejected in strict mode
+            vendor_resource = sample_resource_create
+            vendor_resource.mime_type = "application/x-custom"
+
+            with pytest.raises(ContentTypeError) as exc_info:
+                await resource_service.register_resource(
+                    mock_db,
+                    vendor_resource,
+                    created_by="user@example.com",
+                )
+            
+            assert exc_info.value.mime_type == "application/x-custom"
 
 
 class TestResourceServiceMetricsExtended:

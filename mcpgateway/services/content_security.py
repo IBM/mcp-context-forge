@@ -283,10 +283,11 @@ class ContentSecurityService:
     ) -> None:
         """Validate a resource MIME type against the configured allowlist.
 
-        Vendor types (``application/x-*``, ``text/x-*``) and structured-syntax
-        suffix types (e.g. ``application/vnd.api+json``) are always permitted
-        regardless of the allowlist, matching the behaviour of
-        :meth:`~mcpgateway.common.validators.SecurityValidator.validate_mime_type`.
+        When :attr:`~mcpgateway.config.Settings.content_strict_mime_validation`
+        is ``True``, only MIME types explicitly listed in the allowlist are accepted.
+        This includes vendor types (``application/x-*``, ``text/x-*``) and
+        structured-syntax suffix types (e.g. ``application/vnd.api+json``) which
+        must be explicitly added to the allowlist if needed.
 
         When :attr:`~mcpgateway.config.Settings.content_strict_mime_validation`
         is ``False`` the method logs a warning but does **not** raise, enabling
@@ -305,7 +306,7 @@ class ContentSecurityService:
 
         Examples:
             >>> service = ContentSecurityService()
-            >>> service.validate_resource_mime_type("text/plain")  # OK
+            >>> service.validate_resource_mime_type("text/plain")  # OK if in allowlist
             >>> service.validate_resource_mime_type(None)          # OK - no type declared
             >>> from unittest.mock import patch
             >>> with patch("mcpgateway.services.content_security.settings") as mock_settings:
@@ -316,6 +317,15 @@ class ContentSecurityService:
             ...     except ContentTypeError as e:
             ...         print("blocked:", e.mime_type)
             blocked: application/evil
+            >>> # Vendor types must be explicitly in allowlist
+            >>> with patch("mcpgateway.services.content_security.settings") as mock_settings:
+            ...     mock_settings.content_strict_mime_validation = True
+            ...     mock_settings.content_allowed_resource_mimetypes = ["text/plain"]
+            ...     try:
+            ...         service.validate_resource_mime_type("application/x-custom")
+            ...     except ContentTypeError as e:
+            ...         print("vendor type blocked:", e.mime_type)
+            vendor type blocked: application/x-custom
         """
         # Allow absent MIME types - callers may omit the field legitimately
         if not mime_type:
@@ -336,11 +346,10 @@ class ContentSecurityService:
             logger.debug("Resource MIME type validation passed: %s", mime_type)
             return
 
-        # Always permit vendor types and structured-syntax suffix types to
-        # avoid breaking legitimate content that is not in the default list.
-        if base_mime_type.startswith(("application/x-", "text/x-")) or "+" in base_mime_type:
-            logger.debug("Resource MIME type permitted (vendor/suffix): %s", mime_type)
-            return
+        # In strict mode, ALL types must be explicitly in the allowlist.
+        # Vendor types (application/x-*, text/x-*) and suffix types (+json, +xml)
+        # are NOT automatically allowed for security reasons.
+        # If you need these types, add them explicitly to CONTENT_ALLOWED_RESOURCE_MIMETYPES.
 
         # Validation failed - increment metric, log with sanitized PII, and raise
         content_type_violations_counter.labels(content_type="resource", mime_type=mime_type).inc()

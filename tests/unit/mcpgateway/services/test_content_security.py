@@ -337,19 +337,57 @@ class TestValidateResourceMimeType:
         service.validate_resource_mime_type("application/json")
         service.validate_resource_mime_type("image/png")
 
-    def test_validate_vendor_mime_type(self):
-        """Test that vendor types (x- prefix) are always allowed."""
+    def test_validate_vendor_mime_type_log_only_mode(self, monkeypatch):
+        """Test that vendor types (x- prefix) are allowed in log-only mode."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
+        
         service = ContentSecurityService()
-        # Vendor types should always pass
+        # Vendor types should pass in log-only mode
         service.validate_resource_mime_type("application/x-custom")
         service.validate_resource_mime_type("text/x-special")
 
-    def test_validate_suffix_mime_type(self):
-        """Test that suffix types (with +) are always allowed."""
+    def test_validate_vendor_mime_type_strict_mode(self, monkeypatch):
+        """Test that vendor types (x- prefix) are rejected in strict mode unless in allowlist."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
+        monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
+        
         service = ContentSecurityService()
-        # Suffix types should always pass
+        # Vendor types should be rejected in strict mode if not in allowlist
+        with pytest.raises(ContentTypeError) as exc_info:
+            service.validate_resource_mime_type("application/x-custom")
+        assert exc_info.value.mime_type == "application/x-custom"
+        
+        with pytest.raises(ContentTypeError) as exc_info:
+            service.validate_resource_mime_type("text/x-special")
+        assert exc_info.value.mime_type == "text/x-special"
+
+    def test_validate_suffix_mime_type_log_only_mode(self, monkeypatch):
+        """Test that suffix types (with +) are allowed in log-only mode."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", False)
+        
+        service = ContentSecurityService()
+        # Suffix types should pass in log-only mode
         service.validate_resource_mime_type("application/vnd.api+json")
         service.validate_resource_mime_type("application/custom+xml")
+
+    def test_validate_suffix_mime_type_strict_mode(self, monkeypatch):
+        """Test that suffix types (with +) are rejected in strict mode unless in allowlist."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
+        monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
+        
+        service = ContentSecurityService()
+        # Suffix types should be rejected in strict mode if not in allowlist
+        with pytest.raises(ContentTypeError) as exc_info:
+            service.validate_resource_mime_type("application/vnd.api+json")
+        assert exc_info.value.mime_type == "application/vnd.api+json"
+        
+        with pytest.raises(ContentTypeError) as exc_info:
+            service.validate_resource_mime_type("application/custom+xml")
+        assert exc_info.value.mime_type == "application/custom+xml"
 
     def test_validate_disallowed_mime_type_strict_mode(self, monkeypatch):
         """Test validation fails for disallowed MIME types in strict mode."""
@@ -431,37 +469,65 @@ class TestMimeTypeIntegration:
 
 
 class TestVendorSuffixMimeTypeInStrictMode:
-    """Test vendor/suffix MIME type handling in strict mode (lines 322-323)."""
+    """Test vendor/suffix MIME type handling in strict mode - must be in allowlist."""
 
-    def test_vendor_type_allowed_in_strict_mode(self, monkeypatch):
-        """Test that application/x- vendor types pass even in strict mode."""
+    def test_vendor_type_rejected_in_strict_mode_without_allowlist(self, monkeypatch):
+        """Test that application/x- vendor types are rejected in strict mode if not in allowlist."""
         from mcpgateway import config
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         # Use a custom allowlist that does NOT include application/x-custom
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
 
         service = ContentSecurityService()
-        # application/x-custom is NOT in the allowlist but should still pass (vendor type)
+        # application/x-custom is NOT in the allowlist and should be rejected (no automatic bypass)
+        with pytest.raises(ContentTypeError) as exc_info:
+            service.validate_resource_mime_type("application/x-custom")
+        assert exc_info.value.mime_type == "application/x-custom"
+
+    def test_vendor_type_allowed_when_in_allowlist(self, monkeypatch):
+        """Test that vendor types pass when explicitly added to allowlist."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
+        # Add vendor type to allowlist
+        monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain", "application/x-custom"])
+
+        service = ContentSecurityService()
+        # application/x-custom IS in the allowlist and should pass
         service.validate_resource_mime_type("application/x-custom")
 
-    def test_text_vendor_type_allowed_in_strict_mode(self, monkeypatch):
-        """Test that text/x- vendor types pass even in strict mode."""
+    def test_text_vendor_type_rejected_in_strict_mode_without_allowlist(self, monkeypatch):
+        """Test that text/x- vendor types are rejected in strict mode if not in allowlist."""
         from mcpgateway import config
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["application/json"])
 
         service = ContentSecurityService()
-        # text/x-special is NOT in the allowlist but should still pass (vendor type)
-        service.validate_resource_mime_type("text/x-special")
+        # text/x-special is NOT in the allowlist and should be rejected
+        with pytest.raises(ContentTypeError) as exc_info:
+            service.validate_resource_mime_type("text/x-special")
+        assert exc_info.value.mime_type == "text/x-special"
 
-    def test_suffix_type_allowed_in_strict_mode(self, monkeypatch):
-        """Test that suffix types (+json, +xml) pass even in strict mode."""
+    def test_suffix_type_rejected_in_strict_mode_without_allowlist(self, monkeypatch):
+        """Test that suffix types (+json, +xml) are rejected in strict mode if not in allowlist."""
         from mcpgateway import config
         monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
         monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain"])
 
         service = ContentSecurityService()
-        # application/vnd.api+json is NOT in the allowlist but should pass (suffix type)
+        # application/vnd.api+json is NOT in the allowlist and should be rejected
+        with pytest.raises(ContentTypeError) as exc_info:
+            service.validate_resource_mime_type("application/vnd.api+json")
+        assert exc_info.value.mime_type == "application/vnd.api+json"
+
+    def test_suffix_type_allowed_when_in_allowlist(self, monkeypatch):
+        """Test that suffix types pass when explicitly added to allowlist."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_strict_mime_validation", True)
+        # Add suffix type to allowlist
+        monkeypatch.setattr(config.settings, "content_allowed_resource_mimetypes", ["text/plain", "application/vnd.api+json"])
+
+        service = ContentSecurityService()
+        # application/vnd.api+json IS in the allowlist and should pass
         service.validate_resource_mime_type("application/vnd.api+json")
 
 
