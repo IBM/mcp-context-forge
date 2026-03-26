@@ -16,7 +16,6 @@ tests.
 from __future__ import annotations
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, List, Optional, TypeVar
@@ -406,6 +405,7 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_register_prompt_content_size_error(self, prompt_service, test_db):
         """Test that ContentSizeError is caught and re-raised during prompt registration."""
+        # First-Party
         from mcpgateway.services.content_security import ContentSizeError
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -413,11 +413,7 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(
-            content_type="Prompt template",
-            actual_size=15000,
-            max_size=10240
-        )
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
@@ -1019,6 +1015,7 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_update_prompt_team_id_rejects_non_owner(self, prompt_service, test_db):
         """Reassigning a prompt to a team where user is not owner must raise."""
+        # First-Party
         from mcpgateway.services.prompt_service import _validate_prompt_team_assignment
 
         mock_query = Mock()
@@ -1110,6 +1107,7 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_update_prompt_content_size_error(self, prompt_service, test_db):
         """Test that ContentSizeError is caught and re-raised during prompt update."""
+        # First-Party
         from mcpgateway.services.content_security import ContentSizeError
 
         existing = _build_db_prompt()
@@ -1125,11 +1123,7 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(
-            content_type="Prompt template",
-            actual_size=15000,
-            max_size=10240
-        )
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
@@ -1357,7 +1351,7 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cache_hit_returns_cached(self, prompt_service, test_db):
-        cached = PromptMetrics(
+        PromptMetrics(
             total_executions=123,
             successful_executions=100,
             failed_executions=23,
@@ -1488,7 +1482,7 @@ class TestJinjaTemplateCaching:
     def test_format_fallback_still_works(self):
         """Verify Python format() fallback works when Jinja render fails."""
         # First-Party
-        from mcpgateway.services.prompt_service import _compile_jinja_template, PromptService
+        from mcpgateway.services.prompt_service import PromptService
 
         service = PromptService()
 
@@ -1618,7 +1612,6 @@ class TestPromptGatewayNamespacing:
         the executed SQL and checking for the gateway_id clause.
         """
         # First-Party
-        from mcpgateway.db import Gateway as DbGateway
 
         # Setup prompt create data
         pc = PromptCreate(name="hello", description="greet a user", template="Hello {{ name }}!", arguments=[], gateway_id="gateway-2")
@@ -1656,7 +1649,6 @@ class TestPromptGatewayNamespacing:
     async def test_prompt_namespacing_same_gateway(self, prompt_service, test_db):
         """Test: Same `name` **cannot** be registered for the **same** gateway (same team/owner)."""
         # First-Party
-        from mcpgateway.db import Gateway as DbGateway
 
         # Setup existing prompt
         existing = _build_db_prompt(name="hello")
@@ -2133,7 +2125,7 @@ class TestListPromptsAdvanced:
 
         with (
             patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
-            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service._get_registry_cache"),
             patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
         ):
             mock_paginate.return_value = {
@@ -2624,7 +2616,7 @@ class TestUpdatePromptNameConflict:
 
         with (
             patch("mcpgateway.services.prompt_service.get_for_update") as mock_gfu,
-            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service._get_registry_cache"),
         ):
             mock_gfu.side_effect = [existing, conflicting]  # first: get prompt, second: conflict check
 
@@ -2704,7 +2696,7 @@ class TestUpdatePromptFieldsAndExceptions:
                 tags=["v2"],
             )
 
-            result = await prompt_service.update_prompt(db, 1, upd, modified_by="admin", modified_from_ip="1.2.3.4", modified_via="api", modified_user_agent="test-agent")
+            await prompt_service.update_prompt(db, 1, upd, modified_by="admin", modified_from_ip="1.2.3.4", modified_via="api", modified_user_agent="test-agent")
 
         assert existing.template == "Hi {{ user }}!"
         assert existing.argument_schema["properties"]["user"]["description"] == "Username"
@@ -3135,3 +3127,146 @@ class TestRegisterPromptsBulkChunkException:
 
         assert result["failed"] >= 1
         assert any("Chunk processing failed" in err for err in result["errors"])
+
+
+# --------------------------------------------------------------------------- #
+#                   Gateway ID Filtering Tests (#3638)                        #
+# --------------------------------------------------------------------------- #
+
+
+class TestListPromptsGatewayIdFilter:
+    """Tests for gateway_id filtering in list_prompts."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_filter(self, prompt_service):
+        """gateway_id filter should add a WHERE clause matching the gateway ID."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        captured_query = None
+
+        async def capture_paginate(db, query, **kwargs):
+            nonlocal captured_query
+            captured_query = query
+            return ([], None)
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", side_effect=capture_paginate):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="some-gateway-id")
+
+        assert result == []
+        assert next_cursor is None
+        # Verify the compiled query contains the gateway_id equality filter
+        compiled = str(captured_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "some-gateway-id" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_null_filter(self, prompt_service):
+        """gateway_id='null' should add an IS NULL WHERE clause."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        captured_query = None
+
+        async def capture_paginate(db, query, **kwargs):
+            nonlocal captured_query
+            captured_query = query
+            return ([], None)
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", side_effect=capture_paginate):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="null")
+
+        assert result == []
+        assert next_cursor is None
+        compiled = str(captured_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "gateway_id IS NULL" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_null_case_insensitive(self, prompt_service):
+        """gateway_id='NULL' (uppercase) should also add an IS NULL WHERE clause."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        captured_query = None
+
+        async def capture_paginate(db, query, **kwargs):
+            nonlocal captured_query
+            captured_query = query
+            return ([], None)
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", side_effect=capture_paginate):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="NULL")
+
+        assert result == []
+        assert next_cursor is None
+        compiled = str(captured_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "gateway_id IS NULL" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_nonexistent_returns_empty(self, prompt_service):
+        """Nonexistent gateway_id should return empty list, not an error."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        captured_query = None
+
+        async def capture_paginate(db, query, **kwargs):
+            nonlocal captured_query
+            captured_query = query
+            return ([], None)
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", side_effect=capture_paginate):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="nonexistent-id")
+
+        assert result == []
+        assert next_cursor is None
+        compiled = str(captured_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "nonexistent-id" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_included_in_cache_hash(self, prompt_service):
+        """gateway_id should be part of the cache hash to prevent cache poisoning."""
+        db = MagicMock()
+        db.commit = Mock()
+
+        with patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value="hash123")
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+
+            with patch("mcpgateway.services.prompt_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+                await prompt_service.list_prompts(db, gateway_id="gw-123")
+
+            # Verify gateway_id was passed to hash_filters
+            mock_cache.hash_filters.assert_called_once()
+            call_kwargs = mock_cache.hash_filters.call_args[1]
+            assert call_kwargs.get("gateway_id") == "gw-123"
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_without_gateway_id_no_filter(self, prompt_service):
+        """When gateway_id is None, no gateway filtering should be applied."""
+        db = MagicMock()
+        db.commit = Mock()
+        mock_prompt = _build_db_prompt()
+        mock_prompt.team_id = None
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache_fn.return_value = AsyncMock(hash_filters=MagicMock(return_value="h"), get=AsyncMock(return_value=None), set=AsyncMock())
+            mock_paginate.return_value = ([mock_prompt], None)
+
+            result, _ = await prompt_service.list_prompts(db, gateway_id=None)
+
+        assert result == ["converted"]

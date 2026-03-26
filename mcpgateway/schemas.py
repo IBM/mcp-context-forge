@@ -1933,6 +1933,7 @@ class ResourceRead(BaseModelWithConfigDict):
     name: str
     description: Optional[str]
     mime_type: Optional[str]
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     size: Optional[int]
     created_at: datetime
@@ -2522,6 +2523,7 @@ class PromptRead(BaseModelWithConfigDict):
     custom_name: str
     custom_name_slug: str
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
     gateway_slug: Optional[str] = None
     description: Optional[str]
     template: str

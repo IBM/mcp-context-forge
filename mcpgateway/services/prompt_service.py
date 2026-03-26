@@ -574,6 +574,7 @@ class PromptService(BaseService):
             "custom_name": custom_name,
             "custom_name_slug": custom_name_slug,
             "display_name": display_name,
+            "gateway_id": getattr(db_prompt, "gateway_id", None),
             "gateway_slug": getattr(db_prompt, "gateway_slug", None),
             "description": db_prompt.description,
             "template": db_prompt.template,
@@ -1242,6 +1243,7 @@ class PromptService(BaseService):
         include_inactive: bool = False,
         cursor: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        gateway_id: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
@@ -1264,6 +1266,7 @@ class PromptService(BaseService):
             cursor (Optional[str], optional): An opaque cursor token for pagination.
                 Opaque base64-encoded string containing last item's ID and created_at.
             tags (Optional[List[str]]): Filter prompts by tags. If provided, only prompts with at least one matching tag will be returned.
+            gateway_id (Optional[str]): Filter prompts by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
             limit (Optional[int]): Maximum number of prompts to return. Use 0 for all prompts (no limit).
                 If not specified, uses pagination_default_page_size.
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
@@ -1300,7 +1303,7 @@ class PromptService(BaseService):
         # This prevents cache poisoning where admin results could leak to public-only requests
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit, visibility=visibility)
             cached = await cache.get("prompts", filters_hash)
             if cached is not None:
                 # Reconstruct PromptRead objects from cached dicts
@@ -1317,6 +1320,13 @@ class PromptService(BaseService):
 
         if visibility:
             query = query.where(DbPrompt.visibility == visibility)
+
+        # Add gateway_id filtering if provided
+        if gateway_id:
+            if gateway_id.lower() == "null":
+                query = query.where(DbPrompt.gateway_id.is_(None))
+            else:
+                query = query.where(DbPrompt.gateway_id == gateway_id)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
