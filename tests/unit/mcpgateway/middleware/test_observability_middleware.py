@@ -288,8 +288,9 @@ async def test_observability_middleware_creates_request_scoped_session(mock_requ
     # Verify only one session was created
     assert len(session_instances) == 1, f"Expected 1 session, but {len(session_instances)} were created"
 
-    # Verify session was committed and closed
-    session_instances[0].commit.assert_called_once()
+    # Verify session was closed (lifecycle management)
+    # Note: Middleware no longer commits - transaction control delegated to get_db() (Issue #3731)
+    session_instances[0].commit.assert_not_called()
     session_instances[0].close.assert_called_once()
 
     # Verify response
@@ -341,6 +342,7 @@ async def test_get_db_reuses_middleware_session():
     # Create a mock request with a session in state
     mock_request = MagicMock(spec=Request)
     mock_session = MagicMock()
+    mock_session.is_active = True  # Required for commit check
     mock_request.state.db = mock_session
 
     # Call get_db with the request
@@ -350,14 +352,17 @@ async def test_get_db_reuses_middleware_session():
     # Verify it returns the same session
     assert db is mock_session, "get_db should return the middleware's session"
 
-    # Verify the session is NOT closed (middleware will handle that)
+    # Complete the generator (simulating successful request)
     try:
         next(db_generator)
     except StopIteration:
         pass
 
+    # Verify get_db() commits the middleware session (Issue #3731 fix)
+    # Transaction control is now delegated to get_db(), not middleware
+    mock_session.commit.assert_called_once()
+    # Verify the session is NOT closed (middleware will handle that)
     mock_session.close.assert_not_called()
-    mock_session.commit.assert_not_called()
 
 
 @pytest.mark.asyncio

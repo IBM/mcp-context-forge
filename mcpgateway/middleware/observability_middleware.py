@@ -207,13 +207,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 except Exception as end_trace_error:
                     logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
 
-            # Commit the shared session (used by both observability and route handler)
-            # Note: Some route handlers may have already committed. The is_active check
-            # ensures we only commit if the transaction is still open. Services that
-            # explicitly commit will have already closed their transaction.
-            # Only commit if the transaction is still active AND has uncommitted changes
-            if db.is_active and db.in_transaction():
-                db.commit()
+            # NOTE: Transaction control delegated to get_db()
+            # Middleware only manages session lifecycle (create/close), not transactions.
+            # get_db() will commit on success or rollback on error to maintain
+            # predictable transaction semantics for route handlers (Issue #3731).
 
             return response
 

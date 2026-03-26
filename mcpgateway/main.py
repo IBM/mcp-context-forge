@@ -3092,8 +3092,17 @@ def get_db(request: Request = None):
 
     When observability is enabled, this reuses the session created by
     ObservabilityMiddleware (stored in request.state.db) to avoid duplicate
-    session creation. When observability is disabled or the
-    middleware hasn't created a session, this creates its own session.
+    session creation. When observability is disabled or the middleware hasn't
+    created a session, this creates its own session.
+
+    **Transaction Control**: This function ALWAYS controls transaction boundaries
+    (commit/rollback) regardless of whether it creates the session or reuses one
+    from middleware. This ensures predictable transaction semantics for route
+    handlers and maintains data integrity.
+
+    **Session Lifecycle**: Middleware manages session lifecycle (create/close)
+    while this function manages transactions (commit/rollback). This separation
+    of concerns prevents the transaction management violation described in #3731.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.
@@ -3114,7 +3123,10 @@ def get_db(request: Request = None):
         Exception: Re-raises any exception after rolling back the transaction.
 
     Ensures:
-        The database session is closed after the request completes, even in the case of an exception.
+        - Transaction is committed on success (for both owned and reused sessions)
+        - Transaction is rolled back on error (for both owned and reused sessions)
+        - Session is closed only if created by this function (not if reused from middleware)
+        - Broken connections are invalidated to prevent pool corruption
 
     Examples:
         >>> # Test that get_db returns a generator
@@ -3138,9 +3150,32 @@ def get_db(request: Request = None):
         db = request.state.db
         if db is not None:
             logger.debug(f"[GET_DB] Reusing session from middleware: {id(db)}")
-            # Yield the middleware's session without closing it
-            # The middleware will handle commit/rollback/close
-            yield db
+            # Yield the middleware's session. We control transactions, middleware controls lifecycle.
+            try:
+                yield db
+                # Commit on successful completion (only if transaction still active)
+                # The transaction can become inactive if an exception occurred during
+                # async context manager cleanup (e.g., CancelledError during MCP session teardown).
+                if db.is_active:
+                    db.commit()
+            except Exception:
+                try:
+                    # Always call rollback() in exception handler.
+                    # rollback() is safe to call even when is_active=False - it succeeds and
+                    # restores the session to a usable state. When is_active=False (e.g., after
+                    # IntegrityError), rollback() is actually REQUIRED to clear the failed state.
+                    # Skipping rollback when is_active=False would leave the session unusable.
+                    db.rollback()
+                except Exception:
+                    # Connection is broken - invalidate to remove from pool
+                    # This handles cases like PgBouncer query_wait_timeout where
+                    # the connection is dead and rollback itself fails
+                    try:
+                        db.invalidate()
+                    except Exception:
+                        pass  # nosec B110 - Best effort cleanup on connection failure
+                raise
+            # Don't close - middleware owns the session lifecycle
             return
 
     # Fallback: Create our own session (observability disabled or middleware didn't create one)
