@@ -2480,6 +2480,222 @@ class TestResourceUpdateMimeTypeDetection:
                     # Verify existing MIME type was preserved
                     assert mock_resource.mime_type == "text/markdown"
 
+class TestResourceUrlDetectedMimeTypePriority:
+    """Tests for URL-detected MIME type priority over user-provided values."""
+
+    @pytest.mark.asyncio
+    async def test_register_resource_prefers_url_detected_mime_type(self, resource_service, mock_db):
+        """Test that URL-detected MIME type takes priority over user-provided during registration."""
+        from mcpgateway.schemas import ResourceCreate
+        
+        # Mock database operations
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing resource
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        # Create resource with .md extension but user provides text/plain
+        resource = ResourceCreate(
+            uri="https://gist.github.com/user/example.md",
+            name="Test Markdown",
+            mime_type="text/plain",  # User provides wrong type
+            content="# Test"
+        )
+        
+        with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
+            with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                with patch("mcpgateway.services.resource_service.logger") as mock_logger:
+                    await resource_service.register_resource(mock_db, resource)
+                    
+                    # Verify the resource was added with URL-detected MIME type
+                    added_resource = mock_db.add.call_args[0][0]
+                    assert added_resource.mime_type == "text/markdown"  # URL-detected, not user's text/plain
+                    
+                    # Verify logging of the override
+                    mock_logger.info.assert_any_call(
+                        "Using URL-detected MIME type 'text/markdown' instead of user-provided 'text/plain'"
+                    )
+
+    @pytest.mark.asyncio
+    async def test_register_resource_uses_user_mime_when_no_url_detection(self, resource_service, mock_db):
+        """Test that user-provided MIME type is used when URL detection fails."""
+        from mcpgateway.schemas import ResourceCreate
+        
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        # URI with no extension
+        resource = ResourceCreate(
+            uri="test://no-extension",
+            name="Test Resource",
+            mime_type="text/plain",
+            content="test"
+        )
+        
+        with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
+            with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                await resource_service.register_resource(mock_db, resource)
+                
+                # Verify user's MIME type was used
+                added_resource = mock_db.add.call_args[0][0]
+                assert added_resource.mime_type == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_register_resource_url_detection_various_extensions(self, resource_service, mock_db):
+        """Test URL detection works for various file extensions."""
+        from mcpgateway.schemas import ResourceCreate
+        
+        test_cases = [
+            ("https://example.com/file.json", "application/json"),
+            ("https://example.com/file.xml", "application/xml"),
+            ("https://example.com/file.pdf", "application/pdf"),
+            ("https://example.com/file.png", "image/png"),
+            ("https://example.com/file.jpg", "image/jpeg"),
+            ("https://example.com/file.html", "text/html"),
+            ("https://example.com/file.css", "text/css"),
+            ("https://example.com/file.js", "text/javascript"),
+        ]
+        
+        for uri, expected_mime in test_cases:
+            mock_db.execute.return_value.scalar_one_or_none.return_value = None
+            mock_db.add = MagicMock()
+            mock_db.commit = MagicMock()
+            mock_db.refresh = MagicMock()
+            
+            resource = ResourceCreate(
+                uri=uri,
+                name="Test",
+                mime_type="text/plain",  # Wrong type
+                content="test"
+            )
+            
+            with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):
+                with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                    await resource_service.register_resource(mock_db, resource)
+                    
+                    added_resource = mock_db.add.call_args[0][0]
+                    assert added_resource.mime_type == expected_mime, f"Failed for {uri}"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_prefers_url_detected_mime_type(self, resource_service, mock_db):
+        """Test that URL-detected MIME type takes priority during updates."""
+        from mcpgateway.schemas import ResourceUpdate
+        
+        # Existing resource
+        mock_resource = MagicMock()
+        mock_resource.id = 1
+        mock_resource.uri = "test://old"
+        mock_resource.mime_type = "text/plain"
+        mock_resource.text_content = "content"
+        mock_resource.binary_content = None
+        mock_resource.visibility = "private"
+        mock_resource.team_id = None
+        mock_resource.version = 1
+        
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        # Update with new URI that has .json extension
+        update = ResourceUpdate(
+            uri="https://api.example.com/data.json",
+            mime_type="text/html"  # User provides wrong type
+        )
+        
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
+            with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                with patch("mcpgateway.services.resource_service.logger") as mock_logger:
+                    await resource_service.update_resource(mock_db, 1, update)
+                    
+                    # Verify URL-detected MIME type was used
+                    assert mock_resource.mime_type == "application/json"
+                    
+                    # Verify logging
+                    mock_logger.info.assert_any_call(
+                        "Using URL-detected MIME type 'application/json' instead of user-provided 'text/html'"
+                    )
+
+    @pytest.mark.asyncio
+    async def test_update_resource_empty_mime_with_url_detection(self, resource_service, mock_db):
+        """Test that empty MIME type triggers URL detection during update."""
+        from mcpgateway.schemas import ResourceUpdate
+        
+        mock_resource = MagicMock()
+        mock_resource.id = 1
+        mock_resource.uri = "test://old"
+        mock_resource.mime_type = "text/plain"
+        mock_resource.text_content = "content"
+        mock_resource.binary_content = None
+        mock_resource.visibility = "private"
+        mock_resource.team_id = None
+        mock_resource.version = 1
+        
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        # Update with new URI and empty MIME type
+        update = ResourceUpdate(
+            uri="https://example.com/document.pdf",
+            mime_type=""  # Empty string
+        )
+        
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
+            with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                await resource_service.update_resource(mock_db, 1, update)
+                
+                # Verify URL-detected MIME type was used
+                assert mock_resource.mime_type == "application/pdf"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_empty_mime_no_url_detection_preserves_existing(self, resource_service, mock_db):
+        """Test that empty MIME type with no URL detection preserves existing type."""
+        from mcpgateway.schemas import ResourceUpdate
+        
+        mock_resource = MagicMock()
+        mock_resource.id = 1
+        mock_resource.uri = "test://no-extension"
+        mock_resource.mime_type = "text/markdown"
+        mock_resource.text_content = "# Markdown"
+        mock_resource.binary_content = None
+        mock_resource.visibility = "private"
+        mock_resource.team_id = None
+        mock_resource.version = 1
+        
+        mock_db.get = MagicMock(return_value=mock_resource)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        
+        # Update with empty MIME type but URI has no extension
+        update = ResourceUpdate(mime_type="")
+        
+        with patch.object(resource_service, "_detect_mime_type", return_value="text/plain"):
+            with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
+                with patch.object(resource_service, "convert_resource_to_read", return_value=MagicMock()):
+                    await resource_service.update_resource(mock_db, 1, update)
+                    
+                    # Verify fallback detection was used (not preserved)
+                    assert mock_resource.mime_type == "text/plain"
+
+    @pytest.mark.asyncio
+    async def test_detect_mime_type_from_uri_helper(self, resource_service):
+        """Test the _detect_mime_type_from_uri helper method."""
+        test_cases = [
+            ("https://example.com/file.md", "text/markdown"),
+            ("https://example.com/file.json", "application/json"),
+            ("https://example.com/file.pdf", "application/pdf"),
+            ("https://example.com/no-extension", None),
+            ("test://unknown.xyz", None),  # Unknown extension
+            ("https://example.com/file.tar.gz", "application/gzip"),
+        ]
+        
+        for uri, expected_mime in test_cases:
+            result = resource_service._detect_mime_type_from_uri(uri)
+            assert result == expected_mime, f"Failed for {uri}: expected {expected_mime}, got {result}"
+
+
 
 class TestResourceServiceMetricsExtended:
     """Extended tests for resource service metrics."""
