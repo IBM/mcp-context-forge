@@ -8206,11 +8206,12 @@ class TestProxyFunctions:
 
     @pytest.mark.asyncio
     async def test_proxy_list_tools_with_passthrough_headers(self):
-        """Test proxy list_tools forwards passthrough headers."""
+        """Test proxy list_tools forwards passthrough headers via compute_passthrough_headers_cached."""
         mock_gateway = MagicMock()
         mock_gateway.id = "gw-123"
         mock_gateway.url = "http://remote-gateway.example.com/mcp"
         mock_gateway.passthrough_headers = ["X-Custom-Header", "X-Request-ID"]
+        mock_gateway.auth_type = "bearer"
 
         request_headers = {
             "x-custom-header": "custom-value",
@@ -8226,20 +8227,36 @@ class TestProxyFunctions:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        captured_headers = {}
+
         @asynccontextmanager
         async def mock_client(*args, **kwargs):
-            headers = kwargs.get("headers", {})
-            # Verify passthrough headers are included
-            assert "X-Custom-Header" in headers
-            assert headers["X-Custom-Header"] == "custom-value"
-            assert "X-Request-ID" in headers
-            assert headers["X-Request-ID"] == "req-456"
+            captured_headers.update(kwargs.get("headers", {}))
             yield (None, None, lambda: "session-id")
+
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
                 with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
-                    await tr._proxy_list_tools_to_gateway(mock_gateway, request_headers, {}, None)
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
+                        with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
+                            mock_cache.get_passthrough_headers.return_value = ["X-Custom-Header", "X-Request-ID"]
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.default_passthrough_headers = []
+                                mock_settings.mcpgateway_direct_proxy_timeout = 30
+                                with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.enable_header_passthrough = True
+                                    mock_ph_settings.enable_overwrite_base_headers = False
+                                    await tr._proxy_list_tools_to_gateway(mock_gateway, request_headers, {}, None)
+
+        # Verify compute_passthrough_headers_cached forwarded the headers
+        assert "X-Custom-Header" in captured_headers
+        assert captured_headers["X-Custom-Header"] == "custom-value"
+        assert "X-Request-ID" in captured_headers
+        assert captured_headers["X-Request-ID"] == "req-456"
 
     @pytest.mark.asyncio
     async def test_proxy_list_tools_exception_returns_empty(self):
@@ -8292,11 +8309,12 @@ class TestProxyFunctions:
 
     @pytest.mark.asyncio
     async def test_proxy_list_resources_with_passthrough_headers(self):
-        """Test proxy list_resources forwards passthrough headers."""
+        """Test proxy list_resources forwards passthrough headers via compute_passthrough_headers_cached."""
         mock_gateway = MagicMock()
         mock_gateway.id = "gw-456"
         mock_gateway.url = "http://remote-gateway.example.com/mcp"
         mock_gateway.passthrough_headers = ["X-Tenant-ID", "X-Request-ID"]
+        mock_gateway.auth_type = "bearer"
 
         request_headers = {
             "x-tenant-id": "tenant-abc",
@@ -8312,20 +8330,36 @@ class TestProxyFunctions:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        captured_headers = {}
+
         @asynccontextmanager
         async def mock_client(*args, **kwargs):
-            headers = kwargs.get("headers", {})
-            # Verify passthrough headers are included
-            assert "X-Tenant-ID" in headers
-            assert headers["X-Tenant-ID"] == "tenant-abc"
-            assert "X-Request-ID" in headers
-            assert headers["X-Request-ID"] == "req-789"
+            captured_headers.update(kwargs.get("headers", {}))
             yield (None, None, lambda: "session-id")
+
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
 
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
                 with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
-                    await tr._proxy_list_resources_to_gateway(mock_gateway, request_headers, {}, None)
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
+                        with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
+                            mock_cache.get_passthrough_headers.return_value = ["X-Tenant-ID", "X-Request-ID"]
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.default_passthrough_headers = []
+                                mock_settings.mcpgateway_direct_proxy_timeout = 30
+                                with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.enable_header_passthrough = True
+                                    mock_ph_settings.enable_overwrite_base_headers = False
+                                    await tr._proxy_list_resources_to_gateway(mock_gateway, request_headers, {}, None)
+
+        # Verify compute_passthrough_headers_cached forwarded the headers
+        assert "X-Tenant-ID" in captured_headers
+        assert captured_headers["X-Tenant-ID"] == "tenant-abc"
+        assert "X-Request-ID" in captured_headers
+        assert captured_headers["X-Request-ID"] == "req-789"
 
     @pytest.mark.asyncio
     async def test_proxy_list_resources_with_meta(self):
@@ -8481,11 +8515,12 @@ class TestProxyFunctions:
 
     @pytest.mark.asyncio
     async def test_proxy_read_resource_with_passthrough_headers(self):
-        """Test proxy read_resource forwards passthrough headers."""
+        """Test proxy read_resource forwards passthrough headers via compute_passthrough_headers_cached."""
         mock_gateway = MagicMock()
         mock_gateway.id = "gw-789"
         mock_gateway.url = "http://remote-gateway.example.com/mcp"
         mock_gateway.passthrough_headers = ["X-Tenant-ID"]
+        mock_gateway.auth_type = "bearer"
 
         mock_result = MagicMock()
         mock_result.contents = []
@@ -8495,19 +8530,36 @@ class TestProxyFunctions:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        captured_headers = {}
+
         @asynccontextmanager
         async def mock_client(*args, **kwargs):
-            headers = kwargs.get("headers", {})
-            assert "X-Tenant-ID" in headers
-            assert headers["X-Tenant-ID"] == "tenant-123"
+            captured_headers.update(kwargs.get("headers", {}))
             yield (None, None, lambda: "session-id")
 
         tr.request_headers_var.set({"x-tenant-id": "tenant-123"})
 
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+
         with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
             with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
                 with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
-                    await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
+                        with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
+                            mock_cache.get_passthrough_headers.return_value = ["X-Tenant-ID"]
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.default_passthrough_headers = []
+                                mock_settings.mcpgateway_direct_proxy_timeout = 30
+                                with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.enable_header_passthrough = True
+                                    mock_ph_settings.enable_overwrite_base_headers = False
+                                    await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
+
+        # Verify compute_passthrough_headers_cached forwarded the headers
+        assert "X-Tenant-ID" in captured_headers
+        assert captured_headers["X-Tenant-ID"] == "tenant-123"
 
     @pytest.mark.asyncio
     async def test_proxy_read_resource_exception_returns_empty(self):
@@ -8524,6 +8576,276 @@ class TestProxyFunctions:
                 result = await tr._proxy_read_resource_to_gateway(mock_gateway, "file:///test.txt", {}, None)
 
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# X-Upstream-Authorization rename tests for direct proxy paths (Issue #3643)
+# ---------------------------------------------------------------------------
+
+
+class TestProxyUpstreamAuthorizationRename:
+    """Verify that X-Upstream-Authorization is renamed to Authorization in all direct proxy functions.
+
+    Before the fix for #3643, the direct proxy functions used a manual header loop that
+    skipped the X-Upstream-Authorization → Authorization rename. These tests ensure the
+    rename happens correctly via compute_passthrough_headers_cached.
+    """
+
+    def _make_gateway(self, auth_type="bearer", passthrough_headers=None):
+        gw = MagicMock()
+        gw.id = "gw-upstream"
+        gw.url = "http://remote.example.com/mcp"
+        gw.auth_type = auth_type
+        gw.passthrough_headers = passthrough_headers
+        return gw
+
+    def _make_mocks(self, result_attr="tools", result_value=None):
+        mock_result = MagicMock()
+        setattr(mock_result, result_attr, result_value or [])
+        mock_session = AsyncMock()
+        if result_attr == "tools":
+            mock_session.list_tools = AsyncMock(return_value=mock_result)
+        elif result_attr == "resources":
+            mock_session.list_resources = AsyncMock(return_value=mock_result)
+        else:
+            mock_session.read_resource = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+        return mock_session
+
+    @pytest.mark.asyncio
+    async def test_list_tools_renames_upstream_auth(self):
+        """X-Upstream-Authorization is renamed to Authorization for tools/list."""
+        gw = self._make_gateway()
+        session = self._make_mocks("tools")
+        request_headers = {"x-upstream-authorization": "Bearer upstream-token-123"}
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
+                        with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
+                            mock_cache.get_passthrough_headers.return_value = []
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.default_passthrough_headers = []
+                                mock_settings.mcpgateway_direct_proxy_timeout = 30
+                                with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.enable_header_passthrough = False
+                                    mock_ph_settings.enable_overwrite_base_headers = False
+                                    await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
+
+        assert "Authorization" in captured, "X-Upstream-Authorization was not renamed to Authorization"
+        assert captured["Authorization"] == "Bearer upstream-token-123"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_renames_upstream_auth(self):
+        """X-Upstream-Authorization is renamed to Authorization for resources/list."""
+        gw = self._make_gateway()
+        session = self._make_mocks("resources")
+        request_headers = {"x-upstream-authorization": "Bearer upstream-token-456"}
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
+                        with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
+                            mock_cache.get_passthrough_headers.return_value = []
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.default_passthrough_headers = []
+                                mock_settings.mcpgateway_direct_proxy_timeout = 30
+                                with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.enable_header_passthrough = False
+                                    mock_ph_settings.enable_overwrite_base_headers = False
+                                    await tr._proxy_list_resources_to_gateway(gw, request_headers, {}, None)
+
+        assert "Authorization" in captured, "X-Upstream-Authorization was not renamed to Authorization"
+        assert captured["Authorization"] == "Bearer upstream-token-456"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_renames_upstream_auth(self):
+        """X-Upstream-Authorization is renamed to Authorization for resources/read."""
+        gw = self._make_gateway()
+        session = self._make_mocks("contents")
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        tr.request_headers_var.set({"x-upstream-authorization": "Bearer upstream-token-789"})
+
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
+                        with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
+                            mock_cache.get_passthrough_headers.return_value = []
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.default_passthrough_headers = []
+                                mock_settings.mcpgateway_direct_proxy_timeout = 30
+                                with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.enable_header_passthrough = False
+                                    mock_ph_settings.enable_overwrite_base_headers = False
+                                    await tr._proxy_read_resource_to_gateway(gw, "file:///test.txt", {}, None)
+
+        assert "Authorization" in captured, "X-Upstream-Authorization was not renamed to Authorization"
+        assert captured["Authorization"] == "Bearer upstream-token-789"
+
+    @pytest.mark.asyncio
+    async def test_list_tools_no_upstream_auth_no_authorization_added(self):
+        """When no X-Upstream-Authorization is sent, no Authorization header should be injected."""
+        gw = self._make_gateway()
+        session = self._make_mocks("tools")
+        request_headers = {"x-request-id": "req-100"}
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
+                        with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
+                            mock_cache.get_passthrough_headers.return_value = []
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.default_passthrough_headers = []
+                                mock_settings.mcpgateway_direct_proxy_timeout = 30
+                                with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.enable_header_passthrough = False
+                                    mock_ph_settings.enable_overwrite_base_headers = False
+                                    await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
+
+        assert "Authorization" not in captured
+
+    @pytest.mark.asyncio
+    async def test_upstream_auth_works_even_when_passthrough_disabled(self):
+        """X-Upstream-Authorization rename works even when ENABLE_HEADER_PASSTHROUGH=false."""
+        gw = self._make_gateway()
+        session = self._make_mocks("tools")
+        request_headers = {"x-upstream-authorization": "Bearer token-even-disabled"}
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        mock_db = MagicMock()
+        mock_db.__enter__ = MagicMock(return_value=mock_db)
+        mock_db.__exit__ = MagicMock(return_value=False)
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db):
+                        with patch("mcpgateway.transports.streamablehttp_transport.global_config_cache") as mock_cache:
+                            mock_cache.get_passthrough_headers.return_value = []
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.default_passthrough_headers = []
+                                mock_settings.mcpgateway_direct_proxy_timeout = 30
+                                with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                    mock_ph_settings.enable_header_passthrough = False  # Explicitly disabled
+                                    mock_ph_settings.enable_overwrite_base_headers = False
+                                    await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
+
+        # X-Upstream-Authorization rename is always enabled regardless of feature flag
+        assert "Authorization" in captured
+        assert captured["Authorization"] == "Bearer token-even-disabled"
+
+    @pytest.mark.asyncio
+    async def test_empty_passthrough_headers_does_not_fall_through_to_global(self):
+        """When gateway.passthrough_headers=[] (explicit empty), no global headers should leak through."""
+        gw = self._make_gateway(passthrough_headers=[])  # Explicitly empty
+        session = self._make_mocks("tools")
+        request_headers = {"x-tenant-id": "tenant-secret", "x-upstream-authorization": "Bearer upstream-tok"}
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                        mock_settings.default_passthrough_headers = ["X-Tenant-Id"]
+                        mock_settings.mcpgateway_direct_proxy_timeout = 30
+                        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                            mock_ph_settings.enable_header_passthrough = True
+                            mock_ph_settings.enable_overwrite_base_headers = False
+                            await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
+
+        # X-Upstream-Authorization rename still works (always enabled)
+        assert "Authorization" in captured
+        assert captured["Authorization"] == "Bearer upstream-tok"
+        # But X-Tenant-Id from the global allowlist must NOT leak through
+        assert "X-Tenant-Id" not in captured
+
+    @pytest.mark.asyncio
+    async def test_db_failure_still_proxies_with_gateway_passthrough_headers(self):
+        """When gateway has explicit passthrough_headers, DB failure should not break the proxy."""
+        gw = self._make_gateway(passthrough_headers=["X-Tenant-Id"])
+        session = self._make_mocks("tools")
+        request_headers = {"x-tenant-id": "tenant-value"}
+        captured = {}
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            captured.update(kwargs.get("headers", {}))
+            yield (None, None, lambda: "session-id")
+
+        # Do NOT mock SessionLocal — if the code correctly skips the DB lookup
+        # when gateway.passthrough_headers is not None, SessionLocal is never called.
+        # If it IS called, an unmocked SessionLocal will raise, caught by the outer
+        # except, and the proxy returns []. We detect that via the captured headers.
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", side_effect=RuntimeError("DB is down")):
+                        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                            mock_settings.default_passthrough_headers = []
+                            mock_settings.mcpgateway_direct_proxy_timeout = 30
+                            with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
+                                mock_ph_settings.enable_header_passthrough = True
+                                mock_ph_settings.enable_overwrite_base_headers = False
+                                result = await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
+
+        # Should succeed because gateway has explicit passthrough_headers — no DB needed
+        assert "X-Tenant-Id" in captured
+        assert captured["X-Tenant-Id"] == "tenant-value"
 
 
 # ---------------------------------------------------------------------------
