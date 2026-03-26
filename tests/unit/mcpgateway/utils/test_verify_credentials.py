@@ -1399,6 +1399,7 @@ async def test_require_admin_auth_email_auth_missing_username_falls_back_to_basi
 @pytest.mark.asyncio
 async def test_require_admin_auth_email_auth_get_db_http_401_redirects_html(monkeypatch):
     monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "app_root_path", "/root", raising=False)
 
     def get_db_raises():
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="boom")

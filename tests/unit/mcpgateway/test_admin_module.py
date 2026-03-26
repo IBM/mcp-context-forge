@@ -436,7 +436,7 @@ async def test_admin_login_handler_paths(monkeypatch):
     user.password_change_required = False
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", False)
     response = await admin.admin_login_handler(request, mock_db)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/admin/")
 
 
 @pytest.mark.asyncio
@@ -1120,7 +1120,7 @@ async def test_change_password_required_handler(monkeypatch):
     with patch("sqlalchemy.inspect", return_value=SimpleNamespace(transient=False, detached=False)):
         response = await admin.change_password_required_handler(request, mock_db)
 
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/admin/")
     assert set_cookie.called
 
 

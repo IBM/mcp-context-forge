@@ -5291,7 +5291,7 @@ class TestA2AAgentManagement:
         result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/root/admin#a2a-agents"
+        assert result.headers["location"] == "/root/admin/#a2a-agents"
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_success(self, mock_delete_agent, mock_request, mock_db):
@@ -5367,7 +5367,7 @@ class TestA2AAgentManagement:
         result = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/admin#a2a-agents"
+        assert result.headers["location"] == "/admin/#a2a-agents"
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")
@@ -13899,6 +13899,7 @@ async def test_change_password_required_handler_paths(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_change_password_required_handler_success(monkeypatch, mock_db):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "app_root_path", "/root")
 
     request = MagicMock(spec=Request)
     request.scope = {"root_path": "/root"}
@@ -13919,17 +13920,19 @@ async def test_change_password_required_handler_success(monkeypatch, mock_db):
 
     response = await change_password_required_handler(request, db=mock_db)
     assert isinstance(response, RedirectResponse)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/admin/")
 
 
 @pytest.mark.asyncio
 async def test_change_password_required_handler_email_auth_disabled(monkeypatch, mock_db):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
+    monkeypatch.setattr(settings, "app_root_path", "/root")
+
     request = MagicMock(spec=Request)
     request.scope = {"root_path": "/root"}
     response = await change_password_required_handler(request, db=mock_db)
     assert isinstance(response, RedirectResponse)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/admin/")
 
 
 @pytest.mark.asyncio
@@ -16411,7 +16414,7 @@ class TestAuthLogin:
         # Should redirect to admin dashboard, not show login page
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/app/admin"
+        assert result.headers["location"] == "/app/admin/"
 
     @pytest.mark.asyncio
     async def test_admin_login_page_shows_form_for_invalid_token(self, monkeypatch):
@@ -16513,7 +16516,7 @@ class TestAuthLogin:
         # Should redirect to admin dashboard
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"] == "/app/admin"
+        assert result.headers["location"] == "/app/admin/"
 
     @pytest.mark.asyncio
     async def test_admin_login_page_access_token_cookie_invalid_shows_form(self, monkeypatch):
@@ -16821,7 +16824,7 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
-        assert result.headers["location"].endswith("/admin")
+        assert result.headers["location"].endswith("/admin/")
 
     @pytest.mark.asyncio
     async def test_admin_login_handler_auth_failure(self, monkeypatch, mock_db):

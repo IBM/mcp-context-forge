@@ -1781,8 +1781,10 @@ class TestDocsAuthMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_docs_auth_normalizes_prefixed_scope_path(self):
+    async def test_docs_auth_normalizes_prefixed_scope_path(self, monkeypatch):
         """When proxy forwards full path, scope_path includes root_path prefix and must be stripped."""
+        monkeypatch.setattr(settings, "app_root_path", "/qa/gateway")
+
         middleware = DocsAuthMiddleware(None)
         request = _make_request("/qa/gateway/docs", root_path="/qa/gateway")
         call_next = AsyncMock(return_value=StarletteResponse("ok"))
@@ -1832,8 +1834,10 @@ class TestDocsAuthMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_docs_auth_trailing_slash_root_path(self):
+    async def test_docs_auth_trailing_slash_root_path(self, monkeypatch):
         """root_path with trailing slash must still strip prefix correctly."""
+        monkeypatch.setattr(settings, "app_root_path", "/qa/gateway")
+
         middleware = DocsAuthMiddleware(None)
         request = _make_request("/qa/gateway/docs", root_path="/qa/gateway/")
         call_next = AsyncMock(return_value=StarletteResponse("ok"))
@@ -2172,6 +2176,7 @@ class TestAdminAuthMiddleware:
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
+        monkeypatch.setattr(settings, "app_root_path", "/qa/gateway")
 
         response = await middleware.dispatch(request, call_next)
         # /admin/login is exempt; leading slash must not be stripped
@@ -2186,6 +2191,7 @@ class TestAdminAuthMiddleware:
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
+        monkeypatch.setattr(settings, "app_root_path", "/qa/gateway")
 
         response = await middleware.dispatch(request, call_next)
         # No credentials: should redirect to login (302), not pass through
@@ -2199,7 +2205,7 @@ class TestAdminAuthMiddleware:
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/qa/gateway/admin/tools", root_path="/qa/gateway/", headers={"accept": "text/html"})
         call_next = AsyncMock(return_value="ok")
-
+        monkeypatch.setattr(settings, "app_root_path", "/qa/gateway")
         monkeypatch.setattr(settings, "auth_required", True)
 
         response = await middleware.dispatch(request, call_next)

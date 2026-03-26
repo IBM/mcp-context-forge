@@ -334,7 +334,33 @@ async def handle_sso_callback(
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
     # Get root path for URL construction
-    root_path = request.scope.get("root_path", "") if request else ""
+    root_path = settings.app_root_path if request else ""
+
+    # Handle OAuth error responses from provider (RFC 6749 Section 4.1.2.1)
+    if error:
+        error_msg = error_description or error
+        logger.warning("SSO callback error from provider '%s': %s - %s", provider_id, error, error_msg)
+
+        error_mappings = {
+            "access_denied": "sso_cancelled",
+            "invalid_request": "sso_invalid_request",
+            "unauthorized_client": "sso_unauthorized",
+            "unsupported_response_type": "sso_config_error",
+            "invalid_scope": "sso_invalid_scope",
+            "server_error": "sso_server_error",
+            "temporarily_unavailable": "sso_unavailable",
+        }
+        error_code = error_mappings.get(error, "sso_failed")
+        return RedirectResponse(url=f"{root_path}/admin/login?error={error_code}", status_code=302)
+
+    # Code and state are required if no error was returned
+    if not code:
+        logger.warning("SSO callback for provider '%s' missing both code and error parameters", provider_id)
+        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+
+    if not state:
+        logger.warning("SSO callback for provider '%s' missing required state parameter", provider_id)
+        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
 
     # Handle OAuth error responses from provider (RFC 6749 Section 4.1.2.1)
     if error:
@@ -385,7 +411,7 @@ async def handle_sso_callback(
         return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
 
     # Create redirect response
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    redirect_response = RedirectResponse(url=f"{root_path}/admin/", status_code=302)
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party

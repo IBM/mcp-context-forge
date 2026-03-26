@@ -2628,7 +2628,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
         # Get path from scope to handle root_path correctly
         scope_path = request.scope.get("path", request.url.path)
-        root_path = request.scope.get("root_path", "")
+        root_path = settings.app_root_path
         scope_path = _normalize_scope_path(scope_path, root_path)
 
         is_protected = any(scope_path.startswith(p) for p in protected_paths)
@@ -2718,7 +2718,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
         # Get path from scope to handle root_path correctly
         scope_path = request.scope.get("path", request.url.path)
-        root_path = request.scope.get("root_path", "")
+        root_path = settings.app_root_path
         scope_path = _normalize_scope_path(scope_path, root_path)
 
         # Allow OPTIONS requests for CORS preflight (RFC 7231)
