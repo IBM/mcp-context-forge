@@ -7810,6 +7810,38 @@ class TestRustMcpExecutionPlan:
         }
 
     @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_injects_w3c_trace_context_into_plan_headers(self, tool_service):
+        """Rust execution plans should carry W3C trace context for direct upstream calls."""
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
+        tool_service._plugin_manager = None
+
+        def _inject(headers):
+            traced = dict(headers)
+            traced["traceparent"] = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+            traced["tracestate"] = "vendor=value"
+            return traced
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"authorization": "Bearer abc"}),
+            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=_inject),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                request_headers={"authorization": "Bearer abc"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["headers"]["authorization"] == "Bearer abc"
+        assert plan["headers"]["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+        assert plan["headers"]["tracestate"] == "vendor=value"
+
+    @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_only_returns_eligible_plan_with_hooks(self, tool_service):
         """Pre-invoke hooks only (no post-invoke) should produce eligible plan with hook results."""
         # First-Party

@@ -58,7 +58,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
-from mcpgateway.observability import create_child_span, create_span, set_span_attribute, set_span_error
+from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
 from mcpgateway.plugins.framework import (
     get_plugin_manager,
     GlobalContext,
@@ -3225,6 +3225,8 @@ class ToolService(BaseService):
                         if hk and hv:
                             runtime_headers[str(hk).lower()] = str(hv)
 
+        runtime_headers = inject_trace_context_headers(runtime_headers)
+
         plan: Dict[str, Any] = {
             "eligible": True,
             "transport": transport,
@@ -4326,6 +4328,7 @@ class ToolService(BaseService):
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
+                        tracing_active = otel_context_active()
 
                         # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
                         # MCP SDK pins headers at transport creation, so adding per-request headers
@@ -4350,7 +4353,7 @@ class ToolService(BaseService):
                             tool_call_result = None
                             use_pool = False
                             pool = None
-                            if settings.mcp_session_pool_enabled:
+                            if settings.mcp_session_pool_enabled and not tracing_active:
                                 try:
                                     pool = get_mcp_session_pool()
                                     use_pool = True
@@ -4372,14 +4375,30 @@ class ToolService(BaseService):
                                         tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
                                 # Non-pooled path: safe to add per-request headers
-                                if correlation_id and headers:
-                                    headers["X-Correlation-ID"] = correlation_id
+                                request_headers = inject_trace_context_headers(headers)
+                                if correlation_id and request_headers:
+                                    request_headers["X-Correlation-ID"] = correlation_id
                                 # Fallback to per-call sessions when pool disabled or not initialized
-                                async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
-                                    async with ClientSession(*streams) as session:
-                                        await session.initialize()
-                                        with anyio.fail_after(effective_timeout):
-                                            tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                with create_span(
+                                    "mcp.client.call",
+                                    {
+                                        "mcp.tool.name": tool_name_original,
+                                        "contextforge.tool.id": tool_id,
+                                        "contextforge.gateway_id": tool_gateway_id,
+                                        "contextforge.runtime": "python",
+                                        "contextforge.transport": "sse",
+                                        "network.protocol.name": "mcp",
+                                        "server.address": urlparse(server_url).hostname,
+                                        "server.port": urlparse(server_url).port,
+                                        "url.path": urlparse(server_url).path or "/",
+                                        "url.full": server_url_sanitized,
+                                    },
+                                ):
+                                    async with sse_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as streams:
+                                        async with ClientSession(*streams) as session:
+                                            await session.initialize()
+                                            with anyio.fail_after(effective_timeout):
+                                                tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -4462,6 +4481,7 @@ class ToolService(BaseService):
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
+                        tracing_active = otel_context_active()
 
                         # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
                         # MCP SDK pins headers at transport creation, so adding per-request headers
@@ -4486,7 +4506,7 @@ class ToolService(BaseService):
                             tool_call_result = None
                             use_pool = False
                             pool = None
-                            if settings.mcp_session_pool_enabled:
+                            if settings.mcp_session_pool_enabled and not tracing_active:
                                 try:
                                     pool = get_mcp_session_pool()
                                     use_pool = True
@@ -4510,15 +4530,31 @@ class ToolService(BaseService):
                                         tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
                                 # Non-pooled path: safe to add per-request headers
-                                if correlation_id and headers:
-                                    headers["X-Correlation-ID"] = correlation_id
+                                request_headers = inject_trace_context_headers(headers)
+                                if correlation_id and request_headers:
+                                    request_headers["X-Correlation-ID"] = correlation_id
 
                                 # Fallback to per-call sessions when pool disabled or not initialized
-                                async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
-                                    async with ClientSession(read_stream, write_stream) as session:
-                                        await session.initialize()
-                                        with anyio.fail_after(effective_timeout):
-                                            tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                with create_span(
+                                    "mcp.client.call",
+                                    {
+                                        "mcp.tool.name": tool_name_original,
+                                        "contextforge.tool.id": tool_id,
+                                        "contextforge.gateway_id": tool_gateway_id,
+                                        "contextforge.runtime": "python",
+                                        "contextforge.transport": "streamablehttp",
+                                        "network.protocol.name": "mcp",
+                                        "server.address": urlparse(server_url).hostname,
+                                        "server.port": urlparse(server_url).port,
+                                        "url.path": urlparse(server_url).path or "/",
+                                        "url.full": server_url_sanitized,
+                                    },
+                                ):
+                                    async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+                                        async with ClientSession(read_stream, write_stream) as session:
+                                            await session.initialize()
+                                            with anyio.fail_after(effective_timeout):
+                                                tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000

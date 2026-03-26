@@ -14,7 +14,7 @@ from contextlib import nullcontext
 from importlib import import_module as _im
 import logging
 import os
-from typing import Any, Callable, cast, Dict, Optional
+from typing import Any, Callable, cast, Dict, Mapping, Optional
 from urllib.parse import urlparse
 
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
@@ -22,15 +22,19 @@ OTEL_AVAILABLE = False
 try:
     # Third-Party
     from opentelemetry import trace
+    from opentelemetry.propagate import extract as otel_extract
+    from opentelemetry.propagate import inject as otel_inject
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
-    from opentelemetry.trace import Status, StatusCode
+    from opentelemetry.trace import SpanKind, Status, StatusCode
 
     OTEL_AVAILABLE = True
 except ImportError:
     # OpenTelemetry not installed - set to None for graceful degradation
     trace = None
+    otel_extract = None
+    otel_inject = None
 
     # Provide a lightweight shim so tests can patch Resource.create
     class _ResourceShim:
@@ -58,6 +62,7 @@ except ImportError:
     BatchSpanProcessor = None
     ConsoleSpanExporter = None
     SimpleSpanProcessor = None
+    SpanKind = None
     Status = None
     StatusCode = None
 
@@ -518,6 +523,161 @@ def _derive_langfuse_trace_name(name: str, attributes: Dict[str, Any]) -> str:
     if name.startswith("a2a.") and attributes.get("a2a.agent.name"):
         return f"A2A: {_display_value(attributes['a2a.agent.name'])}"
     return name
+
+
+def otel_tracing_enabled() -> bool:
+    """Return whether OpenTelemetry tracing is active in this process."""
+
+    return _TRACER is not None
+
+
+def otel_context_active() -> bool:
+    """Return whether the current async context carries an active OTEL span."""
+
+    if not OTEL_AVAILABLE or trace is None:
+        return False
+    try:
+        current_span = trace.get_current_span()
+        if current_span is None:
+            return False
+        span_context = current_span.get_span_context()
+        return bool(getattr(span_context, "is_valid", False))
+    except Exception:
+        return False
+
+
+def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """Return a header carrier populated with the active W3C trace context."""
+
+    carrier = {str(key): str(value) for key, value in (headers or {}).items() if key and value}
+    if not otel_context_active() or otel_inject is None:
+        return carrier
+    try:
+        otel_inject(carrier=carrier)
+    except Exception as exc:
+        logger.debug("Failed to inject W3C trace context into outbound headers: %s", exc)
+    return carrier
+
+
+def _scope_headers_to_carrier(scope_headers: list[tuple[bytes, bytes]]) -> Dict[str, str]:
+    """Convert ASGI scope headers to a text carrier for propagation/extraction."""
+
+    carrier: Dict[str, str] = {}
+    for key, value in scope_headers:
+        try:
+            decoded_key = key.decode("latin-1").lower()
+            decoded_value = value.decode("latin-1")
+        except Exception:
+            continue
+        carrier[decoded_key] = decoded_value
+    return carrier
+
+
+def _should_trace_request_path(path: str) -> bool:
+    """Return whether Phase 1 OTEL request tracing should instrument the path."""
+
+    normalized = path.rstrip("/") or "/"
+    if normalized in {"/rpc", "/mcp", "/message", "/sse"}:
+        return True
+    if normalized.startswith("/servers/") and (
+        normalized.endswith("/mcp") or normalized.endswith("/message") or normalized.endswith("/sse")
+    ):
+        return True
+    if normalized.startswith("/_internal/mcp/"):
+        return True
+    return False
+
+
+class OpenTelemetryRequestMiddleware:
+    """Raw ASGI middleware that creates request-root spans for gateway transport flows."""
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: Mapping[str, Any], receive: Any, send: Any) -> None:
+        if scope.get("type") != "http" or _TRACER is None:
+            await self.app(scope, receive, send)
+            return
+
+        path = str(scope.get("path", "") or "")
+        if not _should_trace_request_path(path):
+            await self.app(scope, receive, send)
+            return
+
+        method = str(scope.get("method", "GET") or "GET").upper()
+        scope_headers = list(scope.get("headers", []) or [])
+        carrier = _scope_headers_to_carrier(scope_headers)
+
+        parent_context = None
+        if otel_extract is not None:
+            try:
+                parent_context = otel_extract(carrier=carrier)
+            except Exception as exc:
+                logger.debug("Failed to extract W3C trace context for %s %s: %s", method, path, exc)
+
+        server = scope.get("server") or ("", None)
+        client = scope.get("client") or ("", None)
+        query_string = scope.get("query_string", b"") or b""
+        if isinstance(query_string, bytes):
+            query_text = query_string.decode("latin-1")
+        else:
+            query_text = str(query_string)
+
+        span_name = f"{method} {path or '/'}"
+        span_attributes: Dict[str, Any] = {
+            "http.request.method": method,
+            "http.route": path or "/",
+            "url.path": path or "/",
+            "url.query": query_text or None,
+            "network.protocol.version": scope.get("http_version"),
+            "server.address": server[0] if len(server) > 0 else None,
+            "server.port": server[1] if len(server) > 1 else None,
+            "client.address": client[0] if len(client) > 0 else None,
+            "client.port": client[1] if len(client) > 1 else None,
+            "user_agent.original": carrier.get("user-agent"),
+            "correlation_id": carrier.get("x-correlation-id"),
+        }
+
+        start_span_kwargs: Dict[str, Any] = {}
+        if parent_context is not None:
+            start_span_kwargs["context"] = parent_context
+        if SpanKind is not None:
+            start_span_kwargs["kind"] = SpanKind.SERVER
+
+        status_code_holder: Dict[str, int] = {}
+
+        async def _send_with_span_status(message: Mapping[str, Any]) -> None:
+            if message.get("type") == "http.response.start":
+                status_code = int(message.get("status", 0) or 0)
+                status_code_holder["status"] = status_code
+                if span is not None and status_code:
+                    span.set_attribute("http.response.status_code", status_code)
+                    if OTEL_AVAILABLE and Status and StatusCode:
+                        if status_code >= 500:
+                            span.set_status(Status(StatusCode.ERROR))
+                        else:
+                            span.set_status(Status(StatusCode.OK))
+            await send(message)
+
+        with _TRACER.start_as_current_span(span_name, **start_span_kwargs) as span:
+            if span is not None:
+                for key, value in span_attributes.items():
+                    if value is not None:
+                        span.set_attribute(key, value)
+
+            try:
+                await self.app(scope, receive, _send_with_span_status)
+                if span is not None and "status" not in status_code_holder and OTEL_AVAILABLE and Status and StatusCode:
+                    span.set_status(Status(StatusCode.OK))
+            except Exception as exc:
+                if span is not None:
+                    span.record_exception(exc)
+                    span.set_attribute("error", True)
+                    span.set_attribute("error.type", type(exc).__name__)
+                    span.set_attribute("error.message", str(exc))
+                    if OTEL_AVAILABLE and Status and StatusCode:
+                        span.set_status(Status(StatusCode.ERROR, str(exc)))
+                raise
 
 
 def init_telemetry() -> Optional[Any]:
