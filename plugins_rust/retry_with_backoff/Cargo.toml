@@ -17,9 +17,11 @@ name = "stub_gen"
 path = "src/bin/stub_gen.rs"
 
 [dependencies]
+log = "0.4.29"
 # pyo3: the bridge between Python and Rust
 # abi3-py311 = compile once, works on Python 3.11+
 pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
+pyo3-log = "0.13.3"
 pyo3-stub-gen = "0.19"
 
 # rand: random number generation — needed for full-jitter backoff
