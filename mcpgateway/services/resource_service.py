@@ -380,6 +380,7 @@ class ResourceService(BaseService):
         resource_dict["created_at"] = getattr(resource, "created_at", None)
         resource_dict["updated_at"] = getattr(resource, "updated_at", None)
         resource_dict["version"] = getattr(resource, "version", None)
+        resource_dict["gateway_id"] = getattr(resource, "gateway_id", None)
         return ResourceRead.model_validate(resource_dict)
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
