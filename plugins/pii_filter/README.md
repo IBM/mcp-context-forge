@@ -25,7 +25,7 @@ A plugin for detecting and masking Personally Identifiable Information (PII) in 
 ### Masking Strategies
 - **REDACT** - Complete replacement with `[REDACTED]` or custom text
 - **PARTIAL** - Show partial info (e.g., `***-**-1234` for SSN, `j***e@example.com` for email)
-- **HASH** - Replace with hash value for consistency
+- **HASH** - Replace with a deterministic SHA-256-derived placeholder such as `[HASH:8f434346648f6b96]`
 - **TOKENIZE** - Replace with unique token for reversibility
 - **REMOVE** - Complete removal of PII
 
@@ -115,6 +115,23 @@ config:
   default_mask_strategy: "redact"
 ```
 
+## SSN Detection Notes
+
+- SSNs do not have a public checksum comparable to Luhn. Local pattern checks can only determine whether a value looks like an SSN, not whether it is assigned to a real person.
+- Authoritative SSN verification requires identity-aware SSA-backed verification, not standalone checksum validation.
+- The current Rust detector may classify bare 9-digit values as SSNs. This can create false positives for other 9-digit identifiers when `detect_ssn` is enabled.
+- A future hardening pass should keep broad compact-SSN support but reject structurally impossible SSNs instead of requiring an `SSN` label.
+
+### Structural Validation Limits
+
+The planned structural hardening should reject values that violate SSA invalid-number rules:
+
+- The first three digits cannot be `000`, `666`, or `900-999`
+- The middle two digits cannot be `00`
+- The last four digits cannot be `0000`
+
+These checks reduce false positives, but they still cannot prove a value is a real SSN.
+
 ## Testing
 
 ### Run All Tests
@@ -187,6 +204,15 @@ config:
       mask_strategy: "redact"
       enabled: true
 ```
+
+**Custom Pattern Complexity Limits (DoS Prevention):**
+
+To prevent Regular Expression Denial of Service (ReDoS) attacks, custom patterns are subject to the following limits:
+- **Maximum pattern length:** 256 characters
+- **Maximum alternations (`|`):** 16
+- **Maximum quantifiers (`*`, `+`, `?`, `{}`):** 24
+
+Custom patterns are expected to be written by trusted operators in plugin configuration, not supplied by end users at request time. The Rust detector uses the `regex` crate's linear-time matching engine, and these limits add extra guardrails for maintainability and compilation cost. Patterns exceeding these limits will be rejected during configuration validation.
 
 Test the custom pattern:
 ```python

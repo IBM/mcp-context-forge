@@ -19,32 +19,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Try to import Rust implementation
-# Fix sys.path to prioritize site-packages over source directory
+# Try to import Rust implementation from the installed package without mutating sys.path.
 try:
-    # Standard
-    import os
-    import sys
+    # First-Party
+    from pii_filter_rust.pii_filter_rust import PIIDetectorRust as _RustDetector
 
-    # Temporarily remove current directory from path if it contains plugins_rust source
-    original_path = sys.path.copy()
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    plugins_rust_src = os.path.join(project_root, "plugins_rust")
-
-    # Remove source directory from path temporarily
-    filtered_path = [p for p in sys.path if not p.startswith(plugins_rust_src)]
-    sys.path = filtered_path
-
-    try:
-        # First-Party
-        from pii_filter_rust.pii_filter_rust import PIIDetectorRust as _RustDetector
-
-        RUST_AVAILABLE = True
-        logger.info("🦀 Rust PII filter module imported successfully")
-    finally:
-        # Restore original path
-        sys.path = original_path
-
+    RUST_AVAILABLE = True
+    logger.info("🦀 Rust PII filter module imported successfully")
 except ImportError as e:
     RUST_AVAILABLE = False
     _RustDetector = None
