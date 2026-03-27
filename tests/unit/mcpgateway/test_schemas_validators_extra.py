@@ -147,11 +147,17 @@ class TestToolUpdateDescriptionValidationStrict:
     """
 
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
-        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+        for pat in ["&&", ";", "||", "$(", "> ", "< "]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolUpdate.validate_description(f"Valid prefix {pat} suffix")
+
+    def test_single_pipe_allowed_in_strict_mode(self, monkeypatch):
+        """Single pipe is allowed because it is valid in LogQL, PromQL, regex, and Markdown tables."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("pipe | grep")
+        assert result is not None
 
     @pytest.mark.parametrize(
         "description",
@@ -160,11 +166,10 @@ class TestToolUpdateDescriptionValidationStrict:
             "end statement;",
             "try this || that",
             "expand $(cmd)",
-            "pipe | grep",
             "Search docs > results",
             "read < file",
         ],
-        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+        ids=["ampersand", "semicolon", "or", "subshell", "redirect_out", "redirect_in"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -180,7 +185,7 @@ class TestToolUpdateDescriptionValidationStrict:
         monkeypatch.setattr(settings, "validation_strict", False)
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
-            result = ToolUpdate.validate_description("foo && bar | baz > qux")
+            result = ToolUpdate.validate_description("foo && bar > qux")
         assert result is not None
         unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
         assert len(unsafe_warnings) == 1
@@ -201,7 +206,7 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_forbidden_patterns_match_tool_create(self, monkeypatch):
         """Ensure ToolCreate and ToolUpdate reject the exact same set of forbidden patterns in strict mode."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
+        forbidden_patterns = ["&&", ";", "||", "$(", "> ", "< "]
         for pat in forbidden_patterns:
             payload = f"test {pat} injection"
             with pytest.raises(ValueError, match="unsafe characters"):
@@ -212,6 +217,21 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_empty_string_accepted(self):
         """Empty string is a valid description (not None, not forbidden)."""
         assert ToolUpdate.validate_description("") == ""
+
+    def test_disabled_allows_any_description(self, monkeypatch):
+        """Disabling forbidden patterns on ToolUpdate allows descriptions with any content."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", False)
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("run; rm -rf / && $(evil)")
+        assert result is not None
+
+    def test_empty_pattern_skipped(self, monkeypatch):
+        """Empty patterns in ToolUpdate are skipped and do not match everything."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["", "  "])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("perfectly safe description")
+        assert result is not None
 
     def test_forbidden_pattern_at_start(self, monkeypatch):
         """Forbidden pattern at the very start of a description is still caught."""
@@ -856,9 +876,9 @@ class TestToolDescriptionForbiddenPatterns:
     def test_default_patterns_block_forbidden_chars(self, monkeypatch):
         """Default forbidden patterns reject known unsafe substrings in strict mode."""
         monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
-        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$(", "|", "> ", "< "])
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$(", "> ", "< "])
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+        for pat in ["&&", ";", "||", "$(", "> ", "< "]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"description with {pat} inside")
 
@@ -1068,11 +1088,17 @@ class TestToolCreateDescriptionValidationStrict:
     """
 
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
-        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+        for pat in ["&&", ";", "||", "$(", "> ", "< "]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"Valid prefix {pat} suffix")
+
+    def test_single_pipe_allowed_in_strict_mode(self, monkeypatch):
+        """Single pipe is allowed because it is valid in LogQL, PromQL, regex, and Markdown tables."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolCreate.validate_description("pipe | grep")
+        assert result is not None
 
     @pytest.mark.parametrize(
         "description",
@@ -1081,11 +1107,10 @@ class TestToolCreateDescriptionValidationStrict:
             "end statement;",
             "try this || that",
             "expand $(cmd)",
-            "pipe | grep",
             "Search docs > results",
             "read < file",
         ],
-        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+        ids=["ampersand", "semicolon", "or", "subshell", "redirect_out", "redirect_in"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -1101,7 +1126,7 @@ class TestToolCreateDescriptionValidationStrict:
         monkeypatch.setattr(settings, "validation_strict", False)
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
-            result = ToolCreate.validate_description("foo && bar | baz > qux")
+            result = ToolCreate.validate_description("foo && bar > qux")
         assert result is not None
         unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
         assert len(unsafe_warnings) == 1

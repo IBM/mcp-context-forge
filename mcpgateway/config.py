@@ -365,7 +365,7 @@ class Settings(BaseSettings):
     )
     tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
     tool_description_forbidden_patterns: List[str] = Field(
-        default_factory=lambda: ["&&", ";", "||", "$(", "|", "> ", "< "],
+        default_factory=lambda: ["&&", ";", "||", "$(", "> ", "< "],
         description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&",";"]\'.',
     )
 

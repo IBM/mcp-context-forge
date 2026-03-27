@@ -164,7 +164,7 @@ These shell/pipe metacharacters are blocked by default in `ToolCreate` to reduce
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED` | `true` | Master switch — set to `false` to disable all pattern checks |
-| `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` | `["&&", ";", "||", "$(", "|", "> ", "< "]` | Override the blocked substrings (JSON array) |
+| `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` | `["&&", ";", "||", "$(", "> ", "< "]` | Override the blocked substrings (JSON array) |
 | `VALIDATION_STRICT` | `true` | When `false`, matched patterns log a warning instead of rejecting |
 
 **Option 1 — Customize the pattern list** (recommended):
