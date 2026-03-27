@@ -121,7 +121,7 @@ testing:
       tag: "1.0.0-RC-2"
       pullPolicy: Never
     jwt:
-      secret: my-test-key-but-now-longer-than-32-bytes
+      secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret
   fastTime:
     register:
       enabled: true

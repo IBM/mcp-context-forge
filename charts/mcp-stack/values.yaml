@@ -1771,7 +1771,7 @@ testing:
     jwt:
       username: admin@example.com
       expirationMinutes: 10080
-      secret: my-test-key-but-now-longer-than-32-bytes
+      secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret
 
   fastTime:
     register:

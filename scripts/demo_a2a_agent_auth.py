@@ -45,7 +45,7 @@ AUTH_TOKEN = "secret-bearer-token"
 AUTH_API_KEY = "secret-api-key"
 PORT = 0
 CONTEXTFORGE_URL = "http://localhost:8000"
-JWT_SECRET = "my-test-key-but-now-longer-than-32-bytes"
+JWT_SECRET = "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
 AUTO_REGISTER = False
 AGENT_NAME = ""
 
