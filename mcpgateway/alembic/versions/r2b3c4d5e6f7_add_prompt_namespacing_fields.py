@@ -48,19 +48,11 @@ def upgrade() -> None:
     connection = bind
     separator = settings.gateway_tool_name_separator
 
-    rows = (
-        connection.execute(
-            sa.text(
-                """
+    rows = connection.execute(sa.text("""
             SELECT p.id, p.name, p.gateway_id, p.team_id, p.owner_email, g.name AS gateway_name
             FROM prompts p
             LEFT JOIN gateways g ON p.gateway_id = g.id
-            """
-            )
-        )
-        .mappings()
-        .all()
-    )
+            """)).mappings().all()
 
     seen_gateway_original: dict[tuple[str, str], int] = {}
     seen_scoped_names: set[tuple[Union[str, None], Union[str, None], str]] = set()
@@ -108,8 +100,7 @@ def upgrade() -> None:
         display_name = custom_name
 
         connection.execute(
-            sa.text(
-                """
+            sa.text("""
                 UPDATE prompts
                 SET original_name = :original_name,
                     custom_name = :custom_name,
@@ -117,8 +108,7 @@ def upgrade() -> None:
                     display_name = :display_name,
                     name = :name
                 WHERE id = :prompt_id
-                """
-            ),
+                """),
             {
                 "original_name": original_name,
                 "custom_name": custom_name,

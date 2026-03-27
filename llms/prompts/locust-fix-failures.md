@@ -45,7 +45,7 @@ payload = {'sub':'admin@example.com',
   'iat':datetime.datetime.now(datetime.timezone.utc),
   'aud':'mcpgateway-api','iss':'mcpgateway',
   'jti':str(uuid.uuid4()),'teams':None,'is_admin':True}
-print(jwt.encode(payload, 'my-test-key', algorithm='HS256'))")
+print(jwt.encode(payload, 'my-test-key-but-now-longer-than-32-bytes', algorithm='HS256'))")
 AUTH="Authorization: Bearer $JWT"
 
 # Test any REST endpoint

@@ -22,7 +22,7 @@ ContextForge uses JWT Bearer tokens for authentication. Generate a token before 
 ```bash
 # Generate authentication token
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Verify the token was generated
 echo "Token: ${MCPGATEWAY_BEARER_TOKEN}"
@@ -512,7 +512,7 @@ Run it interactively (without the here-doc) if you prefer to type requests by ha
 
 # Setup
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Function to make authenticated JSON-RPC calls
 make_call() {
@@ -631,7 +631,7 @@ echo "=== Session Complete ==="
 
 # Setup
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 echo "=== Starting SSE Session ==="
 
@@ -783,7 +783,7 @@ MCP follows JSON-RPC 2.0 error handling standards:
 ```bash
 # Verify token generation
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Test token validity
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -974,7 +974,7 @@ def main():
     # Generate authentication token
     result = subprocess.run([
         "python3", "-m", "mcpgateway.utils.create_jwt_token",
-        "--username", "admin", "--exp", "10080", "--secret", "my-test-key"
+        "--username", "admin", "--exp", "10080", "--secret", "my-test-key-but-now-longer-than-32-bytes"
     ], capture_output=True, text=True)
 
     if result.returncode != 0:
@@ -1105,7 +1105,7 @@ async function main() {
     try {
         // Generate authentication token
         const authToken = execSync(
-            'python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key',
+            'python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes',
             { encoding: 'utf8' }
         ).trim();
 

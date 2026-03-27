@@ -64,7 +64,7 @@
 
     ```env
     # JWT authentication (required)
-    JWT_SECRET_KEY=my-test-key
+    JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
 
     # Admin UI login credentials
     PLATFORM_ADMIN_EMAIL=admin@example.com
@@ -134,7 +134,7 @@
 ???+ example "🔑 How do I generate and use a JWT token?"
     ```bash
     export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-        --username admin@example.com --exp 10080 --secret my-test-key)
+        --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
     curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
     ```
 

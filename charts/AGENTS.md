@@ -132,7 +132,7 @@ mcpContextForge:
   secret:
     BASIC_AUTH_USER: admin
     BASIC_AUTH_PASSWORD: changeme
-    JWT_SECRET_KEY: my-test-key
+    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes
 
 postgres:
   enabled: true

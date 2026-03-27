@@ -63,7 +63,7 @@ pytestmark = [pytest.mark.e2e, skip_no_gateway]
 RBAC_PREFIX = "mcp-rbac"
 SSE_GATEWAY_NAME = f"{RBAC_PREFIX}-sse-gw"
 # Must match docker-compose gateway JWT_SECRET_KEY
-_JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key")
+_JWT_SECRET = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 
 
 # ---------------------------------------------------------------------------

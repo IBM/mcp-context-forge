@@ -218,7 +218,7 @@ docker run -d --name conc-redis -p 6379:6379 redis:7
 # Start gateway (Terminal A)
 DATABASE_URL='postgresql+psycopg://postgres:postgres@127.0.0.1:5432/concurrent_test' \
 REDIS_URL='redis://127.0.0.1:6379/0' CACHE_TYPE='redis' \
-JWT_SECRET_KEY='my-test-key' \
+JWT_SECRET_KEY='my-test-key-but-now-longer-than-32-bytes' \
 SSRF_ALLOW_LOCALHOST=true SSRF_ALLOW_PRIVATE_NETWORKS=true \
 make dev
 
@@ -227,7 +227,7 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 
 # Generate token and run (Terminal C)
 export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 120 --secret my-test-key)"
+  --username admin@example.com --exp 120 --secret my-test-key-but-now-longer-than-32-bytes)"
 make conc-02-gateways
 ```
 

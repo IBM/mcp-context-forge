@@ -1,7 +1,7 @@
 environment:
   gateway_url: http://localhost:4444
   fast_time_url: http://localhost:8888
-  jwt_secret: my-test-key
+  jwt_secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret
   username: admin@example.com
   jwt_expiration_minutes: 10080
   results_base_dir: results

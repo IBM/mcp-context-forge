@@ -185,7 +185,7 @@ def health():
 
 # Configuration from environment with fallbacks for local development
 CONTEXTFORGE_URL = os.environ.get("CONTEXTFORGE_URL", "http://localhost:8000")
-JWT_SECRET = os.environ.get("JWT_SECRET_KEY", "my-test-key")  # noqa: S105 - default for demo only
+JWT_SECRET = os.environ.get("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")  # noqa: S105 - default for demo only
 AGENT_ID = None
 
 

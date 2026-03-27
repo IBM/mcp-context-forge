@@ -162,8 +162,7 @@ def upgrade() -> None:
         t_uuid = uuid.uuid4().hex
         tool_slug = slugify(tname)
         sess.execute(
-            sa.text(
-                """
+            sa.text("""
                 UPDATE tools
                 SET id_new=:u,
                     original_name=:on,
@@ -174,8 +173,7 @@ def upgrade() -> None:
                     END,
                     gateway_id_new=(SELECT id_new FROM gateways WHERE id=:g)
                 WHERE id=:i
-                """
-            ),
+                """),
             {
                 "u": t_uuid,
                 "on": tname,

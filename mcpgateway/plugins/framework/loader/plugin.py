@@ -57,7 +57,7 @@ class PluginLoader:
             A plugin type.
         """
         try:
-            (mod_name, cls_name) = parse_class_name(kind)
+            mod_name, cls_name = parse_class_name(kind)
             module = import_module(mod_name)
             class_ = getattr(module, cls_name)
             return cast(Type[Plugin], class_)

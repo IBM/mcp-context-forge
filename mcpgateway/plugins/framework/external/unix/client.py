@@ -26,6 +26,7 @@ Examples:
     >>> # await plugin.initialize()
     >>> # result = await plugin.invoke_hook(hook_type, payload, context)
 """
+
 # pylint: disable=no-member,no-name-in-module
 
 # Standard

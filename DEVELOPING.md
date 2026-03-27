@@ -475,7 +475,7 @@ make dev
 # Setup environment
 export MCP_GATEWAY_BASE_URL=http://localhost:4444
 export MCP_SERVER_URL=http://localhost:4444/servers/UUID/mcp
-export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)"
+export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key-but-now-longer-than-32-bytes)"
 
 # Launch Inspector with SSE (direct)
 npx @modelcontextprotocol/inspector

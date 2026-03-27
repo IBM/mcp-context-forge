@@ -57,7 +57,7 @@ pkill -f "mcpgateway.main|uvicorn" || true
 DATABASE_URL='postgresql+psycopg://postgres:postgres@127.0.0.1:5432/concurrent_test' \
 REDIS_URL='redis://127.0.0.1:6379/0' \
 CACHE_TYPE='redis' \
-JWT_SECRET_KEY='my-test-key' \
+JWT_SECRET_KEY='my-test-key-but-now-longer-than-32-bytes' \
 SSRF_ALLOW_LOCALHOST=true \
 SSRF_ALLOW_PRIVATE_NETWORKS=true \
 make dev
@@ -74,7 +74,7 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 
 ```bash
 cd <repo-root>
-export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 120 --secret my-test-key)"
+export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 120 --secret my-test-key-but-now-longer-than-32-bytes)"
 make conc-01-gateways
 ```
 

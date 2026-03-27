@@ -6,6 +6,7 @@ Revises: c1c2c3c4c5c6
 Create Date: 2026-01-21 09:48:44.636655
 
 """
+
 # Standard
 from typing import Sequence, Union
 

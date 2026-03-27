@@ -189,8 +189,7 @@ def upgrade() -> None:
             # Find active team members who don't have any active team-scoped role
             # Include tm.role to map owners and members to correct RBAC roles
             result = bind.execute(
-                text(
-                    """
+                text("""
                     SELECT tm.user_email, tm.team_id, tm.role
                     FROM email_team_members tm
                     WHERE tm.is_active = true
@@ -201,8 +200,7 @@ def upgrade() -> None:
                         AND ur.scope_id = tm.team_id
                         AND ur.is_active = true
                     )
-                    """
-                ),
+                    """),
             )
             members_without_roles = result.fetchall()
 
