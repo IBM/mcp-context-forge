@@ -57,6 +57,8 @@ async def test_token_from_cookie(monkeypatch):
     request.url.path = "/api/data"
     request.cookies = {"jwt_token": "cookie_token"}
     request.headers = {}
+    # Ensure no existing session (auth middleware should create and close one)
+    request.state.db = None
 
     mock_user = MagicMock()
     mock_user.email = "user@example.com"
@@ -70,6 +72,7 @@ async def test_token_from_cookie(monkeypatch):
     call_next.assert_awaited_once_with(request)
     assert response.status_code == 200
     assert request.state.user.email == "user@example.com"
+    # Auth middleware should create and close the session (owned=True)
     mock_session.return_value.close.assert_called_once()
 
 
@@ -82,6 +85,8 @@ async def test_token_from_header(monkeypatch):
     request.url.path = "/api/data"
     request.cookies = {}
     request.headers = {"authorization": "Bearer header_token"}
+    # Ensure no existing session (auth middleware should create and close one)
+    request.state.db = None
 
     mock_user = MagicMock()
     mock_user.email = "header@example.com"
@@ -95,6 +100,7 @@ async def test_token_from_header(monkeypatch):
     call_next.assert_awaited_once_with(request)
     assert response.status_code == 200
     assert request.state.user.email == "header@example.com"
+    # Auth middleware should create and close the session (owned=True)
     mock_session.return_value.close.assert_called_once()
 
 
@@ -107,6 +113,8 @@ async def test_authentication_failure(monkeypatch):
     request.url.path = "/api/data"
     request.cookies = {"jwt_token": "bad_token"}
     request.headers = {}
+    # Ensure no existing session (auth middleware should create and close one)
+    request.state.db = None
     # Mock request.client for security_logger
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
@@ -147,6 +155,8 @@ async def test_db_close_exception(monkeypatch):
     request.url.path = "/api/data"
     request.cookies = {"jwt_token": "token"}
     request.headers = {}
+    # Ensure no existing session (auth middleware should create and close one)
+    request.state.db = None
 
     mock_user = MagicMock()
     mock_user.email = "user@example.com"
@@ -282,6 +292,8 @@ async def test_failure_logging_close_exception(monkeypatch):
     request.url.path = "/api/data"
     request.cookies = {"jwt_token": "bad_token"}
     request.headers = {}
+    # Ensure no existing session (auth middleware should create and close one)
+    request.state.db = None
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
 
@@ -386,6 +398,8 @@ async def test_http_401_with_failure_logging_enabled():
     request.url.path = "/api/tools"
     request.cookies = {"jwt_token": "revoked_token"}
     request.headers = {"accept": "application/json"}
+    # Ensure no existing session (auth middleware should create and close one)
+    request.state.db = None
     request.client = MagicMock()
     request.client.host = "10.0.0.1"
 
@@ -401,7 +415,8 @@ async def test_http_401_with_failure_logging_enabled():
 
     assert response.status_code == 401
     mock_security_logger.log_authentication_attempt.assert_called_once()
-    mock_db.commit.assert_called_once()
+    # Auth middleware no longer commits (transaction control delegated to get_db per PR #3813)
+    # But it should close the session since it created it (owned=True)
     mock_db.close.assert_called_once()
 
 
@@ -416,6 +431,8 @@ async def test_http_401_logging_db_error_handled():
     request.url.path = "/api/tools"
     request.cookies = {"jwt_token": "bad_token"}
     request.headers = {"accept": "application/json"}
+    # Ensure no existing session (auth middleware should create and close one)
+    request.state.db = None
     request.client = MagicMock()
     request.client.host = "10.0.0.1"
 
@@ -557,3 +574,207 @@ async def test_http_401_json_deny_includes_security_headers():
     assert response.status_code == 401
     assert response.headers.get("x-content-type-options") == "nosniff"
     assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+
+# Session Reuse Tests (Issue #3622)
+
+
+def test_get_or_create_session_reuses_existing():
+    """Verify _get_or_create_session reuses session from request.state.db."""
+    from mcpgateway.middleware.auth_middleware import _get_or_create_session
+
+    mock_session = MagicMock()
+    mock_request = MagicMock(spec=Request)
+    mock_request.state.db = mock_session
+
+    db, owned = _get_or_create_session(mock_request)
+
+    assert db is mock_session
+    assert owned is False
+
+
+def test_get_or_create_session_creates_when_none_exists():
+    """Verify _get_or_create_session creates session when request.state.db is None."""
+    from mcpgateway.middleware.auth_middleware import _get_or_create_session
+
+    mock_request = MagicMock(spec=Request)
+    # Configure getattr to return None for 'db' attribute
+    mock_request.state = MagicMock()
+    mock_request.state.db = None
+
+    with patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session_local:
+        mock_new_session = MagicMock()
+        mock_session_local.return_value = mock_new_session
+
+        db, owned = _get_or_create_session(mock_request)
+
+        assert db is mock_new_session
+        assert owned is True
+        mock_session_local.assert_called_once()
+        # Verify the new session was stored in request.state.db
+        assert mock_request.state.db is mock_new_session
+
+
+@pytest.mark.asyncio
+async def test_auth_middleware_reuses_session_on_success():
+    """Verify auth middleware reuses session from request.state.db on success."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "valid_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    # Set up existing session in request.state
+    existing_session = MagicMock()
+    request.state.db = existing_session
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session_local, \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
+        response = await middleware.dispatch(request, call_next)
+
+    # SessionLocal should NOT be called (session reused)
+    mock_session_local.assert_not_called()
+    # Existing session should NOT be closed (not owned)
+    existing_session.close.assert_not_called()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_auth_middleware_closes_only_owned_sessions():
+    """Verify auth middleware only closes sessions it created."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "valid_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    # No existing session - auth middleware will create one
+    request.state = MagicMock()
+    request.state.db = None
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+
+    mock_new_session = MagicMock()
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_new_session), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)):
+        response = await middleware.dispatch(request, call_next)
+
+    # New session should be closed (owned=True)
+    mock_new_session.close.assert_called_once()
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_auth_middleware_handles_close_failure():
+    """Verify graceful handling of session close failures."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "valid_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    # No existing session
+    request.state = MagicMock()
+    request.state.db = None
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+
+    mock_new_session = MagicMock()
+    mock_new_session.close.side_effect = Exception("Close failed")
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_new_session), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
+         patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger:
+        response = await middleware.dispatch(request, call_next)
+
+    # Close failure should be logged as warning
+    mock_logger.warning.assert_called()
+    assert "Failed to close auth session" in str(mock_logger.warning.call_args)
+    # Request should still succeed
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_auth_middleware_reuses_session_on_failure():
+    """Verify auth middleware reuses session from request.state.db on auth failure."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "invalid_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    # Set up existing session
+    existing_session = MagicMock()
+    request.state.db = existing_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session_local, \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    # SessionLocal should NOT be called (session reused)
+    mock_session_local.assert_not_called()
+    # Existing session should NOT be closed (not owned)
+    existing_session.close.assert_not_called()
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_middleware_close_failure_in_hard_deny_path():
+    """Verify close failure is handled gracefully in hard deny (401/403) path."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "revoked_token"}
+    request.headers = {"accept": "application/json"}
+    # No existing session - auth middleware will create and try to close one
+    request.state.db = None
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    mock_db = MagicMock()
+    mock_db.close.side_effect = Exception("Close failed")
+    mock_security_logger = MagicMock()
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
+         patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger, \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    # Should still return 401 despite close failure
+    assert response.status_code == 401
+    # Close should have been attempted
+    mock_db.close.assert_called_once()
+    # Warning should be logged
+    mock_logger.warning.assert_called()
+    assert any("Failed to close auth session" in str(call) for call in mock_logger.warning.call_args_list)

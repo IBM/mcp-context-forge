@@ -22,6 +22,7 @@ from typing import Callable
 # Third-Party
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -60,6 +61,44 @@ def _should_log_auth_failure() -> bool:
     """
     # Log failures for "all" and "failures_only" levels, not for "high_severity"
     return settings.security_logging_level in ("all", "failures_only")
+
+
+def _get_or_create_session(request: Request) -> tuple[Session, bool]:
+    """Get existing session from request.state.db or create new one.
+
+    This function implements the session reuse pattern established in PR #3600
+    to eliminate duplicate database sessions. It checks if a middleware (typically
+    ObservabilityMiddleware) has already created a request-scoped session and
+    reuses it. If no session exists (e.g., when observability is disabled), it
+    creates a new one as a fallback.
+
+    Args:
+        request: FastAPI/Starlette request object
+
+    Returns:
+        tuple: (session, owned) where:
+            - session: SQLAlchemy Session object
+            - owned: bool, True if we created the session (caller must close it)
+
+    Examples:
+        >>> from unittest.mock import Mock
+        >>> mock_request = Mock()
+        >>> mock_request.state.db = None
+        >>> db, owned = _get_or_create_session(mock_request)
+        >>> owned
+        True
+    """
+    db = getattr(request.state, "db", None)
+    if db is not None:
+        logger.debug(f"[AUTH] Reusing session from middleware: {id(db)}")
+        return db, False
+
+    # Fallback: create session if no middleware provided one
+    # (e.g., when observability is disabled)
+    logger.debug("[AUTH] Creating new session (no middleware session available)")
+    db = SessionLocal()
+    request.state.db = db
+    return db, True
 
 
 class AuthContextMiddleware(BaseHTTPMiddleware):
@@ -129,9 +168,9 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             logger.info(f"✓ Authenticated user: {user_email if user_email else user_id}")
 
             # Log successful authentication (only if logging level is "all")
-            # DB session created only when needed
+            # DB session reused from middleware or created if needed (Issue #3622)
             if log_success:
-                db = SessionLocal()
+                db, owned = _get_or_create_session(request)
                 try:
                     security_logger.log_authentication_attempt(
                         user_id=user_id,
@@ -142,21 +181,24 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         user_agent=request.headers.get("user-agent"),
                         db=db,
                     )
-                    db.commit()
+                    # Note: Transaction commit is managed by get_db() in main.py (PR #3813)
+                    # Middleware only uses the session, doesn't control transactions
                 except Exception as log_error:
                     logger.debug(f"Failed to log successful auth: {log_error}")
                 finally:
-                    try:
-                        db.close()
-                    except Exception as close_error:
-                        logger.debug(f"Failed to close database session: {close_error}")
+                    # Only close if we created the session
+                    if owned:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.warning(f"Failed to close auth session: {close_error}")
 
         except HTTPException as e:
             if e.status_code in (401, 403) and e.detail in _HARD_DENY_DETAILS:
                 logger.info(f"✗ Auth rejected ({e.status_code}): {e.detail}")
 
                 if log_failure:
-                    db = SessionLocal()
+                    db, owned = _get_or_create_session(request)
                     try:
                         security_logger.log_authentication_attempt(
                             user_id="unknown",
@@ -168,14 +210,17 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                             failure_reason=str(e.detail),
                             db=db,
                         )
-                        db.commit()
+                        # Note: Transaction commit is managed by get_db() in main.py (PR #3813)
+                        # Middleware only uses the session, doesn't control transactions
                     except Exception as log_error:
                         logger.debug(f"Failed to log auth failure: {log_error}")
                     finally:
-                        try:
-                            db.close()
-                        except Exception as close_error:
-                            logger.debug(f"Failed to close database session: {close_error}")
+                        # Only close if we created the session
+                        if owned:
+                            try:
+                                db.close()
+                            except Exception as close_error:
+                                logger.warning(f"Failed to close auth session: {close_error}")
 
                 # Browser/admin requests with stale cookies: let the request continue
                 # without user context so the RBAC layer can redirect to /admin/login.
@@ -208,9 +253,9 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
 
             # Log failed authentication attempt (based on logging level)
-            # DB session created only when needed
+            # DB session reused from middleware or created if needed (Issue #3622)
             if log_failure:
-                db = SessionLocal()
+                db, owned = _get_or_create_session(request)
                 try:
                     security_logger.log_authentication_attempt(
                         user_id="unknown",
@@ -222,14 +267,17 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         failure_reason=str(e),
                         db=db,
                     )
-                    db.commit()
+                    # Note: Transaction commit is managed by get_db() in main.py (PR #3813)
+                    # Middleware only uses the session, doesn't control transactions
                 except Exception as log_error:
                     logger.debug(f"Failed to log auth failure: {log_error}")
                 finally:
-                    try:
-                        db.close()
-                    except Exception as close_error:
-                        logger.debug(f"Failed to close database session: {close_error}")
+                    # Only close if we created the session
+                    if owned:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.warning(f"Failed to close auth session: {close_error}")
 
         # Continue with request
         return await call_next(request)
