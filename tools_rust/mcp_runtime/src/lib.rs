@@ -29,7 +29,10 @@ use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionMana
 use reqwest::{Client, Url};
 #[cfg(feature = "rmcp-upstream-client")]
 use reqwest_rmcp::Client as RmcpReqwestClient;
-use rustls::{ClientConfig as RustlsClientConfig, RootCertStore};
+use rustls::{
+    ClientConfig as RustlsClientConfig, RootCertStore,
+    pki_types::{CertificateDer, pem::PemObject},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -2146,19 +2149,7 @@ fn build_postgres_tls_connector(
     let (_added, _ignored) = root_cert_store.add_parsable_certificates(native_certs.certs);
 
     if let Some(path) = tls_options.ssl_root_cert.as_deref() {
-        let pem_bytes = fs::read(path).map_err(|err| {
-            RuntimeError::Config(format!(
-                "invalid MCP_RUST_DATABASE_URL sslrootcert '{path}': {err}"
-            ))
-        })?;
-        let mut pem_reader = std::io::BufReader::new(pem_bytes.as_slice());
-        let certificates = rustls_pemfile::certs(&mut pem_reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|err| {
-                RuntimeError::Config(format!(
-                    "invalid MCP_RUST_DATABASE_URL sslrootcert '{path}': {err}"
-                ))
-            })?;
+        let certificates = load_pem_certificates(path)?;
         let (added, _ignored) = root_cert_store.add_parsable_certificates(certificates);
         if added == 0 {
             return Err(RuntimeError::Config(format!(
@@ -2172,6 +2163,27 @@ fn build_postgres_tls_connector(
         .with_no_client_auth();
 
     Ok(MakeRustlsConnect::new(tls_connector))
+}
+
+fn load_pem_certificates(path: &str) -> Result<Vec<CertificateDer<'static>>, RuntimeError> {
+    let pem_bytes = fs::read(path).map_err(|err| {
+        RuntimeError::Config(format!(
+            "invalid MCP_RUST_DATABASE_URL sslrootcert '{path}': {err}"
+        ))
+    })?;
+    let certificates = CertificateDer::pem_slice_iter(&pem_bytes)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| {
+            RuntimeError::Config(format!(
+                "invalid MCP_RUST_DATABASE_URL sslrootcert '{path}': {err}"
+            ))
+        })?;
+    if certificates.is_empty() {
+        return Err(RuntimeError::Config(format!(
+            "invalid MCP_RUST_DATABASE_URL sslrootcert '{path}': no certificates were parsed"
+        )));
+    }
+    Ok(certificates)
 }
 
 fn ensure_rustls_crypto_provider() {
@@ -7641,11 +7653,11 @@ mod unit_tests {
         forward_to_backend, forward_transport_request, get_runtime_session,
         handle_initialize_with_session_core, handle_resume_transport_request, has_server_scope,
         hex_decode, hex_encode, inject_server_id_header, inject_session_header,
-        invalid_request_response, is_affinity_forwarded_request, maybe_bind_session_auth_context,
-        maybe_upsert_runtime_session_from_transport_response, normalize_postgres_database_url,
-        parse_error_response, parse_sse_line, pool_owner_key, prompt_arguments_from_schema,
-        public_client_ip, query_param, remove_runtime_session, replay_events_endpoint,
-        requested_initialize_session_id, requested_protocol_version,
+        invalid_request_response, is_affinity_forwarded_request, load_pem_certificates,
+        maybe_bind_session_auth_context, maybe_upsert_runtime_session_from_transport_response,
+        normalize_postgres_database_url, parse_error_response, parse_sse_line, pool_owner_key,
+        prompt_arguments_from_schema, public_client_ip, query_param, remove_runtime_session,
+        replay_events_endpoint, requested_initialize_session_id, requested_protocol_version,
         response_from_affinity_forward_response, run, runtime_session_access_outcome,
         runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
         send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
@@ -7666,13 +7678,33 @@ mod unit_tests {
     use std::collections::HashMap;
     use std::{
         convert::Infallible,
+        fs,
         net::{SocketAddr, TcpListener},
         path::PathBuf,
         sync::{Arc, Mutex},
         time::Duration,
     };
     use tokio::time::{Instant, sleep};
+    use tracing::warn;
     use uuid::Uuid;
+
+    fn generate_test_root_cert_pem() -> Option<String> {
+        let native_certs = rustls_native_certs::load_native_certs();
+        for load_error in native_certs.errors {
+            warn!("Rust MCP test native root load warning: {load_error}");
+        }
+        let Some(certificate) = native_certs.certs.into_iter().next() else {
+            return None;
+        };
+        let encoded = base64::engine::general_purpose::STANDARD.encode(certificate.as_ref());
+        let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+        for chunk in encoded.as_bytes().chunks(64) {
+            pem.push_str(std::str::from_utf8(chunk).expect("base64 chunk is utf-8"));
+            pem.push('\n');
+        }
+        pem.push_str("-----END CERTIFICATE-----\n");
+        Some(pem)
+    }
 
     fn free_tcp_addr() -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
@@ -7979,6 +8011,51 @@ mod unit_tests {
         match error {
             RuntimeError::Config(message) => {
                 assert!(message.contains("sslrootcert"));
+            }
+            other => panic!("expected config error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn load_pem_certificates_accepts_valid_certificate_chain() {
+        let path =
+            std::env::temp_dir().join(format!("contextforge-root-ca-{}.pem", Uuid::new_v4()));
+        let Some(root_cert_pem) = generate_test_root_cert_pem() else {
+            return;
+        };
+        fs::write(&path, root_cert_pem).expect("write pem file");
+
+        let certificates =
+            load_pem_certificates(path.to_str().expect("utf-8 path")).expect("certificates");
+
+        fs::remove_file(&path).expect("remove pem file");
+
+        assert_eq!(certificates.len(), 1);
+    }
+
+    #[test]
+    fn load_pem_certificates_rejects_non_certificate_pem() {
+        let path = std::env::temp_dir().join(format!(
+            "contextforge-invalid-root-ca-{}.pem",
+            Uuid::new_v4()
+        ));
+        fs::write(
+            &path,
+            "-----BEGIN PUBLIC KEY-----\nZm9v\n-----END PUBLIC KEY-----\n",
+        )
+        .expect("write invalid pem file");
+
+        let error = load_pem_certificates(path.to_str().expect("utf-8 path"))
+            .expect_err("public key pem should fail");
+
+        fs::remove_file(&path).expect("remove invalid pem file");
+
+        match error {
+            RuntimeError::Config(message) => {
+                assert!(
+                    message.contains("no certificates were parsed")
+                        || message.contains("NoItemsFound")
+                );
             }
             other => panic!("expected config error, got {other}"),
         }
