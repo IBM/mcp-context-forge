@@ -7091,6 +7091,8 @@ test-full: coverage test-js test-ui-report
 # help: pip-audit           - Audit Python dependencies for published CVEs
 # help: gitleaks-install    - Install gitleaks secret scanner
 # help: gitleaks            - Scan git history for secrets
+# help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
+# help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
 # help: sri-generate        - Generate SRI hashes for CDN resources
 # help: sri-verify          - Verify SRI hashes match current CDN content
@@ -7309,6 +7311,21 @@ gitleaks:                           ## 🔍 Scan for secrets in git history
 	@echo "🔍 Scanning for secrets with gitleaks..."
 	@gitleaks detect --source . -v || true
 	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
+
+.PHONY: detect-secrets-scan
+detect-secrets-scan: install-dev             ## 🔍  detect-secrets scan for secrets in repository
+	@echo "🔍 Running detect-secrets scan..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets scan --update .secrets.baseline --use-all-plugins"
+
+.PHONY: detect-secrets-audit
+detect-secrets-audit: install-dev            ## 🔎  detect-secrets audit for reviewing findings
+	@echo "🔎 Running detect-secrets audit..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets audit .secrets.baseline"
+
+.PHONY: detect-secrets-hook
+detect-secrets-hook: install-dev              ## 🔎  detect-secrets pre-commit hook equivalent
+	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets-hook --baseline .secrets.baseline --use-all-plugins --fail-on-unaudited"
 
 ## --------------------------------------------------------------------------- ##
 ##  DevSkim (.NET-based security patterns scanner)
