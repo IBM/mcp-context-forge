@@ -54,3 +54,4 @@ config:
 - `max_retries` is clamped to the gateway-level `max_tool_retries` setting.
 - `check_text_content` is off by default to avoid false-positives on tools that legitimately return status codes as informational data.
 - Per-tool overrides are also clamped to the gateway ceiling.
+- **Resource retry is not yet implemented.** The `resource_post_fetch` hook registers successfully and returns retry policy metadata, but does not trigger actual retries. Resource fetch failures raise exceptions before the post-fetch hook fires, so transient resource errors are not retried. Only `tool_post_invoke` performs active retry logic.

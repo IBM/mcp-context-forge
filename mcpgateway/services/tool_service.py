@@ -4525,7 +4525,10 @@ class ToolService(BaseService):
                             except Exception:
                                 tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
 
-                    # Retry: if the plugin requested a delayed retry and we haven't hit the gateway ceiling
+                    # Retry: if the plugin requested a delayed retry and we haven't hit the gateway ceiling.
+                    # retry_attempt is 0-based (0 = original call).  The condition allows retry_attempt
+                    # values 0..max_tool_retries-1, meaning up to max_tool_retries *retry* attempts on
+                    # top of the original call (total attempts = max_tool_retries + 1).
                     if post_result.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
                         logger.debug(
                             "tool_service: retry requested for tool=%s attempt=%d/%d delay_ms=%d",
@@ -4590,7 +4593,9 @@ class ToolService(BaseService):
                     except Exception as plugin_exc:
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
 
-                # Retry if the plugin requested a delayed retry and we haven't hit the ceiling
+                # Retry if the plugin requested a delayed retry and we haven't hit the ceiling.
+                # Same counting convention as the success path: retry_attempt is 0-based,
+                # so this allows up to max_tool_retries retry attempts beyond the original call.
                 if exc_post_result is not None and exc_post_result.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
                     logger.debug(
                         "tool_service: retry requested (exception path) for tool=%s attempt=%d/%d delay_ms=%d",
