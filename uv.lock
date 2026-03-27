@@ -414,6 +414,28 @@ wheels = [
 ]
 
 [[package]]
+name = "boxsdk"
+version = "3.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "python-dateutil" },
+    { name = "requests" },
+    { name = "requests-toolbelt" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/bf/d7/c1a95bb602d7f90a85a68d8e6f11954e50c255110d39e2167c7796252622/boxsdk-3.14.0.tar.gz", hash = "sha256:7918b1929368724662474fffa417fa0457a523d089b8185260efbedd28c4f9b1", size = 232630, upload-time = "2025-04-09T15:07:15.181Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/5d/4e15511e0f4f2f9fbbf4646a8d0e138e5c53a3d428f1724e7dc3c8acf556/boxsdk-3.14.0-py2.py3-none-any.whl", hash = "sha256:0314e2f172b050e98489955f2e9001263de79c3dd751e6feee19f2195fdf7c01", size = 141329, upload-time = "2025-04-09T15:07:13.295Z" },
+]
+
+[package.optional-dependencies]
+jwt = [
+    { name = "cryptography" },
+    { name = "pyjwt" },
+]
+
+[[package]]
 name = "bracex"
 version = "2.6"
 source = { registry = "https://pypi.org/simple" }
@@ -915,6 +937,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0f/d5/c66da9b79e5bdb124974bfe172b4daf3c984ebd9c2a06e2b8a4dc7331c72/defusedxml-0.7.1.tar.gz", hash = "sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69", size = 75520, upload-time = "2021-03-08T10:59:26.269Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl", hash = "sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61", size = 25604, upload-time = "2021-03-08T10:59:24.45Z" },
+]
+
+[[package]]
+name = "detect-secrets"
+version = "0.13.1+ibm.64.dss"
+source = { git = "https://github.com/ibm/detect-secrets.git?rev=076672a9a01abdfc7ecee2e7d14f08cdccb73976#076672a9a01abdfc7ecee2e7d14f08cdccb73976" }
+dependencies = [
+    { name = "binaryornot" },
+    { name = "boxsdk", extra = ["jwt"] },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "tabulate" },
+    { name = "urllib3" },
 ]
 
 [[package]]
@@ -2828,6 +2864,7 @@ dev = [
     { name = "coverage" },
     { name = "darglint" },
     { name = "debugpy" },
+    { name = "detect-secrets" },
     { name = "diff-cover" },
     { name = "dlint" },
     { name = "dodgy" },
@@ -2982,6 +3019,7 @@ dev = [
     { name = "coverage", specifier = ">=7.10.7" },
     { name = "darglint", specifier = ">=1.8.1" },
     { name = "debugpy", specifier = ">=1.8.20" },
+    { name = "detect-secrets", git = "https://github.com/ibm/detect-secrets.git?rev=076672a9a01abdfc7ecee2e7d14f08cdccb73976" },
     { name = "diff-cover", specifier = ">=9.0.0" },
     { name = "dlint", specifier = ">=0.16.0" },
     { name = "dodgy", specifier = ">=0.2.1" },

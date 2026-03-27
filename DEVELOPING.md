@@ -34,6 +34,9 @@ make autoflake isort black pre-commit
 make doctest test htmlcov flake8 pylint verify
 ```
 
+Note that if the pre-commit check fails on detect secrets you need to identify if any secrets are in the code and remove them if necessary.
+If these are fake secrets for testing, you can attest to the fact that they are not in-fact secrets by executing `make detect-secrets-scan` followed by `make detect-secrets-audit` which will bring you through the `detect-secrets` interface for acknowledging/rejecting secrets - you will need to commit the `.secrets.baseline file as part of your PR.
+
 ## Development Setup
 
 ### Prerequisites

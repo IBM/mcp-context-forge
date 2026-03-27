@@ -142,6 +142,9 @@ We believe that security should enhance rather than hinder the development proce
 - `make dodgy` - Detect hardcoded passwords, API keys, and secrets
 - `make devskim` - DevSkim security anti-pattern detection (Microsoft)
 - `make gitleaks` - Scan git history for accidentally committed secrets
+- `make detect-secrets-scan` - Scan git structure for accidentally committed secrets
+- `make detect-secrets-audit` - Manually attest to detected secrets being or not being actual secrets
+- `make detect-secrets-hook` - Locally execute the equivalent command that the pre-commit hook will run
 - `make dlint` - Python security best practices enforcement
 - `make interrogate` - Ensure comprehensive docstring coverage
 - `make prospector` - Comprehensive code analysis combining multiple tools

@@ -24,13 +24,6 @@ repos:
   # -----------------------------------------------------------------------------
   # 🔐 Security and Secret Detection Hooks
   # -----------------------------------------------------------------------------
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.0
-    hooks:
-      - id: gitleaks
-        name: 🔐 Gitleaks - Detect hardcoded secrets
-        description: Scans for hardcoded secrets like API keys and passwords.
-
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
@@ -45,13 +38,13 @@ repos:
         exclude: (mcpgateway/utils/generate_keys|tests/unit/mcpgateway/utils/test_generate_keys|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils)\.py|plugins_rust/secrets_detection/examples/heavy_workload\.rs|plugins_rust/secrets_detection/src/scanner\.rs|plugins_rust/secrets_detection/src/patterns\.rs
         types: [text]
 
-  #   - repo: https://github.com/Yelp/detect-secrets
-  #     rev: v1.5.0
-  #     hooks:
-  #       - id: detect-secrets
-  #         name: 🔐 Detect Secrets
-  #         description: Detects secrets within a repository.
-  #         args: ['--baseline', '.secrets.baseline']
+  - repo: https://github.com/ibm/detect-secrets
+    rev: 076672a9a01abdfc7ecee2e7d14f08cdccb73976 # "0.13.1+ibm.64.dss"
+    hooks:
+      - id: detect-secrets
+        name: 🔐 IBM Detect Secrets
+        description: Detects secrets within a repository using IBM's detect-secrets.
+        args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
 
   # -----------------------------------------------------------------------------
   # ❌ Forbid Specific AI / LLM Patterns
