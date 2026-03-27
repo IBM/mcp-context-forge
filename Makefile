@@ -3294,7 +3294,7 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.25.7
+LINT_GO_TOOLCHAIN ?= go1.25.8
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -8075,6 +8075,7 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-test-integration                 - Run Rust integration tests
 # help: rust-test-all                         - Run all Rust and Python integration tests
 # help: rust-bench                            - Run Rust plugin benchmarks
+# help: rust-bench-build                      - Compile Rust plugin benchmarks without running them
 # help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
 # help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
 # help: rust-check                            - Run all Rust checks (format, lint, test)
@@ -8093,7 +8094,7 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-mcp-runtime-test                 - Run tests for the experimental Rust MCP runtime
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 
-.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
+.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-build rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
@@ -8143,6 +8144,9 @@ rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
 
 rust-bench: rust-ensure-deps            ## Run Rust benchmarks
 	@$(MAKE) -C plugins_rust bench
+
+rust-bench-build: rust-ensure-deps      ## Compile Rust plugin benchmarks without running them
+	@$(MAKE) -C plugins_rust bench-build
 
 rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
 	@$(MAKE) -C plugins_rust bench-compare

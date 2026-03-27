@@ -1,7 +1,7 @@
 # Makefile for Rust Plugins
 # Automatically discovers and installs all plugins (subdirectories with Cargo.toml)
 
-.PHONY: install clean list help build test fmt clippy doc test-python test-verbose clean-all fmt-check doc-open bench bench-compare compare check verify verify-stubs clean-stubs test-integration test-all uninstall deny
+.PHONY: install clean list help build test fmt clippy doc test-python test-verbose clean-all fmt-check doc-open bench bench-build bench-compare compare check verify verify-stubs clean-stubs test-integration test-all uninstall deny
 
 # Discover all plugin directories containing Cargo.toml
 PLUGIN_DIRS := $(shell find . -mindepth 1 -maxdepth 1 -type d -exec test -f {}/Cargo.toml \; -print | sed 's|^\./||' | sort)
@@ -127,6 +127,13 @@ bench:
 	@for plugin in $(PLUGIN_DIRS); do \
 		echo "Benchmarking: $$plugin"; \
 		(cd $$plugin && $(MAKE) bench) || exit 1; \
+	done
+
+bench-build:
+	@echo "Compiling benchmarks for all Rust plugins without running them..."
+	@for plugin in $(PLUGIN_DIRS); do \
+		echo "Compiling benchmark targets: $$plugin"; \
+		(cd $$plugin && cargo bench --no-run) || exit 1; \
 	done
 
 bench-compare:
