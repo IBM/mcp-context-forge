@@ -97,6 +97,11 @@ flowchart TB
     end
 
     subgraph "Plugin Ecosystem"
+        Static["Static Global Plugins"]
+        Dynamic["Dynamic tenant level plugins"]
+    end
+
+    subgraph "Native Plugins"
         Native["Native Plugins"]
         External["External MCP <br> Plugin Servers"]
     end
@@ -114,6 +119,8 @@ flowchart TB
     Executor --> External
     External --> AI
     External --> Security
+    Native --> Static
+    Native --> Dynamic
 
     style Gateway fill:#e3f2fd
     style PM fill:#fff3e0
@@ -135,6 +142,8 @@ The framework supports two distinct plugin deployment patterns:
 - Execute within the main application process
 - Written in Python and extend the base `Plugin` class
 - Fastest execution with shared memory access
+- Can be Static running at Global level based on the `config` file
+- Can be Dynamic executing at tenant level based on the configs in the `db`
 - Examples: regex filters, simple transforms, validation
 
 #### **External Plugins** (Remote MCP Servers)
