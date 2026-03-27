@@ -552,8 +552,17 @@ async def set_global_passthrough_headers(db: Session) -> None:
 _LOOPBACK_SKIP_HEADERS: frozenset[str] = frozenset(
     {
         "authorization",
+        "connection",
         "content-type",
+        "content-length",
+        "host",
+        "keep-alive",
         "mcp-session-id",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
         "x-mcp-session-id",
         "x-forwarded-internally",
     }

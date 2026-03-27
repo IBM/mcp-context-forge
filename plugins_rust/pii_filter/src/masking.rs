@@ -24,11 +24,13 @@ pub fn mask_pii<'a>(
     text: &'a str,
     detections: &HashMap<PIIType, Vec<Detection>>,
     config: &PIIConfig,
-) -> Cow<'a, str> {
+) -> Result<Cow<'a, str>, String> {
     if detections.is_empty() {
         // Zero-copy optimization when no masking needed
-        return Cow::Borrowed(text);
+        return Ok(Cow::Borrowed(text));
     }
+
+    validate_detection_ranges(text, detections)?;
 
     // Collect all detections with their positions
     let mut all_detections: Vec<(&Detection, PIIType)> = Vec::new();
@@ -50,7 +52,58 @@ pub fn mask_pii<'a>(
         result.replace_range(detection.start..detection.end, &masked_value);
     }
 
-    Cow::Owned(result)
+    Ok(Cow::Owned(result))
+}
+
+fn validate_detection_ranges(
+    text: &str,
+    detections: &HashMap<PIIType, Vec<Detection>>,
+) -> Result<(), String> {
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+
+    for items in detections.values() {
+        for detection in items {
+            if detection.start > detection.end {
+                return Err(format!(
+                    "Invalid detection range: start {} is after end {}",
+                    detection.start, detection.end
+                ));
+            }
+
+            if detection.end > text.len() {
+                return Err(format!(
+                    "Invalid detection range: end {} exceeds text length {}",
+                    detection.end,
+                    text.len()
+                ));
+            }
+
+            if !text.is_char_boundary(detection.start) || !text.is_char_boundary(detection.end) {
+                return Err(format!(
+                    "Invalid detection range: offsets {}..{} must align to UTF-8 boundaries (text len: {})",
+                    detection.start,
+                    detection.end,
+                    text.len()
+                ));
+            }
+
+            ranges.push((detection.start, detection.end));
+        }
+    }
+
+    ranges.sort_unstable();
+    for window in ranges.windows(2) {
+        if let [(prev_start, prev_end), (next_start, _)] = window
+            && next_start < prev_end
+        {
+            return Err(format!(
+                "Overlapping detection ranges are not supported: {}..{} overlaps a later span",
+                prev_start, prev_end
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 /// Apply specific masking strategy to a value
@@ -142,15 +195,17 @@ fn partial_mask(value: &str, pii_type: PIIType) -> String {
 
         _ => {
             // Generic partial masking: first + last char
-            if value.len() > 2 {
+            let chars: Vec<char> = value.chars().collect();
+
+            if chars.len() > 2 {
                 format!(
                     "{}{}{}",
-                    &value[..1],
-                    "*".repeat(value.len() - 2),
-                    &value[value.len() - 1..]
+                    chars[0],
+                    "*".repeat(chars.len() - 2),
+                    chars[chars.len() - 1]
                 )
-            } else if value.len() == 2 {
-                format!("{}*", &value[..1])
+            } else if chars.len() == 2 {
+                format!("{}*", chars[0])
             } else {
                 "*".to_string()
             }
@@ -163,7 +218,7 @@ fn hash_mask(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
     let result = hasher.finalize();
-    format!("[HASH:{}]", &format!("{:x}", result)[..8])
+    format!("[HASH:{}]", &format!("{:x}", result)[..16])
 }
 
 /// Tokenize using UUID v4
@@ -200,7 +255,7 @@ mod tests {
         let result = hash_mask("sensitive");
         assert!(result.starts_with("[HASH:"));
         assert!(result.ends_with("]"));
-        assert_eq!(result.len(), 15); // [HASH:xxxxxxxx]
+        assert_eq!(result.len(), 23); // [HASH:xxxxxxxxxxxxxxxx]
     }
 
     #[test]
@@ -216,7 +271,83 @@ mod tests {
         let detections = HashMap::new();
         let text = "No PII here";
 
-        let result = mask_pii(text, &detections, &config);
+        let result = mask_pii(text, &detections, &config).unwrap();
         assert_eq!(result, text); // Zero-copy
+    }
+
+    #[test]
+    fn test_partial_mask_custom_unicode_does_not_panic() {
+        let config = PIIConfig {
+            default_mask_strategy: MaskingStrategy::Partial,
+            ..Default::default()
+        };
+        let text = "Contact José at jose@example.com and Jose Alvarez tomorrow";
+        let unicode_value = "José";
+        let start = text.find(unicode_value).unwrap();
+        let end = start + unicode_value.len();
+
+        let mut detections = HashMap::new();
+        detections.insert(
+            PIIType::Custom,
+            vec![Detection {
+                value: unicode_value.to_string(),
+                start,
+                end,
+                mask_strategy: MaskingStrategy::Partial,
+            }],
+        );
+
+        let result = mask_pii(text, &detections, &config).unwrap();
+        assert_eq!(
+            result,
+            "Contact J**é at jose@example.com and Jose Alvarez tomorrow"
+        );
+    }
+
+    #[test]
+    fn test_mask_pii_rejects_overlapping_ranges() {
+        let config = PIIConfig::default();
+        let text = "abcdef";
+        let mut detections = HashMap::new();
+        detections.insert(
+            PIIType::Custom,
+            vec![
+                Detection {
+                    value: "abc".to_string(),
+                    start: 0,
+                    end: 3,
+                    mask_strategy: MaskingStrategy::Redact,
+                },
+                Detection {
+                    value: "bcd".to_string(),
+                    start: 1,
+                    end: 4,
+                    mask_strategy: MaskingStrategy::Redact,
+                },
+            ],
+        );
+
+        let err = mask_pii(text, &detections, &config).unwrap_err();
+        assert!(err.contains("Overlapping detection ranges"));
+    }
+
+    #[test]
+    fn test_mask_pii_reports_utf8_boundary_offsets() {
+        let config = PIIConfig::default();
+        let text = "Joé";
+        let mut detections = HashMap::new();
+        detections.insert(
+            PIIType::Custom,
+            vec![Detection {
+                value: "o".to_string(),
+                start: 3,
+                end: 3,
+                mask_strategy: MaskingStrategy::Redact,
+            }],
+        );
+
+        let err = mask_pii(text, &detections, &config).unwrap_err();
+        assert!(err.contains("offsets 3..3"));
+        assert!(err.contains(&format!("text len: {}", text.len())));
     }
 }
