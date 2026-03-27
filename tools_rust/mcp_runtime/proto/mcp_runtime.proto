@@ -1,0 +1,142 @@
+// Location: tools_rust/mcp_runtime/proto/mcp_runtime.proto
+// SPDX-License-Identifier: Apache-2.0
+//
+// Internal IPC contract between the Python core and the Rust MCP runtime sidecar.
+//
+// This replaces the current HTTP/JSON proxy (rust_mcp_runtime_proxy.py) with a
+// gRPC-over-UDS transport as described in ADR-044.
+//
+// Design constraints:
+//   - Python core remains the auth authority; auth context is forwarded as an
+//     opaque encoded string (base64url JSON), not re-validated here.
+//   - Rust sidecar remains stateless with respect to auth; it binds the forwarded
+//     context to the runtime session on first initialize.
+//   - Streaming responses (SSE / live-stream GET) use server-side streaming RPC.
+//   - Unary RPC covers POST (tools/call, initialize, etc.) and DELETE (session close).
+
+syntax = "proto3";
+
+package contextforge.mcp.runtime.v1;
+
+option java_package = "com.contextforge.mcp.runtime.v1";
+option java_outer_classname = "McpRuntimeProto";
+
+// ---------------------------------------------------------------------------
+// Service definition
+// ---------------------------------------------------------------------------
+
+service McpRuntime {
+    // Unary: POST /mcp — initialize, tools/call, tools/list, resources/*, prompts/*
+    rpc Invoke(McpRequest) returns (McpResponse);
+
+    // Server-streaming: GET /mcp — SSE / live-stream / resume
+    rpc InvokeStream(McpRequest) returns (stream McpChunk);
+
+    // Unary: DELETE /mcp — session close
+    rpc CloseSession(McpRequest) returns (McpResponse);
+
+    // Unary: health probe — used by Python entrypoint readiness check
+    rpc HealthCheck(HealthRequest) returns (HealthResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Shared auth/routing context forwarded from Python core on every request
+// ---------------------------------------------------------------------------
+
+message McpAuthContext {
+    // Base64url-encoded JSON auth context produced by Python after JWT/RBAC
+    // validation. Rust treats this as opaque and binds it to the session.
+    string encoded = 1;
+
+    // Wall-clock expiry (Unix ms). Rust uses this to enforce the session-auth
+    // reuse TTL without calling back to Python on every request.
+    uint64 expires_at_epoch_ms = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Request
+// ---------------------------------------------------------------------------
+
+message McpRequest {
+    // HTTP method: GET, POST, DELETE
+    string method = 1;
+
+    // Request path relative to the sidecar root, e.g. "/mcp/"
+    string path = 2;
+
+    // URL query string (without leading "?"), e.g. "session_id=abc"
+    string query = 3;
+
+    // Raw JSON-RPC request body (POST only; empty for GET and DELETE)
+    bytes body = 4;
+
+    // Forwarded HTTP headers safe to pass to the sidecar.
+    // Hop-by-hop, forwarding chain, and internal-only headers are stripped
+    // by the Python proxy before populating this map.
+    map<string, string> headers = 5;
+
+    // Server scope derived from the URL path /servers/<id>/mcp by Python.
+    // Rust uses this for server-scoped dispatch and session affinity.
+    // Empty string means the request is not server-scoped.
+    string server_id = 6;
+
+    // Auth context forwarded from Python after JWT/RBAC validation.
+    // Absent on the first initialize (Rust will call back to Python auth).
+    McpAuthContext auth_context = 7;
+
+    // Set to true when this request was forwarded by another Rust worker for
+    // affinity routing (corresponds to x-contextforge-affinity-forwarded).
+    bool affinity_forwarded = 8;
+
+    // MCP session ID extracted from the Mcp-Session-Id header (if present).
+    string session_id = 9;
+}
+
+// ---------------------------------------------------------------------------
+// Unary response
+// ---------------------------------------------------------------------------
+
+message McpResponse {
+    // HTTP status code (200, 400, 502, etc.)
+    int32 status = 1;
+
+    // Response headers to forward back to the client.
+    // Hop-by-hop headers are excluded.
+    map<string, string> headers = 2;
+
+    // Full response body (for non-streaming responses)
+    bytes body = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Streaming chunk (server-side streaming RPC only)
+// ---------------------------------------------------------------------------
+
+message McpChunk {
+    // Raw SSE / NDJSON chunk bytes
+    bytes data = 1;
+
+    // True on the final chunk; client should close the stream after receiving.
+    bool done = 2;
+
+    // Non-zero only on the terminal chunk when the sidecar encountered an
+    // error during streaming. Mirrors HTTP status semantics.
+    int32 error_status = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Health probe
+// ---------------------------------------------------------------------------
+
+message HealthRequest {}
+
+message HealthResponse {
+    // "ok" when the sidecar is ready to serve traffic
+    string status = 1;
+
+    // RUST_MCP_MODE value active in the sidecar (edge, full, shadow, off)
+    string mode = 2;
+
+    // Sidecar build version string
+    string version = 3;
+}
