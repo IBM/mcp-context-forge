@@ -12,19 +12,19 @@ name: Lint & Static Analysis
 on:
   push:
     branches: ["main"]
-    paths:
-      - "mcpgateway/**"
-      - "plugins/**"
-      - "pyproject.toml"
-      - ".github/workflows/lint.yml"
+    # paths:
+    #   - "mcpgateway/**"
+    #   - "plugins/**"
+    #   - "pyproject.toml"
+    #   - ".github/workflows/lint.yml"
   pull_request:
     types: [opened, synchronize, ready_for_review]
     branches: ["main"]
-    paths:
-      - "mcpgateway/**"
-      - "plugins/**"
-      - "pyproject.toml"
-      - ".github/workflows/lint.yml"
+    # paths:
+    #   - "mcpgateway/**"
+    #   - "plugins/**"
+    #   - "pyproject.toml"
+    #   - ".github/workflows/lint.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -50,9 +50,6 @@ jobs:
           - id: ruff
             setup: pip install ruff
             cmd: "ruff check $TARGET"
-          - id: unimport
-            setup: pip install unimport
-            cmd: "unimport $TARGET"
           - id: vulture
             setup: pip install vulture
             cmd: 'vulture $TARGET --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"'

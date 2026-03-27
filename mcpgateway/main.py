@@ -5319,6 +5319,7 @@ async def list_resources(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5334,6 +5335,7 @@ async def list_resources(
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
+        gateway_id (Optional[str]): Filter by gateway ID. Use 'null' for resources without a gateway.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -5372,7 +5374,7 @@ async def list_resources(
     # Use unified list_resources() with token-based team filtering
     # Always apply visibility filtering based on token scope
     logger.debug(
-        f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+        f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}, gateway_id={gateway_id}"
     )
     data, next_cursor = await resource_service.list_resources(
         db=db,
@@ -5380,6 +5382,7 @@ async def list_resources(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
+        gateway_id=gateway_id,
         user_email=user_email,
         team_id=team_id,
         visibility=visibility,
@@ -5823,6 +5826,7 @@ async def list_prompts(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5838,6 +5842,7 @@ async def list_prompts(
         tags: Comma-separated list of tags to filter by.
         team_id: Filter by specific team ID.
         visibility: Filter by visibility (private, team, public).
+        gateway_id: Filter by gateway ID. Use 'null' for prompts without a gateway.
         db: Database session.
         user: Authenticated user.
 
@@ -5876,7 +5881,7 @@ async def list_prompts(
     # Use consolidated prompt listing with token-based team filtering
     # Always apply visibility filtering based on token scope
     logger.debug(
-        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}, gateway_id={gateway_id}"
     )
     data, next_cursor = await prompt_service.list_prompts(
         db=db,
@@ -5884,6 +5889,7 @@ async def list_prompts(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
+        gateway_id=gateway_id,
         user_email=user_email,
         team_id=team_id,
         visibility=visibility,
