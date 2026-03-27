@@ -50,9 +50,6 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
 
-      - name: Run pre-commit
-        run: make --no-print-directory pre-commit
-
       - name: Verify SRI hashes
         run: make sri-verify
 

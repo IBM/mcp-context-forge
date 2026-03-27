@@ -8,4 +8,3 @@ __all__ = [
 ]
 
 def py_scan_container(container: typing.Any, config: typing.Any) -> tuple[builtins.int, typing.Any, list]: ...
-
