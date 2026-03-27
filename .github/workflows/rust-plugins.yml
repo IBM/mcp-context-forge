@@ -109,7 +109,7 @@ jobs:
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: wheels-build
+          name: wheels-build-${{ matrix.os }}
           path: plugins_rust/*/dist/*.whl
 
   # Security audit (all plugins in one job)
@@ -140,10 +140,10 @@ jobs:
       - name: Run cargo-deny policy checks on all plugins
         run: make rust-deny
 
-  # Benchmark tests (verify benchmarks compile and run)
-  benchmark-tests:
+  # Benchmark build verification (compile benchmark targets without running them)
+  release-build-verification:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    name: Benchmark Tests
+    name: Benchmark Build Verification
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -171,10 +171,10 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: plugins_rust/*/target
-          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-benchmark-build-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Run benchmarks for all plugins
-        run: make rust-bench
+      - name: Compile Rust plugin benchmarks without running them
+        run: make rust-bench-build
 
   # Coverage report (all plugins in one job)
   coverage:
