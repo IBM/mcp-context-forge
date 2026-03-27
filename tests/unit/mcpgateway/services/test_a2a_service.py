@@ -3185,8 +3185,8 @@ class TestSetAgentStateToolCascade:
         assert mock_db.execute.call_count == 2
         dummy_cache.invalidate_tools.assert_not_awaited()
 
-    async def test_cascade_tool_update_failure_logs_warning(self, service, mock_db, monkeypatch):
-        """Tool cascade failure is caught and logged, agent state change is preserved."""
+    async def test_cascade_tool_update_failure_propagates(self, service, mock_db, monkeypatch):
+        """Tool cascade failure propagates to caller (matches gateway_service pattern)."""
         agent = SimpleNamespace(id="a1", enabled=True, name="ag", reachable=True, tool_id="t1", tool=SimpleNamespace(name="my-tool"))
 
         # First call returns agent, second call (tool UPDATE) raises
@@ -3213,14 +3213,5 @@ class TestSetAgentStateToolCascade:
         )
         monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: dummy_cache)
 
-        with patch("mcpgateway.services.a2a_service.logger") as mock_logger:
-            result = await service.set_agent_state(mock_db, "a1", activate=False)
-
-        # Agent state was committed successfully before cascade
-        assert agent.enabled is False
-        assert result is not None
-        # Tool cache was NOT invalidated since cascade failed
-        dummy_cache.invalidate_tools.assert_not_awaited()
-        # Warning was logged
-        mock_logger.warning.assert_called_once()
-        assert "Failed to cascade tool state" in mock_logger.warning.call_args[0][0]
+        with pytest.raises(RuntimeError, match="DB write failed"):
+            await service.set_agent_state(mock_db, "a1", activate=False)
