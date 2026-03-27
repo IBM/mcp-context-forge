@@ -2828,18 +2828,24 @@ class MCPPathRewriteMiddleware:
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not original_path.startswith("/.well-known/"):
             if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
-                # SECURITY: If the path looks server-scoped, validate that a
-                # server_id segment is present and non-empty before rewriting.
-                # Without this check, paths like /servers/xyz/mcp (non-hex ID)
-                # or /servers//mcp (empty ID) would be rewritten to /mcp/ and
-                # silently fall through to unscoped global behaviour (#3891).
-                if "/servers/" in original_path:
-                    # Extract the segment between /servers/ and /mcp
-                    _srv_match = re.search(r"/servers/([^/]+)/mcp", original_path)
+                # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
+                # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
+                # /mcp/ as that would expose the global MCP transport under
+                # undocumented aliases, broadening the externally reachable
+                # route surface.
+                if original_path.startswith("/servers/"):
+                    # Validate that a non-empty server_id segment is present.
+                    # Without this check, paths like /servers//mcp (empty ID)
+                    # would be rewritten and silently fall through (#3891).
+                    _srv_match = re.match(r"/servers/([^/]+)/mcp", original_path)
                     if not _srv_match:
                         response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
                         await response(scope, receive, send)
                         return
+                else:
+                    # Not a /servers/ path — do not rewrite, pass through
+                    await self.application(scope, receive, send)
+                    return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 scope["path"] = "/mcp/"
                 await self.application(scope, receive, send)

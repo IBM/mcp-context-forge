@@ -6239,6 +6239,7 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6296,6 +6297,7 @@ async def test_forwarded_post_injects_server_id_with_existing_params(monkeypatch
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6360,6 +6362,7 @@ async def test_forwarded_post_injects_server_id_with_non_dict_params(monkeypatch
             raise AssertionError("Should not fall through to SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6506,6 +6509,7 @@ async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6548,6 +6552,7 @@ async def test_local_affinity_post_injects_server_id_regression(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6620,6 +6625,7 @@ async def test_local_affinity_post_injects_server_id_with_non_dict_params(monkey
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -9844,6 +9850,7 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -10477,6 +10484,7 @@ async def test_local_affinity_post_injects_server_id_when_params_missing(monkeyp
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
