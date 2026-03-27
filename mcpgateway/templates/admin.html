@@ -14646,14 +14646,13 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     id="team-max-members"
                     min="1"
                     {% if not is_admin %}max="{{ max_members_per_team }}"{% endif %}
-                    value="{{ [50, max_members_per_team] | min }}"
                     class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   />
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     {% if is_admin %}
-                    Optional. Admins can set any limit.
+                    Optional. Leave empty to use global default ({{ max_members_per_team }}). Admins can set any limit.
                     {% else %}
-                    Optional, defaults to {{ [50, max_members_per_team] | min }}.
+                    Optional. Leave empty to use global default ({{ max_members_per_team }}).
                     {% endif %}
                   </p>
                 </div>
@@ -15018,6 +15017,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function editTeamSafe(button) {
         const teamId = button.getAttribute('data-team-id');
+        // Clear stale modal content before fetching fresh data to prevent
+        // race conditions with the delayed closeTeamEditModal timer.
+        var mc = document.getElementById('team-edit-modal-content');
+        if (mc) mc.innerHTML = '';
         // Load edit modal content via HTMX
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/edit', {
           target: '#team-edit-modal-content',
@@ -15033,7 +15036,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       }
 
       function loadTeamMembersView(teamId) {
-        // Load team members management modal
+        var mc = document.getElementById('team-edit-modal-content');
+        if (mc) mc.innerHTML = '';
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
@@ -15043,7 +15047,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       }
 
       function loadAddMembersView(teamId) {
-        // Load add members interface
+        var mc = document.getElementById('team-edit-modal-content');
+        if (mc) mc.innerHTML = '';
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'

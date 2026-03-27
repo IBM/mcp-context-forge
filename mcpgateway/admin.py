@@ -145,7 +145,7 @@ from mcpgateway.services.root_service import RootService, RootServiceError, Root
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
@@ -3980,7 +3980,7 @@ async def admin_ui(
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
-            "max_members_per_team": getattr(settings, "max_members_per_team", 100),
+            "max_members_per_team": settings.max_members_per_team,
         },
     )
 
@@ -5576,6 +5576,26 @@ async def admin_list_teams(
         return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading teams: {html.escape(str(e))}</p></div>', status_code=200)
 
 
+def _parse_form_max_members(raw: object) -> Optional[int]:
+    """Parse and validate a max_members value from a form field.
+
+    Args:
+        raw: The raw form value (typically a string or None).
+
+    Returns:
+        The parsed integer, or ``None`` when the field is blank or non-numeric.
+
+    Raises:
+        ValueError: When the parsed integer is less than 1.
+    """
+    if raw and str(raw).strip().isdigit():
+        parsed = int(str(raw).strip())
+        if parsed < 1:
+            raise ValueError("Maximum members must be at least 1")
+        return parsed
+    return None
+
+
 @admin_router.post("/teams")
 @require_permission("teams.create", allow_admin_bypass=False)
 async def admin_create_team(
@@ -5610,10 +5630,7 @@ async def admin_create_team(
         slug = form.get("slug") or None
         description = form.get("description") or None
         visibility = form.get("visibility", "private")
-        max_members_val = form.get("max_members")
-        max_members: Optional[int] = None
-        if max_members_val and str(max_members_val).strip().isdigit():
-            max_members = int(str(max_members_val).strip()) or None
+        max_members = _parse_form_max_members(form.get("max_members"))
 
         if not name:
             response = HTMLResponse(
@@ -5657,6 +5674,12 @@ async def admin_create_team(
             status_code=400,
         )
         return response
+    except ValueError as e:
+        LOGGER.warning(f"Validation error creating team: {e}")
+        return HTMLResponse(
+            content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">{html.escape(str(e))}</div>',
+            status_code=400,
+        )
     except IntegrityError as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
         if "UNIQUE constraint failed: email_teams.slug" in str(e):
@@ -6011,21 +6034,27 @@ async def admin_get_team_edit(
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
         is_admin_edit = isinstance(_user, dict) and _user.get("is_admin")
-        max_members_limit = getattr(settings, "max_members_per_team", 100)
-        current_exceeds_limit = bool(team.max_members and team.max_members > max_members_limit)
+        max_members_limit = settings.max_members_per_team
+        current_exceeds_limit = bool(team.max_members is not None and team.max_members > max_members_limit)
         max_attr = "" if is_admin_edit else f'max="{max_members_limit}"'
+        use_default_checked = "checked" if team.max_members is None else ""
+        max_members_disabled = "disabled" if team.max_members is None else ""
         # When the existing value exceeds the configured limit for a non-admin,
         # show an empty field to avoid browser validation blocking form submission.
         # Submitting empty preserves the current value server-side.
-        if is_admin_edit:
-            max_members_value = team.max_members if team.max_members else ""
-            max_members_hint = "Admins can set any limit. Leave empty to keep current value."
+        max_members_value: Union[str, int] = ""
+        if team.max_members is None:
+            max_members_value = ""
+            max_members_hint = f"Currently using global default ({max_members_limit})."
+        elif is_admin_edit:
+            max_members_value = team.max_members
+            max_members_hint = "Admins can set any limit."
         elif current_exceeds_limit:
             max_members_value = ""
             max_members_hint = f"Current: {team.max_members} (above max {max_members_limit}). Leave empty to keep, or set a new value \u2264 {max_members_limit}."
         else:
-            max_members_value = team.max_members if team.max_members else ""
-            max_members_hint = f"Max {max_members_limit}. Leave empty to keep current value."
+            max_members_value = team.max_members
+            max_members_hint = f"Max {max_members_limit}."
         edit_form = rf"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
@@ -6058,7 +6087,13 @@ async def admin_get_team_edit(
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Maximum Members</label>
-                    <input type="number" name="max_members" min="1" {max_attr} value="{max_members_value}"
+                    <div class="flex items-center mt-1 mb-2">
+                        <input type="checkbox" name="use_default_max_members" id="use-default-max-members" {use_default_checked}
+                               onchange="var mi = this.closest('div').parentElement.querySelector('input[name=max_members]'); mi.disabled = this.checked; if(this.checked) mi.value = '';"
+                               class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+                        <label for="use-default-max-members" class="ml-2 text-sm text-gray-700 dark:text-gray-300">Use global default ({max_members_limit})</label>
+                    </div>
+                    <input type="number" name="max_members" min="1" {max_attr} value="{max_members_value}" {max_members_disabled}
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{max_members_hint}</p>
                 </div>
@@ -6114,14 +6149,12 @@ async def admin_update_team(
         name_val = form.get("name")
         desc_val = form.get("description")
         vis_val = form.get("visibility", "private")
-        max_members_val = form.get("max_members")
+        use_default_max_members = form.get("use_default_max_members")
         # Trim before presence check for consistent error messages
         name = name_val.strip() if isinstance(name_val, str) else None
         description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
-        max_members: Optional[int] = None
-        if max_members_val and str(max_members_val).strip().isdigit():
-            max_members = int(str(max_members_val).strip()) or None
+        max_members = _parse_form_max_members(form.get("max_members"))
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -6174,7 +6207,19 @@ async def admin_update_team(
         # Update team
         user_email = getattr(user, "email", None) or str(user)
         is_admin = isinstance(user, dict) and user.get("is_admin")
-        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email, skip_limits=bool(is_admin))
+        # Three-way max_members resolution:
+        #   checkbox checked  → None  (clear per-team override, revert to global default)
+        #   number provided   → int   (set explicit per-team limit)
+        #   neither           → UNSET (leave current value unchanged)
+        if use_default_max_members:
+            max_members_kwarg = None
+        elif max_members is not None:
+            max_members_kwarg = max_members
+        else:
+            max_members_kwarg = UNSET
+        updated = await team_service.update_team(
+            team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members_kwarg, updated_by=user_email, skip_limits=bool(is_admin)
+        )
 
         if not updated:
             is_htmx = request.headers.get("HX-Request") == "true"

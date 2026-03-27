@@ -10,6 +10,21 @@
 
 ### ⚠️ Breaking Changes
 
+#### **👥 `MAX_MEMBERS_PER_TEAM` No Longer Baked Into Team Rows** ([#3682](https://github.com/IBM/mcp-context-forge/pull/3682), [#3588](https://github.com/IBM/mcp-context-forge/issues/3588))
+
+**Action Required**: New teams now store `NULL` for `max_members` and resolve the limit at check time from the `MAX_MEMBERS_PER_TEAM` environment variable. Existing teams created before this change still have the old default baked into the DB and will **not** automatically pick up env var changes.
+
+To apply the new behavior to existing teams, set each team's `max_members` to `null` via the API:
+
+```bash
+curl -X PUT "http://localhost:8080/teams/<team_id>" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"max_members": null}'
+```
+
+Teams with an explicit non-null `max_members` value will continue to use that value, ignoring the global setting.
+
 #### **🗄️ MySQL/MariaDB/MongoDB Support Removed** ([#3684](https://github.com/IBM/mcp-context-forge/pull/3684), [#1688](https://github.com/IBM/mcp-context-forge/issues/1688))
 
 **Action Required**: MySQL, MariaDB, and MongoDB database backends are no longer supported.

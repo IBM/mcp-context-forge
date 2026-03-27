@@ -1126,7 +1126,7 @@ sequenceDiagram
 AUTO_CREATE_PERSONAL_TEAMS=true
 # PERSONAL_TEAM_PREFIX=personal  # optional: set to get collision-safe email-based slugs
 MAX_TEAMS_PER_USER=50
-MAX_MEMBERS_PER_TEAM=100        # platform admins are exempt from this cap
+MAX_MEMBERS_PER_TEAM=100        # default limit resolved at check time; platform admins are exempt
 
 # Team Invitation Settings
 INVITATION_EXPIRY_DAYS=7

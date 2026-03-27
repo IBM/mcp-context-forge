@@ -1311,7 +1311,7 @@
     },
     "max_members_per_team": {
       "default": 100,
-      "description": "Maximum number of members per team",
+      "description": "Default maximum members per team, resolved at check time. Teams without an explicit per-team override use this value.",
       "title": "Max Members Per Team",
       "type": "integer"
     },

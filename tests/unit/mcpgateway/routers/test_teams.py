@@ -1135,9 +1135,11 @@ class TestTeamsRouter:
         """Non-admin users cannot set max_members above the configured limit."""
         request = TeamCreateRequest(name="Test Team", description="desc", visibility="private", max_members=9999)
 
-        with patch("mcpgateway.routers.teams.settings") as mock_settings:
+        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_settings.allow_team_creation = True
-            mock_settings.max_members_per_team = 100
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
+            MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import create_team
 
@@ -1145,7 +1147,7 @@ class TestTeamsRouter:
                 await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "max_members cannot exceed 100" in str(exc_info.value.detail)
+            assert "max_members cannot exceed" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_create_team_non_admin_max_members_at_limit(self, mock_user_context, mock_team, mock_db):
@@ -1192,6 +1194,7 @@ class TestTeamsRouter:
             mock_settings.max_members_per_team = 100
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.update_team = AsyncMock(side_effect=ValueError("max_members cannot exceed the configured limit of 100"))
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import update_team
@@ -1200,7 +1203,7 @@ class TestTeamsRouter:
                 await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-            assert "max_members cannot exceed 100" in str(exc_info.value.detail)
+            assert "max_members cannot exceed" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_update_team_non_admin_max_members_at_limit(self, mock_user_context, mock_team, mock_db):
