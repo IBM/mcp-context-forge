@@ -175,8 +175,7 @@ class LogAggregator:
 
             # If PostgreSQL is available, use a single SQL rollup with generate_series and ordered-set aggregates
             if _is_postgresql():
-                sql = text(
-                    """
+                sql = text("""
                     WITH windows AS (
                       SELECT generate_series(:full_start::timestamptz, (:full_end - (:window_minutes || ' minutes')::interval)::timestamptz, (:window_minutes || ' minutes')::interval) AS window_start
                     ), pairs AS (
@@ -207,8 +206,7 @@ class LogAggregator:
                     GROUP BY w.window_start, p.component, p.operation_type
                     HAVING COUNT(sle.duration_ms) > 0
                     ORDER BY w.window_start, p.component, p.operation_type
-                    """
-                )
+                    """)
 
                 rows = db.execute(
                     sql,
@@ -710,8 +708,7 @@ class LogAggregator:
 
         # PostgreSQL percentile_cont query using ordered-set aggregate functions
         # This computes all statistics in a single query
-        stats_sql = text(
-            """
+        stats_sql = text("""
             SELECT
                 COUNT(duration_ms) as cnt,
                 AVG(duration_ms) as avg_duration,
@@ -726,8 +723,7 @@ class LogAggregator:
               AND timestamp >= :window_start
               AND timestamp < :window_end
               AND duration_ms IS NOT NULL
-            """
-        )
+            """)
 
         result = db.execute(
             stats_sql,

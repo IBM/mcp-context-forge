@@ -14,6 +14,7 @@ local run lifecycle management; the gateway remains authoritative for
 cancellation and also broadcasts a `notifications/cancelled` JSON-RPC
 notification to connected sessions.
 """
+
 # Future
 from __future__ import annotations
 
