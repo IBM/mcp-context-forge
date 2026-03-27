@@ -128,7 +128,7 @@ ContextForge implements a **two-layer security model**:
 | `platform_admin` | global | `*` (all) |
 | `team_admin` | team | teams.*, tools.read/execute, resources.read |
 | `developer` | team | tools.read/execute, resources.read |
-| `viewer` | team | tools.read, resources.read (read-only) |
+| `viewer` | team | tools.read/execute, resources.read |
 
 ### Documentation
 

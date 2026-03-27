@@ -129,6 +129,7 @@ VIEWER_PERMISSIONS = sorted(
         "teams.read",
         "teams.join",
         "tools.read",
+        "tools.execute",
         "resources.read",
         "prompts.read",
         "llm.read",
@@ -466,8 +467,11 @@ class TestRoleDefinitionSync:
         team_admin_set = set(TEAM_ADMIN_PERMISSIONS)
         assert developer_set < team_admin_set, f"Developer should be strict subset of team_admin. Extra in dev: {developer_set - team_admin_set}"
 
-        # Verify platform_viewer permissions match viewer permissions
-        assert set(PLATFORM_VIEWER_PERMISSIONS) == viewer_set, "Platform viewer should have same permissions as viewer"
+        # Verify viewer has tools.execute but platform_viewer does not
+        platform_viewer_set = set(PLATFORM_VIEWER_PERMISSIONS)
+        assert "tools.execute" in viewer_set, "Viewer (team-scoped) should have tools.execute"
+        assert "tools.execute" not in platform_viewer_set, "Platform viewer (global) should NOT have tools.execute"
+        assert viewer_set - platform_viewer_set == {"tools.execute"}, f"Viewer should differ from platform_viewer only by tools.execute, got: {viewer_set - platform_viewer_set}"
 
     def test_bootstrap_roles_exist_in_db(self, matrix_db):
         """Verify all expected roles were created in the test DB."""

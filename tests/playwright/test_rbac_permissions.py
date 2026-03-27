@@ -1254,10 +1254,10 @@ class TestRPCToolExecutionRBAC:
             if tool_id:
                 admin_api.delete(f"/tools/{tool_id}")
 
-    def test_viewer_rpc_tools_call_denied(self, playwright: Playwright, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer (no tools.execute) must still be denied -32003 on /rpc tools/call (deny-path).
+    def test_viewer_rpc_tools_call_allowed(self, playwright: Playwright, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer (team-scoped) has tools.execute and can invoke tools via /rpc tools/call.
 
-        Ensures the fix doesn't inadvertently grant execute to roles that should not have it.
+        Team-scoped viewer should be able to execute tools within their team scope.
         """
         team_id = rbac_test_team["id"]
         tool_name = f"{RBAC_TEST_PREFIX}-rpc-viewer-{uuid.uuid4().hex[:8]}"
@@ -1269,7 +1269,7 @@ class TestRPCToolExecutionRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "RPC RBAC deny-path test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}},
+                    "tool": {"name": tool_name, "description": "RPC RBAC viewer execute test tool", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}},
                     "team_id": team_id,
                     "visibility": "team",
                 }
@@ -1292,8 +1292,8 @@ class TestRPCToolExecutionRBAC:
                 )
                 body = rpc_resp.json()
                 error_code = body.get("error", {}).get("code")
-                assert error_code == -32003, f"Viewer should be denied tools.execute with -32003 but got error_code={error_code}. " f"Full response: {body}"
-                logger.info("Viewer /rpc tools/call: HTTP %d, error_code=%s — correctly denied", rpc_resp.status, error_code)
+                assert error_code != -32003, f"Viewer should be allowed tools.execute but got access denied (-32003). " f"Full response: {body}"
+                logger.info("Viewer /rpc tools/call: HTTP %d — correctly allowed", rpc_resp.status)
             finally:
                 viewer_ctx.dispose()
         finally:
@@ -1408,10 +1408,10 @@ class TestSessionTokenCookieRBAC:
             if tool_id:
                 admin_api.delete(f"/tools/{tool_id}")
 
-    def test_viewer_cookie_rpc_tools_call_denied(self, page: Page, base_url: str, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer cookie session must be denied -32003 on /rpc tools/call (deny-path)."""
+    def test_viewer_cookie_rpc_tools_call_allowed(self, page: Page, base_url: str, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer cookie session has team-scoped tools.execute and must NOT get -32003 on /rpc tools/call."""
         team_id = rbac_test_team["id"]
-        tool_name = f"{RBAC_TEST_PREFIX}-cookie-deny-{uuid.uuid4().hex[:8]}"
+        tool_name = f"{RBAC_TEST_PREFIX}-cookie-viewer-exec-{uuid.uuid4().hex[:8]}"
 
         # Standard
         import json as _json  # noqa: PLC0415
@@ -1420,7 +1420,7 @@ class TestSessionTokenCookieRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Cookie deny test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}},
+                    "tool": {"name": tool_name, "description": "Cookie viewer execute test", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}},
                     "team_id": team_id,
                     "visibility": "team",
                 }
@@ -1446,8 +1446,8 @@ class TestSessionTokenCookieRBAC:
                 tool_name,
             )
             error_code = result["body"].get("error", {}).get("code")
-            assert error_code == -32003, f"Viewer cookie session should get -32003 but got error_code={error_code}. " f"Response: {result['body']}"
-            logger.info("Viewer cookie /rpc tools/call: error_code=%s — correctly denied", error_code)
+            assert error_code != -32003, f"Viewer cookie session should NOT get -32003 (access denied) but did. " f"Response: {result['body']}"
+            logger.info("Viewer cookie /rpc tools/call: error_code=%s — correctly allowed (not -32003)", error_code)
         finally:
             if tool_id:
                 admin_api.delete(f"/tools/{tool_id}")
