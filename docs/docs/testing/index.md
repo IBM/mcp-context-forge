@@ -201,7 +201,7 @@ Manual concurrency tests validate data consistency under concurrent access. Thes
 
 # Generate token and run
 export CONC_TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 120 --secret my-test-key)"
+  --username admin@example.com --exp 120 --secret my-test-key-but-now-longer-than-32-bytes)"
 make conc-02-gateways
 
 # Custom parameters

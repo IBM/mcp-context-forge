@@ -782,7 +782,7 @@ mcpContextForge:
     API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     MCP_REQUIRE_AUTH: "true"               # require auth for /mcp endpoints (recommended secure default)
-    JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
+    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
@@ -1771,7 +1771,7 @@ testing:
     jwt:
       username: admin@example.com
       expirationMinutes: 10080
-      secret: my-test-key
+      secret: my-test-key-but-now-longer-than-32-bytes
 
   fastTime:
     register:

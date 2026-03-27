@@ -60,7 +60,7 @@ def generate_token(
     email: str,
     is_admin: bool,
     teams: Optional[List[str]] = "OMIT",
-    secret: str = "my-test-key"
+    secret: str = "my-test-key-but-now-longer-than-32-bytes"
 ) -> str:
     """Generate a JWT token with specified claims."""
     payload = {

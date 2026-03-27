@@ -142,7 +142,7 @@ BASIC_AUTH_USER = _get_config("BASIC_AUTH_USER", "admin")
 BASIC_AUTH_PASSWORD = _get_config("BASIC_AUTH_PASSWORD", "changeme")
 
 # JWT settings for auto-generation (if MCPGATEWAY_BEARER_TOKEN not set)
-JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 JWT_ALGORITHM = _get_config("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _get_config("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _get_config("JWT_ISSUER", "mcpgateway")

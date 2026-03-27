@@ -1911,7 +1911,7 @@
             "JWT_SECRET_KEY": {
               "type": "string",
               "description": "JWT secret key",
-              "default": "my-test-key"
+              "default": "my-test-key-but-now-longer-than-32-bytes"
             },
             "MAX_FAILED_LOGIN_ATTEMPTS": {
               "type": "string"

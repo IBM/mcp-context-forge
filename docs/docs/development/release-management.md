@@ -1073,7 +1073,7 @@ Create a token for API and client access:
 export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
-  --secret my-test-key)
+  --secret my-test-key-but-now-longer-than-32-bytes)
 ```
 
 Set the base URL (use `8080` for the nginx-proxied compose stack):

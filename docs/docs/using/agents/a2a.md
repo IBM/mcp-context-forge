@@ -258,7 +258,7 @@ The demo agent supports these query formats:
 ```bash
 # Get a token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 60 --secret my-test-key)
+  --username admin@example.com --exp 60 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Invoke the agent
 curl -X POST "http://localhost:8000/a2a/demo-calculator-agent/invoke" \
@@ -279,7 +279,7 @@ uv run python __main__.py  # Starts on port 9999
 
 # Register with ContextForge (in another terminal)
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 60 --secret my-test-key)
+  --username admin@example.com --exp 60 --secret my-test-key-but-now-longer-than-32-bytes)
 
 curl -X POST "http://localhost:8000/a2a" \
   -H "Authorization: Bearer $TOKEN" \

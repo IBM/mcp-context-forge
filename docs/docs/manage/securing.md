@@ -250,7 +250,7 @@ Server-scoped tokens are restricted to specific MCP servers and cannot access ad
 python3 -m mcpgateway.utils.create_jwt_token \
   --username user@example.com \
   --scopes '{"server_id": "my-specific-server"}' \
-  --secret my-test-key
+  --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 **Security Features:**
@@ -269,7 +269,7 @@ Tokens can be restricted to specific permission sets:
 python3 -m mcpgateway.utils.create_jwt_token \
   --username user@example.com \
   --scopes '{"permissions": ["tools.read", "resources.read"]}' \
-  --secret my-test-key
+  --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 **Canonical Permissions Used:**
