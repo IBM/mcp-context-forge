@@ -13,6 +13,7 @@ Endpoints:
 
 Security: endpoints require RBAC permission `admin.system_config` by default.
 """
+
 # Standard
 from typing import Optional
 

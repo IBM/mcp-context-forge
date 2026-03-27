@@ -175,7 +175,7 @@ Extracts system from the OAuth2 configuration's `token_url`:
 ## Testing
 
 ## Create a token
-export MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+export MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 
 export CLIENT_ID=xxx
 export CLIENT_SECRET=xxx

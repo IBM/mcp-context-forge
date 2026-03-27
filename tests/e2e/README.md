@@ -39,7 +39,7 @@ pytest tests/e2e/test_mcp_cli_protocol.py -v
 | Variable | Default | Description |
 |---|---|---|
 | `MCP_CLI_BASE_URL` | `http://localhost:8080` | Gateway URL (nginx proxy or direct) |
-| `JWT_SECRET_KEY` | `my-test-key` | JWT signing secret (must match gateway) |
+| `JWT_SECRET_KEY` | `my-test-key-but-now-longer-than-32-bytes` | JWT signing secret (must match gateway) |
 | `PLATFORM_ADMIN_EMAIL` | `admin@example.com` | Admin email for JWT token |
 | `MCP_CLI_TOKEN_EXPIRY` | `60` | JWT token lifetime in minutes |
 | `MCP_CLI_TIMEOUT` | `30` | Per-command timeout in seconds |

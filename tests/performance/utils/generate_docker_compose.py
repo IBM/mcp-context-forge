@@ -80,7 +80,7 @@ GATEWAY_SERVICE_TEMPLATE = """  gateway{instance_suffix}:
       - DB_POOL_MAX_OVERFLOW={db_pool_max_overflow}
       - DB_POOL_TIMEOUT={db_pool_timeout}
 {redis_pool}
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
       - MCPGATEWAY_ADMIN_API_ENABLED=true
       - MCPGATEWAY_UI_ENABLED=true
     ports:

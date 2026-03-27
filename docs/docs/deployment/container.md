@@ -12,7 +12,7 @@ If you just want to run the gateway using the official OCI container image from 
 docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-test-key \
+  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   -e JWT_AUDIENCE=mcpgateway-api \
   -e JWT_ISSUER=mcpgateway \
   -e AUTH_REQUIRED=true \
@@ -100,7 +100,7 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_UI_ENABLED=true \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-test-key \
+  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \

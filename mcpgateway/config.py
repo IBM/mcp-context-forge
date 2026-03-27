@@ -365,7 +365,7 @@ class Settings(BaseSettings):
     )
     tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
     tool_description_forbidden_patterns: List[str] = Field(
-        default_factory=lambda: ["&&", ";", "||", "$(", "|", "> ", "< "],
+        default_factory=lambda: ["&&", ";", "||", "$(", "> ", "< "],
         description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&",";"]\'.',
     )
 
@@ -1085,7 +1085,7 @@ class Settings(BaseSettings):
 
         return {
             "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
-            != "my-test-key",  # nosec B105 - checking for default value
+            not in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"),  # nosec B105 - checking for default values
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,

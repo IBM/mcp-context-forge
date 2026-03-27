@@ -149,7 +149,7 @@ def get_security_warnings(settings: Settings) -> list[str]:
 
     # --- JWT_SECRET_KEY ---
     jwt = settings.jwt_secret_key.get_secret_value() if isinstance(settings.jwt_secret_key, SecretStr) else settings.jwt_secret_key
-    weak_jwt = ["my-test-key", "changeme", "secret", "password"]
+    weak_jwt = ["my-test-key", "my-test-key-but-now-longer-than-32-bytes", "changeme", "secret", "password"]
     if jwt.lower() in weak_jwt:
         warnings.append("JWT_SECRET_KEY: Default/weak secret detected! Please set a strong, unique value for production.")
 

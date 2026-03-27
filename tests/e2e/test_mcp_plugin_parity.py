@@ -47,7 +47,7 @@ pytestmark = [
 # This suite targets the standard compose-backed test stack, which uses the
 # fixed local JWT secret below. Do not source this from mutable process env,
 # because broad-suite tests may patch JWT_SECRET_KEY before this module loads.
-COMPOSE_TEST_JWT_SECRET = "my-test-key"
+COMPOSE_TEST_JWT_SECRET = "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
 
 
 def _make_admin_jwt() -> str:

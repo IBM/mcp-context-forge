@@ -73,7 +73,7 @@ services:
       - AUTH_REQUIRED=true
       - EMAIL_AUTH_ENABLED=true
       - MCP_CLIENT_AUTH_ENABLED=true
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=Changeme123!
       - PLATFORM_ADMIN_FULL_NAME=Platform Administrator
@@ -149,7 +149,7 @@ services:
   register_benchmark:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     command:

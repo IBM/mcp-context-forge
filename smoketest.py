@@ -233,7 +233,7 @@ def generate_jwt() -> str:
     """
     # Use email format for new authentication system
     user = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
-    secret = os.getenv("JWT_SECRET_KEY", "my-test-key")
+    secret = os.getenv("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
     expiry = os.getenv("TOKEN_EXPIRY", "300")  # seconds
 
     cmd = [

@@ -553,8 +553,7 @@ async def oauth_callback(
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
         # Return success page with option to return to admin
-        return HTMLResponse(
-            content=f"""
+        return HTMLResponse(content=f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -642,8 +641,7 @@ async def oauth_callback(
             </script>
         </body>
         </html>
-        """
-        )
+        """)
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")

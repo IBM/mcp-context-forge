@@ -73,7 +73,7 @@ def _get_config(key: str, default: str = "") -> str:
 
 
 # JWT Configuration
-JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key")
+JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-32-bytes")
 JWT_ALGORITHM = _get_config("JWT_ALGORITHM", "HS256")
 JWT_AUDIENCE = _get_config("JWT_AUDIENCE", "mcpgateway-api")
 JWT_ISSUER = _get_config("JWT_ISSUER", "mcpgateway")

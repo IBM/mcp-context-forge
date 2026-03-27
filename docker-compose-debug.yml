@@ -184,7 +184,7 @@ services:
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
       # Option 2: RSA (Production - Asymmetric, uncomment and generate certs)
       # - JWT_ALGORITHM=RS256
       # - JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem
@@ -830,7 +830,7 @@ services:
         set -eu
         TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token \
           --username prometheus@monitoring --exp 0 \
-          --secret my-test-key --algo HS256 2>/dev/null)
+          --secret my-test-key-but-now-longer-than-32-bytes --algo HS256 2>/dev/null)
         printf "%s" "$$TOKEN" > /tokens/gateway.jwt
         echo "✅ Prometheus scrape token written to /tokens/gateway.jwt"
     profiles: ["monitoring"]
@@ -1007,7 +1007,7 @@ services:
       fast_time_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
     # This is a one-shot container that exits after registration
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
@@ -1061,9 +1061,9 @@ services:
 
         echo "Generating JWT token..."
         echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
-        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256"
+        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256"
         # Only capture stdout (the token), let warnings go to stderr
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256 2>/dev/null)
         echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
 
         # Decode the token to verify it has expiration
@@ -1290,7 +1290,7 @@ services:
       fast_test_server:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1298,7 +1298,7 @@ services:
         echo "Registering fast_test_server with gateway..."
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256 2>/dev/null)
 
         # Register using Python
         python3 -c "
@@ -1396,7 +1396,7 @@ services:
       benchmark_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     restart: "no"
@@ -1410,7 +1410,7 @@ services:
         sleep 5
 
         # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256 2>/dev/null)
 
         # Register benchmark servers using environment variables
         python3 -c "

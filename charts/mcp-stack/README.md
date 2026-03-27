@@ -590,7 +590,7 @@ retry the Helm upgrade.
 | mcpContextForge.config.VALIDATION_MIDDLEWARE_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED | string | `"true"` | Enable forbidden pattern checks on tool descriptions |
-| mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS | string | `'["&&", ";", "||", "$(", "|", "> ", "< "]'` | Substrings blocked in tool descriptions (JSON array) |
+| mcpContextForge.config.TOOL_DESCRIPTION_FORBIDDEN_PATTERNS | string | `'["&&", ";", "||", "$(", "> ", "< "]'` | Substrings blocked in tool descriptions (JSON array) |
 | mcpContextForge.config.JSON_SCHEMA_VALIDATION_STRICT | string | `"true"` |  |
 | mcpContextForge.config.SANITIZE_OUTPUT | string | `"true"` |  |
 | mcpContextForge.config.ALLOWED_ROOTS | string | `"[]"` |  |
@@ -684,7 +684,7 @@ retry the Helm upgrade.
 | mcpContextForge.secret.API_ALLOW_BASIC_AUTH | string | `"false"` |  |
 | mcpContextForge.secret.AUTH_REQUIRED | string | `"true"` |  |
 | mcpContextForge.secret.MCP_REQUIRE_AUTH | string | `"false"` |  |
-| mcpContextForge.secret.JWT_SECRET_KEY | string | `"my-test-key"` |  |
+| mcpContextForge.secret.JWT_SECRET_KEY | string | `"my-test-key-but-now-longer-than-32-bytes"` |  |
 | mcpContextForge.secret.JWT_ALGORITHM | string | `"HS256"` |  |
 | mcpContextForge.secret.JWT_AUDIENCE | string | `"mcpgateway-api"` |  |
 | mcpContextForge.secret.JWT_ISSUER | string | `"mcpgateway"` |  |
@@ -1288,7 +1288,7 @@ retry the Helm upgrade.
 | testing.registration.restartPolicy | string | `"Never"` |  |
 | testing.registration.jwt.username | string | `"admin@example.com"` |  |
 | testing.registration.jwt.expirationMinutes | int | `10080` |  |
-| testing.registration.jwt.secret | string | `"my-test-key"` |  |
+| testing.registration.jwt.secret | string | `"my-test-key-but-now-longer-than-32-bytes"` |  |
 | testing.fastTime.register.enabled | bool | `false` |  |
 | testing.fastTime.register.gatewayName | string | `"fast_time"` |  |
 | testing.fastTime.register.gatewayPath | string | `"/http"` |  |

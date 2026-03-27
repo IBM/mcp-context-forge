@@ -732,8 +732,7 @@ def _get_query_performance_postgresql(db: Session, cutoff_time: datetime, hours:
     Returns:
         dict: Performance analytics computed via SQL
     """
-    stats_sql = text(
-        """
+    stats_sql = text("""
         SELECT
             COUNT(*) as total_traces,
             percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
@@ -746,8 +745,7 @@ def _get_query_performance_postgresql(db: Session, cutoff_time: datetime, hours:
             MAX(duration_ms) as max_duration
         FROM observability_traces
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
-        """
-    )
+        """)
 
     result = db.execute(stats_sql, {"cutoff_time": cutoff_time}).fetchone()
 

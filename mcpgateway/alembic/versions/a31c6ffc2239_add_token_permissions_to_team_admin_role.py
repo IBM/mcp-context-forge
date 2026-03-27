@@ -113,21 +113,17 @@ def upgrade() -> None:
     now = datetime.now(timezone.utc)
 
     if dialect_name == "postgresql":
-        update_query = text(
-            """
+        update_query = text("""
             UPDATE roles
             SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
             WHERE id = :role_id
-            """
-        )
+            """)
     else:
-        update_query = text(
-            """
+        update_query = text("""
             UPDATE roles
             SET permissions = :permissions, updated_at = :updated_at
             WHERE id = :role_id
-            """
-        )
+            """)
 
     conn.execute(
         update_query,
@@ -171,21 +167,17 @@ def downgrade() -> None:
     now = datetime.now(timezone.utc)
 
     if dialect_name == "postgresql":
-        update_query = text(
-            """
+        update_query = text("""
             UPDATE roles
             SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
             WHERE id = :role_id
-            """
-        )
+            """)
     else:
-        update_query = text(
-            """
+        update_query = text("""
             UPDATE roles
             SET permissions = :permissions, updated_at = :updated_at
             WHERE id = :role_id
-            """
-        )
+            """)
 
     conn.execute(
         update_query,

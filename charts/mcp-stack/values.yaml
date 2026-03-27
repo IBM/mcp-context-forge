@@ -657,7 +657,7 @@ mcpContextForge:
     MAX_PATH_DEPTH: "10" # maximum allowed path depth
     MAX_PARAM_LENGTH: "10000" # maximum parameter length (characters)
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED: "true" # enable forbidden pattern checks on tool descriptions
-    TOOL_DESCRIPTION_FORBIDDEN_PATTERNS: '["&&", ";", "||", "$(", "|", "> ", "< "]' # substrings blocked in tool descriptions (JSON array)
+    TOOL_DESCRIPTION_FORBIDDEN_PATTERNS: '["&&", ";", "||", "$(", "> ", "< "]' # substrings blocked in tool descriptions (JSON array)
     DANGEROUS_PATTERNS: '["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]' # dangerous input patterns (JSON array)
     ALLOWED_MIME_TYPES: '["text/plain","text/markdown","text/html","application/json","application/xml","image/png","image/jpeg","image/gif"]' # allowed MIME types (JSON array)
 
@@ -782,7 +782,7 @@ mcpContextForge:
     API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     MCP_REQUIRE_AUTH: "true"               # require auth for /mcp endpoints (recommended secure default)
-    JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
+    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
@@ -1771,7 +1771,7 @@ testing:
     jwt:
       username: admin@example.com
       expirationMinutes: 10080
-      secret: my-test-key
+      secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret
 
   fastTime:
     register:

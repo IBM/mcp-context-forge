@@ -16,7 +16,7 @@ Requirements:
     - ContextForge running (default: http://localhost:8080 via docker-compose)
     - Environment variables (or defaults):
         MCP_CLI_BASE_URL: Gateway URL (default: http://localhost:8080)
-        JWT_SECRET_KEY: JWT signing secret (default: my-test-key)
+        JWT_SECRET_KEY: JWT signing secret (default: my-test-key-but-now-longer-than-32-bytes)
         PLATFORM_ADMIN_EMAIL: Admin email (default: admin@example.com)
 
 Usage:

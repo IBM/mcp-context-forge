@@ -6,6 +6,7 @@ Revises: ba202ac1665f
 Create Date: 2026-02-09 19:44:36.365036
 
 """
+
 # Standard
 from typing import Sequence, Union
 

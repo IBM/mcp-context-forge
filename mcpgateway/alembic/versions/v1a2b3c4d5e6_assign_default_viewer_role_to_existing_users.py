@@ -184,21 +184,17 @@ def upgrade() -> None:
         if role_result:
             role_id = role_result[0]
             if dialect_name == "postgresql":
-                update_query = text(
-                    """
+                update_query = text("""
                     UPDATE roles
                     SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
                     WHERE id = :role_id
-                    """
-                )
+                    """)
             else:
-                update_query = text(
-                    """
+                update_query = text("""
                     UPDATE roles
                     SET permissions = :permissions, updated_at = :updated_at
                     WHERE id = :role_id
-                    """
-                )
+                    """)
 
             bind.execute(
                 update_query,
@@ -220,23 +216,19 @@ def upgrade() -> None:
     if not platform_viewer_result:
         platform_viewer_id = str(uuid.uuid4())
         if dialect_name == "postgresql":
-            insert_role = text(
-                """
+            insert_role = text("""
                 INSERT INTO roles (id, name, description, scope, permissions, inherits_from,
                                  created_by, is_system_role, is_active, created_at, updated_at)
                 VALUES (:id, :name, :description, :scope, CAST(:permissions AS JSONB), :inherits_from,
                         :created_by, :is_system_role, :is_active, :created_at, :updated_at)
-            """
-            )
+            """)
         else:
-            insert_role = text(
-                """
+            insert_role = text("""
                 INSERT INTO roles (id, name, description, scope, permissions, inherits_from,
                                  created_by, is_system_role, is_active, created_at, updated_at)
                 VALUES (:id, :name, :description, :scope, :permissions, :inherits_from,
                         :created_by, :is_system_role, :is_active, :created_at, :updated_at)
-            """
-            )
+            """)
 
         bind.execute(
             insert_role,
@@ -259,21 +251,17 @@ def upgrade() -> None:
         # Update permissions if role already exists (converge to system defaults)
         platform_viewer_id = platform_viewer_result[0]
         if dialect_name == "postgresql":
-            update_pv_query = text(
-                """
+            update_pv_query = text("""
                 UPDATE roles
                 SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
                 WHERE id = :role_id
-                """
-            )
+                """)
         else:
-            update_pv_query = text(
-                """
+            update_pv_query = text("""
                 UPDATE roles
                 SET permissions = :permissions, updated_at = :updated_at
                 WHERE id = :role_id
-                """
-            )
+                """)
         bind.execute(
             update_pv_query,
             {
@@ -313,8 +301,7 @@ def upgrade() -> None:
     # Step 4: Find users without role assignments (excluding platform admin)
     print("\n=== Step 4: Finding users without role assignments ===")
     if dialect_name == "postgresql":
-        users_query = text(
-            """
+        users_query = text("""
             SELECT eu.email, eu.is_admin,
                    (SELECT et.id FROM email_teams et
                     INNER JOIN email_team_members etm ON etm.team_id = et.id
@@ -327,11 +314,9 @@ def upgrade() -> None:
             WHERE eu.email NOT IN (SELECT DISTINCT user_email FROM user_roles WHERE is_active = TRUE)
             AND eu.is_active = TRUE
             AND eu.email != :admin_email
-        """
-        )
+        """)
     else:
-        users_query = text(
-            """
+        users_query = text("""
             SELECT eu.email, eu.is_admin,
                    (SELECT et.id FROM email_teams et
                     INNER JOIN email_team_members etm ON etm.team_id = et.id
@@ -344,8 +329,7 @@ def upgrade() -> None:
             WHERE eu.email NOT IN (SELECT DISTINCT user_email FROM user_roles WHERE is_active = 1)
             AND eu.is_active = 1
             AND eu.email != :admin_email
-        """
-        )
+        """)
 
     users_without_roles = bind.execute(users_query, {"admin_email": admin_email}).fetchall()
 
@@ -357,14 +341,12 @@ def upgrade() -> None:
 
     # Step 5: Assign roles to users
     print("\n=== Step 5: Assigning roles to users ===")
-    insert_user_role = text(
-        """
+    insert_user_role = text("""
         INSERT INTO user_roles (id, user_email, role_id, scope, scope_id,
                               granted_by, granted_at, expires_at, is_active)
         VALUES (:id, :user_email, :role_id, :scope, :scope_id,
                 :granted_by, :granted_at, :expires_at, :is_active)
-    """
-    )
+    """)
 
     granted_by_email = admin_email
     assigned_count = 0
@@ -534,21 +516,17 @@ def downgrade() -> None:
             if role_result:
                 role_id = role_result[0]
                 if dialect_name == "postgresql":
-                    update_query = text(
-                        """
+                    update_query = text("""
                         UPDATE roles
                         SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
                         WHERE id = :role_id
-                        """
-                    )
+                        """)
                 else:
-                    update_query = text(
-                        """
+                    update_query = text("""
                         UPDATE roles
                         SET permissions = :permissions, updated_at = :updated_at
                         WHERE id = :role_id
-                        """
-                    )
+                        """)
 
                 bind.execute(
                     update_query,

@@ -27,7 +27,7 @@ Before using the API, you need to:
     export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
       --username admin@example.com \
       --exp 10080 \
-      --secret my-test-key 2>/dev/null | head -1)
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
 
     # Verify token was generated
     echo "Token: ${TOKEN:0:50}..."
@@ -41,7 +41,7 @@ Before using the API, you need to:
       --admin \
       --full-name "Admin User" \
       --exp 10080 \
-      --secret my-test-key 2>/dev/null | head -1)
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
     ```
 
     **Team-Scoped Token (⚠️ DEV/TEST ONLY):**
@@ -52,7 +52,7 @@ Before using the API, you need to:
       --teams team-123,team-456 \
       --full-name "Team User" \
       --exp 10080 \
-      --secret my-test-key 2>/dev/null | head -1)
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
     ```
 
     !!! tip "Token Expiration"
@@ -1339,7 +1339,7 @@ export BASE_URL="http://localhost:4444"
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
-  --secret my-test-key 2>/dev/null | head -1)
+  --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
 
 echo "=== ContextForge E2E Test ==="
 echo

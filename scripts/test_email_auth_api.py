@@ -50,7 +50,7 @@ NC = "\033[0m"
 # Configuration
 # ---------------------------------------------------------------------------
 DEFAULT_BASE_URL = "http://localhost:8080"
-DEFAULT_JWT_SECRET = "my-test-key"
+DEFAULT_JWT_SECRET = "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
 DEFAULT_ADMIN_EMAIL = "admin@example.com"
 TEST_EMAIL_PREFIX = "itest-"  # prefix for test users to avoid collisions
 TIMEOUT_SECONDS = 15
