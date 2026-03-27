@@ -510,3 +510,138 @@ async def test_get_redis_client_parser_configuration_error_returns_none():
 
                 assert client is None
                 mock_from_url.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests for Redis Cluster support
+# ---------------------------------------------------------------------------
+
+
+class TestStripDbFromUrl:
+    """Tests for _strip_db_from_url helper."""
+
+    def test_strips_db_zero(self):
+        """Strips /0 from URL."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        result = _strip_db_from_url("redis://:pass@host:6379/0")
+        assert result == "redis://:pass@host:6379"
+
+    def test_no_db_path_unchanged(self):
+        """URL without database path is returned unchanged."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        result = _strip_db_from_url("redis://:pass@host:6379")
+        assert result == "redis://:pass@host:6379"
+
+    def test_slash_only_unchanged(self):
+        """URL with trailing slash only is returned unchanged."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        result = _strip_db_from_url("redis://:pass@host:6379/")
+        assert result == "redis://:pass@host:6379/"
+
+    def test_non_zero_db_raises_error(self):
+        """Non-zero database number raises ValueError."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        with pytest.raises(ValueError, match="Redis Cluster only supports database 0"):
+            _strip_db_from_url("redis://:pass@host:6379/1")
+
+    def test_non_zero_db_2_raises_error(self):
+        """Database /2 raises ValueError."""
+        from mcpgateway.utils.redis_client import _strip_db_from_url
+
+        with pytest.raises(ValueError, match="Redis Cluster only supports database 0"):
+            _strip_db_from_url("redis://:pass@host:6379/2")
+
+
+class TestClusterMode:
+    """Tests for REDIS_CLUSTER_MODE setting."""
+
+    @pytest.mark.asyncio
+    async def test_cluster_mode_false_uses_standalone(self):
+        """When redis_cluster_mode=False, uses standalone from_url."""
+        mock_redis = AsyncMock()
+        mock_redis.ping = AsyncMock(return_value=True)
+
+        with patch("mcpgateway.config.settings") as mock_settings:
+            mock_settings.cache_type = "redis"
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_decode_responses = True
+            mock_settings.redis_max_connections = 10
+            mock_settings.redis_socket_timeout = 5.0
+            mock_settings.redis_socket_connect_timeout = 5.0
+            mock_settings.redis_retry_on_timeout = True
+            mock_settings.redis_health_check_interval = 30
+            mock_settings.redis_parser = "auto"
+            mock_settings.redis_cluster_mode = False
+
+            with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
+                client = await get_redis_client()
+
+                assert client is mock_redis
+                mock_from_url.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cluster_mode_true_uses_redis_cluster(self):
+        """When redis_cluster_mode=True, uses RedisCluster.from_url."""
+        mock_cluster = AsyncMock()
+        mock_cluster.ping = AsyncMock(return_value=True)
+
+        mock_redis_cluster_cls = MagicMock()
+        mock_redis_cluster_cls.from_url = MagicMock(return_value=mock_cluster)
+
+        with patch("mcpgateway.config.settings") as mock_settings:
+            mock_settings.cache_type = "redis"
+            mock_settings.redis_url = "redis://:pass@redis-cluster:6379/0"
+            mock_settings.redis_decode_responses = True
+            mock_settings.redis_max_connections = 10
+            mock_settings.redis_socket_timeout = 5.0
+            mock_settings.redis_socket_connect_timeout = 5.0
+            mock_settings.redis_retry_on_timeout = True
+            mock_settings.redis_health_check_interval = 30
+            mock_settings.redis_parser = "auto"
+            mock_settings.redis_cluster_mode = True
+
+            mock_aioredis = MagicMock()
+            mock_aioredis.RedisCluster = mock_redis_cluster_cls
+
+            with patch.dict("sys.modules", {"redis.asyncio": mock_aioredis}):
+                with patch("redis.asyncio", mock_aioredis):
+                    _reset_client()
+                    # Directly test the helper
+                    from mcpgateway.utils.redis_client import _create_cluster_client
+
+                    client = await _create_cluster_client(mock_settings, mock_aioredis, None)
+
+                    assert client is mock_cluster
+                    mock_redis_cluster_cls.from_url.assert_called_once()
+                    # Verify /0 was stripped from URL
+                    call_args = mock_redis_cluster_cls.from_url.call_args
+                    assert "/0" not in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_cluster_mode_missing_attr_defaults_false(self):
+        """When redis_cluster_mode attr is missing, defaults to False (standalone)."""
+        mock_redis = AsyncMock()
+        mock_redis.ping = AsyncMock(return_value=True)
+
+        with patch("mcpgateway.config.settings") as mock_settings:
+            mock_settings.cache_type = "redis"
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_decode_responses = True
+            mock_settings.redis_max_connections = 10
+            mock_settings.redis_socket_timeout = 5.0
+            mock_settings.redis_socket_connect_timeout = 5.0
+            mock_settings.redis_retry_on_timeout = True
+            mock_settings.redis_health_check_interval = 30
+            mock_settings.redis_parser = "auto"
+            # Simulate missing attribute
+            del mock_settings.redis_cluster_mode
+
+            with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
+                client = await get_redis_client()
+
+                assert client is mock_redis
+                mock_from_url.assert_called_once()

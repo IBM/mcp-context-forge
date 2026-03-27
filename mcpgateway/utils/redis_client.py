@@ -94,18 +94,38 @@ def _get_async_parser_class(parser_setting: str) -> tuple[Any, str]:
 def _strip_db_from_url(url: str) -> str:
     """Remove the database number from a Redis URL for cluster mode.
 
-    Redis Cluster only supports database 0, so ``/0`` (or any ``/N``) must be
-    stripped from the URL before passing it to ``RedisCluster.from_url()``.
+    Redis Cluster only supports database 0.  If the URL contains ``/0`` it is
+    silently stripped.  If it contains a non-zero database (``/1``, ``/2``, …)
+    a ``ValueError`` is raised so that misconfigurations fail fast instead of
+    being silently ignored.
 
     Args:
         url: Redis connection URL, e.g. ``redis://:pass@host:6379/0``
 
     Returns:
         URL without the trailing database path, e.g. ``redis://:pass@host:6379``
+
+    Raises:
+        ValueError: If the URL specifies a non-zero database number.
+
+    Examples:
+        >>> _strip_db_from_url("redis://:pass@host:6379/0")
+        'redis://:pass@host:6379'
+        >>> _strip_db_from_url("redis://:pass@host:6379")
+        'redis://:pass@host:6379'
+        >>> _strip_db_from_url("redis://:pass@host:6379/1")
+        Traceback (most recent call last):
+            ...
+        ValueError: Redis Cluster only supports database 0, but REDIS_URL specifies /1. Remove the database selector or use /0.
     """
     parsed = urlparse(url)
     if parsed.path and parsed.path not in ("", "/"):
-        # Remove the database path (e.g. /0, /1, etc.)
+        db_str = parsed.path.lstrip("/")
+        if db_str and db_str != "0":
+            raise ValueError(
+                f"Redis Cluster only supports database 0, but REDIS_URL "
+                f"specifies /{db_str}. Remove the database selector or use /0."
+            )
         cleaned = parsed._replace(path="")
         return cleaned.geturl()
     return url
