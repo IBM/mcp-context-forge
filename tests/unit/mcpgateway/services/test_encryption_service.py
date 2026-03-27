@@ -415,7 +415,7 @@ class TestEncryptionService:
         api_keys = [
             "sk-1234567890abcdefghijklmnopqrst",  # OpenAI format
             "ghp_1234567890abcdefghijklmnopqrst",  # GitHub format
-            "AKIA1234567890ABCDEF",  # AWS format
+            "AKIAIOSFODNN7EXAMPLE",  # AWS format
             base64.urlsafe_b64encode(b"some_api_key_data" * 5).decode(),  # Base64 encoded key
         ]
 
