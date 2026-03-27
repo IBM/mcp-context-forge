@@ -38,6 +38,7 @@ import html
 import json
 import logging
 import re
+import signal
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
@@ -72,7 +73,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from mcpgateway import __version__
 from mcpgateway import version as version_module
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, _resolve_teams_from_db, get_current_user, get_user_team_roles, normalize_token_teams
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -162,6 +163,7 @@ from mcpgateway.transports.streamablehttp_transport import (
 )
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
@@ -1700,6 +1702,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # First-Party
+        from mcpgateway.handlers.signal_handlers import sighup_handler  # pylint: disable=import-outside-toplevel
+
+        signal.signal(signal.SIGHUP, sighup_handler)
+
         # Start cache invalidation subscriber for cross-worker cache synchronization
         # First-Party
         from mcpgateway.cache.registry_cache import get_cache_invalidation_subscriber  # pylint: disable=import-outside-toplevel
@@ -1768,6 +1775,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         raise
     finally:
+        # Restore default SIGHUP handling in case we reset signal handlers.
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"Failed to restore default SIGHUP handler: {exc}")
+
         if aggregation_stop_event is not None:
             aggregation_stop_event.set()
         for task in (aggregation_backfill_task, aggregation_loop_task):
@@ -2588,7 +2601,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                     token_use = payload.get("token_use")
                     if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                         is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
-                        token_teams = await _resolve_teams_from_db(username, {"is_admin": is_admin})
+                        token_teams = await resolve_session_teams(payload, username, {"is_admin": is_admin})
                     else:
                         # API token or legacy path: embedded teams claim semantics
                         token_teams = normalize_token_teams(payload)
@@ -3079,8 +3092,17 @@ def get_db(request: Request = None):
 
     When observability is enabled, this reuses the session created by
     ObservabilityMiddleware (stored in request.state.db) to avoid duplicate
-    session creation. When observability is disabled or the
-    middleware hasn't created a session, this creates its own session.
+    session creation. When observability is disabled or the middleware hasn't
+    created a session, this creates its own session.
+
+    **Transaction Control**: This function ALWAYS controls transaction boundaries
+    (commit/rollback) regardless of whether it creates the session or reuses one
+    from middleware. This ensures predictable transaction semantics for route
+    handlers and maintains data integrity.
+
+    **Session Lifecycle**: Middleware manages session lifecycle (create/close)
+    while this function manages transactions (commit/rollback). This separation
+    of concerns prevents the transaction management violation described in #3731.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.
@@ -3101,7 +3123,10 @@ def get_db(request: Request = None):
         Exception: Re-raises any exception after rolling back the transaction.
 
     Ensures:
-        The database session is closed after the request completes, even in the case of an exception.
+        - Transaction is committed on success (for both owned and reused sessions)
+        - Transaction is rolled back on error (for both owned and reused sessions)
+        - Session is closed only if created by this function (not if reused from middleware)
+        - Broken connections are invalidated to prevent pool corruption
 
     Examples:
         >>> # Test that get_db returns a generator
@@ -3125,9 +3150,32 @@ def get_db(request: Request = None):
         db = request.state.db
         if db is not None:
             logger.debug(f"[GET_DB] Reusing session from middleware: {id(db)}")
-            # Yield the middleware's session without closing it
-            # The middleware will handle commit/rollback/close
-            yield db
+            # Yield the middleware's session. We control transactions, middleware controls lifecycle.
+            try:
+                yield db
+                # Commit on successful completion (only if transaction still active)
+                # The transaction can become inactive if an exception occurred during
+                # async context manager cleanup (e.g., CancelledError during MCP session teardown).
+                if db.is_active:
+                    db.commit()
+            except Exception:
+                try:
+                    # Always call rollback() in exception handler.
+                    # rollback() is safe to call even when is_active=False - it succeeds and
+                    # restores the session to a usable state. When is_active=False (e.g., after
+                    # IntegrityError), rollback() is actually REQUIRED to clear the failed state.
+                    # Skipping rollback when is_active=False would leave the session unusable.
+                    db.rollback()
+                except Exception:
+                    # Connection is broken - invalidate to remove from pool
+                    # This handles cases like PgBouncer query_wait_timeout where
+                    # the connection is dead and rollback itself fails
+                    try:
+                        db.invalidate()
+                    except Exception:
+                        pass  # nosec B110 - Best effort cleanup on connection failure
+                raise
+            # Don't close - middleware owns the session lifecycle
             return
 
     # Fallback: Create our own session (observability disabled or middleware didn't create one)
@@ -3972,6 +4020,13 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
         user_with_token["auth_token"] = auth_token
         user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
+
+        # Capture passthrough headers from the original SSE request for loopback /rpc calls.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        user_with_token["_passthrough_headers"] = safe_extract_headers_for_loopback(dict(request.headers), "SSE")
 
         # Defensive cleanup callback - runs immediately on client disconnect
         async def on_disconnect_cleanup() -> None:
@@ -5264,6 +5319,7 @@ async def list_resources(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5279,6 +5335,7 @@ async def list_resources(
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
+        gateway_id (Optional[str]): Filter by gateway ID. Use 'null' for resources without a gateway.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -5317,7 +5374,7 @@ async def list_resources(
     # Use unified list_resources() with token-based team filtering
     # Always apply visibility filtering based on token scope
     logger.debug(
-        f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+        f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}, gateway_id={gateway_id}"
     )
     data, next_cursor = await resource_service.list_resources(
         db=db,
@@ -5325,6 +5382,7 @@ async def list_resources(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
+        gateway_id=gateway_id,
         user_email=user_email,
         team_id=team_id,
         visibility=visibility,
@@ -5768,6 +5826,7 @@ async def list_prompts(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5783,6 +5842,7 @@ async def list_prompts(
         tags: Comma-separated list of tags to filter by.
         team_id: Filter by specific team ID.
         visibility: Filter by visibility (private, team, public).
+        gateway_id: Filter by gateway ID. Use 'null' for prompts without a gateway.
         db: Database session.
         user: Authenticated user.
 
@@ -5821,7 +5881,7 @@ async def list_prompts(
     # Use consolidated prompt listing with token-based team filtering
     # Always apply visibility filtering based on token scope
     logger.debug(
-        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}, gateway_id={gateway_id}"
     )
     data, next_cursor = await prompt_service.list_prompts(
         db=db,
@@ -5829,6 +5889,7 @@ async def list_prompts(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
+        gateway_id=gateway_id,
         user_email=user_email,
         team_id=team_id,
         visibility=visibility,
@@ -9801,11 +9862,18 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=1008, reason=str(e.detail))
             return
 
+        # Capture passthrough headers from the WebSocket handshake request.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import filter_loopback_skip_headers, safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        ws_passthrough_headers = safe_extract_headers_for_loopback(dict(websocket.headers), "WebSocket")
+
         await websocket.accept()
         while True:
             try:
                 data = await websocket.receive_text()
-                client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
+                client_args = {"timeout": settings.federation_timeout, "verify": internal_loopback_verify()}
 
                 # Build headers for /rpc request - forward auth credentials
                 rpc_headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -9813,10 +9881,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     rpc_headers["Authorization"] = f"Bearer {auth_token}"
                 if proxy_user:
                     rpc_headers[settings.proxy_user_header] = proxy_user
+                # Forward passthrough headers captured from the WebSocket handshake (see #3640).
+                # Defense-in-depth: filter via filter_loopback_skip_headers() so passthrough
+                # can never override the gateway's internal auth, content-type, or session/routing headers.
+                if ws_passthrough_headers:
+                    rpc_headers.update(filter_loopback_skip_headers(ws_passthrough_headers))
 
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
-                        f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
+                        f"{internal_loopback_base_url()}{settings.app_root_path}/rpc",
                         json=orjson.loads(data),
                         headers=rpc_headers,
                     )
@@ -9913,6 +9986,13 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["auth_token"] = auth_token
         user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
+
+        # Capture passthrough headers from the original SSE request for loopback /rpc calls.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        user_with_token["_passthrough_headers"] = safe_extract_headers_for_loopback(dict(request.headers), "SSE")
 
         # Create respond task and register for cancellation on disconnect
         respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id))
@@ -10839,6 +10919,12 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
     app.include_router(admin_router)  # Admin routes imported from admin.py
+
+    # Validate section-to-permission mapping consistency at startup
+    # First-Party
+    from mcpgateway.admin import validate_section_permissions
+
+    validate_section_permissions(admin_router)
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 

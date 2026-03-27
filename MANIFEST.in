@@ -76,6 +76,7 @@ recursive-include infra *.sh
 recursive-include infra *.yaml
 recursive-include infra *.yml
 include infra/nginx/Dockerfile
+include infra/s390x/Containerfile
 
 # Export/Import functionality (explicitly include new files)
 include mcpgateway/cli_export_import.py
@@ -105,7 +106,7 @@ recursive-include plugins_rust *.py
 recursive-include plugins_rust *.pyi
 recursive-include plugins_rust *.json
 recursive-include plugins_rust Makefile
-include plugins_rust/*/Cargo.lock
+recursive-include plugins_rust *.lock
 prune plugins_rust/target
 recursive-exclude plugins_rust/*/target *
 
@@ -190,6 +191,7 @@ exclude .prospector.yaml
 exclude .hadolint.yaml
 exclude .ruff.toml
 exclude .pre-commit-config.yaml
+exclude .secrets.baseline
 
 # Backup and temporary files
 global-exclude *~

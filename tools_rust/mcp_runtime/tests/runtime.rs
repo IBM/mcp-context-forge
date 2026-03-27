@@ -2623,10 +2623,10 @@ async fn live_stream_core_returns_headers_without_waiting_for_backend_sse() {
     );
     let runtime_url = spawn_router(runtime).await;
     let client = reqwest::Client::new();
-    let started = Instant::now();
 
     initialize_runtime_session(&runtime_url, "live-session-delayed", None).await;
 
+    let started = Instant::now();
     let response = client
         .get(format!("{runtime_url}/mcp"))
         .header("accept", "text/event-stream")

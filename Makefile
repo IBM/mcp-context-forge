@@ -64,7 +64,7 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 	$(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
 	.depsorter_cache.json .depupdate.* \
-	grype-results.sarif devskim-results.sarif \
+	devskim-results.sarif \
 	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb \
 	*.log mcpgateway.sbom.xml
 
@@ -119,7 +119,7 @@ help:
 # 🔧 SYSTEM-LEVEL DEPENDENCIES
 # -----------------------------------------------------------------------------
 # help: 🔧 SYSTEM-LEVEL DEPENDENCIES (DEV BUILD ONLY)
-# help: os-deps              - Install Graphviz, Pandoc, Trivy, SCC used for dev docs generation and security scan
+# help: os-deps              - Install Graphviz, Pandoc, SCC used for dev docs generation
 OS_DEPS_SCRIPT := ./os_deps.sh
 
 .PHONY: os-deps
@@ -164,13 +164,15 @@ endef
 .PHONY: uv
 uv:
 	@if ! type uv >/dev/null 2>&1 && ! test -x "$(HOME)/.local/bin/uv"; then \
-		echo "🔧 'uv' not found - installing..."; \
+		echo "❌ 'uv' not found."; \
 		if type brew >/dev/null 2>&1; then \
-			echo "🍺 Installing 'uv' via Homebrew..."; \
-			brew install uv; \
+			echo "💡 Install 'uv' via Homebrew or another trusted package manager:"; \
+			echo "   brew install uv"; \
+			exit 1; \
 		else \
-			echo "🐍 Installing 'uv' via local install script..."; \
-			curl -LsSf https://astral.sh/uv/install.sh | sh ; \
+			echo "💡 Install uv from a trusted package manager or pinned release:"; \
+			echo "   https://docs.astral.sh/uv/getting-started/installation/"; \
+			exit 1; \
 		fi; \
 	fi
 
@@ -777,7 +779,7 @@ coverage-pytest: install-dev
 		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
 		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
+			--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
 			--durations=120 --cov-report=term --cov=mcpgateway \
 			$(PYTEST_IGNORE_FLAGS) tests/ || true"
 
@@ -791,7 +793,7 @@ coverage: coverage-pytest install-dev
 		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
 		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
+			--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
 			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
 			--cov=mcpgateway mcpgateway/ || true"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
@@ -3079,7 +3081,6 @@ images:
 # help: pyright              - Static type-checking with Pyright
 # help: radon                - Code complexity & maintainability metrics
 # help: pyroma               - Validate packaging metadata
-# help: importchecker        - Detect orphaned imports
 # help: spellcheck           - Spell-check the codebase
 # help: fawltydeps           - Detect undeclared / unused deps
 # help: wily                 - Maintainability report
@@ -3093,7 +3094,6 @@ images:
 # help: sbom                 - Produce a CycloneDX SBOM and vulnerability scan
 # help: pytype               - Flow-sensitive type checker
 # help: check-manifest       - Verify sdist/wheel completeness
-# help: unimport             - Unused import detection
 # help: vulture              - Dead code detection
 # help: linting-workflow-actionlint  - Lint GitHub Actions workflows (actionlint; shellcheck disabled)
 # help: linting-workflow-zizmor      - Security-focused linting of GitHub Actions workflows
@@ -3133,12 +3133,12 @@ endif
 
 # List of individual lint targets
 LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle \
-	ruff ty pyright radon pyroma pyrefly spellcheck importchecker \
-		pytype check-manifest markdownlint vulture unimport
+	ruff ty pyright radon pyroma pyrefly spellcheck \
+		pytype check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
 FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
-	pycodestyle ruff pyright vulture unimport markdownlint
+	pycodestyle ruff pyright vulture markdownlint
 
 .PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
@@ -3742,9 +3742,6 @@ radon:                              ## 📈  Complexity / MI metrics
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
 
-importchecker:                      ## 🧐  Orphaned import detector
-	@$(VENV_DIR)/bin/importchecker .
-
 spellcheck:                         ## 🔤  Spell-check
 	@$(VENV_DIR)/bin/pyspelling || true
 
@@ -3828,17 +3825,10 @@ sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "📋  Converting SBOM to markdown..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		sbom2doc -i $(PROJECT_NAME).sbom.xml -f markdown -o $(DOCS_DIR)/docs/test/sbom.md"
-	@echo "🔒  Running security scans..."
-	@/bin/bash -c "if command -v trivy >/dev/null 2>&1; then \
-		echo '## Trivy Vulnerability Scan' >> $(DOCS_DIR)/docs/test/sbom.md; \
-		echo '' >> $(DOCS_DIR)/docs/test/sbom.md; \
-		trivy sbom $(PROJECT_NAME).sbom.xml | tee -a $(DOCS_DIR)/docs/test/sbom.md; \
-	else \
-		echo '⚠️  trivy not found, skipping vulnerability scan'; \
-		echo '## Security Scan' >> $(DOCS_DIR)/docs/test/sbom.md; \
-		echo '' >> $(DOCS_DIR)/docs/test/sbom.md; \
-		echo 'Trivy not available - install with: brew install trivy' >> $(DOCS_DIR)/docs/test/sbom.md; \
-	fi"
+	@echo "🔒  Recording local scan guidance..."
+	@echo '## Security Scan' >> $(DOCS_DIR)/docs/test/sbom.md
+	@echo '' >> $(DOCS_DIR)/docs/test/sbom.md
+	@echo 'Review the generated SBOM separately before publishing the image.' >> $(DOCS_DIR)/docs/test/sbom.md
 	@echo "📊  Checking for outdated packages..."
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && \
 		echo '## Outdated Packages' >> $(DOCS_DIR)/docs/test/sbom.md && \
@@ -3856,9 +3846,6 @@ pytype:								## 🧠  Pytype static type analysis
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
-
-unimport:                           ## 📦  Unused import detection
-	@echo "📦  unimport $(TARGET)…" && $(VENV_DIR)/bin/unimport --check --diff $(TARGET)
 
 vulture:                            ## 🧹  Dead code detection
 	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
@@ -4213,42 +4200,14 @@ lint-complexity:						## 📈 Analyze code complexity
 		$(VENV_DIR)/bin/radon mi $(TARGET) -s"
 
 # -----------------------------------------------------------------------------
-# 📑 GRYPE SECURITY/VULNERABILITY SCANNING
+# 📑 CONTAINER SECURITY REVIEW
 # -----------------------------------------------------------------------------
-# help: grype-install        - Install Grype
-# help: grype-scan           - Scan all files using grype
-# help: grype-sarif          - Generate SARIF report
-# help: security-scan        - Run Trivy and Grype security-scan
-.PHONY: grype-install grype-scan grype-sarif security-scan
+# help: security-scan        - Show current local container review guidance
+.PHONY: security-scan
 
-grype-install:
-	@echo "📥 Installing Grype CLI..."
-	@curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
-
-grype-scan:
-	@command -v grype >/dev/null 2>&1 || { \
-		echo "❌ grype not installed."; \
-		echo "💡 Install with:"; \
-		echo "   • curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin"; \
-		echo "   • Or run: make grype-install"; \
-		exit 1; \
-	}
-	@echo "🔍 Grype vulnerability scan..."
-	@grype $(IMG) --scope all-layers
-
-grype-sarif:
-	@command -v grype >/dev/null 2>&1 || { \
-		echo "❌ grype not installed."; \
-		echo "💡 Install with:"; \
-		echo "   • curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin"; \
-		echo "   • Or run: make grype-install"; \
-		exit 1; \
-	}
-	@echo "📄 Generating Grype SARIF report..."
-	@grype $(IMG) --scope all-layers --output sarif --file grype-results.sarif
-
-security-scan: trivy grype-scan
-	@echo "✅ Multi-engine security scan complete"
+security-scan:
+	@echo "ℹ️  No repo-managed local container vulnerability scanner is configured."
+	@echo "ℹ️  Review the generated SBOM and use your preferred pinned scanner separately."
 
 # -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
@@ -4555,29 +4514,6 @@ sonar-info:
 # 🛡️  SECURITY & PACKAGE SCANNING
 # =============================================================================
 # help: 🛡️ SECURITY & PACKAGE SCANNING
-# help: trivy-install        - Install Trivy
-# help: trivy                - Scan container image for CVEs (HIGH/CRIT). Needs podman socket enabled
-.PHONY: trivy-install trivy
-
-trivy-install:
-	@echo "📥 Installing Trivy..."
-	@curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-
-trivy:
-	@command -v trivy >/dev/null 2>&1 || { \
-		echo "❌ trivy not installed."; \
-		echo "💡 Install with:"; \
-		echo "   • macOS: brew install trivy"; \
-		echo "   • Linux: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"; \
-		echo "   • Or run: make trivy-install"; \
-		exit 1; \
-	}
-	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user enable --now podman.socket 2>/dev/null || true; \
-	fi
-	@echo "🔎  trivy vulnerability scan..."
-	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
-
 # help: dockle               - Lint the built container image via tarball (no daemon/socket needed)
 .PHONY: dockle
 DOCKLE_IMAGE ?= $(IMG)         # mcpgateway/mcpgateway:latest
@@ -5873,19 +5809,31 @@ ibmcloud-check-env:
 		fi'
 
 ibmcloud-cli-install:
-	@echo "☁️  Detecting OS and installing IBM Cloud CLI..."
+	@echo "☁️  Detecting OS and preparing IBM Cloud CLI install guidance..."
 	@if grep -qi microsoft /proc/version 2>/dev/null; then \
 		echo "🔧 Detected WSL2"; \
-		curl -fsSL https://clis.cloud.ibm.com/install/linux | sh; \
+		echo "❌ Refusing to install IBM Cloud CLI via curl | sh."; \
+		echo "💡 Install from IBM's official packaged distribution instead:"; \
+		echo "   https://cloud.ibm.com/docs/cli?topic=cli-getting-started"; \
+		exit 1; \
 	elif [ "$$(uname)" = "Darwin" ]; then \
 		echo "🍏 Detected macOS"; \
-		curl -fsSL https://clis.cloud.ibm.com/install/osx | sh; \
+		echo "❌ Refusing to install IBM Cloud CLI via curl | sh."; \
+		echo "💡 Install from IBM's official packaged distribution instead:"; \
+		echo "   https://cloud.ibm.com/docs/cli?topic=cli-getting-started"; \
+		exit 1; \
 	elif [ "$$(uname)" = "Linux" ]; then \
 		echo "🐧 Detected Linux"; \
-		curl -fsSL https://clis.cloud.ibm.com/install/linux | sh; \
+		echo "❌ Refusing to install IBM Cloud CLI via curl | sh."; \
+		echo "💡 Install from IBM's official packaged distribution instead:"; \
+		echo "   https://cloud.ibm.com/docs/cli?topic=cli-getting-started"; \
+		exit 1; \
 	elif command -v powershell.exe >/dev/null; then \
 		echo "🪟 Detected Windows"; \
-		powershell.exe -Command "iex (New-Object Net.WebClient).DownloadString('https://clis.cloud.ibm.com/install/powershell')"; \
+		echo "❌ Refusing to install IBM Cloud CLI via remote PowerShell script."; \
+		echo "💡 Install from IBM's official packaged distribution instead:"; \
+		echo "   https://cloud.ibm.com/docs/cli?topic=cli-getting-started"; \
+		exit 1; \
 	else \
 		echo "❌ Unsupported OS"; exit 1; \
 	fi
@@ -6183,7 +6131,10 @@ helm-install:
 	@if [ "$(shell uname)" = "Darwin" ]; then \
 	  brew install helm; \
 	elif [ "$(shell uname)" = "Linux" ]; then \
-	  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash; \
+	  echo "❌ Refusing to install Helm via curl | bash."; \
+	  echo "💡 Install Helm from a trusted package manager or pinned release:"; \
+	  echo "   https://helm.sh/docs/intro/install/"; \
+	  exit 1; \
 	elif command -v powershell.exe >/dev/null; then \
 	  powershell.exe -NoProfile -Command "choco install -y kubernetes-helm"; \
 	else \
@@ -7140,6 +7091,8 @@ test-full: coverage test-js test-ui-report
 # help: pip-audit           - Audit Python dependencies for published CVEs
 # help: gitleaks-install    - Install gitleaks secret scanner
 # help: gitleaks            - Scan git history for secrets
+# help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
+# help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
 # help: sri-generate        - Generate SRI hashes for CDN resources
 # help: sri-verify          - Verify SRI hashes match current CDN content
@@ -7358,6 +7311,21 @@ gitleaks:                           ## 🔍 Scan for secrets in git history
 	@echo "🔍 Scanning for secrets with gitleaks..."
 	@gitleaks detect --source . -v || true
 	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
+
+.PHONY: detect-secrets-scan
+detect-secrets-scan: install-dev             ## 🔍  detect-secrets scan for secrets in repository
+	@echo "🔍 Running detect-secrets scan..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets scan --update .secrets.baseline --use-all-plugins"
+
+.PHONY: detect-secrets-audit
+detect-secrets-audit: install-dev            ## 🔎  detect-secrets audit for reviewing findings
+	@echo "🔎 Running detect-secrets audit..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets audit .secrets.baseline"
+
+.PHONY: detect-secrets-hook
+detect-secrets-hook: install-dev              ## 🔎  detect-secrets pre-commit hook equivalent
+	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets-hook --baseline .secrets.baseline --use-all-plugins --fail-on-unaudited"
 
 ## --------------------------------------------------------------------------- ##
 ##  DevSkim (.NET-based security patterns scanner)
@@ -8132,10 +8100,10 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 
 rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
 	@if ! command -v rustup > /dev/null 2>&1; then \
-		echo "🦀 Rust not found. Installing Rust toolchain..."; \
-		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
-		echo "✅ Rust installed successfully."; \
-		echo "⚠️  Please run 'source \"$$HOME/.cargo/env\"' or restart your shell, then run 'make' again."; \
+		echo "🦀 Rust not found."; \
+		echo "❌ Refusing to install Rust via remote shell bootstrapper."; \
+		echo "💡 Install rustup from a trusted package manager or pinned release:"; \
+		echo "   https://rustup.rs/"; \
 		exit 1; \
 	fi
 	@if ! command -v cargo > /dev/null 2>&1; then \

@@ -7458,6 +7458,38 @@ async def test_admin_get_team_edit_renders_max_members(monkeypatch, mock_request
 
 
 @pytest.mark.asyncio
+async def test_admin_get_team_edit_over_limit_non_admin(monkeypatch, mock_request, mock_db, allow_permission):
+    """Non-admin editing a team whose max_members exceeds the limit sees an empty field with a hint."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "max_members_per_team", 100)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=500))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "is_admin": False, "db": mock_db})
+    body = response.body.decode()
+    # Field should be empty to avoid browser validation blocking form submission
+    assert 'value=""' in body
+    assert "Current: 500" in body
+    assert "above max 100" in body
+
+
+@pytest.mark.asyncio
+async def test_admin_get_team_edit_over_limit_admin(monkeypatch, mock_request, mock_db, allow_permission):
+    """Admin editing a team whose max_members exceeds the limit sees the actual value."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "max_members_per_team", 100)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=500))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "admin@example.com", "is_admin": True, "db": mock_db})
+    body = response.body.decode()
+    # Admin sees the actual value, no max attribute
+    assert 'value="500"' in body
+    assert 'max="100"' not in body
+    assert "Admins can set any limit" in body
+
+
+@pytest.mark.asyncio
 async def test_admin_update_team_rejected_personal_team_htmx(monkeypatch, mock_db, allow_permission):
     """update_team returning False (personal team) must surface an error, not false success."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
@@ -12390,6 +12422,9 @@ async def test_cache_invalidation_endpoints(monkeypatch, mock_db, allow_permissi
     cache = MagicMock()
     cache.stats.return_value = {"hits": 1}
     monkeypatch.setattr("mcpgateway.admin.global_config_cache", cache)
+    # invalidate_passthrough_header_caches() calls global_config_cache.invalidate()
+    # via its own module reference, so patch there too.
+    monkeypatch.setattr("mcpgateway.utils.passthrough_headers.global_config_cache", cache)
 
     result = await _unwrap(invalidate_passthrough_headers_cache)(_user={"email": "user@example.com", "db": mock_db})
     assert result["status"] == "invalidated"

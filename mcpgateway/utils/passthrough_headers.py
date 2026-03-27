@@ -31,6 +31,8 @@ Example Usage:
 # Standard
 import logging
 import re
+import threading
+import time
 from typing import Dict, List, Optional
 
 # Third-Party
@@ -534,8 +536,290 @@ async def set_global_passthrough_headers(db: Session) -> None:
         try:
             db.add(GlobalConfig(passthrough_headers=allowed_headers))
             db.commit()
-            # Invalidate cache so next read picks up new config (Issue #1715)
-            global_config_cache.invalidate()
+            # Invalidate both global and loopback caches so next read picks up new config (Issue #1715, #3640)
+            invalidate_passthrough_header_caches()
         except Exception as e:
             db.rollback()
             raise PassthroughHeadersError(f"Failed to update passthrough headers: {str(e)}")
+
+
+# Headers that must never be forwarded via loopback — they are set by the caller
+# or are gateway-internal routing/loop-prevention headers.
+# IMPORTANT: keep this set in sync with internal headers set at merge sites
+# (session_registry generate_response, WebSocket relay, Streamable HTTP affinity).
+# httpx concatenates case-different duplicate keys rather than picking one, so an
+# omission here could silently corrupt the internal header value.
+_LOOPBACK_SKIP_HEADERS: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "content-type",
+        "mcp-session-id",
+        "x-mcp-session-id",
+        "x-forwarded-internally",
+    }
+)
+
+
+def _loopback_skip_set() -> frozenset[str]:
+    """Return the full set of headers to skip in loopback forwarding.
+
+    Extends ``_LOOPBACK_SKIP_HEADERS`` with the configurable
+    ``proxy_user_header`` (default ``X-Authenticated-User``) so that
+    passthrough headers can never overwrite the gateway-internal proxy
+    user identity — even if that header name is added to the passthrough
+    allowlist by mistake.
+
+    Returns:
+        frozenset[str]: Header names to skip during loopback forwarding.
+    """
+    proxy = settings.proxy_user_header.lower()
+    if proxy in _LOOPBACK_SKIP_HEADERS:
+        return _LOOPBACK_SKIP_HEADERS
+    return _LOOPBACK_SKIP_HEADERS | {proxy}
+
+
+class _LoopbackAllowlistCache:
+    """TTL cache for the merged passthrough header allowlist (global + all gateways).
+
+    Avoids a full Gateway table scan on every loopback call by caching the union
+    of global and gateway-specific passthrough headers with the same 60 s TTL used
+    by global_config_cache.
+    """
+
+    def __init__(self, ttl_seconds: float = 60.0):
+        self._cache: Optional[frozenset[str]] = None
+        self._populated: bool = False
+        self._expiry: float = 0
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+
+    def get(self, db: Session) -> frozenset[str]:
+        """Return the cached merged allowlist, refreshing from DB when expired.
+
+        Falls back to the last known good value during transient DB failures to
+        avoid a thundering-herd of failing queries on every loopback call.
+
+        Args:
+            db: SQLAlchemy database session for querying gateway configurations.
+
+        Returns:
+            Frozen set of allowed passthrough header names (union of global and
+            all gateway-specific configurations).
+
+        Raises:
+            Exception: Re-raised from DB query when no stale cache is available
+                to fall back to (first call after startup with a broken DB).
+        """
+        now = time.time()
+        # CPython GIL ensures atomic attribute reads on the fast path.
+        if now < self._expiry and self._populated:
+            return self._cache  # type: ignore[return-value]  # _populated guarantees non-None
+        with self._lock:
+            if now < self._expiry and self._populated:
+                return self._cache  # type: ignore[return-value]  # _populated guarantees non-None
+            try:
+                merged: set[str] = set(global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers or []) or [])
+                gw_rows = db.query(DbGateway.passthrough_headers).filter(DbGateway.passthrough_headers.isnot(None)).all()
+                for (gw_headers,) in gw_rows:
+                    if gw_headers:
+                        merged.update(gw_headers)
+                self._cache = frozenset(merged)
+                self._populated = True
+                self._expiry = now + self._ttl
+            except Exception:
+                logger.warning("Failed to refresh loopback allowlist cache from DB; using stale value if available", exc_info=True)
+                if self._populated and self._cache is not None:
+                    # Extend TTL briefly to avoid hammering DB on every request
+                    self._expiry = now + min(self._ttl, 10.0)
+                else:
+                    raise
+            return self._cache  # type: ignore[return-value]  # _populated guarantees non-None
+
+    def invalidate(self) -> None:
+        """Force a refresh on next access."""
+        with self._lock:
+            self._populated = False
+            self._expiry = 0
+
+
+_loopback_allowlist_cache = _LoopbackAllowlistCache()
+
+
+def invalidate_passthrough_header_caches() -> None:
+    """Invalidate both the global config cache and the loopback allowlist cache.
+
+    Call this after any mutation to passthrough header configuration (global or
+    per-gateway) so that loopback transports (SSE, WebSocket, Streamable HTTP)
+    converge immediately with direct /rpc rather than waiting for TTL expiry.
+    """
+    global_config_cache.invalidate()
+    _loopback_allowlist_cache.invalidate()
+    logger.debug("Invalidated global_config_cache and _loopback_allowlist_cache for passthrough headers")
+
+
+def filter_loopback_skip_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """Return a copy of *headers* with gateway-internal loopback headers removed.
+
+    Defense-in-depth filter applied at loopback merge sites (SSE generate_response,
+    WebSocket relay) to ensure passthrough headers can never override the gateway's
+    internal JWT, content-type, proxy-user, or session/routing headers — even if
+    ``extract_headers_for_loopback`` is bypassed or its skip-list is out of sync.
+
+    Values are re-sanitized via ``sanitize_header_value()`` so this function is
+    safe to call on input that has not been pre-sanitized.
+
+    Args:
+        headers: Candidate passthrough headers to filter.
+
+    Returns:
+        New dictionary containing only headers whose lowercased names are
+        **not** in the skip set (``_LOOPBACK_SKIP_HEADERS`` plus the
+        configurable ``proxy_user_header``), with values sanitized.
+    """
+    skip = _loopback_skip_set()
+    filtered: Dict[str, str] = {}
+    for k, v in headers.items():
+        if k.lower() in skip:
+            continue
+        try:
+            filtered[k] = sanitize_header_value(v)
+        except Exception:
+            logger.warning("Dropped unsafe header %s during loopback filter", k, exc_info=True)
+    return filtered
+
+
+def extract_headers_for_loopback(request_headers: Dict[str, str]) -> Dict[str, str]:
+    """Extract passthrough-relevant headers to forward in internal loopback /rpc calls.
+
+    SSE and WebSocket transports make internal loopback HTTP calls to /rpc. Client
+    passthrough headers (like X-Upstream-Authorization) must be included in those
+    loopback requests so that /rpc can forward them to upstream MCP servers via
+    get_passthrough_headers().
+
+    Always extracts:
+    - x-upstream-authorization (always enabled per design, renamed to Authorization upstream)
+
+    When ENABLE_HEADER_PASSTHROUGH is True, also extracts headers matching the
+    cached union of:
+    - The global allowlist resolved via global_config_cache.get_passthrough_headers()
+      (respects PASSTHROUGH_HEADERS_SOURCE priority: env, db, merge)
+    - All gateway-specific passthrough_headers configured on any Gateway
+
+    The merged allowlist is cached with a 60 s TTL (matching global_config_cache)
+    so the gateway table scan only runs once per TTL window, not per request.
+
+    All extracted values are sanitized via sanitize_header_value() for defense-in-depth,
+    even though the /rpc endpoint re-sanitizes via get_passthrough_headers().
+
+    Headers in _LOOPBACK_SKIP_HEADERS (authorization, content-type, and gateway-internal
+    routing/session headers) are never returned, regardless of configuration.
+
+    Args:
+        request_headers: Headers from the incoming client HTTP request or WebSocket
+            handshake. Keys are header names, values are header values.
+
+    Returns:
+        Dictionary of headers to merge into the loopback /rpc request.
+        Does not include authorization, content-type, or gateway-internal headers
+        (those are handled separately by the caller).
+
+    Examples:
+        X-Upstream-Authorization is always extracted:
+        >>> from unittest.mock import patch
+        >>> with patch("mcpgateway.utils.passthrough_headers.settings") as s:
+        ...     s.enable_header_passthrough = False
+        ...     s.default_passthrough_headers = []
+        ...     extract_headers_for_loopback({"X-Upstream-Authorization": "Bearer tok"})
+        {'x-upstream-authorization': 'Bearer tok'}
+
+        Empty when no relevant headers present:
+        >>> from unittest.mock import patch
+        >>> with patch("mcpgateway.utils.passthrough_headers.settings") as s:
+        ...     s.enable_header_passthrough = False
+        ...     s.default_passthrough_headers = []
+        ...     extract_headers_for_loopback({"Accept": "text/html"})
+        {}
+    """
+    forwarded: Dict[str, str] = {}
+    if not request_headers:
+        return forwarded
+
+    headers_lower = {k.lower(): v for k, v in request_headers.items()}
+
+    # Always forward x-upstream-authorization (always-enabled passthrough header).
+    # On sanitization failure, drop the header rather than forwarding an unsanitized value —
+    # sanitization prevents CRLF/control-character injection, so bypassing it is unsafe.
+    upstream_auth = headers_lower.get("x-upstream-authorization")
+    if upstream_auth:
+        try:
+            forwarded["x-upstream-authorization"] = sanitize_header_value(upstream_auth)
+        except Exception:
+            logger.warning("Failed to sanitize x-upstream-authorization; dropping header for safety", exc_info=True)
+
+    # When passthrough feature is enabled, also forward configured allowlist headers.
+    # The merged allowlist (global + all gateways) is cached with a 60 s TTL.
+    try:
+        if settings.enable_header_passthrough:
+            # First-Party
+            from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+
+            with SessionLocal() as db:
+                allowed = _loopback_allowlist_cache.get(db)
+            skip = _loopback_skip_set()
+            for header_name in allowed:
+                header_lower = header_name.lower()
+                if header_lower in skip:
+                    continue
+                if header_lower in headers_lower:
+                    try:
+                        forwarded[header_lower] = sanitize_header_value(headers_lower[header_lower])
+                    except Exception:
+                        logger.warning("Failed to sanitize passthrough header %s; skipping", header_lower, exc_info=True)
+    except Exception:
+        logger.warning("Failed to read passthrough header allowlist; forwarding only previously extracted headers", exc_info=True)
+
+    if forwarded:
+        logger.debug("Extracted %d passthrough header(s) for loopback: %s", len(forwarded), list(forwarded.keys()))
+
+    return forwarded
+
+
+def safe_extract_headers_for_loopback(request_headers: Dict[str, str], transport_name: str = "transport") -> Dict[str, str]:
+    """Safely extract passthrough headers, returning ``{}`` on failure.
+
+    Wraps :func:`extract_headers_for_loopback` so that SSE / WebSocket setup
+    is never blocked by passthrough configuration issues.  ``ImportError``
+    propagates (broken deployment should fail loudly).
+
+    Args:
+        request_headers: Incoming HTTP headers to extract from.
+        transport_name: Label for warning logs on failure.
+
+    Returns:
+        Dict[str, str]: Extracted passthrough headers, or empty dict on error.
+    """
+    try:
+        return extract_headers_for_loopback(request_headers)
+    except Exception:
+        logger.warning("Failed to extract passthrough headers for %s; upstream auth may fail", transport_name, exc_info=True)
+        return {}
+
+
+def safe_extract_and_filter_for_loopback(request_headers: Dict[str, str]) -> Dict[str, str]:
+    """Extract *and* filter passthrough headers, returning ``{}`` on failure.
+
+    Combines :func:`extract_headers_for_loopback` and
+    :func:`filter_loopback_skip_headers` with error handling so that
+    Streamable HTTP affinity loopback calls degrade gracefully.
+
+    Args:
+        request_headers: Incoming HTTP headers to extract and filter.
+
+    Returns:
+        Dict[str, str]: Filtered passthrough headers, or empty dict on error.
+    """
+    try:
+        return filter_loopback_skip_headers(extract_headers_for_loopback(request_headers))
+    except Exception:
+        logger.warning("Failed to extract passthrough headers for loopback; upstream auth may fail", exc_info=True)
+        return {}

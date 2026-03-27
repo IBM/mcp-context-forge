@@ -6,14 +6,10 @@
 
 <!-- === CI / Security / Build Badges === -->
 [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
-[![CodeQL](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml)&nbsp;
 [![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
 [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
 [![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
 [![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
-
-<!-- === Container Build & Deploy === -->
-[![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
 
 <!-- === Package / Container === -->
 [![Async](https://img.shields.io/badge/async-await-green.svg)](https://docs.python.org/3/library/asyncio.html)
@@ -93,7 +89,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 <summary><strong>🔌 Gateway Layer with Protocol Flexibility</strong></summary>
 
 * Federates any MCP server or REST API
-* Lets you choose your MCP protocol version (e.g., `2025-06-18`)
+* Lets you choose your MCP protocol version (e.g., `2025-11-25`)
 * Exposes a single, unified interface for diverse backends
 
 </details>
@@ -135,7 +131,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 * Real-time log viewer with filtering, search, and export capabilities
 * Auth: Basic, JWT, or custom schemes
 * Structured logs, health endpoints, metrics
-* 400+ tests, Makefile targets, live reload, pre-commit hooks
+* 7,000+ tests, Makefile targets, live reload, pre-commit hooks
 
 </details>
 
@@ -183,7 +179,7 @@ uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 <details>
 <summary><strong>📋 Prerequisites</strong></summary>
 
-* **Python ≥ 3.10** (3.11 recommended)
+* **Python ≥ 3.11**
 * **curl + jq** - only for the last smoke-test step
 
 </details>
@@ -416,18 +412,18 @@ docker compose ps
 # View logs
 docker compose logs -f gateway
 
-# Access Admin UI: http://localhost:4444/admin (login with PLATFORM_ADMIN_EMAIL/PASSWORD)
+# Access Admin UI: http://localhost:8080/admin (login with PLATFORM_ADMIN_EMAIL/PASSWORD)
 # Generate API token
 docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com --exp 10080 --secret my-test-key
 ```
 
 **What you get:**
-- 🗄️ **PostgreSQL** - Production-ready database with 36+ tables
+- 🗄️ **PostgreSQL** - Production-ready database with 55+ tables
 - 🚀 **ContextForge** - Full-featured gateway with Admin UI
 - 📊 **Redis** - High-performance caching and session storage
 - 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
-- 🌐 **Nginx Proxy** - Caching reverse proxy (optional)
+- 🌐 **Nginx Proxy** - Caching reverse proxy on port 8080
 
 **Enable HTTPS (optional):**
 ```bash
@@ -769,7 +765,7 @@ These values differ from code defaults to provide a working local/dev setup:
 | `MCPGATEWAY_UI_ENABLED` | Enable Admin UI dashboard | `true` |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable Admin API endpoints | `true` |
 | `DATABASE_URL` | SQLAlchemy connection URL | `sqlite:///./mcp.db` |
-| `SECURE_COOKIES` | Set `false` for HTTP (non-HTTPS) dev | `true` |
+| `SECURE_COOKIES` | Set `false` for HTTP (non-HTTPS) dev | `false` |
 
 ### 📚 Full Configuration Reference
 
@@ -899,7 +895,7 @@ mcpgateway/          # Core FastAPI application
 ├── middleware/      # Cross-cutting concerns
 └── transports/      # SSE, WebSocket, stdio, streamable HTTP
 
-tests/               # Test suite (400+ tests)
+tests/               # Test suite (7,000+ tests)
 docs/docs/           # Full documentation (MkDocs)
 charts/              # Kubernetes/Helm charts
 plugins/             # Plugin framework and implementations
@@ -932,7 +928,7 @@ make lint            # Run all linters
 make coverage        # Generate coverage report
 ```
 
-Run `make` to see all 75+ available targets.
+Run `make` to see all available targets.
 
 For development workflows, see:
 - **[Developer Workstation Setup](https://ibm.github.io/mcp-context-forge/development/developer-workstation/)**

@@ -433,7 +433,7 @@ class TestTeamsRouter:
     async def test_update_team_success(self, mock_user_context, mock_db, mock_team):
         """Test updating a team successfully."""
         team_id = mock_team.id
-        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
+        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=50)
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -453,7 +453,7 @@ class TestTeamsRouter:
     async def test_update_team_insufficient_permissions(self, mock_user_context, mock_db):
         """Test updating a team without owner permissions."""
         team_id = str(uuid4())
-        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
+        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=50)
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -472,7 +472,7 @@ class TestTeamsRouter:
     async def test_update_team_not_found(self, mock_user_context, mock_db):
         """Test updating a non-existent team."""
         team_id = str(uuid4())
-        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
+        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=50)
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -1125,6 +1125,121 @@ class TestTeamsRouter:
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Invalid email format" in str(exc_info.value.detail)
+
+    # =========================================================================
+    # max_members Enforcement Tests
+    # =========================================================================
+
+    @pytest.mark.asyncio
+    async def test_create_team_non_admin_max_members_too_high(self, mock_user_context, mock_db):
+        """Non-admin users cannot set max_members above the configured limit."""
+        request = TeamCreateRequest(name="Test Team", description="desc", visibility="private", max_members=9999)
+
+        with patch("mcpgateway.routers.teams.settings") as mock_settings:
+            mock_settings.allow_team_creation = True
+            mock_settings.max_members_per_team = 100
+
+            from mcpgateway.routers.teams import create_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "max_members cannot exceed 100" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_create_team_non_admin_max_members_at_limit(self, mock_user_context, mock_team, mock_db):
+        """Non-admin users can set max_members exactly at the configured limit."""
+        request = TeamCreateRequest(name="Test Team", description="desc", visibility="private", max_members=100)
+
+        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_settings.allow_team_creation = True
+            mock_settings.max_members_per_team = 100
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team = AsyncMock(return_value=mock_team)
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            assert result.id == mock_team.id
+
+    @pytest.mark.asyncio
+    async def test_create_team_admin_can_exceed_max_members(self, mock_admin_context, mock_team, mock_db):
+        """Admin users can set max_members above the configured limit."""
+        request = TeamCreateRequest(name="Test Team", description="desc", visibility="private", max_members=9999)
+
+        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_settings.allow_team_creation = True
+            mock_settings.max_members_per_team = 100
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team = AsyncMock(return_value=mock_team)
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            result = await create_team(request, current_user_ctx=mock_admin_context, db=mock_db)
+            assert result.id == mock_team.id
+            mock_service.create_team.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_team_non_admin_max_members_too_high(self, mock_user_context, mock_db):
+        """Non-admin users cannot set max_members above the configured limit on update."""
+        team_id = str(uuid4())
+        request = TeamUpdateRequest(max_members=9999)
+
+        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_settings.max_members_per_team = 100
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import update_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "max_members cannot exceed 100" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_update_team_non_admin_max_members_at_limit(self, mock_user_context, mock_team, mock_db):
+        """Non-admin users can set max_members exactly at the configured limit on update."""
+        team_id = str(uuid4())
+        request = TeamUpdateRequest(max_members=100)
+
+        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_settings.max_members_per_team = 100
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.update_team = AsyncMock(return_value=True)
+            mock_service.get_team_by_id = AsyncMock(return_value=mock_team)
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import update_team
+
+            result = await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
+            assert result.id == mock_team.id
+
+    @pytest.mark.asyncio
+    async def test_update_team_admin_can_exceed_max_members(self, mock_admin_context, mock_team, mock_db):
+        """Admin users can set max_members above the configured limit on update."""
+        team_id = str(uuid4())
+        request = TeamUpdateRequest(max_members=9999)
+
+        with patch("mcpgateway.routers.teams.settings") as mock_settings, patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_settings.max_members_per_team = 100
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.update_team = AsyncMock(return_value=True)
+            mock_service.get_team_by_id = AsyncMock(return_value=mock_team)
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import update_team
+
+            result = await update_team(team_id, request, current_user=mock_admin_context, db=mock_db)
+            assert result.id == mock_team.id
+            mock_service.update_team.assert_called_once()
 
     @pytest.mark.skip(reason="RBAC mocking complex - functionality covered by test_teams_v2.py")
     @pytest.mark.asyncio

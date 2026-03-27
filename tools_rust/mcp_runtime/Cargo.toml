@@ -24,7 +24,6 @@ reqwest-rmcp = { package = "reqwest", version = "0.13.2", default-features = fal
 rmcp = { version = "1.1.1", optional = true, default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "reqwest"] }
 rustls = "0.23.37"
 rustls-native-certs = "0.8.3"
-rustls-pemfile = "2.2.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"

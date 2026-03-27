@@ -262,7 +262,6 @@ uv.lock
 plugins_rust/target/
 plugins_rust/*/target/
 *.rs.bk
-plugins_rust/Cargo.lock
 
 # ========================================
 # Project-Specific (ContextForge)

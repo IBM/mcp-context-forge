@@ -527,13 +527,15 @@ class ToolCreate(BaseModel):
         # When VALIDATION_STRICT=false these patterns produce a warning only so
         # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
         # "< input", "cmd | grep") can register without error.
-        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
-        for pat in forbidden_patterns:
-            if pat in v:
-                if settings.validation_strict:
-                    raise ValueError(f"Description contains unsafe characters: '{pat}'")
-                logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
-                break
+        if settings.tool_description_forbidden_patterns_enabled:
+            for pat in settings.tool_description_forbidden_patterns:
+                if not pat or not pat.strip():
+                    continue
+                if pat in v:
+                    if settings.validation_strict:
+                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                    break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -1931,6 +1933,7 @@ class ResourceRead(BaseModelWithConfigDict):
     name: str
     description: Optional[str]
     mime_type: Optional[str]
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     size: Optional[int]
     created_at: datetime
@@ -2520,6 +2523,7 @@ class PromptRead(BaseModelWithConfigDict):
     custom_name: str
     custom_name_slug: str
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
     gateway_slug: Optional[str] = None
     description: Optional[str]
     template: str
@@ -2682,6 +2686,10 @@ class GatewayCreate(BaseModelWithConfigDict):
     ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
     ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate for integrity verification")
     signing_algorithm: Optional[str] = Field("ed25519", description="Algorithm used for signing the CA certificate")
+
+    # mTLS client certificate/key
+    client_cert: Optional[str] = Field(None, description="Client TLS certificate for mTLS authentication")
+    client_key: Optional[str] = Field(None, description="Client TLS key for mTLS authentication")
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
@@ -3025,6 +3033,15 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # Gateway mode configuration
     gateway_mode: Optional[str] = Field(None, description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
 
+    # CA certificate configuration for custom TLS trust
+    ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
+    ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate")
+    signing_algorithm: Optional[str] = Field(None, description="Algorithm used for signing the CA certificate")
+
+    # mTLS client TLS certificate and key
+    client_cert: Optional[str] = Field(None, description="Client TLS certificate for mTLS gateway authentication")
+    client_key: Optional[str] = Field(None, description="Client TLS key for mTLS gateway authentication")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -3319,6 +3336,11 @@ class GatewayRead(BaseModelWithConfigDict):
     last_seen: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last seen timestamp")
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
+    ca_certificate: Optional[str] = Field(default=None, description="Custom CA certificate for TLS verification")
+    ca_certificate_sig: Optional[str] = Field(default=None, description="Signature of the custom CA certificate")
+    signing_algorithm: Optional[str] = Field(default="ed25519", description="Algorithm used for signing the CA certificate")
+    client_cert: Optional[str] = Field(default=None, description="Client TLS certificate for mTLS authentication")
+    client_key: Optional[str] = Field(default=None, description="Client TLS key for mTLS authentication")
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, authheaders, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
@@ -3591,6 +3613,8 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_token_unmasked"] = None
         masked_data["auth_header_value_unmasked"] = None
         masked_data["auth_headers_unmasked"] = None
+        # SECURITY: Mask mTLS client private key
+        masked_data["client_key"] = settings.masked_auth_value if masked_data.get("client_key") else None
         return GatewayRead.model_validate(masked_data)
 
 

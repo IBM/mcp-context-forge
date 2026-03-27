@@ -14,7 +14,7 @@ use super::config::{MaskingStrategy, PIIConfig, PIIType};
 pub struct CompiledPattern {
     pub pii_type: PIIType,
     pub regex: Regex,
-    pub mask_strategy: MaskingStrategy,
+    pub mask_strategy: Option<MaskingStrategy>,
     #[allow(dead_code)]
     pub description: String,
 }
@@ -26,15 +26,14 @@ pub struct CompiledPatterns {
     pub whitelist: Vec<Regex>,
 }
 
-/// Pattern definitions (pattern, description, default mask strategy)
-type PatternDef = (&'static str, &'static str, MaskingStrategy);
+/// Pattern definitions (pattern, description)
+type PatternDef = (&'static str, &'static str);
 
 // SSN patterns
 static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
         r"\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b",
         "US Social Security Number",
-        MaskingStrategy::Partial,
     )]
 });
 
@@ -48,36 +47,27 @@ static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
         (
             r"\b(?:BSN|Citizen\s+ID|Burgerservicenummer)[:\s#]*\d{9}\b",
             "Dutch BSN with explicit context",
-            MaskingStrategy::Partial,
         ),
         (
             r"\b(?:ID|Order|Invoice|Tracking|Numbers?)[:\s#]*\d{9}\b",
             "9-digit ID with generic context",
-            MaskingStrategy::Partial,
         ),
         (
             r"\b(?:My\s+)?BSN\s+(?:is\s+)?\d{9}\b",
             "BSN with 'is' context",
-            MaskingStrategy::Partial,
         ),
     ]
 });
 
 // Credit card patterns
-static CREDIT_CARD_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(
-        r"\b(?:\d{4}[-\s]?){3}\d{4}\b",
-        "Credit card number",
-        MaskingStrategy::Partial,
-    )]
-});
+static CREDIT_CARD_PATTERNS: Lazy<Vec<PatternDef>> =
+    Lazy::new(|| vec![(r"\b(?:\d{4}[-\s]?){3}\d{4}\b", "Credit card number")]);
 
 // Email patterns
 static EMAIL_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
         r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
         "Email address",
-        MaskingStrategy::Partial,
     )]
 });
 
@@ -87,13 +77,8 @@ static PHONE_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
         (
             r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
             "US phone number",
-            MaskingStrategy::Partial,
         ),
-        (
-            r"\b\+[1-9]\d{9,14}\b",
-            "International phone number",
-            MaskingStrategy::Partial,
-        ),
+        (r"\b\+[1-9]\d{9,14}\b", "International phone number"),
     ]
 });
 
@@ -103,12 +88,10 @@ static IP_ADDRESS_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
         (
             r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
             "IPv4 address",
-            MaskingStrategy::Redact,
         ),
         (
             r"\b(?:[A-Fa-f0-9]{1,4}:){7}[A-Fa-f0-9]{1,4}\b",
             "IPv6 address",
-            MaskingStrategy::Redact,
         ),
     ]
 });
@@ -119,47 +102,31 @@ static DOB_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
         (
             r"\b(?:DOB|Date of Birth|Born|Birthday)[:\s]+\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b",
             "Date of birth with label",
-            MaskingStrategy::Redact,
         ),
         (
             r"\b(?:0[1-9]|1[0-2])[-/](?:0[1-9]|[12]\d|3[01])[-/](?:19|20)\d{2}\b",
             "Date in MM/DD/YYYY format",
-            MaskingStrategy::Redact,
         ),
     ]
 });
 
 // Passport patterns
-static PASSPORT_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(
-        r"\b[A-Z]{1,2}\d{6,9}\b",
-        "Passport number",
-        MaskingStrategy::Redact,
-    )]
-});
+static PASSPORT_PATTERNS: Lazy<Vec<PatternDef>> =
+    Lazy::new(|| vec![(r"\b[A-Z]{1,2}\d{6,9}\b", "Passport number")]);
 
 // Driver's license patterns
 static DRIVER_LICENSE_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
         r"\b(?:DL|License|Driver'?s? License)[#:\s]+[A-Z0-9]{5,20}\b",
         "Driver's license number",
-        MaskingStrategy::Redact,
     )]
 });
 
 // Bank account patterns
 static BANK_ACCOUNT_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![
-        (
-            r"\b\d{8,17}\b",
-            "Bank account number",
-            MaskingStrategy::Redact,
-        ),
-        (
-            r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:\d{3})?\b",
-            "IBAN",
-            MaskingStrategy::Partial,
-        ),
+        (r"\b\d{8,17}\b", "Bank account number"),
+        (r"\b[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}(?:\d{3})?\b", "IBAN"),
     ]
 });
 
@@ -168,23 +135,14 @@ static MEDICAL_RECORD_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
         r"\b(?:MRN|Medical Record)[#:\s]+[A-Z0-9]{6,12}\b",
         "Medical record number",
-        MaskingStrategy::Redact,
     )]
 });
 
 // AWS key patterns
 static AWS_KEY_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![
-        (
-            r"\bAKIA[0-9A-Z]{16}\b",
-            "AWS Access Key ID",
-            MaskingStrategy::Redact,
-        ),
-        (
-            r"\b[A-Za-z0-9/+=]{40}\b",
-            "AWS Secret Access Key",
-            MaskingStrategy::Redact,
-        ),
+        (r"\bAKIA[0-9A-Z]{16}\b", "AWS Access Key ID"),
+        (r"\b[A-Za-z0-9/+=]{40}\b", "AWS Secret Access Key"),
     ]
 });
 
@@ -193,7 +151,6 @@ static API_KEY_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
     vec![(
         r#"\b(?:api[_-]?key|apikey|api_token|access[_-]?token)[:\s]+['"]?[A-Za-z0-9\-_]{20,}['"]?\b"#,
         "Generic API key",
-        MaskingStrategy::Redact,
     )]
 });
 
@@ -206,7 +163,7 @@ pub fn compile_patterns(config: &PIIConfig) -> Result<CompiledPatterns, String> 
     macro_rules! add_patterns {
         ($enabled:expr, $pii_type:expr, $pattern_list:expr) => {
             if $enabled {
-                for (pattern, description, mask_strategy) in $pattern_list.iter() {
+                for (pattern, description) in $pattern_list.iter() {
                     // Add case-insensitive flag to pattern string for RegexSet
                     pattern_strings.push(format!("(?i){}", pattern));
                     let regex = regex::RegexBuilder::new(pattern)
@@ -216,7 +173,7 @@ pub fn compile_patterns(config: &PIIConfig) -> Result<CompiledPatterns, String> 
                     patterns.push(CompiledPattern {
                         pii_type: $pii_type,
                         regex,
-                        mask_strategy: *mask_strategy,
+                        mask_strategy: None,
                         description: description.to_string(),
                     });
                 }
@@ -284,7 +241,7 @@ pub fn compile_patterns(config: &PIIConfig) -> Result<CompiledPatterns, String> 
             patterns.push(CompiledPattern {
                 pii_type: PIIType::Custom,
                 regex,
-                mask_strategy: custom.mask_strategy,
+                mask_strategy: Some(custom.mask_strategy),
                 description: custom.description.clone(),
             });
         }

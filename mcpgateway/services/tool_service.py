@@ -710,6 +710,8 @@ class ToolService(BaseService):
                 "visibility": gateway.visibility,
                 "tags": gateway.tags or [],
                 "gateway_mode": getattr(gateway, "gateway_mode", "cache"),  # Gateway mode for direct proxy support
+                "client_cert": getattr(gateway, "client_cert", None),
+                "client_key": getattr(gateway, "client_key", None),
             }
 
         return {"status": "active", "tool": tool_payload, "gateway": gateway_payload}
@@ -3913,18 +3915,54 @@ class ToolService(BaseService):
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
 
-                    def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
-                        """Create an SSL context with the provided CA certificate.
+                    # mTLS client cert/key: resolve from payload, then override with runtime gateway if available
+                    client_cert_from_payload = gateway_payload.get("client_cert") if has_gateway else None
+                    client_key_from_payload = gateway_payload.get("client_key") if has_gateway else None
 
-                        Uses caching to avoid repeated SSL context creation for the same certificate.
+                    # Resolve client cert/key: payload values take precedence, runtime values override if present
+                    gateway_client_cert = client_cert_from_payload
+                    gateway_client_key = client_key_from_payload
+                    if has_gateway and gateway is not None:
+                        runtime_gateway_client_cert = getattr(gateway, "client_cert", None)
+                        runtime_gateway_client_key = getattr(gateway, "client_key", None)
+                        if runtime_gateway_client_cert:
+                            gateway_client_cert = runtime_gateway_client_cert
+                        if runtime_gateway_client_key:
+                            gateway_client_key = runtime_gateway_client_key
+
+                    # Decrypt client_key if stored encrypted
+                    if gateway_client_key:
+                        try:
+                            # First-Party
+                            from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
+
+                            _enc = get_encryption_service(settings.auth_encryption_secret)
+                            gateway_client_key = _enc.decrypt_secret_or_plaintext(gateway_client_key)
+                        except Exception as _dec_exc:
+                            logger.debug("client_key decryption skipped, using as-is: %s", _dec_exc)
+
+                    def create_ssl_context(
+                        ca_certificate: str,
+                        client_cert: str | None = None,
+                        client_key: str | None = None,
+                    ) -> ssl.SSLContext:
+                        """Create an SSL context with the provided CA certificate and optional mTLS credentials.
+
+                        Uses caching to avoid repeated SSL context creation for the same certificate(s).
 
                         Args:
                             ca_certificate: CA certificate in PEM format
+                            client_cert: Optional client cert path or PEM for mTLS
+                            client_key: Optional client key path or PEM for mTLS
 
                         Returns:
                             ssl.SSLContext: Configured SSL context
                         """
-                        return get_cached_ssl_context(ca_certificate)
+                        return get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+
+                    # Capture mTLS client cert/key values for passing to nested function
+                    _client_cert_value = gateway_client_cert
+                    _client_key_value = gateway_client_key
 
                     def get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
@@ -3944,6 +3982,9 @@ class ToolService(BaseService):
                         Raises:
                             Exception: If CA certificate signature is invalid
                         """
+                        # Use captured client cert/key values from closure
+                        client_cert_value = _client_cert_value
+                        client_key_value = _client_key_value
                         # Use local variables instead of ORM objects (captured from outer scope)
                         valid = False
                         if gateway_ca_cert:
@@ -3955,8 +3996,15 @@ class ToolService(BaseService):
                         # First-Party
                         from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
 
-                        if valid:
-                            ctx = create_ssl_context(gateway_ca_cert)
+                        # For plain HTTP gateway URLs, skip SSL context entirely to avoid unnecessary SSL setup.
+                        if gateway_url and gateway_url.lower().startswith("http://"):
+                            ctx = None
+                        elif valid and gateway_ca_cert:
+                            ctx = create_ssl_context(
+                                gateway_ca_cert,
+                                client_cert=client_cert_value,
+                                client_key=client_key_value,
+                            )
                         else:
                             ctx = None
 
