@@ -2607,6 +2607,25 @@ class TestMCPPathRewriteMiddleware:
         dispatch.assert_called_once()
         app_mock.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_rewrite_rejects_empty_server_id_segment(self):
+        """Middleware returns 404 for /servers//mcp (empty server ID)."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/servers//mcp", "headers": []}
+        receive = AsyncMock()
+        sent = []
+
+        async def send(msg):
+            sent.append(msg)
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        app_mock.assert_not_called()
+        # ORJSONResponse sends http.response.start + http.response.body
+        assert any(m.get("status") == 404 for m in sent if m.get("type") == "http.response.start")
+
 
 class TestServerEndpointCoverage:
     """Exercise server endpoints and SSE coverage."""

@@ -2828,6 +2828,18 @@ class MCPPathRewriteMiddleware:
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not original_path.startswith("/.well-known/"):
             if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+                # SECURITY: If the path looks server-scoped, validate that a
+                # server_id segment is present and non-empty before rewriting.
+                # Without this check, paths like /servers/xyz/mcp (non-hex ID)
+                # or /servers//mcp (empty ID) would be rewritten to /mcp/ and
+                # silently fall through to unscoped global behaviour (#3891).
+                if "/servers/" in original_path:
+                    # Extract the segment between /servers/ and /mcp
+                    _srv_match = re.search(r"/servers/([^/]+)/mcp", original_path)
+                    if not _srv_match:
+                        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+                        await response(scope, receive, send)
+                        return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 scope["path"] = "/mcp/"
                 await self.application(scope, receive, send)
@@ -3210,6 +3222,32 @@ def get_db(request: Request = None):
             db.close()
         except Exception:
             pass  # nosec B110 - Best effort cleanup on already-failed prompt bridge sessions
+
+
+async def require_valid_server(server_id: str, db: Session = Depends(get_db)) -> str:
+    """FastAPI dependency that validates a server_id exists in the database.
+
+    Provides a reusable, fail-closed guard for any server-scoped endpoint.
+    Uses the lightweight ``entity_exists()`` check — no eager loading.
+
+    Args:
+        server_id: Path parameter extracted by FastAPI.
+        db: Database session from the ``get_db`` dependency.
+
+    Returns:
+        The validated server_id string.
+
+    Raises:
+        HTTPException: 404 if the server does not exist, 503 on database errors.
+    """
+    try:
+        if not await server_service.entity_exists(db, server_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server not found")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Service unavailable — unable to verify server")
+    return server_id
 
 
 async def _read_request_json(request: Request) -> Any:
@@ -4077,7 +4115,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
 
 @server_router.post("/{server_id}/message")
 @require_permission("servers.use")
-async def message_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
+async def message_endpoint(request: Request, server_id: str = Depends(require_valid_server), user=Depends(get_current_user_with_permissions)):
     """
     Handles incoming messages for a specific server.
 
