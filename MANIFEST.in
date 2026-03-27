@@ -191,6 +191,7 @@ exclude .prospector.yaml
 exclude .hadolint.yaml
 exclude .ruff.toml
 exclude .pre-commit-config.yaml
+exclude .secrets.baseline
 
 # Backup and temporary files
 global-exclude *~
