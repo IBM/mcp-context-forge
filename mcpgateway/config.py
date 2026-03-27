@@ -2037,7 +2037,7 @@ Disallow: /
         """
         return [p for p in value if p and p.strip()]
 
-    @field_validator("mcpgateway_ui_hide_sections", mode="after")
+    @field_validator("mcpgateway_ui_hide_sections", "mcpgateway_ui_hide_sections_admin", mode="after")
     @classmethod
     def _validate_ui_hide_sections(cls, value: list[str]) -> list[str]:
         """Normalize and filter hidable UI sections.
