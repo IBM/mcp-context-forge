@@ -22,7 +22,7 @@ pub static PATTERNS: LazyLock<HashMap<&'static str, Regex>> = LazyLock::new(|| {
     );
     m.insert(
         "github_token",
-        Regex::new(r"\bgh[opusr]_[A-Za-z0-9]{36}\b")
+        Regex::new(r"\b(?:gh[opusr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,})\b")
             .expect("Failed to compile GitHub Token regex pattern"),
     );
     m.insert(
@@ -163,17 +163,27 @@ mod tests {
         let pattern = PATTERNS.get("github_token").unwrap();
 
         assert!(
-            pattern.is_match("ghp_1234567890abcdefghijklmnopqrstuvwxyZ"),
+            pattern.is_match("ghp_1234567890abcdefghijklmnopqrstuvwxyZ"), // pragma: allowlist secret
             "Should match GitHub classic token"
         );
         assert!(
-            pattern.is_match("ghs_1234567890abcdefghijklmnopqrstuvwxyZ"),
+            pattern.is_match("ghs_1234567890abcdefghijklmnopqrstuvwxyZ"), // pragma: allowlist secret
             "Should match GitHub server token"
+        );
+        assert!(
+            pattern.is_match(
+                "github_pat_abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ12", // pragma: allowlist secret
+            ),
+            "Should match GitHub fine-grained PAT"
         );
 
         assert!(
             !pattern.is_match("github_token=short"),
             "Should not match short GitHub-like strings"
+        );
+        assert!(
+            !pattern.is_match("github_pat_short"),
+            "Should not match short fine-grained PAT-like strings"
         );
         assert!(
             !pattern.is_match("ghp_documentation_example"),
@@ -184,9 +194,9 @@ mod tests {
     #[test]
     fn test_stripe_secret_key_pattern() {
         let pattern = PATTERNS.get("stripe_secret_key").unwrap();
-        let live_secret = format!("{}_{}_{}", "sk", "live", "1234567890abcdefghijklmnop");
-        let restricted_test_key = format!("{}_{}_{}", "rk", "test", "1234567890abcdefghijklmnop");
-        let publishable_key = format!("{}_{}_{}", "pk", "live", "1234567890abcdefghijklmnop");
+        let live_secret = format!("{}_{}_{}", "sk", "live", "1234567890abcdefghijklmnop"); // pragma: allowlist secret
+        let restricted_test_key = format!("{}_{}_{}", "rk", "test", "1234567890abcdefghijklmnop"); // pragma: allowlist secret
+        let publishable_key = format!("{}_{}_{}", "pk", "live", "1234567890abcdefghijklmnop"); // pragma: allowlist secret
 
         assert!(
             pattern.is_match(&live_secret),
@@ -212,11 +222,11 @@ mod tests {
         let pattern = PATTERNS.get("generic_api_key_assignment").unwrap();
 
         assert!(
-            pattern.is_match("X-API-Key: test12345678901234567890"),
+            pattern.is_match("X-API-Key: test12345678901234567890"), // pragma: allowlist secret
             "Should match X-API-Key header"
         );
         assert!(
-            pattern.is_match("api_key=my_service_token_1234567890"),
+            pattern.is_match("api_key=my_service_token_1234567890"), // pragma: allowlist secret
             "Should match api_key assignment"
         );
         assert!(

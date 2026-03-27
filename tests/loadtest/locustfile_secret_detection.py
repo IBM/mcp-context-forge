@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 
 import os
 import random
-from locust import HttpUser, task, between
+from locust import between, task
 from locust.contrib.fasthttp import FastHttpUser
 
 
@@ -36,7 +36,7 @@ class SecretsDetectionUser(FastHttpUser):
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json",
         }
-        
+
         # Track secret detection effectiveness
         self.secrets_blocked_count = 0
         self.secrets_not_blocked_count = 0
@@ -52,11 +52,11 @@ class SecretsDetectionUser(FastHttpUser):
 
         # Sample prompts with secrets (should be blocked)
         self.secret_prompts = [
-            "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE AWS_SECRET_ACCESS_KEY=FAKESecretAccessKeyForTestingEXAMPLE0000",
+            "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE AWS_SECRET_ACCESS_KEY=FAKESecretAccessKeyForTestingEXAMPLE0000",  # pragma: allowlist secret
             "Here's my Slack token: xoxr-fake-000000000-fake000000000-fakefakefakefake",
             "Google API key: AIzaFAKE_KEY_FOR_TESTING_ONLY_fake12345",
             "JWT: eyJfake_header_12345.eyJfake_payload_1234.fake_signature_12345678",
-            "Database key: 00face00dead00beef00cafe00fade0000000000000000000000000000000000",
+            "Database key: 00face00dead00beef00cafe00fade0000000000000000000000000000000000",  # pragma: allowlist secret
         ]
 
     @task(7)  # 70% of traffic (7/(7+3))
@@ -108,5 +108,6 @@ class SecretsDetectionUser(FastHttpUser):
                     print(f"⚠️  Warning: {self.secrets_not_blocked_count} secrets not blocked (may indicate detection disabled)")
             else:
                 response.failure(f"Unexpected status {response.status_code}")
+
 
 # Made with Bob

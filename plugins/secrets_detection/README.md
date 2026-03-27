@@ -26,7 +26,7 @@ Configuration (example)
       private_key_block: true
       jwt_like: true
       hex_secret_32: true
-      base64_24: true
+      base64_24: false  # Broad intrinsic-shape heuristic; leave opt-in unless you explicitly want aggressive blocking
     redact: false                # replace matches with redaction_text
     redaction_text: "***REDACTED***"
     block_on_detection: true
@@ -43,7 +43,7 @@ Notes
 
 What it can do
 - Reliably catch supported vendor formats that have strong intrinsic prefixes or structure, even when pasted without labels.
-- Catch generic key/value assignments such as `X-API-Key: ...` or `api_key=...` when `generic_api_key_assignment` is enabled.
+- Catch generic key/value assignments such as `X-API-Key: ...` or `api_key=...` when `generic_api_key_assignment` is enabled. <!-- pragma: allowlist secret -->
 - Still catch some assignment-style values through broader intrinsic-shape heuristics when the value itself looks like a secret.
 - Redact or block when matches are found.
 

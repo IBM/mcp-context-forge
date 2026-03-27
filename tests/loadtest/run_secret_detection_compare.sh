@@ -56,9 +56,9 @@ wait_for_health() {
   local url="$1"
   local max_attempts="${HEALTH_CHECK_MAX_ATTEMPTS}"
   local attempt=0
-  
+
   echo "   ⏳ Waiting for service health at ${url}..."
-  
+
   while [[ ${attempt} -lt ${max_attempts} ]]; do
     if curl -sf "${url}" >/dev/null 2>&1; then
       echo "   ✅ Service is healthy"
@@ -67,7 +67,7 @@ wait_for_health() {
     attempt=$((attempt + 1))
     sleep "${HEALTH_CHECK_SLEEP_SECONDS}"
   done
-  
+
   echo "   ❌ Error: Service failed to become healthy after ${max_attempts} attempts" >&2
   return 1
 }
@@ -75,7 +75,7 @@ wait_for_health() {
 show_rust_flag() {
   local compose_file="$1"
   echo "   🔍 Checking Rust availability..."
-  
+
   # Extract and run a Python check in the container
   local rust_check
   local exit_code=0
@@ -85,13 +85,13 @@ show_rust_flag() {
     print('✅ Rust secrets detection: AVAILABLE')
 except ImportError as e:
     print(f'⚠️  Rust secrets detection: NOT AVAILABLE ({e})')" 2>&1) || exit_code=$?
-  
+
   if [[ ${exit_code} -ne 0 ]]; then
     echo "   ❌ Failed to check Rust availability (exit code: ${exit_code})"
     echo "   ⚠️  Warning: Benchmark results may be unreliable"
     return 1
   fi
-  
+
   echo "   ${rust_check}"
   return 0
 }
@@ -100,13 +100,13 @@ run_locust() {
   local html_report="$1"
   local csv_prefix="$2"
   local exit_code=0
-  
+
   echo "   🚀 Running Locust load test..."
   echo "      Report: ${html_report}"
   echo "      CSV: ${csv_prefix}"
-  
+
   source "${VENV_DIR}/bin/activate"
-  
+
   # Run locust and capture exit code (allow non-zero for analysis)
   locust -f "${LOCUSTFILE}" \
     --host="${SECRET_DETECTION_LOADTEST_HOST}" \
@@ -117,20 +117,21 @@ run_locust() {
     --html="${html_report}" \
     --csv="${csv_prefix}" \
     --only-summary || exit_code=$?
-  
+
   if [[ ${exit_code} -ne 0 ]]; then
     echo "   ⚠️  Warning: Locust exited with code ${exit_code}" >&2
     echo "      This may indicate test failures or timeouts" >&2
     echo "      Check ${html_report} for details" >&2
   fi
-  
+
   return 0  # Continue with comparison even if tests had failures
 }
 
 restore_rust_stack() {
   echo "   ▶ Restoring Rust-capable stack"
   ${COMPOSE_CMD} -f "${RUST_COMPOSE}" down --remove-orphans >/dev/null 2>&1 || true
-  IMAGE_LOCAL="${IMAGE_LOCAL_NAME}" ${COMPOSE_CMD} -f "${RUST_COMPOSE}" up -d >/dev/null
+  IMAGE_LOCAL="${IMAGE_LOCAL_NAME}" ${COMPOSE_CMD} -f "${RUST_COMPOSE}" up -d \
+    --scale gateway="${SECRET_DETECTION_BENCH_GATEWAY_REPLICAS}" >/dev/null
   wait_for_health "${SECRET_DETECTION_LOADTEST_HOST}/health"
   show_rust_flag "${RUST_COMPOSE}"
 }
@@ -171,36 +172,19 @@ echo "   📝 Generating Docker Compose configurations..."
 cat > "${OVERRIDE_BASE}" <<EOF
 services:
   nginx:
-    deploy:
-      resources:
-        limits:
-          cpus: '${SECRET_DETECTION_BENCH_CPU_LIMIT}'
-          memory: 1G
-        reservations:
-          cpus: '${SECRET_DETECTION_BENCH_CPU_RESERVATION}'
-          memory: 512M
+    cpus: '${SECRET_DETECTION_BENCH_CPU_LIMIT}'
+    mem_limit: 1G
+    mem_reservation: 512M
   gateway:
     environment:
       GUNICORN_WORKERS: '${SECRET_DETECTION_BENCH_GUNICORN_WORKERS}'
-    deploy:
-      mode: replicated
-      replicas: ${SECRET_DETECTION_BENCH_GATEWAY_REPLICAS}
-      resources:
-        limits:
-          cpus: '${SECRET_DETECTION_BENCH_CPU_LIMIT}'
-          memory: ${SECRET_DETECTION_BENCH_MEM_LIMIT}
-        reservations:
-          cpus: '${SECRET_DETECTION_BENCH_CPU_RESERVATION}'
-          memory: ${SECRET_DETECTION_BENCH_MEM_RESERVATION}
+    cpus: '${SECRET_DETECTION_BENCH_CPU_LIMIT}'
+    mem_limit: ${SECRET_DETECTION_BENCH_MEM_LIMIT}
+    mem_reservation: ${SECRET_DETECTION_BENCH_MEM_RESERVATION}
   postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: '${SECRET_DETECTION_BENCH_CPU_LIMIT}'
-          memory: 4G
-        reservations:
-          cpus: '${SECRET_DETECTION_BENCH_CPU_RESERVATION}'
-          memory: 2G
+    cpus: '${SECRET_DETECTION_BENCH_CPU_LIMIT}'
+    mem_limit: 4G
+    mem_reservation: 2G
 EOF
 
 # Python fallback configuration (adds shadow module via PYTHONPATH)
@@ -234,7 +218,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 echo "   ▶ Starting Rust-capable stack..."
 ${COMPOSE_CMD} -f "${RUST_COMPOSE}" down --remove-orphans >/dev/null 2>&1 || true
-IMAGE_LOCAL="${IMAGE_LOCAL_NAME}" ${COMPOSE_CMD} -f "${RUST_COMPOSE}" up -d >/dev/null
+IMAGE_LOCAL="${IMAGE_LOCAL_NAME}" ${COMPOSE_CMD} -f "${RUST_COMPOSE}" up -d \
+  --scale gateway="${SECRET_DETECTION_BENCH_GATEWAY_REPLICAS}" >/dev/null
 
 wait_for_health "${SECRET_DETECTION_LOADTEST_HOST}/health"
 show_rust_flag "${RUST_COMPOSE}"
@@ -253,7 +238,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 
 echo "   ▶ Starting Python-only stack (Rust disabled via shadow module)..."
 ${COMPOSE_CMD} -f "${PY_COMPOSE}" down --remove-orphans >/dev/null 2>&1 || true
-IMAGE_LOCAL="${IMAGE_LOCAL_NAME}" ${COMPOSE_CMD} -f "${PY_COMPOSE}" up -d >/dev/null
+IMAGE_LOCAL="${IMAGE_LOCAL_NAME}" ${COMPOSE_CMD} -f "${PY_COMPOSE}" up -d \
+  --scale gateway="${SECRET_DETECTION_BENCH_GATEWAY_REPLICAS}" >/dev/null
 
 wait_for_health "${SECRET_DETECTION_LOADTEST_HOST}/health"
 show_rust_flag "${PY_COMPOSE}"
@@ -300,27 +286,27 @@ for name in ["/rpc prompts/get [clean]", "/rpc prompts/get [secret-blocked]", "A
     if name not in rust or name not in python_rows:
         print(f"\n⚠️  Warning: Missing data for endpoint: {name}")
         continue
-    
+
     print(f"\n{name}")
     print("-" * 100)
-    
+
     rust_row = rust[name]
     python_row = python_rows[name]
-    
+
     for key in ["Requests/s", "Average Response Time", "95%", "99%"]:
         try:
             rust_value = float(rust_row[key])
             python_value = float(python_row[key])
-            
+
             # Calculate percentage difference (positive = Python slower)
             if rust_value > 0:
                 delta_pct = ((python_value - rust_value) / rust_value * 100.0)
             else:
                 delta_pct = 0.0
-            
+
             # Format with color indicators
             indicator = "🔴" if delta_pct > 10 else "🟡" if delta_pct > 5 else "🟢"
-            
+
             print(f"  {key:25s}: rust={rust_row[key]:>10s}  python={python_row[key]:>10s}  "
                   f"delta={delta_pct:>6.2f}% {indicator}")
         except (ValueError, KeyError) as e:
@@ -335,4 +321,3 @@ print("")
 PY
 
 echo "✅ Benchmark complete!"
-

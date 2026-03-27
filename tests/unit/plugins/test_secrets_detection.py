@@ -291,7 +291,20 @@ class TestSecretsDetectionBothImplementations:
         from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
 
         config = SecretsDetectionConfig()
-        data = {"message": "Token value ghp_1234567890abcdefghijklmnopqrstuvwxyZ was pasted into the chat"}
+        data = {"message": "Token value ghp_1234567890abcdefghijklmnopqrstuvwxyZ was pasted into the chat"}  # pragma: allowlist secret
+
+        count, _redacted, findings = _scan_container(data, config, use_rust=use_rust)
+
+        assert count >= 1
+        assert any(f.get("type") == "github_token" for f in findings)
+
+    def test_detects_github_fine_grained_pat_without_label(self, use_rust):
+        """Should detect GitHub fine-grained PATs from their intrinsic prefix."""
+        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+
+        config = SecretsDetectionConfig()
+        token = "github_pat_abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ12"  # pragma: allowlist secret
+        data = {"message": f"{token} was pasted into the chat"}
 
         count, _redacted, findings = _scan_container(data, config, use_rust=use_rust)
 
@@ -303,7 +316,7 @@ class TestSecretsDetectionBothImplementations:
         from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
 
         config = SecretsDetectionConfig()
-        stripe_secret = "_".join(["sk", "live", "1234567890abcdefghijklmnop"])
+        stripe_secret = "_".join(["sk", "live", "1234567890abcdefghijklmnop"])  # pragma: allowlist secret
         data = {"message": f"{stripe_secret} should never be committed"}
 
         count, _redacted, findings = _scan_container(data, config, use_rust=use_rust)
@@ -316,7 +329,7 @@ class TestSecretsDetectionBothImplementations:
         from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
 
         config = SecretsDetectionConfig()
-        publishable_key = "_".join(["pk", "live", "1234567890abcdefghijklmnop"])
+        publishable_key = "_".join(["pk", "live", "1234567890abcdefghijklmnop"])  # pragma: allowlist secret
         data = {"message": f"{publishable_key} is a publishable key example"}
 
         count, _redacted, findings = _scan_container(data, config, use_rust=use_rust)

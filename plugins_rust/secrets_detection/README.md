@@ -49,12 +49,12 @@ secrets_detection:
       google_api_key: true
       github_token: true
       stripe_secret_key: true
-      generic_api_key_assignment: false  # Broad heuristic; useful for X-API-Key/api_key=... style coverage, but can increase false positives
+      generic_api_key_assignment: false  # Broad heuristic; useful for X-API-Key/api_key=... style coverage, but can increase false positives  # pragma: allowlist secret
       slack_token: true
       private_key_block: true
       jwt_like: true
       hex_secret_32: true
-      base64_24: true
+      base64_24: false  # Broad intrinsic-shape heuristic; keep opt-in unless you explicitly want aggressive blocking
     redact: false                    # Replace secrets with redaction_text
     redaction_text: "***REDACTED***"
     block_on_detection: true         # Block requests containing secrets
@@ -68,7 +68,7 @@ Warnings:
 
 What the plugin can do:
 - Catch supported provider formats directly from their intrinsic token structure, without depending on surrounding labels.
-- Catch labeled assignments such as `X-API-Key: ...` when you explicitly enable the broader generic assignment heuristic.
+- Catch labeled assignments such as `X-API-Key: ...` when you explicitly enable the broader generic assignment heuristic. <!-- pragma: allowlist secret -->
 - Keep false positives relatively low by preferring provider-specific formats over generic entropy-based matching.
 
 What the plugin cannot do:
