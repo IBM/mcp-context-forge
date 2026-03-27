@@ -1952,7 +1952,7 @@ def validate_security_configuration():
     # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
     critical_issues = []
 
-    if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:  # nosec B105 - checking for default value
+    if settings.jwt_secret_key in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes") and not settings.dev_mode:  # nosec B105 - checking for default values
         critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
 
     if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
@@ -2037,7 +2037,7 @@ def log_security_recommendations(security_status: settings.SecurityStatus):
         logger.info("📋 SECURITY RECOMMENDATIONS:")
         logger.info("=" * 60)
 
-        if settings.jwt_secret_key == "my-test-key":  # nosec B105 - checking for default value
+        if settings.jwt_secret_key in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"):  # nosec B105 - checking for default value
             logger.info("  • Generate a strong JWT secret:")
             logger.info("    python3 -c 'import secrets; print(secrets.token_urlsafe(32))'")
 
