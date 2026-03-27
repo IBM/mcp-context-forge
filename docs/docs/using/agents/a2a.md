@@ -189,8 +189,8 @@ A2A agents provide comprehensive metrics:
 
 When an A2A agent is registered, a corresponding MCP tool is automatically created (with `integration_type: "A2A"`). The agent and its tool share a linked lifecycle:
 
-- **Deactivating an agent** automatically deactivates its associated tool. The tool will no longer appear in virtual server tool listings and cannot be invoked.
-- **Reactivating an agent** automatically reactivates its associated tool, restoring it to virtual server listings.
+- **Deactivating an agent** automatically deactivates its associated tool, removing it from virtual server tool listings. (Invocation of disabled A2A tools was already rejected; this fix ensures the tool's own `enabled` flag stays in sync so it no longer *appears* as available.)
+- **Reactivating an agent** automatically reactivates its associated tool, restoring it to virtual server tool listings.
 
 This mirrors how MCP server (gateway) deactivation cascades to all child tools, prompts, and resources. Since each A2A agent creates a single tool, the cascade updates exactly one tool record.
 

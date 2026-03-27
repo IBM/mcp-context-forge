@@ -5,12 +5,9 @@ SPDX-License-Identifier: Apache-2.0
 
 A2A Agent testing.
 
-This module contains tests that replicate the issues described in #840:
-1. A2A agent is exposed as an API endpoint but there is no way to test it
-   from the UI with user-provided input (no field to pass the user query).
-2. Tools from A2A Agent are not getting listed under the Global Tools Tab.
-
-These tests verify the expected behavior and will fail until the issues are fixed.
+Tests cover:
+- Issue #840: A2A agent test endpoint user input and tool visibility in Global Tools.
+- Issue #2997: Cascade of agent activation/deactivation to the associated MCP tool.
 """
 
 # Standard
