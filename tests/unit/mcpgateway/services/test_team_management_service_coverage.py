@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import TeamManagementService, TeamMemberLimitExceededError
 
 
 @pytest.fixture(autouse=True)
@@ -370,6 +370,7 @@ class TestAddMemberEdge:
         mock_query = MagicMock()
         mock_filter = MagicMock()
         mock_filter.first = MagicMock(side_effect=[user, None])  # user exists, no existing membership
+        mock_filter.count = MagicMock(return_value=0)
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
@@ -779,13 +780,19 @@ class TestApproveJoinRequestEdge:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        team = _mock_team(max_members=100)
+        # Use max_members=None so the NULL-fallback through settings is exercised
+        team = _mock_team(max_members=None)
         with (
             patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)),
             patch.object(svc, "_log_team_member_action"),
             patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()),
             patch("mcpgateway.services.team_management_service.asyncio") as mock_asyncio,
+            patch("mcpgateway.services.team_management_service.settings") as mock_settings,
         ):
+            mock_settings.max_members_per_team = 100
+            mock_settings.max_teams_per_user = 50
+            mock_settings.default_team_member_role = "developer"
+            mock_settings.default_team_owner_role = "team_admin"
             mock_asyncio.create_task = MagicMock(side_effect=RuntimeError("no loop"))
 
             result = await svc.approve_join_request("jr1", "owner@t.com")
@@ -1443,7 +1450,7 @@ class TestApproveJoinRequestMaxTeamsLimit:
         with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
             with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
                 mock_settings.max_teams_per_user = 50
-                with pytest.raises(ValueError, match="maximum member limit"):
+                with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
                     await svc.approve_join_request("jr1", approved_by="owner@t.com")
 
 
@@ -1481,7 +1488,11 @@ class TestMaxMembersCapEnforcement:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin, patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+        with (
+            patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache,
+            patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin,
+            patch("mcpgateway.services.team_management_service.settings") as mock_settings,
+        ):
             mock_cache.invalidate_user_teams = AsyncMock()
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -1502,7 +1513,11 @@ class TestMaxMembersCapEnforcement:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin, patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+        with (
+            patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache,
+            patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin,
+            patch("mcpgateway.services.team_management_service.settings") as mock_settings,
+        ):
             mock_cache.invalidate_user_teams = AsyncMock()
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -1523,7 +1538,11 @@ class TestMaxMembersCapEnforcement:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin, patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+        with (
+            patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache,
+            patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin,
+            patch("mcpgateway.services.team_management_service.settings") as mock_settings,
+        ):
             mock_cache.invalidate_user_teams = AsyncMock()
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
@@ -1572,12 +1591,23 @@ class TestMaxMembersCapEnforcement:
         assert team.max_members == 500
 
     @pytest.mark.asyncio
-    async def test_update_with_none_max_members_preserves_existing(self, svc, db):
-        """Update with max_members=None leaves the existing value unchanged."""
+    async def test_update_with_none_max_members_clears_override(self, svc, db):
+        """Update with max_members=None clears the per-team override (reverts to global default)."""
         team = _mock_team(max_members=75)
 
         with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
             result = await svc.update_team("t1", max_members=None, skip_limits=False)
+
+        assert result is True
+        assert team.max_members is None  # cleared — global default applies at check time
+
+    @pytest.mark.asyncio
+    async def test_update_omitting_max_members_preserves_existing(self, svc, db):
+        """Omitting max_members entirely leaves the existing value unchanged."""
+        team = _mock_team(max_members=75)
+
+        with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
+            result = await svc.update_team("t1", name="Renamed", skip_limits=False)
 
         assert result is True
         assert team.max_members == 75  # unchanged

@@ -101,15 +101,6 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         if not settings.allow_team_creation and not is_admin:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team creation is currently disabled")
 
-        # Enforce max_members_per_team limit for non-admin users
-        if not is_admin and request.max_members is not None:
-            limit = getattr(settings, "max_members_per_team", 100)
-            if request.max_members > limit:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"max_members cannot exceed {limit} for non-admin users",
-                )
-
         service = TeamManagementService(db)
         team = await service.create_team(
             name=request.name,
@@ -378,16 +369,13 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
         if role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
-        # Enforce max_members_per_team limit for non-admin users
-        if not is_admin and request.max_members is not None:
-            limit = getattr(settings, "max_members_per_team", 100)
-            if request.max_members > limit:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"max_members cannot exceed {limit} for non-admin users",
-                )
-
-        success = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=is_admin)
+        # Only pass max_members when explicitly provided in the request body
+        # (including explicit null) so update_team can distinguish "not provided"
+        # from "clear the per-team override".
+        update_kwargs: dict[str, Any] = dict(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, skip_limits=is_admin)
+        if "max_members" in request.model_fields_set:
+            update_kwargs["max_members"] = request.max_members
+        success = await service.update_team(**update_kwargs)
 
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found or update failed")
@@ -747,7 +735,7 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         )
     except HTTPException:
         raise
-    except ValueError as e:
+    except (ValueError, TeamMemberLimitExceededError) as e:
         logger.error(f"Team invitation failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -842,7 +830,7 @@ async def accept_team_invitation(token: str, current_user: dict = Depends(get_cu
         return TeamMemberResponse.model_validate(member)
     except HTTPException:
         raise
-    except ValueError as e:
+    except (ValueError, TeamMemberLimitExceededError) as e:
         logger.error(f"Invitation acceptance failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
@@ -1133,7 +1121,7 @@ async def approve_join_request(
             invited_by=member.invited_by,
             is_active=member.is_active,
         )
-    except ValueError as e:
+    except (ValueError, TeamMemberLimitExceededError) as e:
         # Handle validation errors with 400 Bad Request
         error_msg = str(e)
         if "maximum team limit" in error_msg:

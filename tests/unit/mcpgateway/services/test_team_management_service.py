@@ -20,7 +20,31 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import TeamManagementService, TeamMemberLimitExceededError, get_effective_max_members
+
+
+class TestGetEffectiveMaxMembers:
+    """Tests for get_effective_max_members — global default vs per-team override."""
+
+    def test_explicit_value_used(self):
+        """When team has explicit max_members, use it regardless of settings."""
+        team = MagicMock(spec=EmailTeam)
+        team.max_members = 25
+        assert get_effective_max_members(team) == 25
+
+    def test_none_falls_back_to_settings(self):
+        """When team.max_members is None, fall back to settings.max_members_per_team."""
+        team = MagicMock(spec=EmailTeam)
+        team.max_members = None
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_members_per_team = 200
+            assert get_effective_max_members(team) == 200
+
+    def test_zero_returns_zero(self):
+        """Explicit zero means no limit enforced (falsy)."""
+        team = MagicMock(spec=EmailTeam)
+        team.max_members = 0
+        assert get_effective_max_members(team) == 0
 
 
 class TestTeamManagementService:
@@ -209,7 +233,11 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_create_team_with_settings_defaults(self, service, mock_db):
-        """Test team creation uses settings defaults."""
+        """Test team creation stores None for max_members when not explicitly provided.
+
+        The effective limit is resolved at check time via get_effective_max_members(),
+        so changing the env var affects existing teams without requiring per-team updates.
+        """
         mock_team = MagicMock(spec=EmailTeam)
 
         # Mock the query for existing inactive teams to return None
@@ -230,7 +258,8 @@ class TestTeamManagementService:
 
             MockTeam.assert_called_once()
             call_kwargs = MockTeam.call_args[1]
-            assert call_kwargs["max_members"] == 50
+            # max_members should be None (not baked from settings) so the global default applies at check time
+            assert call_kwargs["max_members"] is None
 
     @pytest.mark.asyncio
     async def test_create_team_reactivates_existing_inactive_team(self, service, mock_db):
@@ -378,6 +407,30 @@ class TestTeamManagementService:
 
             assert result is False
             mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_team_clear_max_members(self, service, mock_db, mock_team):
+        """Test that passing max_members=None clears the per-team override."""
+        mock_team.max_members = 25  # explicit override
+
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.update_team(team_id="team123", max_members=None)
+
+            assert result is True
+            assert mock_team.max_members is None
+            mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_team_omit_max_members_leaves_unchanged(self, service, mock_db, mock_team):
+        """Test that omitting max_members leaves the existing value unchanged."""
+        mock_team.max_members = 25
+
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.update_team(team_id="team123", name="Renamed")
+
+            assert result is True
+            assert mock_team.max_members == 25
+            mock_db.commit.assert_called_once()
 
     # =========================================================================
     # Team Deletion Tests
@@ -1346,6 +1399,7 @@ class TestTeamManagementService:
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
             mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
@@ -1398,6 +1452,7 @@ class TestTeamManagementService:
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
             mock_settings.default_team_member_role = "viewer"
             mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
@@ -1421,6 +1476,47 @@ class TestTeamManagementService:
         assert result is member
         mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
         mock_role_service.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_approve_join_request_member_limit_exceeded(self, service, mock_db):
+        """Test approve_join_request rejects when team is at capacity."""
+        join_request = MagicMock(spec=EmailTeamJoinRequest)
+        join_request.team_id = "team-1"
+        join_request.user_email = "user@example.com"
+        join_request.is_expired.return_value = False
+        mock_db.query.return_value.filter.return_value.first.return_value = join_request
+        mock_db.query.return_value.filter.return_value.count.return_value = 10
+
+        mock_team = MagicMock()
+        mock_team.max_members = 10
+
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
+
+            with patch.object(service, "get_team_by_id", new=AsyncMock(return_value=mock_team)):
+                with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
+                    await service.approve_join_request("req-1", "admin@example.com")
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_approve_join_request_team_not_found(self, service, mock_db):
+        """Test approve_join_request rejects when team does not exist."""
+        join_request = MagicMock(spec=EmailTeamJoinRequest)
+        join_request.team_id = "team-gone"
+        join_request.user_email = "user@example.com"
+        join_request.is_expired.return_value = False
+        mock_db.query.return_value.filter.return_value.first.return_value = join_request
+
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_teams_per_user = 50
+
+            with patch.object(service, "get_team_by_id", new=AsyncMock(return_value=None)):
+                with pytest.raises(ValueError, match="not found or inactive"):
+                    await service.approve_join_request("req-1", "admin@example.com")
+
+        mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_reject_join_request_success(self, service, mock_db):

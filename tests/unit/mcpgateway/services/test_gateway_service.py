@@ -1392,6 +1392,7 @@ class TestGatewayService:
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         # Only update description
@@ -1434,9 +1435,11 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock(side_effect=Exception("Database error"))
         test_db.rollback = Mock()
+        test_db.refresh = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(description="New description")
@@ -1485,9 +1488,11 @@ class TestGatewayService:
         # Use return_value for all execute calls
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))
+        test_db.refresh = Mock()
         # Mock the query for team name lookup
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(description="New description")

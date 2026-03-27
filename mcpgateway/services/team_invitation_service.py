@@ -31,7 +31,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.team_management_service import get_user_team_count
+from mcpgateway.services.team_management_service import check_team_member_capacity, get_user_team_count
 
 # Initialize logging
 logging_service = LoggingService()
@@ -229,15 +229,10 @@ class TeamInvitationService:
                 logger.warning(f"Active invitation already exists for {SecurityValidator.sanitize_log_message(email)} to team {SecurityValidator.sanitize_log_message(team_id)}")
                 raise ValueError(f"An active invitation already exists for {email}")
 
-            # Check team member limit
-            if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
-
-                pending_invitation_count = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == team_id, EmailTeamInvitation.is_active.is_(True)).count()
-
-                if (current_member_count + pending_invitation_count) >= team.max_members:
-                    logger.warning(f"Team {SecurityValidator.sanitize_log_message(team_id)} has reached maximum member limit")
-                    raise ValueError(f"Team has reached maximum member limit of {team.max_members}")
+            # Check team member limit (explicit per-team value or global default).
+            # Reserve slots for pending invitations too, so we don't over-invite.
+            pending_count = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == team_id, EmailTeamInvitation.is_active.is_(True)).count()
+            check_team_member_capacity(self.db, team, extra_count=pending_count)
 
             # Deactivate any existing invitations for this email/team combination
             if existing_invitation:
@@ -356,12 +351,8 @@ class TeamInvitationService:
             if self._get_user_team_count(accepting_email) >= max_teams:
                 raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
-            # Check team member limit
-            if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.is_active.is_(True)).count()
-                if current_member_count >= team.max_members:
-                    logger.warning(f"Team {invitation.team_id} has reached maximum member limit")
-                    raise ValueError(f"Team has reached maximum member limit of {team.max_members}")
+            # Check team member limit (explicit per-team value or global default)
+            check_team_member_capacity(self.db, team)
 
             # Create team membership
             membership = EmailTeamMember(team_id=invitation.team_id, user_email=invitation.email, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True)
