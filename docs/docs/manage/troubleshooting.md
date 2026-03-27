@@ -163,24 +163,33 @@ The `+psycopg` suffix tells SQLAlchemy to use the psycopg 3 dialect instead of t
 
 If you see an error such as `"Team has reached maximum member limit of 100"` when adding members or sending invitations, the team has hit its membership cap.
 
-Each team has a `max_members` value that defaults to the global `MAX_MEMBERS_PER_TEAM` setting (default: **100**). The limit applies to active members plus pending invitations.
+Each team has a `max_members` value. When `max_members` is `null` (the default for new teams), the global `MAX_MEMBERS_PER_TEAM` setting is used at check time (default: **100**). The limit applies to active members plus pending invitations.
 
 ### Fix
 
-Increase the global default by setting `MAX_MEMBERS_PER_TEAM` in your environment:
+Increase the global default by setting `MAX_MEMBERS_PER_TEAM` in your environment. This takes effect immediately for all teams that do not have an explicit per-team override:
 
 ```bash
 # .env
 MAX_MEMBERS_PER_TEAM=500
 ```
 
-Alternatively, update the limit on a specific team via the Admin API:
+Alternatively, set an explicit per-team limit via the Admin API:
 
 ```bash
-curl -X PATCH http://localhost:4444/api/v1/teams/{team_id} \
+curl -X PUT http://localhost:4444/teams/{team_id} \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"max_members": 500}'
+```
+
+To revert a team to the global default, clear its per-team override:
+
+```bash
+curl -X PUT http://localhost:4444/teams/{team_id} \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"max_members": null}'
 ```
 
 See the [Configuration Reference](./configuration.md) for all team-related settings.

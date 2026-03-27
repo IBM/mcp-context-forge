@@ -23548,6 +23548,8 @@ async function showTeamEditModal(teamId) {
 
 function hideTeamEditModal() {
     document.getElementById("team-edit-modal").classList.add("hidden");
+    var content = document.getElementById("team-edit-modal-content");
+    if (content) content.innerHTML = "";
 }
 
 // Expose team modal functions to global scope

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser
 from mcpgateway.services.team_invitation_service import TeamInvitationService
+from mcpgateway.services.team_management_service import TeamMemberLimitExceededError
 
 
 class TestTeamInvitationService:
@@ -376,8 +377,48 @@ class TestTeamInvitationService:
 
         mock_db.query.side_effect = query_side_effect
 
-        with pytest.raises(ValueError, match="maximum member limit"):
+        with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
             await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_create_invitation_null_max_members_uses_global_default(self, service, mock_team, mock_inviter, mock_membership, mock_db):
+        """Test that create_invitation falls back to settings.max_members_per_team when team.max_members is None."""
+        mock_team.max_members = None  # no per-team override
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model == EmailTeam:
+                mock_query.filter.return_value.first.return_value = mock_team
+            elif model == EmailUser:
+                mock_query.filter.return_value.first.return_value = mock_inviter
+            elif model == EmailTeamMember:
+                if not hasattr(query_side_effect, "member_call_count"):
+                    query_side_effect.member_call_count = 0
+                query_side_effect.member_call_count += 1
+
+                if query_side_effect.member_call_count == 1:
+                    mock_query.filter.return_value.first.return_value = mock_membership
+                elif query_side_effect.member_call_count == 2:
+                    mock_query.filter.return_value.first.return_value = None
+                else:
+                    mock_query.filter.return_value.count.return_value = 8
+            elif model == EmailTeamInvitation:
+                if not hasattr(query_side_effect, "invitation_call_count"):
+                    query_side_effect.invitation_call_count = 0
+                query_side_effect.invitation_call_count += 1
+
+                if query_side_effect.invitation_call_count == 1:
+                    mock_query.filter.return_value.first.return_value = None
+                else:
+                    mock_query.filter.return_value.count.return_value = 2  # 8 + 2 = 10
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
+
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_members_per_team = 10  # global limit matches total (8+2)
+            with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
+                await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
 
     # =========================================================================
     # Invitation Retrieval Tests
@@ -568,8 +609,36 @@ class TestTeamInvitationService:
         mock_db.query.side_effect = query_side_effect
 
         with patch.object(service, "get_invitation_by_token", return_value=mock_invitation):
-            with pytest.raises(ValueError, match="maximum member limit"):
+            with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
                 await service.accept_invitation("token")
+
+    @pytest.mark.asyncio
+    async def test_accept_invitation_null_max_members_uses_global_default(self, service, mock_invitation, mock_team, mock_db):
+        """Test that accept_invitation falls back to settings.max_members_per_team when team.max_members is None."""
+        mock_team.max_members = None  # no per-team override
+
+        def query_side_effect(model):
+            mock_query = MagicMock()
+            if model == EmailTeam:
+                mock_query.filter.return_value.first.return_value = mock_team
+            elif model == EmailTeamMember:
+                if not hasattr(query_side_effect, "call_count"):
+                    query_side_effect.call_count = 0
+                query_side_effect.call_count += 1
+
+                if query_side_effect.call_count == 1:
+                    mock_query.filter.return_value.first.return_value = None
+                else:
+                    mock_query.filter.return_value.count.return_value = 10
+            return mock_query
+
+        mock_db.query.side_effect = query_side_effect
+
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.max_members_per_team = 10  # global limit matches count
+            with patch.object(service, "get_invitation_by_token", return_value=mock_invitation):
+                with pytest.raises(TeamMemberLimitExceededError, match="maximum member limit"):
+                    await service.accept_invitation("token")
 
     # =========================================================================
     # Invitation Decline Tests

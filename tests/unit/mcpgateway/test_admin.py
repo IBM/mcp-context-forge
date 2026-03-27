@@ -278,6 +278,7 @@ from mcpgateway.services.prompt_service import PromptNotFoundError, PromptServic
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerService
+from mcpgateway.services.team_management_service import UNSET
 from mcpgateway.services.tool_service import (
     ToolError,
     ToolNotFoundError,
@@ -7134,6 +7135,19 @@ async def test_admin_create_team_with_nonnumeric_max_members(monkeypatch, mock_d
 
 
 @pytest.mark.asyncio
+async def test_admin_create_team_with_zero_max_members(monkeypatch, mock_db, allow_permission):
+    """Zero max_members in create form returns a 400 error."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Safe Team", "visibility": "private", "max_members": "0"}))
+
+    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 400
+    assert "at least 1" in response.body.decode()
+
+
+@pytest.mark.asyncio
 async def test_admin_create_team_integrity_error(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)
@@ -7426,7 +7440,7 @@ async def test_admin_update_team_with_max_members(monkeypatch, mock_db, allow_pe
 
 @pytest.mark.asyncio
 async def test_admin_update_team_with_nonnumeric_max_members(monkeypatch, mock_db, allow_permission):
-    """Non-numeric max_members in update form falls back to None (preserves existing value)."""
+    """Non-numeric max_members in update form maps to UNSET (leaves existing value unchanged)."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)
     request.scope = {"root_path": ""}
@@ -7441,7 +7455,21 @@ async def test_admin_update_team_with_nonnumeric_max_members(monkeypatch, mock_d
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
     _, kwargs = team_service.update_team.call_args
-    assert kwargs.get("max_members") is None
+    assert kwargs.get("max_members") is UNSET
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_with_zero_max_members(monkeypatch, mock_db, allow_permission):
+    """Zero max_members in update form returns a 400 error."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private", "max_members": "0"}))
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert response.status_code == 400
+    assert "at least 1" in response.body.decode()
 
 
 @pytest.mark.asyncio
@@ -7487,6 +7515,61 @@ async def test_admin_get_team_edit_over_limit_admin(monkeypatch, mock_request, m
     assert 'value="500"' in body
     assert 'max="100"' not in body
     assert "Admins can set any limit" in body
+    # Checkbox should be unchecked (explicit override present)
+    assert 'id="use-default-max-members"' in body
+
+
+@pytest.mark.asyncio
+async def test_admin_get_team_edit_null_max_members(monkeypatch, mock_request, mock_db, allow_permission):
+    """Team with max_members=None shows checkbox checked and input disabled."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "max_members_per_team", 100)
+    team_service = MagicMock()
+    team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=None))
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+    body = response.body.decode()
+    assert "checked" in body
+    assert "disabled" in body
+    assert "Currently using global default (100)" in body
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_use_default_checkbox_clears_override(monkeypatch, mock_db, allow_permission):
+    """Checking 'Use global default' checkbox passes max_members=None to clear the per-team override."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private", "use_default_max_members": "on"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("max_members") is None
+
+
+@pytest.mark.asyncio
+async def test_admin_update_team_empty_max_members_no_checkbox_sends_unset(monkeypatch, mock_db, allow_permission):
+    """Empty max_members without the checkbox sends UNSET (leave unchanged)."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.scope = {"root_path": ""}
+    request.headers = {"HX-Request": "true"}
+    request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
+
+    team_service = MagicMock()
+    team_service.update_team = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+
+    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    _, kwargs = team_service.update_team.call_args
+    assert kwargs.get("max_members") is UNSET
 
 
 @pytest.mark.asyncio
