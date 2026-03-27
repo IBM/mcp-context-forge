@@ -98,8 +98,19 @@ def _record_mcp_auth_cache_event(outcome: str) -> None:
         pass  # nosec B110 - Metrics must not break auth flow
 
 
-# Precompiled regex for server ID extraction from path
-_SERVER_ID_RE: Pattern[str] = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp")
+# Precompiled regex for server ID extraction from path.
+# SECURITY: Uses [^/]+ (any non-slash characters) instead of a restrictive hex-only
+# class to ensure ALL server-scoped paths are captured.  A narrow regex caused non-hex
+# IDs (e.g. "xyz") to silently fall through to unscoped global behaviour (#3891).
+_SERVER_ID_RE: Pattern[str] = re.compile(r"^/servers/(?P<server_id>[^/]+)/mcp")
+
+# Pattern that detects a server-scoped MCP path even when _SERVER_ID_RE doesn't
+# match (e.g. empty segment: /servers//mcp).  Used as a defense-in-depth guard.
+_SERVER_SCOPED_PATH_RE: Pattern[str] = re.compile(r"^/servers/.*/mcp(?:/)?$")
+
+# Sentinel returned by _validate_server_id to signal that an error response
+# has already been sent and the caller should return immediately.
+_REJECT = object()
 
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
@@ -2476,6 +2487,58 @@ class SessionManagerWrapper:
         logger.debug("Stopping Streamable HTTP Session Manager...")
         await self.stack.aclose()
 
+    @staticmethod
+    async def _validate_server_id(match: "re.Match[str] | None", path: str, scope: Scope, receive: Receive, send: Send) -> str | None:
+        """Validate and resolve the server_id from the request path.
+
+        Args:
+            match: Result of ``_SERVER_ID_RE.search(path)``.
+            path: Original request path (``scope["modified_path"]``).
+            scope: ASGI scope dict.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+
+        Returns:
+            The validated server_id string, ``None`` when the path is
+            not server-scoped (legitimate global ``/mcp``), or the
+            sentinel ``_REJECT`` when an error response has already been
+            sent and the caller should return immediately.
+        """
+        if match:
+            server_id = match.group("server_id")
+            # SECURITY: Validate that the server_id exists in the database
+            # to prevent unauthorized access via invalid server IDs.
+            # Uses the shared BaseService.entity_exists() for a lightweight
+            # EXISTS check — no row data is loaded.
+            try:
+                # First-Party
+                from mcpgateway.services.server_service import server_service as _server_svc  # pylint: disable=import-outside-toplevel,no-name-in-module
+
+                async with get_db() as db:
+                    if not await _server_svc.entity_exists(db, server_id):
+                        logger.warning("Invalid server ID in MCP request path: %s", server_id)
+                        response = ORJSONResponse({"detail": "Server not found"}, status_code=404)
+                        await response(scope, receive, send)
+                        return _REJECT
+            except Exception as e:
+                logger.error("Failed to validate server ID %s: %s", server_id, e)
+                response = ORJSONResponse({"detail": "Service unavailable — unable to verify server"}, status_code=503)
+                await response(scope, receive, send)
+                return _REJECT
+            return server_id
+
+        # SECURITY (defense-in-depth): If the path looks server-scoped but
+        # the primary regex didn't capture a server_id (e.g. empty segment
+        # /servers//mcp, or an encoding edge case), reject immediately
+        # rather than falling through to unscoped global behaviour (#3891).
+        if _SERVER_SCOPED_PATH_RE.search(path):
+            logger.warning("Server-scoped MCP path with unparseable server ID rejected: %s", path)
+            response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+            await response(scope, receive, send)
+            return _REJECT
+
+        return None  # Legitimate unscoped /mcp path
+
     async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
         """
         Forwards an incoming ASGI request to the streamable HTTP session manager.
@@ -2570,6 +2633,14 @@ class SessionManagerWrapper:
                 )
                 await response(scope, receive, send)
                 return
+
+        # SECURITY: Validate server existence early — before affinity routing
+        # can shortcut to /rpc, which checks token scoping but not server
+        # existence.  Without this, nonexistent server IDs that reach the
+        # affinity branches would bypass the 404 and get empty-scoped results.
+        validated = await self._validate_server_id(match, path, scope, receive, send)
+        if validated is _REJECT:
+            return
 
         if is_internally_forwarded:
             logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)
@@ -2856,11 +2927,7 @@ class SessionManagerWrapper:
         # Store headers in context for tool invocations
         request_headers_var.set(headers)
 
-        if match:
-            server_id = match.group("server_id")
-            server_id_var.set(server_id)
-        else:
-            server_id_var.set(None)
+        server_id_var.set(validated)
 
         # For session affinity: wrap send to capture session ID from response headers
         # This allows us to register ownership for new sessions created by the SDK

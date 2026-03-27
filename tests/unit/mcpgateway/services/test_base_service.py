@@ -19,7 +19,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 # First-Party
 from mcpgateway.services.base_service import BaseService
 
-
 # ---------------------------------------------------------------------------
 # Helpers: lightweight SQLAlchemy model and concrete test subclass
 # ---------------------------------------------------------------------------
@@ -44,6 +43,38 @@ class _ConcreteService(BaseService):
     """Valid concrete subclass used by every test that needs an instance."""
 
     _visibility_model_cls = _FakeItem
+
+
+# ---------------------------------------------------------------------------
+# entity_exists
+# ---------------------------------------------------------------------------
+
+
+class TestEntityExists:
+    """Tests for the BaseService.entity_exists lightweight existence check."""
+
+    @pytest.fixture()
+    def service(self):
+        return _ConcreteService()
+
+    @pytest.mark.asyncio
+    async def test_returns_true_when_entity_exists(self, service):
+        db = MagicMock()
+        db.execute.return_value.scalar.return_value = True
+        assert await service.entity_exists(db, "some-id") is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_entity_missing(self, service):
+        db = MagicMock()
+        db.execute.return_value.scalar.return_value = False
+        assert await service.entity_exists(db, "missing-id") is False
+
+    @pytest.mark.asyncio
+    async def test_propagates_db_exceptions(self, service):
+        db = MagicMock()
+        db.execute.side_effect = RuntimeError("connection lost")
+        with pytest.raises(RuntimeError, match="connection lost"):
+            await service.entity_exists(db, "any-id")
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +195,7 @@ def _compile_where(stmt) -> str:
     compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
     # Extract everything after WHERE to avoid matching column names in SELECT
     if "WHERE" in compiled:
-        return compiled[compiled.index("WHERE"):]
+        return compiled[compiled.index("WHERE") :]
     return compiled
 
 

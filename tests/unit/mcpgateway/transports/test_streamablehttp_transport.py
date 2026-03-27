@@ -22,17 +22,17 @@ have no heavy dependencies.
 from __future__ import annotations
 
 # Standard
-import json
 from contextlib import asynccontextmanager
+import json
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
 import httpx
+from mcp.types import PromptArgument
 import pytest
 from starlette.types import Scope
-from mcp.types import PromptArgument
 
 # First-Party
 # ---------------------------------------------------------------------------
@@ -40,10 +40,17 @@ from mcp.types import PromptArgument
 # ---------------------------------------------------------------------------
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
-from mcpgateway.transports.streamablehttp_transport import _MCPGATEWAY_CONTEXT_KEY
-from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service, user_context_var
-from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service
-from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service
+from mcpgateway.transports.streamablehttp_transport import (
+    _MCPGATEWAY_CONTEXT_KEY,
+    list_prompts,
+    list_resources,
+    list_tools,
+    prompt_service,
+    resource_service,
+    server_id_var,
+    tool_service,
+    user_context_var,
+)
 
 InMemoryEventStore = tr.InMemoryEventStore  # alias
 streamable_http_auth = tr.streamable_http_auth
@@ -1484,6 +1491,7 @@ async def test_streamable_http_auth_skips_well_known_rfc9728_even_when_strict(mo
     assert result is True
     assert called == []
 
+
 @pytest.mark.asyncio
 async def test_streamable_http_auth_requires_auth_for_mcp_sse(monkeypatch):
     """Auth should require authentication for /mcp/sse paths."""
@@ -1958,7 +1966,7 @@ async def test_session_manager_wrapper_handle_streamable_http_no_server_id(monke
 
 @pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http_exception(monkeypatch, caplog):
-    """Test handle_streamable_http logs and raises on exception."""
+    """Test handle_streamable_http returns 503 when server validation fails."""
     # Standard
     from contextlib import asynccontextmanager
 
@@ -1985,13 +1993,22 @@ async def test_session_manager_wrapper_handle_streamable_http_exception(monkeypa
     await wrapper.initialize()
     scope = _make_scope("/servers/123/mcp")
 
-    async def send(msg):
-        pass
+    # Track what was sent
+    sent_messages = []
 
-    with pytest.raises(RuntimeError):
-        await wrapper.handle_streamable_http(scope, None, send)
+    async def send(msg):
+        sent_messages.append(msg)
+
+    # The new validation will catch the database error and return 503
+    # before the RuntimeError from handle_request is reached
+    await wrapper.handle_streamable_http(scope, None, send)
     await wrapper.shutdown()
-    assert "Error handling streamable HTTP request" in caplog.text
+
+    # Verify 503 response was sent due to server validation failure
+    assert len(sent_messages) >= 2
+    assert sent_messages[0]["type"] == "http.response.start"
+    assert sent_messages[0]["status"] == 503
+    assert "Failed to validate server ID" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -5784,6 +5801,7 @@ async def test_session_manager_wrapper_redis_event_store_when_rust_event_store_d
 
     SessionManagerWrapper()
 
+    # First-Party
     from mcpgateway.transports.redis_event_store import RedisEventStore
 
     assert isinstance(captured_config["event_store"], RedisEventStore)
@@ -5812,6 +5830,7 @@ async def test_session_manager_wrapper_falls_back_to_python_event_store_when_ses
 
     SessionManagerWrapper()
 
+    # First-Party
     from mcpgateway.transports.redis_event_store import RedisEventStore
 
     assert isinstance(captured_config["event_store"], RedisEventStore)
@@ -6220,6 +6239,7 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6277,6 +6297,7 @@ async def test_forwarded_post_injects_server_id_with_existing_params(monkeypatch
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6341,6 +6362,7 @@ async def test_forwarded_post_injects_server_id_with_non_dict_params(monkeypatch
             raise AssertionError("Should not fall through to SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6487,6 +6509,7 @@ async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
             raise AssertionError("Should not reach SDK")
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6529,6 +6552,7 @@ async def test_local_affinity_post_injects_server_id_regression(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -6601,6 +6625,7 @@ async def test_local_affinity_post_injects_server_id_with_non_dict_params(monkey
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -7740,7 +7765,7 @@ async def test_streamable_http_auth_uses_cached_auth_context(monkeypatch):
     """Cached MCP auth context should bypass per-request revocation and user lookups."""
 
     # First-Party
-    from mcpgateway.cache.auth_cache import CachedAuthContext, auth_cache
+    from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext
 
     async def fake_verify(_token):
         return {
@@ -7789,7 +7814,7 @@ async def test_streamable_http_auth_rejects_revoked_cached_auth_context(monkeypa
     """Cached revoked auth context should reject before touching the DB helpers."""
 
     # First-Party
-    from mcpgateway.cache.auth_cache import CachedAuthContext, auth_cache
+    from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext
 
     async def fake_verify(_token):
         return {
@@ -7837,7 +7862,7 @@ async def test_streamable_http_auth_rejects_inactive_cached_auth_context(monkeyp
     """Cached inactive auth context should reject before touching the DB helpers."""
 
     # First-Party
-    from mcpgateway.cache.auth_cache import CachedAuthContext, auth_cache
+    from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext
 
     async def fake_verify(_token):
         return {
@@ -9825,6 +9850,7 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -10232,8 +10258,8 @@ async def test_get_request_context_header_wins_over_cookie(monkeypatch):
     from unittest.mock import PropertyMock
 
     # First-Party
-    import mcpgateway.utils.verify_credentials as vc
     from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+    import mcpgateway.utils.verify_credentials as vc
 
     t = server_id_var.set("default_server_id")
 
@@ -10458,6 +10484,7 @@ async def test_local_affinity_post_injects_server_id_when_params_missing(monkeyp
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
 
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
 
@@ -10912,6 +10939,7 @@ async def test_streamable_http_auth_allows_authenticated_oauth_server(monkeypatc
 @pytest.mark.asyncio
 async def test_streamable_http_auth_returns_503_on_db_failure(monkeypatch):
     """Middleware returns 503 when DB is unavailable (OAuthEnforcementUnavailableError)."""
+    # Third-Party
     from sqlalchemy.exc import OperationalError
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
@@ -10944,6 +10972,7 @@ async def test_streamable_http_auth_returns_503_on_db_failure(monkeypatch):
 @pytest.mark.asyncio
 async def test_check_server_oauth_enforcement_db_query_failure_raises(monkeypatch):
     """DB query failure wraps in OAuthEnforcementUnavailableError — fail-closed."""
+    # Third-Party
     from sqlalchemy.exc import OperationalError
 
     token = tr._oauth_checked_var.set(False)
@@ -11676,6 +11705,7 @@ async def test_validate_session_access_session_exists_exception(monkeypatch):
 @pytest.mark.asyncio
 async def test_session_owner_mismatch_logs_warning(monkeypatch, caplog):
     """When _claim_streamable_session_owner returns a different owner, a warning is logged (line 2529)."""
+    # Standard
     import logging
 
     # _claim returns a DIFFERENT owner than the requester (non-admin)
@@ -11807,6 +11837,7 @@ async def test_streamable_http_auth_unexpected_exception_returns_401(monkeypatch
 @pytest.mark.asyncio
 async def test_call_tool_denied_by_token_scope(monkeypatch):
     """Token with tools.read but not tools.execute should be denied call_tool via scope check."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     monkeypatch.setattr(
@@ -11834,6 +11865,7 @@ async def test_call_tool_denied_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_allowed_by_token_scope(monkeypatch):
     """Token with tools.execute in scope should be allowed."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     monkeypatch.setattr(
@@ -11849,6 +11881,7 @@ async def test_call_tool_allowed_by_token_scope(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda _headers: None)
+    # Third-Party
     from mcp import types as mcp_types
 
     tool_result = MagicMock()
@@ -11862,7 +11895,10 @@ async def test_call_tool_allowed_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_allowed_with_empty_scoped_permissions(monkeypatch):
     """Token with no scoped permissions (defer to RBAC) should be allowed if RBAC passes."""
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     monkeypatch.setattr(
@@ -12228,6 +12264,7 @@ def _patch_request_context(monkeypatch, user_context):
 @pytest.mark.asyncio
 async def test_list_tools_denied_by_token_scope(monkeypatch):
     """Token without tools.read should be denied list_tools."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_tools
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
@@ -12239,6 +12276,7 @@ async def test_list_tools_denied_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resources_denied_by_token_scope(monkeypatch):
     """Token without resources.read should be denied list_resources."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_resources
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
@@ -12250,6 +12288,7 @@ async def test_list_resources_denied_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_resource_denied_by_token_scope(monkeypatch):
     """Token without resources.read should be denied read_resource."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import read_resource
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
@@ -12261,6 +12300,7 @@ async def test_read_resource_denied_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_prompts_denied_by_token_scope(monkeypatch):
     """Token without prompts.read should be denied list_prompts."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_prompts
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
@@ -12272,6 +12312,7 @@ async def test_list_prompts_denied_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_prompt_denied_by_token_scope(monkeypatch):
     """Token without prompts.read should be denied get_prompt."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import get_prompt
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
@@ -12283,6 +12324,7 @@ async def test_get_prompt_denied_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resource_templates_denied_by_token_scope(monkeypatch):
     """Token without resources.read should be denied list_resource_templates."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_resource_templates
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
@@ -12294,7 +12336,10 @@ async def test_list_resource_templates_denied_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_allowed_with_wildcard_scoped_permissions(monkeypatch):
     """Token with wildcard scoped permissions should pass scope check."""
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
     monkeypatch.setattr(
@@ -12321,6 +12366,7 @@ async def test_call_tool_allowed_with_wildcard_scoped_permissions(monkeypatch):
 @pytest.mark.asyncio
 async def test_normalize_jwt_payload_with_scoped_permissions(monkeypatch):
     """API token with scopes.permissions should include scoped_permissions in context."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
 
     monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
@@ -12339,6 +12385,7 @@ async def test_normalize_jwt_payload_with_scoped_permissions(monkeypatch):
 @pytest.mark.asyncio
 async def test_set_logging_level_denied_by_token_scope(monkeypatch):
     """Token without servers.use should be denied set_logging_level."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
     _patch_request_context(monkeypatch, _scoped_user_context(["tools.read"]))
@@ -12350,6 +12397,7 @@ async def test_set_logging_level_denied_by_token_scope(monkeypatch):
 @pytest.mark.asyncio
 async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
     """_auth_jwt should propagate scopes.permissions into user_context_var."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         _StreamableHttpAuthHandler,
         user_context_var,
@@ -12383,6 +12431,7 @@ async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_auth_jwt_uses_cached_auth_context_and_cached_teams(monkeypatch):
     """Cached auth context and cached teams should avoid fallback lookups and preserve scoped server ids."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
 
     jwt_payload = {
@@ -12418,6 +12467,7 @@ async def test_auth_jwt_uses_cached_auth_context_and_cached_teams(monkeypatch):
 @pytest.mark.asyncio
 async def test_auth_jwt_falls_back_after_cache_errors_and_tolerates_cache_set_failure(monkeypatch):
     """Fallback auth flow should survive cache lookup/set failures and revocation-check exceptions."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
 
     jwt_payload = {
@@ -12464,6 +12514,7 @@ async def test_auth_jwt_falls_back_after_cache_errors_and_tolerates_cache_set_fa
 @pytest.mark.asyncio
 async def test_auth_jwt_uses_batched_auth_context_and_caches_team_list(monkeypatch):
     """Batched auth lookups should populate context and tolerate team-cache write failures."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
 
     jwt_payload = {
@@ -12502,6 +12553,7 @@ async def test_auth_jwt_uses_batched_auth_context_and_caches_team_list(monkeypat
 @pytest.mark.asyncio
 async def test_auth_jwt_cached_context_requires_user_when_db_user_missing(monkeypatch):
     """Cached auth contexts without a DB user should reject when REQUIRE_USER_IN_DB is enabled."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
 
     jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
@@ -12527,6 +12579,7 @@ async def test_auth_jwt_cached_context_requires_user_when_db_user_missing(monkey
 @pytest.mark.asyncio
 async def test_auth_jwt_returns_invalid_credentials_when_cache_lookup_raises_http_exception(monkeypatch):
     """HTTPException from auth cache lookup should be surfaced as invalid credentials."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
 
     jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
@@ -12549,6 +12602,7 @@ async def test_auth_jwt_returns_invalid_credentials_when_cache_lookup_raises_htt
 @pytest.mark.asyncio
 async def test_auth_jwt_batched_context_requires_user_when_db_user_missing(monkeypatch):
     """Batched auth lookups without a DB user should reject when REQUIRE_USER_IN_DB is enabled."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
 
     jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
@@ -12572,6 +12626,7 @@ async def test_auth_jwt_batched_context_requires_user_when_db_user_missing(monke
 @pytest.mark.asyncio
 async def test_auth_jwt_records_batch_team_cache_hit_on_success(monkeypatch):
     """Successful batched team caching should preserve the resolved team list."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
 
     jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
@@ -12595,6 +12650,7 @@ async def test_auth_jwt_records_batch_team_cache_hit_on_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_auth_jwt_uses_batched_team_ids_when_auth_cache_is_disabled(monkeypatch):
     """Batched auth lookups should still populate session team context without the cache layer."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler, user_context_var
 
     jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
@@ -12619,6 +12675,7 @@ async def test_auth_jwt_uses_batched_team_ids_when_auth_cache_is_disabled(monkey
 @pytest.mark.asyncio
 async def test_auth_jwt_returns_invalid_credentials_when_batched_lookup_raises_http_exception(monkeypatch):
     """HTTPException from the batched auth lookup should be surfaced as invalid credentials."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import _StreamableHttpAuthHandler
 
     jwt_payload = {"sub": "user@example.com", "is_admin": False, "token_use": "session"}
@@ -12642,10 +12699,12 @@ async def test_auth_jwt_returns_invalid_credentials_when_batched_lookup_raises_h
 @pytest.mark.asyncio
 async def test_complete_denied_by_token_scope(monkeypatch):
     """Token without tools.read should be denied completion/complete."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import complete
 
     _patch_request_context(monkeypatch, _scoped_user_context(["servers.use"]))
 
+    # Third-Party
     from mcp import types as mcp_types
 
     ref = mcp_types.PromptReference(type="ref/prompt", name="test-prompt")
@@ -12727,8 +12786,9 @@ async def test_call_tool_skips_rbac_for_unauthenticated_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_session_manager_wrapper_rbac_gate_denies_missing_servers_use(monkeypatch):
     """SessionManagerWrapper RBAC gate returns 403 Access denied when servers.use permission is absent."""
-    import json
+    # Standard
     from contextlib import asynccontextmanager
+    import json
 
     class DummySessionManager:
         def __init__(self):
@@ -12780,3 +12840,267 @@ async def test_session_manager_wrapper_rbac_gate_denies_missing_servers_use(monk
     assert sent[0]["status"] == 403
     body = json.loads(sent[1]["body"])
     assert body["detail"] == "Access denied"
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_server_not_found_returns_404(monkeypatch):
+    """Server-scoped Streamable HTTP requests return 404 when server ID doesn't exist in database."""
+    # Standard
+    from contextlib import asynccontextmanager
+
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Session manager must not be reached when server not found")
+
+    dummy_manager = DummySessionManager()
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: dummy_manager)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+
+    # Mock permission check to pass (we want to test the server lookup failure)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+
+    # Mock entity_exists to return False (server not found) — uses BaseService.entity_exists
+    @asynccontextmanager
+    async def mock_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db)
+
+    # First-Party
+    from mcpgateway.services.server_service import ServerService
+
+    monkeypatch.setattr(ServerService, "entity_exists", AsyncMock(return_value=False))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+    try:
+        scope = _make_scope("/servers/abc123-def456-789/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+        receive = _make_receive(orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": "1"}))
+        send, messages = _make_send_collector()
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        # Verify 404 response
+        assert len(messages) >= 2
+        assert messages[0]["type"] == "http.response.start"
+        assert messages[0]["status"] == 404
+        assert messages[1]["type"] == "http.response.body"
+
+        body = orjson.loads(messages[1]["body"])
+        assert body["detail"] == "Server not found"
+    finally:
+        user_context_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_server_validation_db_error_returns_503(monkeypatch):
+    """Server-scoped Streamable HTTP requests return 503 when database validation fails."""
+    # Standard
+    from contextlib import asynccontextmanager
+
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Session manager must not be reached when DB error occurs")
+
+    dummy_manager = DummySessionManager()
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: dummy_manager)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+
+    # Mock permission check to pass (we want to test the DB error handling)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+
+    # Mock entity_exists to raise (simulates database failure)
+    @asynccontextmanager
+    async def mock_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db)
+
+    # First-Party
+    from mcpgateway.services.server_service import ServerService
+
+    monkeypatch.setattr(ServerService, "entity_exists", AsyncMock(side_effect=Exception("Database connection failed")))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+    try:
+        scope = _make_scope("/servers/abc123-def456-789/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+        receive = _make_receive(orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": "1"}))
+        send, messages = _make_send_collector()
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        # Verify 503 response
+        assert len(messages) >= 2
+        assert messages[0]["type"] == "http.response.start"
+        assert messages[0]["status"] == 503
+        assert messages[1]["type"] == "http.response.body"
+
+        body = orjson.loads(messages[1]["body"])
+        assert "Service unavailable" in body["detail"]
+        assert "unable to verify server" in body["detail"]
+    finally:
+        user_context_var.reset(token)
+        await wrapper.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Deny-path regression tests for #3891: invalid server IDs must not fall
+# through to unscoped global behaviour.
+# ---------------------------------------------------------------------------
+
+
+class TestServerIdDenyPaths:
+    """Regression tests ensuring invalid server IDs in /servers/{id}/mcp are
+    rejected rather than silently falling through to global (unscoped) access.
+
+    Covers:
+    - Non-hex server IDs (e.g. "xyz")
+    - URL-encoded special characters (e.g. "hello%20world")
+    - Empty server ID segment (/servers//mcp)
+    - Path traversal attempts (/../)
+    - Hex-format IDs that don't exist in the database
+    """
+
+    @pytest.fixture(autouse=True)
+    def _patch_infra(self, monkeypatch):
+        """Common infrastructure patches for every test in this class."""
+        # Standard
+        from contextlib import asynccontextmanager
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield MagicMock()
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db)
+
+        # entity_exists returns False for every ID (no server exists)
+        # First-Party
+        from mcpgateway.services.server_service import ServerService
+
+        monkeypatch.setattr(ServerService, "entity_exists", AsyncMock(return_value=False))
+
+        class DummySessionManager:
+            @asynccontextmanager
+            async def run(self):
+                yield self
+
+            async def handle_request(self, scope, receive, send_func):
+                raise AssertionError("Session manager must not be reached for invalid server IDs")
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+
+    @staticmethod
+    async def _run_request(path: str) -> tuple:
+        """Fire a request at the given path and return (status, body_dict)."""
+        # Third-Party
+        import orjson
+
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+
+        token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+        try:
+            scope = _make_scope(path, method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+            receive = _make_receive(orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": "1"}))
+            send_fn, messages = _make_send_collector()
+
+            await wrapper.handle_streamable_http(scope, receive, send_fn)
+
+            assert len(messages) >= 2, f"Expected at least 2 ASGI messages, got {len(messages)}"
+            status = messages[0]["status"]
+            body = orjson.loads(messages[1]["body"])
+            return status, body
+        finally:
+            user_context_var.reset(token)
+            await wrapper.shutdown()
+
+    # --- Non-hex server IDs (primary attack vector from #3891) ---
+
+    @pytest.mark.asyncio
+    async def test_non_hex_server_id_xyz_returns_404(self):
+        """Non-hex server ID 'xyz' must return 404, not all tools."""
+        status, body = await self._run_request("/servers/xyz/mcp")
+        assert status == 404
+        assert "not found" in body["detail"].lower() or "invalid" in body["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_non_hex_server_id_with_letters_returns_404(self):
+        """Server ID containing non-hex letters (g-z) must return 404."""
+        status, body = await self._run_request("/servers/my-server-name/mcp")
+        assert status == 404
+
+    @pytest.mark.asyncio
+    async def test_url_encoded_special_chars_returns_404(self):
+        """URL-encoded special characters in server ID must return 404."""
+        status, body = await self._run_request("/servers/hello%20world/mcp")
+        assert status == 404
+
+    # --- Empty / malformed server ID ---
+
+    @pytest.mark.asyncio
+    async def test_empty_server_id_returns_404(self):
+        """Empty server ID segment (/servers//mcp) must return 404."""
+        status, body = await self._run_request("/servers//mcp")
+        assert status == 404
+
+    # --- Path traversal attempts ---
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_returns_404(self):
+        """Path traversal in server ID must return 404."""
+        status, body = await self._run_request("/servers/../servers/xyz/mcp")
+        assert status == 404
+
+    # --- Hex-format IDs that don't exist in DB ---
+
+    @pytest.mark.asyncio
+    async def test_hex_nonexistent_server_deadbeef_returns_404(self):
+        """Hex-format server ID not in database must return 404."""
+        status, body = await self._run_request("/servers/deadbeef/mcp")
+        assert status == 404
+        assert body["detail"] == "Server not found"
+
+    @pytest.mark.asyncio
+    async def test_hex_nonexistent_server_all_zeros_returns_404(self):
+        """All-zero UUID-format server ID not in database must return 404."""
+        status, body = await self._run_request("/servers/00000000-0000-0000-0000-000000000000/mcp")
+        assert status == 404
+        assert body["detail"] == "Server not found"
+
+    @pytest.mark.asyncio
+    async def test_uppercase_hex_nonexistent_returns_404(self):
+        """Uppercase hex server ID not in database must return 404."""
+        status, body = await self._run_request("/servers/AABB/mcp")
+        assert status == 404
+        assert body["detail"] == "Server not found"
