@@ -18936,8 +18936,8 @@ function clearSearch(entityType) {
 window.clearSearch = clearSearch;
 
 /**
- * Initialize search inputs for all entity types
- * This function also handles re-initialization after HTMX content loads
+ * Initialize search inputs for all entity types.
+ * Called once on page load; HTMX swap/settle handlers no longer re-invoke this.
  */
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
@@ -18961,8 +18961,9 @@ function initializeSearchInputs() {
 
         const searchState = getPanelSearchStateFromUrl(panelConfig.tableName);
 
-        // Set values BEFORE attaching event listener to avoid triggering
-        // a reload during initialization (setting .value fires the input event)
+        // Set values BEFORE attaching event listener so that the subsequent
+        // addEventListener("input", ...) doesn't exist yet during value restore.
+        // The real loop was: afterSwap reset+reinit → cloneNode → eager reload → swap → repeat.
         if (searchState.query && searchInput.value !== searchState.query) {
             searchInput.value = searchState.query;
         }

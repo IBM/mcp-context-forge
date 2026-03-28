@@ -40,12 +40,16 @@ beforeEach(() => {
     // Provide a stub htmx so loadSearchablePanel doesn't throw
     win.htmx = { ajax: vi.fn() };
     win.ROOT_PATH = "";
+    // Clean URL search params so a failed test doesn't contaminate the next one
+    const clean = new URL(win.location.href);
+    clean.search = "";
+    win.history.replaceState({}, "", clean.toString());
 });
 
 // ---------------------------------------------------------------------------
 // Helper: build the minimal DOM for a panel's search infrastructure
 // ---------------------------------------------------------------------------
-function setupPanelDOM(entityType, { searchInputId, tagInputId, tableName }) {
+function setupPanelDOM(_entityType, { searchInputId, tagInputId, tableName }) {
     const searchInput = doc.createElement("input");
     searchInput.id = searchInputId;
     searchInput.type = "text";
@@ -209,7 +213,7 @@ describe("htmx:afterSwap does not re-initialize search inputs", () => {
         url.searchParams.set("servers_q", "existing-query");
         win.history.replaceState({}, "", url.toString());
 
-        const { searchInput } = setupPanelDOM("catalog", {
+        setupPanelDOM("catalog", {
             searchInputId: "servers-search-input",
             tagInputId: "servers-tag-filter",
             tableName: "servers",
