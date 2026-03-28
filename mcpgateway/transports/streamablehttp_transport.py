@@ -3067,6 +3067,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
     for key in (
         "email",
         "teams",
+        "team_name",
         "is_authenticated",
         "is_admin",
         "token_use",
@@ -3242,7 +3243,7 @@ class _StreamableHttpAuthHandler:
                 return True
 
             # First-Party
-            from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+            from mcpgateway.auth import _get_auth_context_batched_sync, resolve_trace_team_name  # pylint: disable=import-outside-toplevel
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
@@ -3473,6 +3474,9 @@ class _StreamableHttpAuthHandler:
                 "permission_is_admin": db_user_is_admin or is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
+            trace_team_name = await resolve_trace_team_name(user_payload, final_teams, preresolved_team_names=batched_auth_ctx.get("team_names") if batched_auth_ctx else None)
+            if trace_team_name:
+                auth_user_ctx["team_name"] = trace_team_name
             # Extract scoped permissions from JWT for per-method enforcement
             jwt_scopes = user_payload.get("scopes") or {}
             jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
@@ -3482,7 +3486,13 @@ class _StreamableHttpAuthHandler:
             if isinstance(scoped_server_id, str) and scoped_server_id:
                 auth_user_ctx["scoped_server_id"] = scoped_server_id
             user_context_var.set(auth_user_ctx)
-            set_trace_context_from_teams(final_teams, user_email=user_email, is_admin=bool(db_user_is_admin or is_admin), auth_method="jwt")
+            set_trace_context_from_teams(
+                final_teams,
+                user_email=user_email,
+                is_admin=bool(db_user_is_admin or is_admin),
+                auth_method="jwt",
+                team_name=trace_team_name,
+            )
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})

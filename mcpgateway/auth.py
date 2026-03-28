@@ -193,6 +193,113 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
         return [row[0] for row in result.all()]
 
 
+def _get_team_name_by_id_sync(team_id: Optional[str]) -> Optional[str]:
+    """Return the active team display name for a team ID.
+
+    Args:
+        team_id: Team identifier to resolve.
+
+    Returns:
+        Team display name when the active team exists, otherwise ``None``.
+    """
+    if not team_id:
+        return None
+
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailTeam  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(
+            select(EmailTeam.name).where(
+                EmailTeam.id == team_id,
+                EmailTeam.is_active.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+def _extract_claim_team_name(payload: Dict[str, Any], team_id: Optional[str]) -> Optional[str]:
+    """Extract a matching team display name from raw JWT team claims.
+
+    Args:
+        payload: Decoded JWT payload.
+        team_id: Normalized primary team identifier to match.
+
+    Returns:
+        Matching team display name from the JWT claims, if present.
+    """
+    if not team_id:
+        return None
+
+    raw_teams = payload.get("teams")
+    if not isinstance(raw_teams, list):
+        return None
+
+    for raw_team in raw_teams:
+        raw_team_id = None
+        raw_team_name = None
+        if isinstance(raw_team, dict):
+            raw_team_id = raw_team.get("id")
+            raw_team_name = raw_team.get("name")
+        elif isinstance(raw_team, str):
+            raw_team_id = raw_team
+
+        if str(raw_team_id).strip() != team_id:
+            continue
+
+        if raw_team_name is None:
+            return None
+
+        normalized_name = str(raw_team_name).strip()
+        return normalized_name or None
+
+    return None
+
+
+async def resolve_trace_team_name(
+    payload: Dict[str, Any],
+    token_teams: Optional[List[str]],
+    *,
+    preresolved_team_names: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
+    """Resolve the primary team display name for tracing.
+
+    The primary team name is additive trace metadata only. It does not affect
+    scope enforcement, which continues to rely on canonical team IDs.
+
+    Args:
+        payload: Decoded JWT payload.
+        token_teams: Canonical resolved team IDs, or ``None`` for admin scope.
+        preresolved_team_names: Optional mapping of team_id to display name from
+            a batched DB lookup.
+
+    Returns:
+        Display name for the primary concrete team, or ``None`` for public/admin
+        scopes or when the name cannot be resolved.
+    """
+    if not token_teams:
+        return None
+
+    primary_team_id = token_teams[0]
+    claim_team_name = _extract_claim_team_name(payload, primary_team_id)
+    if claim_team_name:
+        return claim_team_name
+
+    if preresolved_team_names:
+        resolved_name = preresolved_team_names.get(primary_team_id)
+        if resolved_name:
+            return resolved_name
+
+    try:
+        return await asyncio.to_thread(_get_team_name_by_id_sync, primary_team_id)
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Failed to resolve trace team name for team_id=%s: %s", primary_team_id, exc)
+        return None
+
+
 def get_user_team_roles(db, user_email: str) -> Dict[str, str]:
     """Return a {team_id: role} mapping for a user's active team memberships.
 
@@ -800,7 +907,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
 
     Returns:
         Dict with keys: user (dict or None), personal_team_id (str or None),
-        is_token_revoked (bool), team_ids (list of str)
+        is_token_revoked (bool), team_ids (list of str), team_names (dict)
 
     Examples:
         >>> # This function runs in a thread pool
@@ -819,6 +926,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
             "personal_team_id": None,
             "is_token_revoked": False,  # nosec B105 - boolean flag, not a password
             "team_ids": [],
+            "team_names": {},
         }
 
         # Query 1: Get user data
@@ -855,12 +963,17 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
 
             # Query 4: Get all active team memberships (for session token team resolution)
             team_ids_result = db.execute(
-                select(EmailTeamMember.team_id).where(
+                select(EmailTeamMember.team_id, EmailTeam.name)
+                .join(EmailTeam, EmailTeam.id == EmailTeamMember.team_id)
+                .where(
                     EmailTeamMember.user_email == email,
                     EmailTeamMember.is_active.is_(True),
+                    EmailTeam.is_active.is_(True),
                 )
             )
-            result["team_ids"] = [row[0] for row in team_ids_result.all()]
+            team_rows = team_ids_result.all()
+            result["team_ids"] = [row[0] for row in team_rows]
+            result["team_names"] = {row[0]: row[1] for row in team_rows if row[1]}
 
         # Query 3: Check token revocation (if JTI provided)
         if jti:
@@ -965,13 +1078,14 @@ async def get_current_user(
             # No auth_provider or JTI; default to interactive
             request.state.auth_method = "jwt"
 
-    def _set_trace_for_user(user_obj: EmailUser, *, teams: Any = _UNSET, auth_method: Optional[str] = None) -> None:
+    def _set_trace_for_user(user_obj: EmailUser, *, teams: Any = _UNSET, auth_method: Optional[str] = None, team_name: Optional[str] = None) -> None:
         """Populate trace context from the resolved user and request state.
 
         Args:
             user_obj: Resolved authenticated user object.
             teams: Optional resolved team scope override. When unset, team scope is derived from the user object.
             auth_method: Optional explicit authentication method label to record on the trace.
+            team_name: Optional display name for the primary concrete team.
         """
         resolved_auth_method = auth_method
         if resolved_auth_method is None and request:
@@ -983,6 +1097,7 @@ async def get_current_user(
                 user_email=user_obj.email,
                 is_admin=bool(user_obj.is_admin),
                 auth_method=resolved_auth_method,
+                team_name=team_name,
             )
             return
 
@@ -1202,6 +1317,8 @@ async def get_current_user(
                         else:
                             request.state.team_id = None
 
+                        request.state.trace_team_name = await resolve_trace_team_name(payload, teams)
+
                         await _set_auth_method_from_payload(payload)
 
                     # Return user from cache
@@ -1225,7 +1342,11 @@ async def get_current_user(
                             _inject_userinfo_instate(request, _user_from_cached_dict(cached_ctx.user))
 
                         cached_user = _user_from_cached_dict(cached_ctx.user)
-                        _set_trace_for_user(cached_user, teams=getattr(request.state, "token_teams", _UNSET) if request else _UNSET)
+                        _set_trace_for_user(
+                            cached_user,
+                            teams=getattr(request.state, "token_teams", _UNSET) if request else _UNSET,
+                            team_name=getattr(request.state, "trace_team_name", None) if request else None,
+                        )
                         return cached_user
 
                     # User not in cache but context was (shouldn't happen, but handle it)
@@ -1273,6 +1394,7 @@ async def get_current_user(
                     request.state.token_teams = teams
                     request.state.team_id = team_id
                     request.state.token_use = token_use
+                    request.state.trace_team_name = await resolve_trace_team_name(payload, teams, preresolved_team_names=auth_ctx.get("team_names"))
                     await _set_auth_method_from_payload(payload)
 
                 # Store in cache for future requests
@@ -1357,7 +1479,11 @@ async def get_current_user(
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, _batched_user)
 
-                _set_trace_for_user(_batched_user, teams=getattr(request.state, "token_teams", _UNSET) if request else _UNSET)
+                _set_trace_for_user(
+                    _batched_user,
+                    teams=getattr(request.state, "token_teams", _UNSET) if request else _UNSET,
+                    team_name=getattr(request.state, "trace_team_name", None) if request else None,
+                )
                 return _batched_user
 
             except HTTPException:
@@ -1412,6 +1538,7 @@ async def get_current_user(
             request.state.token_teams = normalized_teams
             request.state.team_id = team_id
             request.state.token_use = token_use
+            request.state.trace_team_name = await resolve_trace_team_name(payload, normalized_teams)
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti
@@ -1534,7 +1661,7 @@ async def get_current_user(
         _inject_userinfo_instate(request, user)
 
     trace_teams = getattr(request.state, "token_teams", _UNSET) if request else _UNSET
-    _set_trace_for_user(user, teams=trace_teams)
+    _set_trace_for_user(user, teams=trace_teams, team_name=getattr(request.state, "trace_team_name", None) if request else None)
     return user
 
 

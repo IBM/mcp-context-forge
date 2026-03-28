@@ -13132,7 +13132,7 @@ async def test_auth_no_token_sets_anonymous_trace_context(monkeypatch):
 async def test_auth_jwt_sets_trace_context_for_session_token(monkeypatch):
     """JWT MCP auth should populate team-scoped trace context."""
     # First-Party
-    from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_scope, get_trace_user_email
+    from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_name, get_trace_team_scope, get_trace_user_email
 
     clear_trace_context()
     monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
@@ -13153,6 +13153,7 @@ async def test_auth_jwt_sets_trace_context_for_session_token(monkeypatch):
         patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=payload)),
         patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
         patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth._get_team_name_by_id_sync", return_value="Stream Team"),
         patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team-stream"])),
     ):
         allowed = await handler._auth_jwt(token="jwt")
@@ -13161,4 +13162,5 @@ async def test_auth_jwt_sets_trace_context_for_session_token(monkeypatch):
     assert get_trace_user_email() == "stream@example.com"
     assert get_trace_auth_method() == "jwt"
     assert get_trace_team_scope() == "team-stream"
+    assert get_trace_team_name() == "Stream Team"
     clear_trace_context()

@@ -281,7 +281,7 @@ class TestObservability:
     def test_create_span_auto_injects_trace_context(self, mock_tracer):
         """create_span should inject trace/user/session metadata into spans."""
         os.environ["DEPLOYMENT_ENV"] = "staging"
-        set_trace_context_from_teams(["team-a", "team-b"], user_email="user@example.com", is_admin=True, auth_method="jwt")
+        set_trace_context_from_teams(["team-a", "team-b"], user_email="user@example.com", is_admin=True, auth_method="jwt", team_name="Team A")
         set_trace_session_id("session-123")
 
         mock_span = MagicMock()
@@ -300,6 +300,7 @@ class TestObservability:
         mock_span.set_attribute.assert_any_call("langfuse.user.id", "user@example.com")
         mock_span.set_attribute.assert_any_call("user.is_admin", True)
         mock_span.set_attribute.assert_any_call("team.scope", "team-a,team-b")
+        mock_span.set_attribute.assert_any_call("team.name", "Team A")
         mock_span.set_attribute.assert_any_call("auth.method", "jwt")
         mock_span.set_attribute.assert_any_call("langfuse.session.id", "session-123")
         mock_span.set_attribute.assert_any_call("langfuse.environment", "staging")

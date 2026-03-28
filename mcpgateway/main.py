@@ -459,6 +459,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         user_email=auth_context.get("email"),
         is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
         auth_method="mcp_internal_forward",
+        team_name=auth_context.get("team_name"),
     )
 
     return {
@@ -11133,6 +11134,7 @@ class InternalTrustedMCPTransportBridge:
                 user_email=auth_context.get("email"),
                 is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
                 auth_method="mcp_internal_forward",
+                team_name=auth_context.get("team_name"),
             )
             await self.transport_app.handle_streamable_http(forwarded_scope, receive, send)
         finally:

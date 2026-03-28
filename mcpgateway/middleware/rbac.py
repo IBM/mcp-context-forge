@@ -174,8 +174,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         set_trace_user_email(email)
         set_trace_user_is_admin(is_admin)
         set_trace_auth_method(auth_method)
+        trace_team_name = getattr(request.state, "trace_team_name", None)
         if team_scope_known:
-            set_trace_context_from_teams(token_teams, user_email=email, is_admin=is_admin, auth_method=auth_method)
+            set_trace_context_from_teams(token_teams, user_email=email, is_admin=is_admin, auth_method=auth_method, team_name=trace_team_name)
         elif is_admin:
             set_trace_team_scope("admin")
 

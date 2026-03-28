@@ -3660,7 +3660,7 @@ class TestSessionTokenBranches:
     async def test_cache_hit_populates_trace_context(self, monkeypatch):
         """Cache-hit auth should populate trace context for downstream spans."""
         # First-Party
-        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_scope, get_trace_user_email
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_name, get_trace_team_scope, get_trace_user_email
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
         payload = {
@@ -3689,6 +3689,47 @@ class TestSessionTokenBranches:
         assert get_trace_user_email() == "trace@example.com"
         assert get_trace_auth_method() == "jwt"
         assert get_trace_team_scope() == "public"
+        assert get_trace_team_name() is None
+        clear_trace_context()
+
+    @pytest.mark.asyncio
+    async def test_batched_auth_populates_primary_trace_team_name(self, monkeypatch):
+        """Batched auth should resolve and store the primary team display name."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_team_name, get_trace_team_scope, get_trace_user_email
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        payload = {
+            "sub": "trace@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "jti-trace",
+            "token_use": "session",
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "auth_provider": "local"},
+        }
+        auth_ctx = {
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "is_active": True},
+            "team_ids": ["team-trace"],
+            "team_names": {"team-trace": "Trace Team"},
+            "personal_team_id": "team-trace",
+            "is_token_revoked": False,
+        }
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        clear_trace_context()
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "trace@example.com"
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_team_scope() == "team-trace"
+        assert get_trace_team_name() == "Trace Team"
         clear_trace_context()
 
 

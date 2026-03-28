@@ -102,6 +102,7 @@ from mcpgateway.utils.log_sanitizer import sanitize_for_log  # noqa: E402  # pyl
 from mcpgateway.utils.trace_context import (  # noqa: E402  # pylint: disable=wrong-import-position
     get_trace_auth_method,
     get_trace_session_id,
+    get_trace_team_name,
     get_trace_team_scope,
     get_trace_user_email,
     get_trace_user_is_admin,
@@ -646,6 +647,10 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         team_scope = get_trace_team_scope()
         if team_scope:
             attributes.setdefault("team.scope", team_scope)
+
+        team_name = get_trace_team_name()
+        if team_name:
+            attributes.setdefault("team.name", team_name)
 
         auth_method = get_trace_auth_method()
         if auth_method:
