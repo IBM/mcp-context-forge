@@ -67,6 +67,9 @@ make autoflake isort black pre-commit
 
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make flake8 bandit interrogate pylint verify
+
+# Before committing Rust changes (plugins_rust/ or tools_rust/):
+make rust-check                   # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
 ```
 
 ## Authentication & RBAC Overview
