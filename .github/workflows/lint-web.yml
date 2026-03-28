@@ -118,6 +118,12 @@ jobs:
           node-version: '20'
 
       # -----------------------------------------------------------
+      # 🔧  Configure npm registry
+      # -----------------------------------------------------------
+      - name: 🔧  Configure npm registry
+        run: npm config set registry https://registry.npmjs.org/
+
+      # -----------------------------------------------------------
       # 2️⃣  Run Linter (install and execute in one step)
       # -----------------------------------------------------------
       - name: 🔍  Run ${{ matrix.id }}
