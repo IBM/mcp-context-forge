@@ -4804,7 +4804,9 @@ def _make_tool_payload(
     }
 
 
-def _make_gateway_payload(*, auth_type=None, auth_value=None, auth_query_params=None, oauth_config=None, ca_certificate=None, ca_certificate_sig=None, passthrough_headers=None, url=None, client_cert=None, client_key=None):
+def _make_gateway_payload(
+    *, auth_type=None, auth_value=None, auth_query_params=None, oauth_config=None, ca_certificate=None, ca_certificate_sig=None, passthrough_headers=None, url=None, client_cert=None, client_key=None
+):
     return {
         "id": "gw-uuid-1",
         "name": "test_gw",
@@ -4915,7 +4917,7 @@ class TestInvokeToolRestTimeout:
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
                 (SimpleNamespace(modified_payload=None), context_table),  # pre-invoke
-                (SimpleNamespace(modified_payload=None), context_table),  # post-invoke (timeout handler)
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table),  # post-invoke (timeout handler)
             ]
         )
         tool_service._plugin_manager = plugin_manager
@@ -5827,9 +5829,6 @@ class TestInvokeToolPluginPostInvokeSerialization:
     @pytest.mark.asyncio
     async def test_plugin_post_invoke_dict_result_serialized_as_json(self, tool_service):
         """When plugin post-invoke returns a dict without 'content' key, it should be serialized as valid JSON."""
-        # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
 
@@ -5846,8 +5845,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False})), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0), {}),  # post-invoke
             ]
         )
         tool_service._plugin_manager = plugin_manager
@@ -5886,9 +5885,6 @@ class TestInvokeToolPluginPostInvokeSerialization:
     @pytest.mark.asyncio
     async def test_plugin_post_invoke_unserializable_result_falls_back_to_str(self, tool_service):
         """When plugin post-invoke returns an unserializable value (e.g. set), it should fall back to str() instead of crashing."""
-        # First-Party
-        from mcpgateway.plugins.framework import ToolHookType
-
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
 
@@ -5905,8 +5901,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"})), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0), {}),  # post-invoke
             ]
         )
         tool_service._plugin_manager = plugin_manager
@@ -6684,7 +6680,7 @@ class TestInvokeToolA2A:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table))
         tool_service._plugin_manager = plugin_manager
 
         with (
@@ -6858,6 +6854,7 @@ class TestInvokeToolMcpSse:
 
             with pytest.raises(ToolInvocationError, match="OAuth authentication failed for gateway"):
                 await tool_service.invoke_tool(db, "test_tool", {})
+
     @pytest.mark.asyncio
     async def test_mcp_http_url_bypasses_ssl_context_creation(self, tool_service):
         """HTTP URLs should skip SSL context creation entirely (line 3986-3988)."""
@@ -6930,7 +6927,7 @@ class TestInvokeToolMcpSse:
             auth_type="basic",
             ca_certificate="dummy-ca",
             client_cert="client-cert-data",  # mTLS client cert
-            client_key="client-key-data",    # mTLS client key
+            client_key="client-key-data",  # mTLS client key
         )
         db = MagicMock()
 
@@ -7357,7 +7354,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), context_table))
         tool_service._plugin_manager = plugin_manager
 
         def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
@@ -7612,7 +7609,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), None))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0), None))
         tool_service._plugin_manager = plugin_manager
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):

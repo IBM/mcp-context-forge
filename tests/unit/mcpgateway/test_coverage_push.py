@@ -93,6 +93,28 @@ def test_mcp_path_rewrite_middleware():
     assert middleware.application == app_mock
 
 
+@pytest.mark.asyncio
+async def test_mcp_path_rewrite_non_servers_passthrough():
+    """Non-/servers/ paths ending in /mcp must pass through without rewriting."""
+    from unittest.mock import AsyncMock
+
+    from mcpgateway.main import MCPPathRewriteMiddleware
+
+    app_mock = AsyncMock()
+    middleware = MCPPathRewriteMiddleware(app_mock)
+
+    scope = {"type": "http", "path": "/custom/mcp", "headers": []}
+    receive = AsyncMock()
+    send = AsyncMock()
+
+    with patch("mcpgateway.main.streamable_http_auth", new_callable=AsyncMock, return_value=True):
+        await middleware._call_streamable_http(scope, receive, send)
+
+    app_mock.assert_awaited_once_with(scope, receive, send)
+    # Path must NOT be rewritten to /mcp/
+    assert scope["path"] == "/custom/mcp"
+
+
 def test_service_instances():
     """Test that service instances exist."""
     # First-Party

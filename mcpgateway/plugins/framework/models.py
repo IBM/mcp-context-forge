@@ -1336,6 +1336,9 @@ class PluginResult(BaseModel, Generic[T]):
             violation (Optional[PluginViolation]): violation object.
             metadata (Optional[dict[str, Any]]): additional metadata.
             http_headers (Optional[dict[str, str]]): HTTP headers to include in successful responses.
+            retry_delay_ms (int): Milliseconds the gateway should wait before retrying the tool call.
+                0 (default) means no retry. Set by retry_with_backoff plugin to request
+                a delayed re-execution of the tool.
 
      Examples:
         >>> result = PluginResult()
@@ -1358,6 +1361,9 @@ class PluginResult(BaseModel, Generic[T]):
         >>> r2 = PluginResult(continue_processing=False)
         >>> r2.continue_processing
         False
+        >>> r3 = PluginResult(retry_delay_ms=500)
+        >>> r3.retry_delay_ms
+        500
     """
 
     continue_processing: bool = True
@@ -1365,6 +1371,7 @@ class PluginResult(BaseModel, Generic[T]):
     violation: Optional[PluginViolation] = None
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
     http_headers: Optional[dict[str, str]] = None
+    retry_delay_ms: int = 0
 
 
 class GlobalContext(BaseModel):

@@ -543,7 +543,23 @@ class ToolTimeoutError(ToolInvocationError):
     This subclass is used to distinguish timeout errors from other invocation errors.
     Timeout handlers call tool_post_invoke before raising this, so the generic exception
     handler should skip calling post_invoke again to avoid double-counting failures.
+
+    Attributes:
+        retry_delay_ms: Delay in milliseconds requested by the retry plugin.
+            0 (default) means no retry.  Set by the timeout handler after
+            invoking the post-invoke hook so the outer catch block can honour
+            the signal without calling post_invoke a second time.
     """
+
+    def __init__(self, message: str, retry_delay_ms: int = 0) -> None:
+        """Initialise with an optional retry delay from the post-invoke hook.
+
+        Args:
+            message: Human-readable error description.
+            retry_delay_ms: Milliseconds the gateway should wait before retrying.
+        """
+        super().__init__(message)
+        self.retry_delay_ms = retry_delay_ms
 
 
 class ToolService(BaseService):
@@ -3216,6 +3232,121 @@ class ToolService(BaseService):
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
         return db.execute(query).scalars().all()
 
+    # ------------------------------------------------------------------
+    # Retry helpers (used by invoke_tool)
+    # ------------------------------------------------------------------
+
+    async def _run_timeout_post_invoke(
+        self,
+        name: str,
+        effective_timeout: float,
+        global_context: Any,
+        context_table: Any,
+    ) -> None:
+        """Invoke post-invoke plugins after a timeout and raise with retry signal if requested.
+
+        Called from each transport-specific timeout handler so the retry plugin
+        can record the failure and (optionally) request a retry.  If the plugin
+        sets ``retry_delay_ms > 0``, a ``ToolTimeoutError`` carrying the delay
+        is raised immediately; otherwise control returns to the caller which
+        raises a plain ``ToolTimeoutError``.
+
+        Args:
+            name: Tool name.
+            effective_timeout: Timeout duration in seconds.
+            global_context: Plugin global context for cross-hook state.
+            context_table: Plugin local context table for per-plugin state.
+
+        Raises:
+            ToolTimeoutError: When the retry plugin requests a delayed retry.
+        """
+        if context_table:
+            for ctx in context_table.values():
+                ctx.set_state("cb_timeout_failure", True)
+
+        if not self._plugin_manager:
+            return
+
+        if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+            timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
+            timeout_post_result, _ = await self._plugin_manager.invoke_hook(
+                ToolHookType.TOOL_POST_INVOKE,
+                payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
+                global_context=global_context,
+                local_contexts=context_table,
+                violations_as_exceptions=False,
+            )
+            if timeout_post_result and timeout_post_result.retry_delay_ms > 0:
+                raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s", retry_delay_ms=timeout_post_result.retry_delay_ms)
+
+    async def _retry_tool_invocation(
+        self,
+        delay_ms: int,
+        retry_attempt: int,
+        name: str,
+        arguments: Dict[str, Any],
+        request_headers: Any,
+        app_user_email: Optional[str],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        server_id: Optional[str],
+        context_table: Any,
+        global_context: Any,
+        meta_data: Optional[Dict[str, Any]],
+        skip_pre_invoke: bool,
+        path_label: str,
+    ) -> "ToolResult":
+        """Sleep for the plugin-requested delay, then recursively re-invoke the tool.
+
+        The sleep is cancellation-aware: if the calling task is cancelled (e.g.
+        client disconnect) the ``CancelledError`` propagates immediately instead
+        of wasting time on a retry that nobody will consume.
+
+        Args:
+            delay_ms: Backoff delay in milliseconds before retrying.
+            retry_attempt: Current zero-based retry counter.
+            name: Tool name to re-invoke.
+            arguments: Tool arguments to forward.
+            request_headers: Original request headers.
+            app_user_email: ContextForge user email for OAuth.
+            user_email: User email for authorization.
+            token_teams: Team IDs from JWT token.
+            server_id: Virtual server ID for scoping.
+            context_table: Plugin local context table.
+            global_context: Plugin global context.
+            meta_data: Optional metadata dictionary.
+            skip_pre_invoke: Whether to skip pre-invoke hooks.
+            path_label: Label for log messages (success/timeout/exception).
+
+        Returns:
+            ToolResult from the retried invocation.
+        """
+        logger.debug(
+            "tool_service: retry requested (%s) for tool=%s attempt=%d/%d delay_ms=%d",
+            path_label,
+            name,
+            retry_attempt + 1,
+            settings.max_tool_retries,
+            delay_ms,
+        )
+        await asyncio.sleep(delay_ms / 1000)
+        with fresh_db_session() as retry_db:
+            return await self.invoke_tool(
+                db=retry_db,
+                name=name,
+                arguments=arguments,
+                request_headers=request_headers,
+                app_user_email=app_user_email,
+                user_email=user_email,
+                token_teams=token_teams,
+                server_id=server_id,
+                plugin_context_table=context_table,
+                plugin_global_context=global_context,
+                meta_data=meta_data,
+                skip_pre_invoke=skip_pre_invoke,
+                retry_attempt=retry_attempt + 1,
+            )
+
     async def invoke_tool(
         self,
         db: Session,
@@ -3230,6 +3361,7 @@ class ToolService(BaseService):
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
         skip_pre_invoke: bool = False,
+        retry_attempt: int = 0,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -3252,6 +3384,8 @@ class ToolService(BaseService):
             plugin_global_context: Optional global context from middleware for consistency across hooks.
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
             skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
+            retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
+                loop and compared against ``settings.max_tool_retries``.
 
         Returns:
             Tool invocation result.
@@ -3801,19 +3935,7 @@ class ToolService(BaseService):
                             )
 
                         if self._plugin_manager:
-                            if context_table:
-                                for ctx in context_table.values():
-                                    ctx.set_state("cb_timeout_failure", True)
-
-                            if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                                timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
-                                await self._plugin_manager.invoke_hook(
-                                    ToolHookType.TOOL_POST_INVOKE,
-                                    payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
-                                    global_context=global_context,
-                                    local_contexts=context_table,
-                                    violations_as_exceptions=False,
-                                )
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table)
 
                         raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                     response.raise_for_status()
@@ -4137,19 +4259,7 @@ class ToolService(BaseService):
                                 )
 
                             if self._plugin_manager:
-                                if context_table:
-                                    for ctx in context_table.values():
-                                        ctx.set_state("cb_timeout_failure", True)
-
-                                if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                                    timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
-                                    await self._plugin_manager.invoke_hook(
-                                        ToolHookType.TOOL_POST_INVOKE,
-                                        payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
-                                        global_context=global_context,
-                                        local_contexts=context_table,
-                                        violations_as_exceptions=False,
-                                    )
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except BaseException as e:
@@ -4288,19 +4398,7 @@ class ToolService(BaseService):
                                 )
 
                             if self._plugin_manager:
-                                if context_table:
-                                    for ctx in context_table.values():
-                                        ctx.set_state("cb_timeout_failure", True)
-
-                                if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                                    timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
-                                    await self._plugin_manager.invoke_hook(
-                                        ToolHookType.TOOL_POST_INVOKE,
-                                        payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
-                                        global_context=global_context,
-                                        local_contexts=context_table,
-                                        violations_as_exceptions=False,
-                                    )
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except BaseException as e:
@@ -4466,19 +4564,7 @@ class ToolService(BaseService):
 
                         # Trigger circuit breaker on timeout
                         if self._plugin_manager:
-                            if context_table:
-                                for ctx in context_table.values():
-                                    ctx.set_state("cb_timeout_failure", True)
-
-                            if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                                timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
-                                await self._plugin_manager.invoke_hook(
-                                    ToolHookType.TOOL_POST_INVOKE,
-                                    payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
-                                    global_context=global_context,
-                                    local_contexts=context_table,
-                                    violations_as_exceptions=False,
-                                )
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table)
 
                         raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
 
@@ -4524,17 +4610,57 @@ class ToolService(BaseService):
                             except Exception:
                                 tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
 
+                    # Retry: if the plugin requested a delayed retry and we haven't hit the gateway ceiling.
+                    # retry_attempt is 0-based (0 = original call).  The condition allows retry_attempt
+                    # values 0..max_tool_retries-1, meaning up to max_tool_retries *retry* attempts on
+                    # top of the original call (total attempts = max_tool_retries + 1).
+                    if post_result.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
+                        return await self._retry_tool_invocation(
+                            post_result.retry_delay_ms,
+                            retry_attempt,
+                            name,
+                            arguments,
+                            request_headers,
+                            app_user_email,
+                            user_email,
+                            token_teams,
+                            server_id,
+                            context_table,
+                            global_context,
+                            meta_data,
+                            skip_pre_invoke,
+                            "success",
+                        )
+
                 return tool_result
             except (PluginError, PluginViolationError):
                 raise
             except ToolTimeoutError as e:
-                # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke
-                # Re-raise without calling post_invoke again to avoid double-counting failures
-                # But DO set error_message and span attributes for observability
+                # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke.
+                # Do NOT call post_invoke again — the retry_delay_ms signal is carried on the exception.
                 error_message = str(e)
                 if span:
                     span.set_attribute("error", True)
                     span.set_attribute("error.message", error_message)
+
+                # Retry if the post-invoke hook (called by the timeout handler) requested it.
+                if e.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
+                    return await self._retry_tool_invocation(
+                        e.retry_delay_ms,
+                        retry_attempt,
+                        name,
+                        arguments,
+                        request_headers,
+                        app_user_email,
+                        user_email,
+                        token_teams,
+                        server_id,
+                        context_table,
+                        global_context,
+                        meta_data,
+                        skip_pre_invoke,
+                        "timeout",
+                    )
                 raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)
@@ -4549,12 +4675,19 @@ class ToolService(BaseService):
                     span.set_attribute("error", True)
                     span.set_attribute("error.message", error_message)
 
-                # Notify plugins of the failure so circuit breaker can track it
-                # This ensures HTTP 4xx/5xx errors and MCP failures are counted
+                # Notify plugins of the failure so circuit breaker / retry plugin can track it.
+                # Capture the result so we can honour a retry_delay_ms signal from the retry plugin.
+                # When the exception carries an HTTP status code (e.g. httpx.HTTPStatusError),
+                # include it in structuredContent so the retry plugin can honour retry_on_status
+                # instead of blindly retrying every exception.
+                exc_post_result = None
                 if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
                     try:
-                        exception_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation failed: {error_message}")], is_error=True)
-                        await self._plugin_manager.invoke_hook(
+                        exc_structured: Optional[Dict[str, Any]] = None
+                        if isinstance(root_cause, httpx.HTTPStatusError):
+                            exc_structured = {"status_code": root_cause.response.status_code}
+                        exception_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation failed: {error_message}")], is_error=True, structured_content=exc_structured)
+                        exc_post_result, _ = await self._plugin_manager.invoke_hook(
                             ToolHookType.TOOL_POST_INVOKE,
                             payload=ToolPostInvokePayload(name=name, result=exception_error_result.model_dump(by_alias=True)),
                             global_context=global_context,
@@ -4563,6 +4696,27 @@ class ToolService(BaseService):
                         )
                     except Exception as plugin_exc:
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
+
+                # Retry if the plugin requested a delayed retry and we haven't hit the ceiling.
+                # Same counting convention as the success path: retry_attempt is 0-based,
+                # so this allows up to max_tool_retries retry attempts beyond the original call.
+                if exc_post_result is not None and exc_post_result.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
+                    return await self._retry_tool_invocation(
+                        exc_post_result.retry_delay_ms,
+                        retry_attempt,
+                        name,
+                        arguments,
+                        request_headers,
+                        app_user_email,
+                        user_email,
+                        token_teams,
+                        server_id,
+                        context_table,
+                        global_context,
+                        meta_data,
+                        skip_pre_invoke,
+                        "exception",
+                    )
 
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
             finally:
