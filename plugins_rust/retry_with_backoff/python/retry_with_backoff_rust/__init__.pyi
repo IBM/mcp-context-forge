@@ -3,6 +3,7 @@
 
 import builtins
 import typing
+
 __all__ = [
     "RetryStateManager",
 ]
@@ -19,4 +20,3 @@ class RetryStateManager:
     def compute_delay(self, attempt: builtins.int) -> builtins.int: ...
     def check_failure(self, is_error: builtins.bool, status_code: typing.Optional[builtins.int]) -> builtins.bool: ...
     def check_and_update(self, tool: builtins.str, request_id: builtins.str, is_error: builtins.bool, status_code: typing.Optional[builtins.int]) -> tuple[builtins.bool, builtins.int]: ...
-

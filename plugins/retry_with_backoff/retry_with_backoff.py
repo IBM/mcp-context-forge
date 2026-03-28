@@ -62,6 +62,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 try:
     from retry_with_backoff_rust import RetryStateManager as _RustRetryStateManager
+
     _RUST_AVAILABLE = True
     log.debug("retry_with_backoff: Rust extension loaded")
 except ImportError:
@@ -73,6 +74,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Per-tool runtime state
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _ToolRetryState:
@@ -88,9 +90,37 @@ class _ToolRetryState:
 # (and therefore the same request_id) on every retry attempt.
 _STATE: Dict[str, _ToolRetryState] = {}
 
+# Entries older than this are considered orphaned (e.g. the retry sleep was
+# cancelled by a client disconnect) and are evicted on the next _get_state call.
+_STATE_TTL_SECONDS: float = 300.0
+
+
+def _evict_stale_entries() -> None:
+    """Remove state entries whose last failure is older than the TTL.
+
+    Called from _get_state on every access.  The dict is typically very small
+    (one entry per in-flight retry chain) so the scan is negligible.
+    """
+    cutoff = time.monotonic() - _STATE_TTL_SECONDS
+    stale = [k for k, v in _STATE.items() if v.last_failure_at > 0 and v.last_failure_at < cutoff]
+    for k in stale:
+        del _STATE[k]
+
 
 def _get_state(tool: str, request_id: str) -> _ToolRetryState:
-    """Return the retry state entry for a given (tool, request_id) pair, creating it if absent."""
+    """Return the retry state entry for a given (tool, request_id) pair, creating it if absent.
+
+    Evicts stale entries on every call to prevent unbounded growth from
+    cancelled retries (e.g. client disconnects during the backoff sleep).
+
+    Args:
+        tool: Tool name.
+        request_id: Unique request identifier.
+
+    Returns:
+        The mutable retry state for this (tool, request_id) pair.
+    """
+    _evict_stale_entries()
     key = f"{tool}:{request_id}"
     if key not in _STATE:
         _STATE[key] = _ToolRetryState()
@@ -98,13 +128,19 @@ def _get_state(tool: str, request_id: str) -> _ToolRetryState:
 
 
 def _del_state(tool: str, request_id: str) -> None:
-    """Remove the retry state entry for a given (tool, request_id) pair, if it exists."""
+    """Remove the retry state entry for a given (tool, request_id) pair, if it exists.
+
+    Args:
+        tool: Tool name.
+        request_id: Unique request identifier.
+    """
     _STATE.pop(f"{tool}:{request_id}", None)
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
 
 class RetryConfig(BaseModel):
     """Per-plugin configuration, read from config.yaml under the plugin's config: key."""
@@ -133,7 +169,15 @@ class RetryConfig(BaseModel):
 
 
 def _cfg_for(cfg: RetryConfig, tool: str) -> RetryConfig:
-    """Return config merged with any per-tool overrides."""
+    """Return config merged with any per-tool overrides.
+
+    Args:
+        cfg: Base plugin configuration.
+        tool: Tool name to look up overrides for.
+
+    Returns:
+        Merged config if overrides exist, otherwise the original config.
+    """
     overrides = cfg.tool_overrides.get(tool)
     if not overrides:
         return cfg
@@ -147,23 +191,32 @@ def _cfg_for(cfg: RetryConfig, tool: str) -> RetryConfig:
 # Backoff calculation
 # ---------------------------------------------------------------------------
 
+
 def _compute_delay_ms(attempt: int, cfg: RetryConfig) -> int:
     """Return jittered exponential backoff delay in milliseconds.
 
     Uses full-jitter: random value between 0 and min(cap, base * 2^attempt).
     This prevents thundering-herd when many tools fail at the same time.
+
+    Args:
+        attempt: Zero-based retry attempt index.
+        cfg: Retry configuration with backoff parameters.
+
+    Returns:
+        Delay in milliseconds.
     """
     cap = cfg.max_backoff_ms
     base = cfg.backoff_base_ms
-    ceiling = min(cap, base * (2 ** attempt))
+    ceiling = min(cap, base * (2**attempt))
     if cfg.jitter:
-        return math.ceil(random.uniform(0, ceiling))
+        return math.ceil(random.uniform(0, ceiling))  # nosec B311  # noqa: DUO102 - timing jitter, not security
     return ceiling
 
 
 # ---------------------------------------------------------------------------
 # Failure detection
 # ---------------------------------------------------------------------------
+
 
 def _is_failure(result: Any, cfg: RetryConfig) -> bool:
     """Return True if the tool result should trigger a retry.
@@ -174,8 +227,11 @@ def _is_failure(result: Any, cfg: RetryConfig) -> bool:
     Three failure signals are checked, in order:
 
     1. Outer ``isError`` — set to True by the gateway when the tool raises an
-       exception. Works on ALL MCP spec versions. This is the recommended way
-       for tools to signal retryable failures.
+       exception. When the gateway can determine the HTTP status code
+       (e.g. from ``httpx.HTTPStatusError``), it includes the code in
+       ``structuredContent``.  If a status code is present, ``retry_on_status``
+       is checked — non-transient errors (400, 401, 404 …) are skipped.
+       Generic exceptions without a status code are always retried.
 
     2. ``structuredContent.status_code`` — when a tool returns a plain dict, the
        gateway places it in structuredContent (MCP spec 2025-03-26+ only). Older
@@ -186,13 +242,29 @@ def _is_failure(result: Any, cfg: RetryConfig) -> bool:
        JSON in text content instead of raising exceptions. Disabled by default
        because it can false-positive on tools that legitimately return status codes
        as informational data (e.g. a monitoring tool reporting downstream statuses).
+
+    Args:
+        result: Serialised ToolResult dict (via model_dump with by_alias=True).
+        cfg: Retry configuration with retry_on_status list.
+
+    Returns:
+        True if the result indicates a transient failure that should be retried.
     """
     if not isinstance(result, dict):
         return False
 
     # Signal 1: outer MCP-level isError (tool raised an exception).
-    # Works on all MCP spec versions — the recommended retry signal.
+    # Works on all MCP spec versions.  When the gateway can determine the
+    # HTTP status code of the failure (e.g. httpx.HTTPStatusError), it places
+    # the code in structuredContent so we can honour retry_on_status.
+    # Generic exceptions with no status code (connection errors, timeouts)
+    # are always considered retryable.
     if result.get("isError") is True:
+        structured = result.get("structuredContent")
+        if isinstance(structured, dict):
+            sc = structured.get("status_code")
+            if isinstance(sc, int):
+                return sc in cfg.retry_on_status
         return True
 
     # Signal 2: structuredContent — only populated on MCP spec 2025-03-26+.
@@ -229,6 +301,7 @@ def _is_failure(result: Any, cfg: RetryConfig) -> bool:
 # Plugin
 # ---------------------------------------------------------------------------
 
+
 class RetryWithBackoffPlugin(Plugin):
     """Active retry-with-backoff plugin.
 
@@ -238,7 +311,11 @@ class RetryWithBackoffPlugin(Plugin):
     """
 
     def __init__(self, config: PluginConfig) -> None:
-        """Initialise the plugin, clamp max_retries to the gateway ceiling, and prepare Rust state managers."""
+        """Initialise the plugin, clamp max_retries to the gateway ceiling, and prepare Rust state managers.
+
+        Args:
+            config: Plugin configuration from the gateway plugin framework.
+        """
         super().__init__(config)
         raw_cfg = RetryConfig(**(config.config or {}))
 
@@ -257,7 +334,9 @@ class RetryWithBackoffPlugin(Plugin):
             if overrides.get("max_retries", 0) > ceiling:
                 log.warning(
                     "retry_with_backoff: tool_overrides[%s].max_retries=%d exceeds ceiling=%d, clamping",
-                    tool_name, overrides["max_retries"], ceiling,
+                    tool_name,
+                    overrides["max_retries"],
+                    ceiling,
                 )
                 overrides["max_retries"] = ceiling
 
@@ -293,6 +372,13 @@ class RetryWithBackoffPlugin(Plugin):
 
         Also attaches retry_policy metadata on every response so downstream
         clients and orchestrators can observe the active policy.
+
+        Args:
+            payload: Post-invoke payload containing the tool name and result.
+            context: Plugin execution context with request_id for state isolation.
+
+        Returns:
+            Result with retry_delay_ms set and retry_policy metadata attached.
         """
         tool = payload.name
         cfg = _cfg_for(self._cfg, tool)
@@ -334,12 +420,16 @@ class RetryWithBackoffPlugin(Plugin):
 
             rust_inst = self._rust_overrides.get(tool, self._rust)
             should_retry, delay_ms = rust_inst.check_and_update(
-                tool, request_id, is_error, status_code,
+                tool,
+                request_id,
+                is_error,
+                status_code,
             )
             if should_retry:
                 log.debug(
                     "retry_with_backoff (rust): tool=%s delay_ms=%d",
-                    tool, delay_ms,
+                    tool,
+                    delay_ms,
                 )
             else:
                 log.debug("retry_with_backoff (rust): tool=%s success/exhausted", tool)
@@ -361,14 +451,18 @@ class RetryWithBackoffPlugin(Plugin):
                 delay_ms = _compute_delay_ms(st.consecutive_failures - 1, cfg)
                 log.debug(
                     "retry_with_backoff: tool=%s failure=%d/%d delay_ms=%d",
-                    tool, st.consecutive_failures, cfg.max_retries, delay_ms,
+                    tool,
+                    st.consecutive_failures,
+                    cfg.max_retries,
+                    delay_ms,
                 )
                 return ToolPostInvokeResult(retry_delay_ms=delay_ms, metadata=retry_policy_meta)
 
             # Max retries exhausted — give up, clean up state for this invocation.
             log.warning(
                 "retry_with_backoff: tool=%s exhausted %d retries, returning failure",
-                tool, cfg.max_retries,
+                tool,
+                cfg.max_retries,
             )
             _del_state(tool, request_id)
             return ToolPostInvokeResult(retry_delay_ms=0, metadata=retry_policy_meta)
@@ -380,7 +474,15 @@ class RetryWithBackoffPlugin(Plugin):
         return ToolPostInvokeResult(retry_delay_ms=0, metadata=retry_policy_meta)
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:  # pylint: disable=unused-argument
-        """Attach retry policy metadata after resource fetch."""
+        """Attach retry policy metadata after resource fetch.
+
+        Args:
+            payload: Resource fetch payload with URI and content.
+            context: Plugin execution context.
+
+        Returns:
+            Result with retry_policy metadata (advisory only, no active retry).
+        """
         return ResourcePostFetchResult(
             metadata={
                 "retry_policy": {

@@ -210,7 +210,7 @@ def run_load_scenario(
     warmup: int,
 ) -> Optional[Dict[str, Any]]:
     """Run load-based benchmark scenario.
-    
+
     Returns:
         Dictionary with scenario results, or None if benchmark failed.
     """
@@ -236,9 +236,7 @@ def run_load_scenario(
     if PYTHON_AVAILABLE:
         print("Running Python...", end=" ", flush=True)
         py_impl = PythonRetryStateManager(**config)
-        py_times, py_retries = benchmark_implementation(
-            py_impl, tool_names, request_ids, failure_rate, iterations, warmup
-        )
+        py_times, py_retries = benchmark_implementation(py_impl, tool_names, request_ids, failure_rate, iterations, warmup)
         py_mean = statistics.mean(py_times) * 1_000_000  # Convert to microseconds
         py_median = statistics.median(py_times) * 1_000_000
         py_stdev = statistics.stdev(py_times) * 1_000_000 if len(py_times) > 1 else 0
@@ -256,9 +254,7 @@ def run_load_scenario(
     if RUST_AVAILABLE:
         print("Running Rust...", end=" ", flush=True)
         rust_impl = RustRetryStateManager(**config)
-        rust_times, rust_retries = benchmark_implementation(
-            rust_impl, tool_names, request_ids, failure_rate, iterations, warmup
-        )
+        rust_times, rust_retries = benchmark_implementation(rust_impl, tool_names, request_ids, failure_rate, iterations, warmup)
         rust_mean = statistics.mean(rust_times) * 1_000_000  # Convert to microseconds
         rust_median = statistics.median(rust_times) * 1_000_000
         rust_stdev = statistics.stdev(rust_times) * 1_000_000 if len(rust_times) > 1 else 0
@@ -273,7 +269,7 @@ def run_load_scenario(
         print("Running Rust... ✗ (not available)")
 
     # Calculate and display results
-    print(f"\n📊 Results:")
+    print("\n📊 Results:")
 
     if "python" in results:
         py = results["python"]
@@ -355,9 +351,7 @@ def benchmark_sequential(
                 _del_state(tool, req_id)
         else:
             # Rust
-            should_retry, _ = rust_mgr.check_and_update(
-                tool, req_id, call["is_error"], call["status_code"]
-            )
+            should_retry, _ = rust_mgr.check_and_update(tool, req_id, call["is_error"], call["status_code"])
             if should_retry:
                 retry_count += 1
 
@@ -373,7 +367,7 @@ def run_sequential_scenario(
     warmup: int,
 ) -> Optional[Dict[str, Any]]:
     """Run sequential call pattern scenario.
-    
+
     Returns:
         Dictionary with scenario results, or None if benchmark failed.
     """
@@ -410,9 +404,7 @@ def run_sequential_scenario(
             config.retry_on_status,
         )
         print("Running Rust...", end=" ", flush=True)
-        rust_times, rust_count = benchmark_sequential(
-            "rust", calls, config, rust_mgr=rust_mgr, warmup=warmup
-        )
+        rust_times, rust_count = benchmark_sequential("rust", calls, config, rust_mgr=rust_mgr, warmup=warmup)
         rust_mean = statistics.mean(rust_times) * 1_000_000
         rust_median = statistics.median(rust_times) * 1_000_000
         rust_stdev = statistics.stdev(rust_times) * 1_000_000 if len(rust_times) > 1 else 0
@@ -426,7 +418,7 @@ def run_sequential_scenario(
     else:
         print("Running Rust... ✗ (not available)")
 
-    print(f"\n📊 Results:")
+    print("\n📊 Results:")
     if "python" in results:
         py = results["python"]
         print(f"  Python: {py['mean']:>10.3f} µs ±{py['stdev']:>8.3f} (median: {py['median']:>10.3f})")
@@ -478,10 +470,7 @@ def generate_sequential_scenarios(iterations: int) -> List[Dict[str, Any]]:
     scenarios.append(
         {
             "name": "Rate limiting (429)",
-            "calls": [
-                {"is_error": False, "status_code": 429 if i % 3 == 0 else 200}
-                for i in range(iterations)
-            ],
+            "calls": [{"is_error": False, "status_code": 429 if i % 3 == 0 else 200} for i in range(iterations)],
         }
     )
 
@@ -503,9 +492,7 @@ def generate_sequential_scenarios(iterations: int) -> List[Dict[str, Any]]:
 
 def main():
     """Run performance comparison benchmarks."""
-    parser = argparse.ArgumentParser(
-        description="Rust vs Python performance comparison for retry_with_backoff"
-    )
+    parser = argparse.ArgumentParser(description="Rust vs Python performance comparison for retry_with_backoff")
     parser.add_argument(
         "--iterations",
         type=int,
@@ -587,46 +574,46 @@ def main():
     if all_results:
         # Calculate overall statistics
         speedups = [r["speedup"] for r in all_results if r["speedup"] is not None]
-        
+
         if speedups:
             avg_speedup = statistics.mean(speedups)
             min_speedup = min(speedups)
             max_speedup = max(speedups)
-            
-            print(f"\n🚀 Rust Speedup Overview:")
+
+            print("\n🚀 Rust Speedup Overview:")
             print(f"  Average: {avg_speedup:.2f}x faster")
             print(f"  Min:     {min_speedup:.2f}x faster")
             print(f"  Max:     {max_speedup:.2f}x faster")
-        
+
         # Per-scenario breakdown
-        print(f"\n📈 Scenario Breakdown:")
+        print("\n📈 Scenario Breakdown:")
         print(f"{'Scenario':<45} {'Python (µs)':>14} {'Rust (µs)':>12} {'Speedup':>10}")
         print(f"{'-' * 45} {'-' * 14} {'-' * 12} {'-' * 10}")
-        
+
         for result in all_results:
             name = result["name"][:44]
-            py_time = result["python"]["mean"] if result["python"] else float('inf')
-            rust_time = result["rust"]["mean"] if result["rust"] else float('inf')
-            speedup = result["speedup"] if result["speedup"] else float('inf')
-            
-            py_str = f"{py_time:>14.3f}" if py_time != float('inf') else "N/A"
-            rust_str = f"{rust_time:>12.3f}" if rust_time != float('inf') else "N/A"
-            speedup_str = f"{speedup:>10.2f}x" if speedup != float('inf') else "N/A"
-            
+            py_time = result["python"]["mean"] if result["python"] else float("inf")
+            rust_time = result["rust"]["mean"] if result["rust"] else float("inf")
+            speedup = result["speedup"] if result["speedup"] else float("inf")
+
+            py_str = f"{py_time:>14.3f}" if py_time != float("inf") else "N/A"
+            rust_str = f"{rust_time:>12.3f}" if rust_time != float("inf") else "N/A"
+            speedup_str = f"{speedup:>10.2f}x" if speedup != float("inf") else "N/A"
+
             print(f"{name:<45} {py_str:>14} {rust_str:>12} {speedup_str:>10}")
-        
+
         # Overall recommendation
-        print(f"\n💡 Recommendation:")
+        print("\n💡 Recommendation:")
         if speedups:
             if avg_speedup >= 2.0:
-                print(f"   Rust implementation provides significant performance benefits")
+                print("   Rust implementation provides significant performance benefits")
                 print(f"   ({avg_speedup:.1f}x average speedup). Recommended for production.")
             elif avg_speedup >= 1.5:
                 print(f"   Rust implementation offers moderate speedup ({avg_speedup:.1f}x).")
-                print(f"   Consider using for high-throughput scenarios.")
+                print("   Consider using for high-throughput scenarios.")
             else:
                 print(f"   Rust implementation shows marginal improvement ({avg_speedup:.1f}x).")
-                print(f"   Python may be sufficient for low-load use cases.")
+                print("   Python may be sufficient for low-load use cases.")
 
     print(f"\n{'=' * 70}")
     print("✅ Benchmark complete!")

@@ -326,8 +326,8 @@ plugins:
     description: "Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay"
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["tool_post_invoke", "resource_post_fetch"]
-    tags: ["reliability", "retry"]
+    hooks: ["tool_post_invoke"]
+    tags: ["retry", "backoff", "resilience"]
     mode: "permissive"
     priority: 170
     conditions: []
@@ -337,6 +337,7 @@ plugins:
       max_backoff_ms: 5000
       retry_on_status: [429, 500, 502, 503, 504]
       jitter: true
+      check_text_content: false
       tool_overrides: {}
 
   # Markdown cleaner

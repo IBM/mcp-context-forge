@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use log::{debug, warn};
 use pyo3::prelude::*;
@@ -30,11 +31,38 @@ impl ToolRetryState {
 // ---------------------------------------------------------------------------
 // Global state — mirrors Python's module-level _STATE dict.
 // Mutex protects concurrent access; OnceLock ensures single initialisation.
+//
+// NOTE: This map is process-global and shared across all RetryStateManager
+// instances.  The gateway creates a single plugin instance so this is fine
+// in practice, but if multiple instances with different configs are ever
+// constructed they will share state entries.
 // ---------------------------------------------------------------------------
 static STATE: OnceLock<Mutex<HashMap<String, ToolRetryState>>> = OnceLock::new();
 
+/// Monotonic reference point — equivalent of Python's `time.monotonic()` epoch.
+/// Using `Instant` instead of `SystemTime` ensures TTL eviction is immune to
+/// wall-clock jumps from NTP sync or manual adjustment.
+static MONO_EPOCH: OnceLock<Instant> = OnceLock::new();
+
+/// Entries older than this (in seconds) are considered orphaned — e.g. the
+/// retry sleep was cancelled by a client disconnect — and are evicted.
+const STATE_TTL_SECS: f64 = 300.0;
+
+/// Return a monotonic timestamp in seconds, analogous to Python's `time.monotonic()`.
+fn monotonic_secs() -> f64 {
+    let epoch = MONO_EPOCH.get_or_init(Instant::now);
+    epoch.elapsed().as_secs_f64()
+}
+
 fn state_map() -> &'static Mutex<HashMap<String, ToolRetryState>> {
     STATE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Remove entries whose `last_failure_at` is older than `STATE_TTL_SECS`.
+/// Called under an already-held lock by `check_and_update`.
+fn evict_stale(map: &mut HashMap<String, ToolRetryState>) {
+    let cutoff = monotonic_secs() - STATE_TTL_SECS;
+    map.retain(|_, v| v.last_failure_at <= 0.0 || v.last_failure_at >= cutoff);
 }
 
 fn make_key(tool: &str, request_id: &str) -> String {
@@ -59,13 +87,22 @@ fn compute_delay_ms(attempt: u32, base_ms: u64, max_ms: u64, jitter: bool) -> u6
 
 // Checks the two pre-extracted failure signals: outer isError flag and status code.
 // Text-content parsing (signal 3) is handled entirely in Python.
+//
+// When isError is true AND a status code is present (e.g. the gateway extracted
+// it from an httpx.HTTPStatusError), the code is checked against retry_on_status
+// so that non-transient HTTP errors (400, 401, 404 …) are not wastefully retried.
+// Generic exceptions with no status code (connection errors, timeouts) are always
+// considered retryable.
 fn is_failure_from_signals(
     is_error: bool,
     status_code: Option<i32>,
     retry_on_status: &HashSet<i32>,
 ) -> bool {
     if is_error {
-        return true;
+        return match status_code {
+            Some(sc) => retry_on_status.contains(&sc),
+            None => true,
+        };
     }
     if let Some(sc) = status_code {
         return retry_on_status.contains(&sc);
@@ -131,10 +168,7 @@ impl RetryStateManager {
         let key = make_key(tool, request_id);
         let state = map.entry(key).or_insert_with(ToolRetryState::new);
         state.consecutive_failures += 1;
-        state.last_failure_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs_f64();
+        state.last_failure_at = monotonic_secs();
         debug!(
             "record_failure: tool={tool} request_id={request_id} consecutive_failures={}",
             state.consecutive_failures
@@ -197,6 +231,7 @@ impl RetryStateManager {
 
         // Acquire the lock once for the entire check-then-act sequence.
         let mut map = state_map().lock().unwrap();
+        evict_stale(&mut map);
         let key = make_key(tool, request_id);
 
         if failed {
@@ -335,8 +370,40 @@ mod tests {
     }
 
     #[test]
-    fn is_error_true_overrides_non_retryable_status() {
-        assert!(is_failure_from_signals(true, Some(200), &status_set(&[])));
+    fn is_error_with_non_retryable_status_does_not_retry() {
+        // isError=true + status_code NOT in retry set → not retryable.
+        assert!(!is_failure_from_signals(true, Some(200), &status_set(&[])));
+        assert!(!is_failure_from_signals(
+            true,
+            Some(400),
+            &status_set(&[500, 503])
+        ));
+        assert!(!is_failure_from_signals(
+            true,
+            Some(404),
+            &status_set(&[500, 503])
+        ));
+    }
+
+    #[test]
+    fn is_error_with_retryable_status_retries() {
+        assert!(is_failure_from_signals(
+            true,
+            Some(500),
+            &status_set(&[500, 503])
+        ));
+        assert!(is_failure_from_signals(
+            true,
+            Some(503),
+            &status_set(&[500, 503])
+        ));
+    }
+
+    #[test]
+    fn is_error_without_status_always_retries() {
+        // isError=true with no status code → generic exception → always retry.
+        assert!(is_failure_from_signals(true, None, &status_set(&[])));
+        assert!(is_failure_from_signals(true, None, &status_set(&[500])));
     }
 
     // ── make_key ────────────────────────────────────────────────────────────

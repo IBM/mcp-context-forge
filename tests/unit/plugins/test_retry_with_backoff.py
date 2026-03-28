@@ -12,19 +12,18 @@ Verifies:
 8. retry_policy metadata — all return paths include advisory policy dict; resource_post_fetch hook
 """
 
-import asyncio
 import logging
 import uuid
 import pytest
 from unittest.mock import MagicMock, patch
 
-import plugins.retry_with_backoff.retry_with_backoff as _plugin_mod
-
 from plugins.retry_with_backoff.retry_with_backoff import (
     RetryWithBackoffPlugin,
     RetryConfig,
-    _ToolRetryState,
+    _STATE,
+    _STATE_TTL_SECONDS,
     _get_state,
+    _del_state,
     _cfg_for,
     _compute_delay_ms,
     _is_failure,
@@ -38,18 +37,25 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.common.models import ResourceContent
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
 
+
 def make_plugin(config_overrides: dict | None = None) -> RetryWithBackoffPlugin:
-    """Build a plugin with default config, optionally overriding fields."""
+    """Build a plugin with default config, optionally overriding fields.
+
+    Args:
+        config_overrides: Optional dict of config fields to override.
+
+    Returns:
+        Configured RetryWithBackoffPlugin instance.
+    """
     cfg = {
         "max_retries": 3,
         "backoff_base_ms": 200,
         "max_backoff_ms": 5000,
-        "jitter": False,          # deterministic by default in tests
+        "jitter": False,  # deterministic by default in tests
         "retry_on_status": [429, 500, 502, 503, 504],
         "tool_overrides": {},
     }
@@ -80,18 +86,19 @@ def make_payload(tool: str, result: dict) -> ToolPostInvokePayload:
 # 1. _compute_delay_ms
 # ---------------------------------------------------------------------------
 
+
 class TestComputeDelayMs:
     def test_no_jitter_returns_exact_ceiling(self):
         cfg = RetryConfig(backoff_base_ms=200, max_backoff_ms=5000, jitter=False)
-        assert _compute_delay_ms(0, cfg) == 200   # base * 2^0
-        assert _compute_delay_ms(1, cfg) == 400   # base * 2^1
-        assert _compute_delay_ms(2, cfg) == 800   # base * 2^2
+        assert _compute_delay_ms(0, cfg) == 200  # base * 2^0
+        assert _compute_delay_ms(1, cfg) == 400  # base * 2^1
+        assert _compute_delay_ms(2, cfg) == 800  # base * 2^2
 
     def test_no_jitter_caps_at_max_backoff(self):
         cfg = RetryConfig(backoff_base_ms=200, max_backoff_ms=500, jitter=False)
         assert _compute_delay_ms(0, cfg) == 200
         assert _compute_delay_ms(1, cfg) == 400
-        assert _compute_delay_ms(2, cfg) == 500   # capped — 800 > 500
+        assert _compute_delay_ms(2, cfg) == 500  # capped — 800 > 500
         assert _compute_delay_ms(10, cfg) == 500  # still capped
 
     def test_jitter_returns_value_within_cap(self):
@@ -108,6 +115,7 @@ class TestComputeDelayMs:
 # ---------------------------------------------------------------------------
 # 2. _is_failure
 # ---------------------------------------------------------------------------
+
 
 class TestIsFailure:
     def setup_method(self):
@@ -206,10 +214,41 @@ class TestIsFailure:
         # structuredContent present but contains neither isError nor status_code → not a failure.
         assert _is_failure({"isError": False, "structuredContent": {"result": "ok"}}, self.cfg) is False
 
+    # -- Signal 1 status-code-aware tests --
+
+    def test_is_error_with_retryable_status_triggers_failure(self):
+        # isError=True + structuredContent.status_code in retry_on_status → retry.
+        result = {"isError": True, "structuredContent": {"status_code": 503}}
+        assert _is_failure(result, self.cfg) is True
+
+    def test_is_error_with_non_retryable_status_skips_retry(self):
+        # isError=True + status_code NOT in retry_on_status → not retryable.
+        result = {"isError": True, "structuredContent": {"status_code": 400}}
+        assert _is_failure(result, self.cfg) is False
+
+    def test_is_error_with_404_skips_retry(self):
+        result = {"isError": True, "structuredContent": {"status_code": 404}}
+        assert _is_failure(result, self.cfg) is False
+
+    def test_is_error_with_401_skips_retry(self):
+        result = {"isError": True, "structuredContent": {"status_code": 401}}
+        assert _is_failure(result, self.cfg) is False
+
+    def test_is_error_without_status_code_always_retries(self):
+        # isError=True with no structuredContent → generic exception → always retry.
+        assert _is_failure({"isError": True}, self.cfg) is True
+        assert _is_failure({"isError": True, "structuredContent": None}, self.cfg) is True
+
+    def test_is_error_with_empty_structured_content_always_retries(self):
+        # isError=True + structuredContent without status_code → still a generic error.
+        result = {"isError": True, "structuredContent": {}}
+        assert _is_failure(result, self.cfg) is True
+
 
 # ---------------------------------------------------------------------------
 # 3. _cfg_for
 # ---------------------------------------------------------------------------
+
 
 class TestCfgFor:
     def test_no_override_returns_same_object(self):
@@ -239,6 +278,7 @@ class TestCfgFor:
 # 4. Plugin __init__ — clamping
 # ---------------------------------------------------------------------------
 
+
 class TestPluginInit:
     def test_max_retries_not_clamped_when_within_ceiling(self):
         with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
@@ -255,10 +295,12 @@ class TestPluginInit:
     def test_tool_override_max_retries_clamped(self):
         with patch("plugins.retry_with_backoff.retry_with_backoff.get_settings") as mock_settings:
             mock_settings.return_value.max_tool_retries = 2
-            plugin = make_plugin({
-                "max_retries": 2,
-                "tool_overrides": {"slow_api": {"max_retries": 10}},
-            })
+            plugin = make_plugin(
+                {
+                    "max_retries": 2,
+                    "tool_overrides": {"slow_api": {"max_retries": 10}},
+                }
+            )
             assert plugin._cfg.tool_overrides["slow_api"]["max_retries"] == 2
 
     def test_clamping_emits_warning(self, caplog):
@@ -266,10 +308,7 @@ class TestPluginInit:
             mock_settings.return_value.max_tool_retries = 1
             with caplog.at_level(logging.WARNING):
                 make_plugin({"max_retries": 5})
-            assert any(
-                r.getMessage() == "retry_with_backoff: max_retries=5 exceeds gateway ceiling=1, clamping"
-                for r in caplog.records
-            )
+            assert any(r.getMessage() == "retry_with_backoff: max_retries=5 exceeds gateway ceiling=1, clamping" for r in caplog.records)
 
     def test_max_retries_equal_ceiling_not_clamped(self):
         """max_retries exactly equal to the gateway ceiling must not be clamped."""
@@ -282,6 +321,7 @@ class TestPluginInit:
 # ---------------------------------------------------------------------------
 # 5. tool_post_invoke — core behaviour
 # ---------------------------------------------------------------------------
+
 
 class TestToolPostInvoke:
     @pytest.mark.asyncio
@@ -355,10 +395,12 @@ class TestToolPostInvoke:
     @pytest.mark.asyncio
     async def test_per_tool_override_is_applied(self):
         """A tool with max_retries=1 override should exhaust after 1 retry."""
-        plugin = make_plugin({
-            "max_retries": 3,
-            "tool_overrides": {"fragile_tool": {"max_retries": 1}},
-        })
+        plugin = make_plugin(
+            {
+                "max_retries": 3,
+                "tool_overrides": {"fragile_tool": {"max_retries": 1}},
+            }
+        )
         ctx = make_context()
         # 1st failure: within budget
         r1 = await plugin.tool_post_invoke(make_payload("fragile_tool", {"isError": True}), ctx)
@@ -405,6 +447,7 @@ class TestToolPostInvoke:
 # 6. _get_state
 # ---------------------------------------------------------------------------
 
+
 class TestGetState:
     def test_creates_fresh_state_for_new_tool(self):
         st = _get_state("brand_new_tool", "req-fresh")
@@ -417,6 +460,36 @@ class TestGetState:
         s2 = _get_state("tool_x", "req-same")
         assert s2.consecutive_failures == 7
         assert s1 is s2
+
+    def test_ttl_eviction_removes_stale_entries(self):
+        """Entries whose last_failure_at is older than _STATE_TTL_SECONDS are evicted."""
+        import time
+
+        key = "evict_tool:evict_req"
+        # Inject a stale entry directly into _STATE
+        from plugins.retry_with_backoff.retry_with_backoff import _ToolRetryState
+
+        _STATE[key] = _ToolRetryState(consecutive_failures=3, last_failure_at=time.monotonic() - _STATE_TTL_SECONDS - 1)
+        assert key in _STATE
+        # _get_state triggers eviction
+        _get_state("other_tool", "other_req")
+        assert key not in _STATE, "stale entry should have been evicted"
+        # Clean up
+        _del_state("other_tool", "other_req")
+
+    def test_ttl_eviction_preserves_fresh_entries(self):
+        """Entries within the TTL window are not evicted."""
+        import time
+
+        key = "fresh_tool:fresh_req"
+        from plugins.retry_with_backoff.retry_with_backoff import _ToolRetryState
+
+        _STATE[key] = _ToolRetryState(consecutive_failures=1, last_failure_at=time.monotonic())
+        _get_state("other_tool2", "other_req2")
+        assert key in _STATE, "fresh entry should not be evicted"
+        # Clean up
+        _STATE.pop(key, None)
+        _del_state("other_tool2", "other_req2")
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +552,7 @@ class TestRustFallback:
 # ---------------------------------------------------------------------------
 # 8. retry_policy metadata
 # ---------------------------------------------------------------------------
+
 
 class TestRetryPolicyMetadata:
     """Verify that retry_policy metadata is attached on every tool_post_invoke
