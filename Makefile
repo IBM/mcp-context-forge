@@ -1302,6 +1302,137 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 	@echo "✅ Monitoring stack stopped and volumes removed."
 
 # =============================================================================
+# help: 🔭 LANGFUSE LLM OBSERVABILITY
+# help: langfuse-up              - Start Langfuse stack (trace viz, evals, cost tracking)
+# help: langfuse-down            - Stop Langfuse stack
+# help: langfuse-status          - Show status of Langfuse services
+# help: langfuse-logs            - Show Langfuse stack logs
+# help: langfuse-clean           - Stop and remove all Langfuse data (volumes)
+# help: langfuse-monitoring-up   - Start Langfuse + monitoring (traces go to both)
+
+LANGFUSE_COMPOSE := $(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.with-langfuse.yml
+
+.PHONY: langfuse-up
+langfuse-up:                               ## Start Langfuse LLM observability stack
+	@echo "🔭 Starting Langfuse LLM observability stack..."
+	@echo "🔎 Preflight: checking host port 8080 (nginx)"
+	@if command -v ss >/dev/null 2>&1; then \
+		if ss -H -ltn 'sport = :8080' | grep -q .; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			ss -ltnp 'sport = :8080' || ss -ltn 'sport = :8080'; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	elif command -v lsof >/dev/null 2>&1; then \
+		if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			lsof -nP -iTCP:8080 -sTCP:LISTEN || true; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
+	fi
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_EXPORTER_OTLP_PROTOCOL=http \
+	$(LANGFUSE_COMPOSE) up -d
+	@echo "⏳ Waiting for Langfuse to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+		if curl -s -o /dev/null -w '' http://localhost:3100/api/public/health 2>/dev/null; then break; fi; \
+		sleep 3; \
+	done
+	@echo ""
+	@echo "✅ Langfuse LLM observability started!"
+	@echo ""
+	@echo "   🔭 Langfuse UI:    http://localhost:3100"
+	@echo "   📧 Login:          admin@example.com / changeme"
+	@echo "   🌐 Gateway:        http://localhost:8080"
+	@echo ""
+	@echo "   OTEL traces from ContextForge → Langfuse (OTLP/HTTP)"
+	@echo "   Project: ContextForge Gateway (auto-provisioned)"
+	@echo ""
+
+.PHONY: langfuse-down
+langfuse-down:                             ## Stop Langfuse stack
+	@echo "🔭 Stopping Langfuse stack..."
+	$(LANGFUSE_COMPOSE) down --remove-orphans
+	@echo "✅ Langfuse stack stopped."
+
+.PHONY: langfuse-status
+langfuse-status:                           ## Show status of Langfuse services
+	@echo "🔭 Langfuse stack status:"
+	@$(LANGFUSE_COMPOSE) ps 2>/dev/null | grep -E "(langfuse)" || \
+		echo "   No Langfuse services running. Start with 'make langfuse-up'"
+	@echo ""
+	@echo "🔍 Langfuse health:"
+	@curl -sf http://localhost:$${LANGFUSE_PORT:-3100}/api/public/health 2>/dev/null && echo "" || \
+		echo "   Langfuse UI not reachable at http://localhost:$${LANGFUSE_PORT:-3100}"
+
+.PHONY: langfuse-logs
+langfuse-logs:                             ## Show Langfuse stack logs
+	$(LANGFUSE_COMPOSE) logs -f --tail=100
+
+.PHONY: langfuse-clean
+langfuse-clean:                            ## Stop and remove all Langfuse data (volumes)
+	@echo "🔭 Stopping and cleaning Langfuse stack..."
+	$(LANGFUSE_COMPOSE) down -v --remove-orphans
+	@echo "✅ Langfuse stack stopped and volumes removed."
+
+.PHONY: langfuse-monitoring-up
+langfuse-monitoring-up:                    ## Start Langfuse + full monitoring stack (Grafana, Prometheus, Tempo)
+	@echo "🔭📊 Starting Langfuse + monitoring stack..."
+	@echo "   Traces will be sent to BOTH Langfuse (LLM analytics) and Tempo (Grafana traces)"
+	@echo "🔎 Preflight: checking host port 8080 (nginx)"
+	@if command -v ss >/dev/null 2>&1; then \
+		if ss -H -ltn 'sport = :8080' | grep -q .; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			ss -ltnp 'sport = :8080' || ss -ltn 'sport = :8080'; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	elif command -v lsof >/dev/null 2>&1; then \
+		if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			lsof -nP -iTCP:8080 -sTCP:LISTEN || true; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
+	fi
+	LOG_FORMAT=json \
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_EXPORTER_OTLP_PROTOCOL=http \
+	$(LANGFUSE_COMPOSE) --profile monitoring up -d
+	@echo "⏳ Waiting for services to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then break; fi; \
+		sleep 2; \
+	done
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+		if curl -s -o /dev/null -w '' http://localhost:3100/api/public/health 2>/dev/null; then break; fi; \
+		sleep 3; \
+	done
+	@echo ""
+	@echo "✅ Langfuse + monitoring stack started!"
+	@echo ""
+	@echo "   🔭 Langfuse UI:    http://localhost:3100 (admin@example.com / changeme)"
+	@echo "   🌐 Grafana:        http://localhost:3000 (admin/changeme)"
+	@echo "   🔥 Prometheus:     http://localhost:9090"
+	@echo "   🧵 Tempo:          http://localhost:3200"
+	@echo "   🌐 Gateway:        http://localhost:8080"
+	@echo ""
+	@echo "   OTEL traces → Langfuse (LLM analytics at :3100)"
+	@echo "   Note: For dual-export to Tempo, deploy an OTEL Collector"
+	@echo ""
+
+.PHONY: langfuse-monitoring-down
+langfuse-monitoring-down:                  ## Stop Langfuse + monitoring stack
+	@echo "🔭📊 Stopping Langfuse + monitoring stack..."
+	$(LANGFUSE_COMPOSE) --profile monitoring down --remove-orphans
+	@echo "✅ Langfuse + monitoring stack stopped."
+
+# =============================================================================
 # help: 🧪 TESTING STACK (Locust + A2A echo + fast_test_server)
 # help: testing-up            - Start testing stack (Locust + A2A echo + fast_test_server)
 # help: testing-down          - Stop testing stack

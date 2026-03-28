@@ -22,6 +22,10 @@
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
 #
+#  Compose overlays (separate files):
+#  docker-compose.with-phoenix.yml:   Phoenix observability (OTEL traces)
+#  docker-compose.with-langfuse.yml:  Langfuse LLM observability (make langfuse-up)
+#
 #  TLS Quick Start:
 #    make compose-tls                    # HTTP:8080 + HTTPS:8443
 #    make compose-tls-https              # Force HTTPS (HTTP redirects)

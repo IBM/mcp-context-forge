@@ -8,6 +8,32 @@ The observability implementation is **vendor-agnostic** and works with any OTLP-
 
 ## Recommended Backend Options
 
+### Langfuse - LLM Observability and Analytics
+
+**Best for**: LLM trace visualization, prompt management, evaluations, and cost tracking
+
+[Langfuse](https://langfuse.com) is an open-source LLM observability platform that receives traces via standard OTLP/HTTP. It provides a comprehensive suite of tools for monitoring, evaluating, and improving LLM applications.
+
+**Key Features**:
+
+- **Trace Visualization**: End-to-end request traces with latency breakdown and error analysis
+- **Prompt Management**: Version, test, and deploy prompts with A/B testing
+- **Evaluations**: Score traces with custom or built-in evaluators
+- **Cost Tracking**: Token usage and cost analytics per model and user
+- **Datasets**: Create test datasets from production traces for regression testing
+- **OpenTelemetry Native**: Standard OTLP/HTTP ingestion (v3.22.0+)
+
+**Ideal Use Cases**:
+
+- Monitoring LLM-powered tool invocations and prompt rendering
+- Tracking costs and token usage across gateway operations
+- Building evaluation pipelines for response quality
+- Managing and versioning prompt templates
+
+**Transport**: Uses OTLP over HTTP (gRPC not supported)
+
+See the [Langfuse Integration Guide](langfuse.md) for setup instructions.
+
 ### Arize Phoenix - AI/LLM-Focused Observability
 
 **Best for**: AI applications, LLM debugging, and prompt optimization
