@@ -1955,6 +1955,33 @@
             "OAUTH_REQUEST_TIMEOUT": {
               "type": "string"
             },
+            "OTEL_EXPORTER_JAEGER_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_OTLP_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_OTLP_HEADERS": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_ZIPKIN_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_RESOURCE_ATTRIBUTES": {
+              "type": "string"
+            },
+            "LANGFUSE_OTEL_AUTH": {
+              "type": "string"
+            },
+            "LANGFUSE_OTEL_ENDPOINT": {
+              "type": "string"
+            },
+            "LANGFUSE_PUBLIC_KEY": {
+              "type": "string"
+            },
+            "LANGFUSE_SECRET_KEY": {
+              "type": "string"
+            },
             "PASSWORD_CHANGE_ENFORCEMENT_ENABLED": {
               "type": "string"
             },

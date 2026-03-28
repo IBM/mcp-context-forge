@@ -31,6 +31,14 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.trace_context import (
+    clear_trace_context,
+    set_trace_auth_method,
+    set_trace_context_from_teams,
+    set_trace_team_scope,
+    set_trace_user_email,
+    set_trace_user_is_admin,
+)
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Security scheme
@@ -904,6 +912,7 @@ async def get_current_user(
         HTTPException: If authentication fails
     """
     logger = logging.getLogger(__name__)
+    clear_trace_context()
 
     async def _set_auth_method_from_payload(payload: dict) -> None:
         """Set request.state.auth_method based on JWT payload.
@@ -955,6 +964,34 @@ async def get_current_user(
         else:
             # No auth_provider or JTI; default to interactive
             request.state.auth_method = "jwt"
+
+    def _set_trace_for_user(user_obj: EmailUser, *, teams: Any = _UNSET, auth_method: Optional[str] = None) -> None:
+        """Populate trace context from the resolved user and request state.
+
+        Args:
+            user_obj: Resolved authenticated user object.
+            teams: Optional resolved team scope override. When unset, team scope is derived from the user object.
+            auth_method: Optional explicit authentication method label to record on the trace.
+        """
+        resolved_auth_method = auth_method
+        if resolved_auth_method is None and request:
+            resolved_auth_method = getattr(request.state, "auth_method", None)
+
+        if teams is not _UNSET:
+            set_trace_context_from_teams(
+                teams,
+                user_email=user_obj.email,
+                is_admin=bool(user_obj.is_admin),
+                auth_method=resolved_auth_method,
+            )
+            return
+
+        set_trace_user_email(user_obj.email)
+        set_trace_user_is_admin(bool(user_obj.is_admin))
+        if resolved_auth_method:
+            set_trace_auth_method(resolved_auth_method)
+        if user_obj.is_admin:
+            set_trace_team_scope("admin")
 
     # NEW: Custom authentication hook - allows plugins to provide alternative auth
     # This hook is invoked BEFORE standard JWT/API token validation
@@ -1060,6 +1097,7 @@ async def get_current_user(
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, user)
 
+                _set_trace_for_user(user)
                 return user
             # If continue_processing=True (no payload), fall through to standard auth
 
@@ -1186,7 +1224,9 @@ async def get_current_user(
                         if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                             _inject_userinfo_instate(request, _user_from_cached_dict(cached_ctx.user))
 
-                        return _user_from_cached_dict(cached_ctx.user)
+                        cached_user = _user_from_cached_dict(cached_ctx.user)
+                        _set_trace_for_user(cached_user, teams=getattr(request.state, "token_teams", _UNSET) if request else _UNSET)
+                        return cached_user
 
                     # User not in cache but context was (shouldn't happen, but handle it)
                     logger.debug("Auth context cached but user missing, falling through to DB")
@@ -1317,6 +1357,7 @@ async def get_current_user(
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, _batched_user)
 
+                _set_trace_for_user(_batched_user, teams=getattr(request.state, "token_teams", _UNSET) if request else _UNSET)
                 return _batched_user
 
             except HTTPException:
@@ -1492,6 +1533,8 @@ async def get_current_user(
     if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
         _inject_userinfo_instate(request, user)
 
+    trace_teams = getattr(request.state, "token_teams", _UNSET) if request else _UNSET
+    _set_trace_for_user(user, teams=trace_teams)
     return user
 
 

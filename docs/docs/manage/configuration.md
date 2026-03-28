@@ -755,7 +755,7 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
 | `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-2`               | string                                     |
-| `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
+| `DEPLOYMENT_ENV` / `ENVIRONMENT` | Environment tag (dev/staging/prod)           | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
 
@@ -766,6 +766,10 @@ ContextForge includes **vendor-agnostic OpenTelemetry support** for distributed 
 | `OTEL_EXPORTER_OTLP_ENDPOINT`   | OTLP collector endpoint                        | (none)                | `http://localhost:4317`                   |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`   | OTLP protocol                                  | `grpc`                | `grpc`, `http/protobuf`                   |
 | `OTEL_EXPORTER_OTLP_HEADERS`    | Authentication headers                         | (empty)               | `api-key=secret,x-auth=token`             |
+| `LANGFUSE_OTEL_ENDPOINT`        | Optional Langfuse OTLP/HTTP endpoint override  | (empty)               | `https://cloud.langfuse.com/api/public/otel/v1/traces` |
+| `LANGFUSE_PUBLIC_KEY`           | Langfuse project public key for derived OTLP auth | (empty)            | `pk-lf-...`                               |
+| `LANGFUSE_SECRET_KEY`           | Langfuse project secret key for derived OTLP auth | (empty)            | `sk-lf-...`                               |
+| `LANGFUSE_OTEL_AUTH`            | Optional base64-encoded `pk:sk` OTLP auth override | (empty)          | base64 string                             |
 | `OTEL_EXPORTER_OTLP_INSECURE`   | Skip TLS verification                          | `true`                | bool                                       |
 
 **Performance Tuning:**

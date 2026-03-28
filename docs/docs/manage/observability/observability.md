@@ -273,7 +273,7 @@ docker run -e OTEL_ENABLE_OBSERVABILITY=true \
 | `OTEL_ENABLE_OBSERVABILITY` | Master switch | `false` | `true`, `false` |
 | `OTEL_SERVICE_NAME` | Service identifier | `mcp-gateway` | Any string |
 | `OTEL_SERVICE_VERSION` | Service version | `1.0.0-RC-2` | Any string |
-| `OTEL_DEPLOYMENT_ENVIRONMENT` | Environment tag | `development` | `development`, `staging`, `production` |
+| `DEPLOYMENT_ENV` / `ENVIRONMENT` | Environment tag | `development` | `development`, `staging`, `production` |
 | `OTEL_TRACES_EXPORTER` | Export backend | `otlp` | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES` | Custom attributes | - | `key=value,key2=value2` |
 
@@ -284,6 +284,10 @@ docker run -e OTEL_ENABLE_OBSERVABILITY=true \
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint | - | `http://localhost:4317` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Protocol | `grpc` | `grpc`, `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Auth headers | - | `api-key=secret,x-auth=token` |
+| `LANGFUSE_OTEL_ENDPOINT` | Optional Langfuse OTLP/HTTP endpoint override | - | `https://cloud.langfuse.com/api/public/otel/v1/traces` |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse project public key for derived OTLP auth | - | `pk-lf-...` |
+| `LANGFUSE_SECRET_KEY` | Langfuse project secret key for derived OTLP auth | - | `sk-lf-...` |
+| `LANGFUSE_OTEL_AUTH` | Optional base64-encoded `pk:sk` auth override | - | base64 string |
 | `OTEL_EXPORTER_OTLP_INSECURE` | Skip TLS verify | `true` | `true`, `false` |
 
 ### Alternative Backends

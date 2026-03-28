@@ -19,6 +19,10 @@ Langfuse is purpose-built for LLM application observability:
 ### Option 1: Docker Compose (Recommended)
 
 ```bash
+# Configure the Langfuse project keys used by the gateway exporter
+# LANGFUSE_PUBLIC_KEY=pk-lf-<set-a-unique-public-key>
+# LANGFUSE_SECRET_KEY=sk-lf-<set-a-unique-secret-key>
+
 # Start ContextForge with Langfuse
 make langfuse-up
 
@@ -28,7 +32,13 @@ docker compose -f docker-compose.yml \
 
 # View Langfuse UI
 open http://localhost:3100
-# Login: admin@example.com / changeme
+# Login with LANGFUSE_INIT_USER_EMAIL / LANGFUSE_INIT_USER_PASSWORD
+# Defaults: admin@example.com / changeme unless you override them
+
+# Verify that fresh MCP traffic lands in Langfuse
+LANGFUSE_PUBLIC_KEY=pk-lf-contextforge \
+LANGFUSE_SECRET_KEY=sk-lf-contextforge \
+uv run pytest tests/e2e/test_langfuse_traces.py -q
 ```
 
 ### Option 2: Standalone Langfuse
@@ -39,13 +49,16 @@ If you already have a Langfuse instance running (self-hosted or cloud), configur
 # Configure ContextForge OTEL to point at your Langfuse instance
 export OTEL_ENABLE_OBSERVABILITY=true
 export OTEL_TRACES_EXPORTER=otlp
-export OTEL_EXPORTER_OTLP_PROTOCOL=http
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://your-langfuse:3000/api/public/otel/v1/traces
+export LANGFUSE_OTEL_ENDPOINT=http://your-langfuse:3000/api/public/otel/v1/traces
 export OTEL_SERVICE_NAME=contextforge-gateway
 
-# Auth: base64-encode your Langfuse project keys
-AUTH=$(echo -n "pk-lf-YOUR_PUBLIC_KEY:sk-lf-YOUR_SECRET_KEY" | base64)
-export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $AUTH"
+# Preferred: configure Langfuse project keys and let the gateway derive OTLP auth
+export LANGFUSE_PUBLIC_KEY=pk-lf-YOUR_PUBLIC_KEY
+export LANGFUSE_SECRET_KEY=sk-lf-YOUR_SECRET_KEY
+
+# Optional compatibility override if you already have a pre-encoded header value
+# export LANGFUSE_OTEL_AUTH=$(echo -n "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" | base64)
+# export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $LANGFUSE_OTEL_AUTH"
 
 # Start ContextForge
 mcpgateway
@@ -57,13 +70,11 @@ For managed deployments, use [Langfuse Cloud](https://cloud.langfuse.com):
 
 ```bash
 # Get API keys from your Langfuse Cloud project settings
-AUTH=$(echo -n "pk-lf-YOUR_PUBLIC_KEY:sk-lf-YOUR_SECRET_KEY" | base64)
-
 export OTEL_ENABLE_OBSERVABILITY=true
 export OTEL_TRACES_EXPORTER=otlp
-export OTEL_EXPORTER_OTLP_PROTOCOL=http
-export OTEL_EXPORTER_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
-export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $AUTH"
+export LANGFUSE_OTEL_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces
+export LANGFUSE_PUBLIC_KEY=pk-lf-YOUR_PUBLIC_KEY
+export LANGFUSE_SECRET_KEY=sk-lf-YOUR_SECRET_KEY
 export OTEL_SERVICE_NAME=contextforge-gateway
 ```
 
@@ -101,6 +112,8 @@ The `docker-compose.with-langfuse.yml` overlay provides:
 - **langfuse-minio** - S3-compatible object storage
 - **langfuse-cache** - Dedicated Redis with auth
 
+ContextForge only needs the Langfuse OTLP endpoint and project credentials. The self-hosted Langfuse database, cache, ClickHouse, and MinIO passwords are internal to the compose overlay and are not consumed by the gateway runtime.
+
 The gateway is overridden to:
 
 ```yaml
@@ -109,8 +122,9 @@ gateway:
     - OTEL_ENABLE_OBSERVABILITY=true
     - OTEL_TRACES_EXPORTER=otlp
     - OTEL_EXPORTER_OTLP_PROTOCOL=http
-    - OTEL_EXPORTER_OTLP_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces
-    - OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64(pk:sk)>
+    - LANGFUSE_OTEL_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces
+    - LANGFUSE_PUBLIC_KEY=<your-project-public-key>
+    - LANGFUSE_SECRET_KEY=<your-project-secret-key>
     - OTEL_SERVICE_NAME=contextforge-gateway
 ```
 
@@ -151,33 +165,58 @@ Each span includes:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LANGFUSE_PORT` | Host port for Langfuse UI | `3100` |
-| `LANGFUSE_PUBLIC_KEY` | API public key | `pk-lf-contextforge` |
-| `LANGFUSE_SECRET_KEY` | API secret key | `sk-lf-contextforge` |
-| `LANGFUSE_OTEL_AUTH` | Base64-encoded `pk:sk` for OTEL header | auto-generated |
+| `LANGFUSE_WORKER_PORT` | Localhost-only Langfuse worker metrics port | `3130` |
+| `LANGFUSE_OTEL_ENDPOINT` | Langfuse OTLP/HTTP traces endpoint | local compose service |
+| `LANGFUSE_PUBLIC_KEY` | API public key | `pk-lf-contextforge` in the local compose overlay |
+| `LANGFUSE_SECRET_KEY` | API secret key | `sk-lf-contextforge` in the local compose overlay |
+| `LANGFUSE_OTEL_AUTH` | Optional base64-encoded `pk:sk` OTLP auth override | unset |
 | `LANGFUSE_INIT_USER_EMAIL` | Admin user email | `admin@example.com` |
-| `LANGFUSE_INIT_USER_PASSWORD` | Admin user password | `changeme` |
-| `LANGFUSE_POSTGRES_PASSWORD` | Langfuse DB password | `langfuse` |
+| `LANGFUSE_INIT_USER_PASSWORD` | Optional local overlay admin password override | `changeme` |
+| `LANGFUSE_POSTGRES_PASSWORD` | Optional local overlay DB password override | local compose default |
 | `LANGFUSE_CLICKHOUSE_USER` | ClickHouse username | `clickhouse` |
-| `LANGFUSE_CLICKHOUSE_PASSWORD` | ClickHouse password | `clickhouse` |
+| `LANGFUSE_CLICKHOUSE_PASSWORD` | Optional local overlay ClickHouse password override | local compose default |
 | `LANGFUSE_MINIO_USER` | MinIO access key | `minio` |
-| `LANGFUSE_MINIO_PASSWORD` | MinIO secret key | `miniosecret` |
-| `LANGFUSE_REDIS_AUTH` | Redis password | `langfuse-redis-secret` |
+| `LANGFUSE_MINIO_PASSWORD` | Optional local overlay MinIO password override | local compose default |
+| `LANGFUSE_REDIS_AUTH` | Optional local overlay Redis password override | local compose default |
+| `LANGFUSE_NEXTAUTH_SECRET` | Optional local overlay NextAuth secret override | local compose default |
+| `LANGFUSE_SALT` | Optional local overlay application salt override | local compose default |
+| `LANGFUSE_ENCRYPTION_KEY` | Optional local overlay encryption key override | local compose default |
 
-!!! warning "Production Credentials"
-    The default credentials are for development only. Override all passwords and keys via `.env` or environment variables before deploying to production.
+!!! note "Gateway vs Self-Hosted Langfuse Secrets"
+    ContextForge itself only reads `LANGFUSE_OTEL_ENDPOINT`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and optionally `LANGFUSE_OTEL_AUTH`. The other `LANGFUSE_*` secrets in this table apply only when you run the local self-hosted Langfuse compose overlay.
+
+!!! warning "Local Compose Defaults"
+    The self-hosted Langfuse compose overlay uses local-only demo project keys when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are unset. This convenience is limited to the compose path; ContextForge code does not embed Langfuse credentials.
 
 ## Using the Langfuse UI
 
 ### Viewing Traces
 
 1. Open [http://localhost:3100](http://localhost:3100)
-2. Log in with `admin@example.com` / `changeme`
+2. Log in with the configured `LANGFUSE_INIT_USER_EMAIL` / `LANGFUSE_INIT_USER_PASSWORD`
 3. Navigate to **Traces** in the sidebar
 4. Each tool invocation appears as a trace with:
     - Span name (e.g., `tool.invoke`)
     - Duration and latency
     - Service attributes (deployment environment, namespace)
     - Error details if the invocation failed
+
+### Viewing Users, Sessions, and Generations
+
+1. Navigate to **Users** to group traces by `langfuse.user.id`
+2. Navigate to **Sessions** to inspect MCP session grouping via `langfuse.session.id`
+3. Navigate to **Generations** to inspect `llm.proxy` and `llm.chat` spans with `gen_ai.*` token usage
+4. Filter by tags such as `team:<team-id>`, `auth:jwt`, and `env:production`
+
+### Dashboard Workflow
+
+Use the Langfuse UI in this order when validating the gateway:
+
+1. **Traces**: confirm the request path and child spans
+2. **Users**: verify the request is attributed to the authenticated email
+3. **Sessions**: verify repeated MCP traffic groups under one session
+4. **Generations**: verify LLM spans include model and token usage
+5. **Evaluations**: score or annotate selected traces after reviewing outputs
 
 ### Creating Evaluations
 
@@ -210,6 +249,10 @@ This starts:
 - **Prometheus** at `http://localhost:9090` (metrics collection)
 - **Tempo** at `http://localhost:3200` (distributed tracing)
 
+The gateway still exports traces to Langfuse in this mode. Tempo remains available for dashboards, metrics, and optional collector-based dual export.
+
+If any of those host ports are already in use, override them before starting the stack. Supported compose-only overrides include `LANGFUSE_PORT`, `LANGFUSE_WORKER_PORT`, `GRAFANA_PORT`, `LOKI_PORT`, `PROMETHEUS_PORT`, `TEMPO_PORT`, `TEMPO_OTLP_GRPC_PORT`, `TEMPO_OTLP_HTTP_PORT`, `PGADMIN_PORT`, and `REDIS_COMMANDER_PORT`. `LOKI_PORT` defaults to `3101` so it does not collide with Langfuse on `3100`.
+
 !!! tip "Dual Trace Export"
     By default, OTEL traces go to Langfuse only. To send traces to both Langfuse and Tempo simultaneously, deploy an [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) with a fan-out pipeline.
 
@@ -217,22 +260,36 @@ This starts:
 
 ### Security Hardening
 
-1. **Change all default credentials** in `.env`:
+1. **Set the gateway-facing Langfuse credentials** in `.env`:
     ```bash
     LANGFUSE_PUBLIC_KEY=pk-lf-<random>
     LANGFUSE_SECRET_KEY=sk-lf-<random>
-    LANGFUSE_INIT_USER_PASSWORD=<strong-password>
-    LANGFUSE_POSTGRES_PASSWORD=<strong-password>
-    LANGFUSE_ENCRYPTION_KEY=<64-hex-chars>
-    LANGFUSE_NEXTAUTH_SECRET=<random-string>
     ```
+    If you run the local self-hosted overlay and want to replace its internal service defaults, override the additional `LANGFUSE_*` compose variables as well.
 
-2. **Regenerate the OTEL auth header**:
+2. **Optionally precompute the OTEL auth header** if you prefer to pass a base64 token instead of raw project keys:
     ```bash
     LANGFUSE_OTEL_AUTH=$(echo -n "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" | base64)
     ```
+    When `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, ContextForge can derive the OTLP Authorization header automatically.
 
-3. **Enable TLS** for the Langfuse endpoint in production.
+3. **Configure OTEL payload controls** for trace capture:
+    ```bash
+    OTEL_REDACT_FIELDS=password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key
+    OTEL_MAX_TRACE_PAYLOAD_SIZE=32768
+    OTEL_CAPTURE_OUTPUT_SPANS=llm.proxy,llm.chat
+    ```
+    `OTEL_CAPTURE_OUTPUT_SPANS` is opt-in. Leave it empty to disable observation output capture entirely.
+
+4. **Enable TLS** for the Langfuse endpoint in production.
+    ```bash
+    LANGFUSE_OTEL_ENDPOINT=https://langfuse.example.com/api/public/otel/v1/traces
+    OTEL_EXPORTER_OTLP_INSECURE=false
+    ```
+    If your OTLP endpoint uses a private CA, mount that CA into the gateway container or host trust store before enabling export.
+
+5. **Verify startup credential enforcement**.
+   ContextForge now fails startup when a Langfuse OTLP endpoint is configured without either `OTEL_EXPORTER_OTLP_HEADERS`, `LANGFUSE_OTEL_AUTH`, or both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`.
 
 ### Kubernetes
 
@@ -273,7 +330,7 @@ Langfuse provides a [Helm chart](https://langfuse.com/docs/deployment/self-host/
 
 4. **Verify traces via API**:
     ```bash
-    AUTH=$(echo -n "pk-lf-contextforge:sk-lf-contextforge" | base64)
+    AUTH=$(echo -n "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" | base64)
     curl -H "Authorization: Basic $AUTH" \
       http://localhost:3100/api/public/traces
     ```
@@ -291,6 +348,14 @@ If Langfuse logs show "Failed to upload JSON to S3":
 
 - Verify MinIO is running: `docker compose exec langfuse-minio mc ls local/langfuse`
 - Check that service names use hyphens (not underscores) - the AWS SDK rejects hostnames with underscores
+
+### Startup Fails With Langfuse Credential Errors
+
+If the gateway exits during startup with a Langfuse credential error:
+
+- Check `OTEL_EXPORTER_OTLP_HEADERS`, `LANGFUSE_OTEL_AUTH`, or the `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` pair
+- Verify `LANGFUSE_OTEL_ENDPOINT` points at `/api/public/otel/v1/traces`
+- Restart the gateway after fixing the missing or mismatched credentials
 
 ## Next Steps
 

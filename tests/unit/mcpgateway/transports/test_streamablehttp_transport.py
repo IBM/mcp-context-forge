@@ -24,6 +24,7 @@ from __future__ import annotations
 # Standard
 from contextlib import asynccontextmanager
 import json
+from types import SimpleNamespace
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13104,3 +13105,60 @@ class TestServerIdDenyPaths:
         status, body = await self._run_request("/servers/AABB/mcp")
         assert status == 404
         assert body["detail"] == "Server not found"
+
+
+@pytest.mark.asyncio
+async def test_auth_no_token_sets_anonymous_trace_context(monkeypatch):
+    """Permissive MCP auth should label anonymous/public-only trace context."""
+    # First-Party
+    from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_scope, get_trace_user_email
+
+    clear_trace_context()
+    monkeypatch.setattr(tr.settings, "mcp_require_auth", False)
+
+    scope = {"path": "/mcp"}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    allowed = await handler._auth_no_token(path="/mcp", bearer_header_supplied=False)
+
+    assert allowed is True
+    assert get_trace_user_email() is None
+    assert get_trace_auth_method() == "anonymous"
+    assert get_trace_team_scope() == "public"
+    clear_trace_context()
+
+
+@pytest.mark.asyncio
+async def test_auth_jwt_sets_trace_context_for_session_token(monkeypatch):
+    """JWT MCP auth should populate team-scoped trace context."""
+    # First-Party
+    from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_scope, get_trace_user_email
+
+    clear_trace_context()
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+
+    payload = {
+        "sub": "stream@example.com",
+        "token_use": "session",
+        "user": {"auth_provider": "local"},
+    }
+    user_record = SimpleNamespace(is_admin=False, is_active=True)
+
+    scope = {"path": "/mcp"}
+    handler = tr._StreamableHttpAuthHandler(scope, AsyncMock(), AsyncMock())
+
+    with (
+        patch("mcpgateway.transports.streamablehttp_transport.verify_credentials", AsyncMock(return_value=payload)),
+        patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        patch("mcpgateway.auth._get_user_by_email_sync", return_value=user_record),
+        patch("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=["team-stream"])),
+    ):
+        allowed = await handler._auth_jwt(token="jwt")
+
+    assert allowed is True
+    assert get_trace_user_email() == "stream@example.com"
+    assert get_trace_auth_method() == "jwt"
+    assert get_trace_team_scope() == "team-stream"
+    clear_trace_context()

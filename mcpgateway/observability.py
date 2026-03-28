@@ -9,11 +9,13 @@ Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 """
 
 # Standard
+import base64
 from contextlib import nullcontext
 from importlib import import_module as _im
 import logging
 import os
 from typing import Any, Callable, cast, Dict, Optional
+from urllib.parse import urlparse
 
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
 OTEL_AVAILABLE = False
@@ -94,7 +96,16 @@ except ImportError:
         logging.getLogger(__name__).debug("Skipping OpenTelemetry shim setup: %s", exc)
 
 # First-Party
+from mcpgateway.config import get_settings  # noqa: E402  # pylint: disable=wrong-import-position
 from mcpgateway.utils.correlation_id import get_correlation_id  # noqa: E402  # pylint: disable=wrong-import-position
+from mcpgateway.utils.trace_context import (  # noqa: E402  # pylint: disable=wrong-import-position
+    get_trace_auth_method,
+    get_trace_session_id,
+    get_trace_team_scope,
+    get_trace_user_email,
+    get_trace_user_is_admin,
+    primary_team_from_scope,
+)
 
 # Try to import optional exporters
 try:
@@ -122,10 +133,144 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+_LANGFUSE_OTEL_PATH_FRAGMENT = "/api/public/otel"
+
 
 # Global tracer instance - using UPPER_CASE for module-level constant
 # pylint: disable=invalid-name
 _TRACER = None
+
+
+def _get_deployment_environment() -> str:
+    """Return the current deployment environment label.
+
+    Returns:
+        Deployment environment label derived from configuration.
+    """
+    return get_settings().deployment_env
+
+
+def _is_langfuse_otlp_endpoint(endpoint: Optional[str]) -> bool:
+    """Return whether the OTLP endpoint points at a Langfuse ingestion path.
+
+    Args:
+        endpoint: OTLP endpoint URL to inspect.
+
+    Returns:
+        ``True`` when the endpoint path matches Langfuse's public OTLP ingestion path.
+    """
+    if not endpoint:
+        return False
+
+    try:
+        return _LANGFUSE_OTEL_PATH_FRAGMENT in urlparse(endpoint).path
+    except Exception:
+        return _LANGFUSE_OTEL_PATH_FRAGMENT in endpoint
+
+
+def _resolve_langfuse_basic_auth() -> str:
+    """Resolve Langfuse OTLP basic auth from explicit auth or project keys.
+
+    Returns:
+        Base64-encoded Langfuse basic-auth credential string, or an empty string when Langfuse auth is not configured.
+    """
+    cfg = get_settings()
+    explicit_auth = cfg.langfuse_otel_auth.get_secret_value().strip() if cfg.langfuse_otel_auth else ""
+    if explicit_auth:
+        return explicit_auth
+
+    public_key = cfg.langfuse_public_key.get_secret_value().strip() if cfg.langfuse_public_key else ""
+    secret_key = cfg.langfuse_secret_key.get_secret_value().strip() if cfg.langfuse_secret_key else ""
+    if not public_key or not secret_key:
+        return ""
+
+    return base64.b64encode(f"{public_key}:{secret_key}".encode("utf-8")).decode("ascii")
+
+
+def _resolve_otlp_endpoint() -> Optional[str]:
+    """Resolve the OTLP endpoint from generic or Langfuse-specific configuration.
+
+    Returns:
+        Configured OTLP endpoint, preferring the Langfuse-specific override when present.
+    """
+    cfg = get_settings()
+    return cfg.langfuse_otel_endpoint or cfg.otel_exporter_otlp_endpoint
+
+
+def _resolve_otlp_headers(endpoint: Optional[str]) -> str:
+    """Resolve OTLP headers, deriving Langfuse basic auth when possible.
+
+    Args:
+        endpoint: Resolved OTLP endpoint URL.
+
+    Returns:
+        Comma-separated OTLP header string suitable for exporter configuration.
+    """
+    cfg = get_settings()
+    if cfg.otel_exporter_otlp_headers:
+        return cfg.otel_exporter_otlp_headers
+
+    if not _is_langfuse_otlp_endpoint(endpoint):
+        return ""
+
+    basic_auth = _resolve_langfuse_basic_auth()
+    if not basic_auth:
+        return ""
+
+    return f"Authorization=Basic {basic_auth}"
+
+
+def _validate_langfuse_configuration(endpoint: Optional[str], headers: str) -> None:
+    """Fail closed when Langfuse OTLP is configured without usable credentials.
+
+    Args:
+        endpoint: OTLP endpoint URL configured for export.
+        headers: Authorization header value configured for the OTLP exporter.
+
+    Raises:
+        RuntimeError: If a Langfuse endpoint is configured without credentials.
+    """
+    if not _is_langfuse_otlp_endpoint(endpoint):
+        return
+
+    if headers:
+        return
+
+    raise RuntimeError("Langfuse OTLP endpoint configured without credentials. " "Set OTEL_EXPORTER_OTLP_HEADERS, LANGFUSE_OTEL_AUTH, " "or LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.")
+
+
+def _derive_langfuse_trace_name(name: str, attributes: Dict[str, Any]) -> str:
+    """Derive a human-readable Langfuse trace name from span context.
+
+    Args:
+        name: Raw span name.
+        attributes: Span attributes used to derive a more readable Langfuse trace label.
+
+    Returns:
+        Human-readable trace name suitable for Langfuse dashboards.
+    """
+    if name == "tool.invoke" and attributes.get("tool.name"):
+        return f"Tool: {attributes['tool.name']}"
+    if name == "tool.list":
+        return "Tools"
+    if name == "prompt.render" and attributes.get("prompt.id"):
+        return f"Prompt: {attributes['prompt.id']}"
+    if name == "prompt.list":
+        return "Prompts"
+    if name == "resource.read" and attributes.get("resource.uri"):
+        return f"Resource: {attributes['resource.uri']}"
+    if name == "resource.list":
+        return "Resources"
+    if name == "resource_template.list":
+        return "Resource Templates"
+    if name == "root.list":
+        return "Roots"
+    if name in {"llm.proxy", "llm.chat"} and attributes.get("gen_ai.request.model"):
+        prefix = "LLM Proxy" if name == "llm.proxy" else "LLM Chat"
+        return f"{prefix}: {attributes['gen_ai.request.model']}"
+    if name.startswith("a2a.") and attributes.get("a2a.agent.name"):
+        return f"A2A: {attributes['a2a.agent.name']}"
+    return name
 
 
 def init_telemetry() -> Optional[Any]:
@@ -143,9 +288,10 @@ def init_telemetry() -> Optional[Any]:
     """
     # pylint: disable=global-statement
     global _TRACER
+    cfg = get_settings()
 
     # Check if observability is disabled (default: disabled)
-    if os.getenv("OTEL_ENABLE_OBSERVABILITY", "false").lower() == "false":
+    if not cfg.otel_enable_observability:
         logger.info("Observability disabled via OTEL_ENABLE_OBSERVABILITY=false")
         return None
 
@@ -156,7 +302,7 @@ def init_telemetry() -> Optional[Any]:
         return None
 
     # Get exporter type from environment
-    exporter_type = os.getenv("OTEL_TRACES_EXPORTER", "otlp").lower()
+    exporter_type = cfg.otel_traces_exporter.lower()
 
     # Handle 'none' exporter (tracing disabled)
     if exporter_type == "none":
@@ -165,21 +311,22 @@ def init_telemetry() -> Optional[Any]:
 
     # Check if endpoint is configured for otlp
     if exporter_type == "otlp":
-        endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+        endpoint = _resolve_otlp_endpoint()
         if not endpoint:
             logger.info("OTLP endpoint not configured, skipping telemetry init")
             return None
+        _validate_langfuse_configuration(endpoint, _resolve_otlp_headers(endpoint))
 
     try:
         # Create resource attributes
         resource_attributes: Dict[str, Any] = {
-            "service.name": os.getenv("OTEL_SERVICE_NAME", "mcp-gateway"),
+            "service.name": cfg.otel_service_name,
             "service.version": "1.0.0-RC-2",
-            "deployment.environment": os.getenv("DEPLOYMENT_ENV", "development"),
+            "deployment.environment": _get_deployment_environment(),
         }
 
         # Add custom resource attributes from environment
-        custom_attrs = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "")
+        custom_attrs = cfg.otel_resource_attributes or ""
         if custom_attrs:
             for attr in custom_attrs.split(","):
                 if "=" in attr:
@@ -256,9 +403,11 @@ def init_telemetry() -> Optional[Any]:
         exporter: Optional[Any] = None
 
         if exporter_type == "otlp":
-            endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-            protocol = os.getenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").lower()
-            headers = os.getenv("OTEL_EXPORTER_OTLP_HEADERS", "")
+            endpoint = _resolve_otlp_endpoint()
+            protocol = cfg.otel_exporter_otlp_protocol.lower()
+            headers = _resolve_otlp_headers(endpoint)
+            if _is_langfuse_otlp_endpoint(endpoint):
+                protocol = "http"
             # Note: some versions of OTLP exporters may not accept 'insecure' kwarg; avoid passing it.
             # Use endpoint scheme or env to control TLS externally.
 
@@ -283,7 +432,7 @@ def init_telemetry() -> Optional[Any]:
 
         elif exporter_type == "jaeger":
             if JAEGER_EXPORTER:
-                endpoint = os.getenv("OTEL_EXPORTER_JAEGER_ENDPOINT", "http://localhost:14268/api/traces")
+                endpoint = cfg.otel_exporter_jaeger_endpoint or "http://localhost:14268/api/traces"
                 exporter = JAEGER_EXPORTER(collector_endpoint=endpoint, username=os.getenv("OTEL_EXPORTER_JAEGER_USER"), password=os.getenv("OTEL_EXPORTER_JAEGER_PASSWORD"))
             else:
                 logger.error("Jaeger exporter not available. Install with: pip install opentelemetry-exporter-jaeger")
@@ -291,7 +440,7 @@ def init_telemetry() -> Optional[Any]:
 
         elif exporter_type == "zipkin":
             if ZIPKIN_EXPORTER:
-                endpoint = os.getenv("OTEL_EXPORTER_ZIPKIN_ENDPOINT", "http://localhost:9411/api/v2/spans")
+                endpoint = cfg.otel_exporter_zipkin_endpoint or "http://localhost:9411/api/v2/spans"
                 exporter = ZIPKIN_EXPORTER(endpoint=endpoint)
             else:
                 logger.error("Zipkin exporter not available. Install with: pip install opentelemetry-exporter-zipkin")
@@ -312,9 +461,9 @@ def init_telemetry() -> Optional[Any]:
             else:
                 span_processor = cast(Any, BatchSpanProcessor)(
                     exporter,
-                    max_queue_size=int(os.getenv("OTEL_BSP_MAX_QUEUE_SIZE", "2048")),
-                    max_export_batch_size=int(os.getenv("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "512")),
-                    schedule_delay_millis=int(os.getenv("OTEL_BSP_SCHEDULE_DELAY", "5000")),
+                    max_queue_size=cfg.otel_bsp_max_queue_size,
+                    max_export_batch_size=cfg.otel_bsp_max_export_batch_size,
+                    schedule_delay_millis=cfg.otel_bsp_schedule_delay,
                 )
             provider.add_span_processor(span_processor)
 
@@ -342,11 +491,11 @@ def init_telemetry() -> Optional[Any]:
 
         logger.info(f"✅ OpenTelemetry initialized with {exporter_type} exporter")
         if exporter_type == "otlp":
-            logger.info(f"   Endpoint: {os.getenv('OTEL_EXPORTER_OTLP_ENDPOINT')}")
+            logger.info(f"   Endpoint: {_resolve_otlp_endpoint()}")
         elif exporter_type == "jaeger":
-            logger.info(f"   Endpoint: {os.getenv('OTEL_EXPORTER_JAEGER_ENDPOINT', 'default')}")
+            logger.info(f"   Endpoint: {cfg.otel_exporter_jaeger_endpoint or 'default'}")
         elif exporter_type == "zipkin":
-            logger.info(f"   Endpoint: {os.getenv('OTEL_EXPORTER_ZIPKIN_ENDPOINT', 'default')}")
+            logger.info(f"   Endpoint: {cfg.otel_exporter_zipkin_endpoint or 'default'}")
 
         return _TRACER
 
@@ -443,20 +592,58 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         # Return a no-op context manager if tracing is not configured or available
         return nullcontext()
 
+    attributes = dict(attributes or {})
+
     # Auto-inject correlation ID into all spans for request tracing
     try:
         correlation_id = get_correlation_id()
         if correlation_id:
-            if attributes is None:
-                attributes = {}
-            # Add correlation ID if not already present
-            if "correlation_id" not in attributes:
-                attributes["correlation_id"] = correlation_id
-            if "request_id" not in attributes:
-                attributes["request_id"] = correlation_id  # Alias for compatibility
+            attributes.setdefault("correlation_id", correlation_id)
+            attributes.setdefault("request_id", correlation_id)
     except Exception as exc:
         # Correlation ID not available or error getting it, continue without it
         logger.debug("Failed to add correlation_id to span: %s", exc)
+
+    try:
+        user_email = get_trace_user_email()
+        if user_email:
+            attributes.setdefault("user.email", user_email)
+            attributes.setdefault("langfuse.user.id", user_email)
+
+        user_is_admin = get_trace_user_is_admin()
+        if user_email or user_is_admin:
+            attributes.setdefault("user.is_admin", user_is_admin)
+
+        team_scope = get_trace_team_scope()
+        if team_scope:
+            attributes.setdefault("team.scope", team_scope)
+
+        auth_method = get_trace_auth_method()
+        if auth_method:
+            attributes.setdefault("auth.method", auth_method)
+
+        session_id = get_trace_session_id()
+        if session_id:
+            attributes.setdefault("langfuse.session.id", session_id)
+
+        environment = _get_deployment_environment()
+        attributes.setdefault("langfuse.environment", environment)
+
+        tags: list[str] = []
+        primary_team = primary_team_from_scope(team_scope)
+        if primary_team:
+            tags.append(f"team:{primary_team}")
+        if auth_method:
+            tags.append(f"auth:{auth_method}")
+        if environment:
+            tags.append(f"env:{environment}")
+        if tags:
+            attributes.setdefault("langfuse.trace.tags", tags)
+
+        attributes.setdefault("langfuse.trace.name", _derive_langfuse_trace_name(name, attributes))
+        attributes.setdefault("langfuse.observation.level", "DEFAULT")
+    except Exception as exc:
+        logger.debug("Failed to auto-inject trace context into span: %s", exc)
 
     # Start span and return the context manager
     span_context = _TRACER.start_as_current_span(name)
@@ -516,6 +703,8 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
                     self.span.set_attribute("error", True)
                     self.span.set_attribute("error.type", exc_type.__name__)
                     self.span.set_attribute("error.message", str(exc_val))
+                    self.span.set_attribute("langfuse.observation.level", "ERROR")
+                    self.span.set_attribute("langfuse.observation.status_message", str(exc_val))
                 elif self.span:
                     if OTEL_AVAILABLE and Status and StatusCode:
                         self.span.set_status(Status(StatusCode.OK))
@@ -524,6 +713,22 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         return SpanWithAttributes(span_context, attributes)
 
     return span_context
+
+
+def create_child_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
+    """Create a nested span using the current trace context.
+
+    This is an alias for ``create_span()`` used where child-span intent is part
+    of the local code structure.
+
+    Args:
+        name: Span name.
+        attributes: Optional attributes to attach to the created span.
+
+    Returns:
+        Span context manager returned by ``create_span()``.
+    """
+    return create_span(name, attributes)
 
 
 # Initialize on module import

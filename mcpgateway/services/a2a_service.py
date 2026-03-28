@@ -30,6 +30,7 @@ from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.observability import create_span
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -42,6 +43,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.trace_redaction import is_output_capture_enabled, redact_sensitive_fields, safe_serialize
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -356,6 +358,17 @@ class A2AAgentService(BaseService):
         Examples:
             # TODO
         """
+        span_cm = create_span(
+            "a2a.register",
+            {
+                "a2a.agent.name": agent_data.name,
+                "a2a.agent.type": agent_data.agent_type,
+                "created_by": created_by,
+                "team_id": team_id,
+                "visibility": visibility,
+            },
+        )
+        span = span_cm.__enter__()
         try:
             agent_data.slug = slugify(agent_data.name)
             # Check for existing server with the same slug within the same team or public scope
@@ -543,20 +556,37 @@ class A2AAgentService(BaseService):
                 },
             )
 
+            if span:
+                span.set_attribute("success", True)
+                span.set_attribute("a2a.agent.id", str(new_agent.id))
             return self.convert_agent_to_read(new_agent, db=db)
 
         except A2AAgentNameConflictError as ie:
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.message", str(ie))
             db.rollback()
             raise ie
         except IntegrityError as ie:
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.message", str(ie))
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
         except ValueError as ve:
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.message", str(ve))
             raise ve
         except Exception as e:
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.message", str(e))
             db.rollback()
             raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
+        finally:
+            span_cm.__exit__(None, None, None)
 
     async def list_agents(
         self,
@@ -1248,64 +1278,84 @@ class A2AAgentService(BaseService):
             A2AAgentNotFoundError: If the agent is not found.
             PermissionError: If user doesn't own the agent.
         """
-        query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-        agent = db.execute(query).scalar_one_or_none()
-
-        if not agent:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
-
-        if user_email:
-            # First-Party
-            from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-            permission_service = PermissionService(db)
-            if not await permission_service.check_resource_ownership(user_email, agent):
-                raise PermissionError("Only the owner can activate the Agent" if activate else "Only the owner can deactivate the Agent")
-
-        agent.enabled = activate
-        if reachable is not None:
-            agent.reachable = reachable
-
-        db.commit()
-        db.refresh(agent)
-
-        # Invalidate caches since agent status changed
-        a2a_stats_cache.invalidate()
-        cache = _get_registry_cache()
-        await cache.invalidate_agents()
-
-        # Cascade: update associated tool's enabled status to match agent.
-        # This mirrors gateway_service.set_gateway_state() which lets cascade
-        # failures propagate so the caller knows the operation was incomplete.
-        if agent.tool_id:
-            now = datetime.now(timezone.utc)
-            tool_result = db.execute(update(DbTool).where(DbTool.id == agent.tool_id).where(DbTool.enabled != activate).values(enabled=activate, updated_at=now))
-            if tool_result.rowcount > 0:
-                db.commit()
-                await cache.invalidate_tools()
-                tool_lookup_cache = _get_tool_lookup_cache()
-                if agent.tool and agent.tool.name:
-                    await tool_lookup_cache.invalidate(agent.tool.name, gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None)
-
-        status = "activated" if activate else "deactivated"
-        logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
-
-        structured_logger.log(
-            level="INFO",
-            message=f"A2A agent {status}",
-            event_type="a2a_agent_status_changed",
-            component="a2a_service",
-            user_email=user_email,
-            resource_type="a2a_agent",
-            resource_id=str(agent.id),
-            custom_fields={
-                "agent_name": agent.name,
-                "enabled": agent.enabled,
-                "reachable": agent.reachable,
+        span_cm = create_span(
+            "a2a.state_change",
+            {
+                "a2a.agent.id": agent_id,
+                "a2a.agent.activate": activate,
+                "user.email": user_email,
             },
         )
+        span = span_cm.__enter__()
+        try:
+            query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
+            agent = db.execute(query).scalar_one_or_none()
 
-        return self.convert_agent_to_read(agent, db=db)
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, agent):
+                    raise PermissionError("Only the owner can activate the Agent" if activate else "Only the owner can deactivate the Agent")
+
+            agent.enabled = activate
+            if reachable is not None:
+                agent.reachable = reachable
+
+            db.commit()
+            db.refresh(agent)
+
+            # Invalidate caches since agent status changed
+            a2a_stats_cache.invalidate()
+            cache = _get_registry_cache()
+            await cache.invalidate_agents()
+
+            # Cascade: update associated tool's enabled status to match agent.
+            # This mirrors gateway_service.set_gateway_state() which lets cascade
+            # failures propagate so the caller knows the operation was incomplete.
+            if agent.tool_id:
+                now = datetime.now(timezone.utc)
+                tool_result = db.execute(update(DbTool).where(DbTool.id == agent.tool_id).where(DbTool.enabled != activate).values(enabled=activate, updated_at=now))
+                if tool_result.rowcount > 0:
+                    db.commit()
+                    await cache.invalidate_tools()
+                    tool_lookup_cache = _get_tool_lookup_cache()
+                    if agent.tool and agent.tool.name:
+                        await tool_lookup_cache.invalidate(agent.tool.name, gateway_id=str(agent.tool.gateway_id) if agent.tool.gateway_id else None)
+
+            status = "activated" if activate else "deactivated"
+            logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
+
+            structured_logger.log(
+                level="INFO",
+                message=f"A2A agent {status}",
+                event_type="a2a_agent_status_changed",
+                component="a2a_service",
+                user_email=user_email,
+                resource_type="a2a_agent",
+                resource_id=str(agent.id),
+                custom_fields={
+                    "agent_name": agent.name,
+                    "enabled": agent.enabled,
+                    "reachable": agent.reachable,
+                },
+            )
+
+            result = self.convert_agent_to_read(agent, db=db)
+            if span:
+                span.set_attribute("success", True)
+            return result
+        except Exception as exc:
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.message", str(exc))
+            raise
+        finally:
+            span_cm.__exit__(None, None, None)
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Delete an A2A agent.
@@ -1320,6 +1370,15 @@ class A2AAgentService(BaseService):
             A2AAgentNotFoundError: If the agent is not found.
             PermissionError: If user doesn't own the agent.
         """
+        span_cm = create_span(
+            "a2a.delete",
+            {
+                "a2a.agent.id": agent_id,
+                "user.email": user_email,
+                "purge_metrics": purge_metrics,
+            },
+        )
+        span = span_cm.__enter__()
         try:
             query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
             agent = db.execute(query).scalar_one_or_none()
@@ -1376,9 +1435,15 @@ class A2AAgentService(BaseService):
                     "purge_metrics": purge_metrics,
                 },
             )
+            if span:
+                span.set_attribute("success", True)
         except PermissionError:
+            if span:
+                span.set_attribute("error", True)
             db.rollback()
             raise
+        finally:
+            span_cm.__exit__(None, None, None)
 
     async def invoke_agent(
         self,
@@ -1495,6 +1560,18 @@ class A2AAgentService(BaseService):
         from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
 
         sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_query_params_decrypted)
+        span_cm = create_span(
+            "a2a.invoke",
+            {
+                "a2a.agent.name": agent_name,
+                "a2a.agent.id": str(agent_id),
+                "a2a.agent.url": sanitized_endpoint_url,
+                "a2a.agent.type": agent_type,
+                "a2a.interaction_type": interaction_type,
+                "langfuse.observation.input": safe_serialize(redact_sensitive_fields(parameters or {})),
+            },
+        )
+        span = span_cm.__enter__()
 
         try:
             # Prepare the request to the A2A agent
@@ -1546,6 +1623,8 @@ class A2AAgentService(BaseService):
             if http_response.status_code == 200:
                 response = http_response.json()
                 success = True
+                if span and is_output_capture_enabled("a2a.invoke"):
+                    span.set_attribute("langfuse.observation.output", safe_serialize(response))
 
                 # Log successful A2A call
                 structured_logger.log(
@@ -1580,11 +1659,17 @@ class A2AAgentService(BaseService):
 
         except A2AAgentError:
             # Re-raise A2AAgentError without wrapping
+            if span and error_message:
+                span.set_attribute("error", True)
+                span.set_attribute("error.message", error_message)
             raise
         except Exception as e:
             # Sanitize error message to prevent URL secrets from leaking in logs
             error_message = sanitize_exception_message(str(e), auth_query_params_decrypted)
             logger.error(f"Failed to invoke A2A agent '{agent_name}': {error_message}")
+            if span:
+                span.set_attribute("error", True)
+                span.set_attribute("error.message", error_message)
             raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}")
 
         finally:
@@ -1619,6 +1704,10 @@ class A2AAgentService(BaseService):
                         ts_db.commit()
             except Exception as ts_error:
                 logger.warning(f"Failed to update last_interaction for '{agent_name}': {ts_error}")
+            if span:
+                span.set_attribute("success", success)
+                span.set_attribute("duration.ms", response_time * 1000)
+            span_cm.__exit__(None, None, None)
 
         return response or {"error": error_message}
 

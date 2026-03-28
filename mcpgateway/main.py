@@ -171,6 +171,7 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
+from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 from mcpgateway.version import router as version_router
@@ -452,6 +453,13 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
 
     if request.headers.get(_INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
         auth_context["_rust_session_validated"] = True
+
+    set_trace_context_from_teams(
+        auth_context.get("teams"),
+        user_email=auth_context.get("email"),
+        is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
+        auth_method="mcp_internal_forward",
+    )
 
     return {
         "email": auth_context.get("email"),
@@ -4142,6 +4150,7 @@ async def message_endpoint(request: Request, server_id: str = Depends(require_va
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+        set_trace_session_id(session_id)
 
         await _assert_session_owner_or_admin(request, user, session_id)
 
@@ -10095,6 +10104,7 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+        set_trace_session_id(session_id)
 
         await _assert_session_owner_or_admin(request, user, session_id)
 
@@ -11118,9 +11128,16 @@ class InternalTrustedMCPTransportBridge:
 
         token = user_context_var.set(auth_context)
         try:
+            set_trace_context_from_teams(
+                auth_context.get("teams"),
+                user_email=auth_context.get("email"),
+                is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
+                auth_method="mcp_internal_forward",
+            )
             await self.transport_app.handle_streamable_http(forwarded_scope, receive, send)
         finally:
             user_context_var.reset(token)
+            clear_trace_context()
 
 
 mcp_transport_app = _build_mcp_transport_app()

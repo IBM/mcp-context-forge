@@ -976,6 +976,32 @@ class TestInternalMcpHelperCoverage:
         assert request.state.token_teams == ["team-a"]
         assert getattr(request.state, "_mcp_internal_auth_context")["_rust_session_validated"] is True
 
+    def test_build_internal_mcp_forwarded_user_sets_trace_context(self):
+        """Trusted forwarded auth should populate trace context for downstream spans."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_scope, get_trace_user_email
+
+        clear_trace_context()
+        request = MagicMock(spec=Request)
+        request.headers = _trusted_internal_mcp_headers(
+            {
+                "email": "trace@example.com",
+                "teams": ["team-x"],
+                "is_authenticated": True,
+                "is_admin": False,
+                "permission_is_admin": False,
+            }
+        )
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = SimpleNamespace()
+
+        _build_internal_mcp_forwarded_user(request)
+
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_auth_method() == "mcp_internal_forward"
+        assert get_trace_team_scope() == "team-x"
+        clear_trace_context()
+
     @pytest.mark.asyncio
     async def test_handle_internal_mcp_tools_call_metric_records_buffered_metrics(self):
         """Trusted Rust metrics writeback should use the buffered Python metric recorder."""
@@ -9488,6 +9514,24 @@ class TestMessageEndpointElicitation:
             await message_endpoint(request, "server-1", user={"email": "user@example.com"})
         assert excinfo.value.status_code == 403
         assert excinfo.value.detail == "Session owner metadata unavailable"
+
+    async def test_message_endpoint_sets_trace_session_id_before_authorization(self, monkeypatch):
+        """message_endpoint should capture session_id even when the owner check fails."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_session_id
+
+        clear_trace_context()
+        request = MagicMock(spec=Request)
+        request.query_params = {"session_id": "session-trace"}
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="other@example.com"))
+        monkeypatch.setattr("mcpgateway.main._read_request_json", AsyncMock(return_value={"hello": "world"}))
+
+        with pytest.raises(HTTPException):
+            await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+
+        assert get_trace_session_id() == "session-trace"
+        clear_trace_context()
 
 
 class TestRemainingCoverageGaps:

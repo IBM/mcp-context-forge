@@ -3656,6 +3656,41 @@ class TestSessionTokenBranches:
         # intersection (["t1"]), to prevent cross-session cache poisoning.
         mock_cache.set_user_teams.assert_called_once_with("user@example.com:True", ["t1", "t2"])
 
+    @pytest.mark.asyncio
+    async def test_cache_hit_populates_trace_context(self, monkeypatch):
+        """Cache-hit auth should populate trace context for downstream spans."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_scope, get_trace_user_email
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        payload = {
+            "sub": "trace@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "jti-trace",
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "auth_provider": "local"},
+        }
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "is_active": True},
+            personal_team_id="team-trace",
+        )
+        request = SimpleNamespace(state=SimpleNamespace(token_teams=["team-trace"]))
+
+        clear_trace_context()
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "trace@example.com"
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_auth_method() == "jwt"
+        assert get_trace_team_scope() == "public"
+        clear_trace_context()
+
 
 def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email():
     """Plugin-auth helper should reject empty or missing email claims."""

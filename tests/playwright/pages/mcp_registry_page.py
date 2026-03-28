@@ -7,8 +7,12 @@ Authors: Mihai Criveti
 MCP Registry page object for browsing and registering MCP servers.
 """
 
+# Standard
+from typing import Callable
+
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -16,6 +20,31 @@ from .base_page import BasePage
 
 class MCPRegistryPage(BasePage):
     """Page object for MCP Registry features."""
+
+    def _wait_for_registry_refresh(self, action: Callable[[], None], timeout: int = 30000) -> None:
+        """Wait for an HTMX registry partial refresh triggered by an action."""
+        previous_markup = self.registry_servers_container.inner_html(timeout=timeout)
+
+        try:
+            with self.page.expect_response(lambda response: "/admin/mcp-registry/partial" in response.url and response.request.method == "GET", timeout=timeout) as response_info:
+                action()
+            response = response_info.value
+        except PlaywrightTimeoutError as exc:
+            raise AssertionError("Timed out waiting for MCP Registry partial refresh") from exc
+
+        if response.status >= 400:
+            raise AssertionError(f"MCP Registry partial refresh failed with status {response.status}")
+
+        self.page.wait_for_function(
+            """([selector, previous]) => {
+                const el = document.querySelector(selector);
+                return !!el && el.innerHTML !== previous;
+            }""",
+            arg=["#mcp-registry-servers", previous_markup],
+            timeout=timeout,
+        )
+
+        self.wait_for_registry_results_ready(timeout=timeout)
 
     # ==================== Panel Elements ====================
 
@@ -138,7 +167,7 @@ class MCPRegistryPage(BasePage):
     @property
     def server_cards(self) -> Locator:
         """All server cards in the grid."""
-        return self.server_grid.locator(".server-card")
+        return self.server_grid.locator(".server-card:visible")
 
     def get_server_card_by_name(self, server_name: str) -> Locator:
         """Get a specific server card by name.
@@ -211,9 +240,11 @@ class MCPRegistryPage(BasePage):
         Args:
             category: Category name to select
         """
-        self.category_filter.select_option(category)
-        # Wait for HTMX to swap the content after filter change
-        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
+        if self.category_filter.input_value(timeout=10000) == category:
+            return
+
+        self._wait_for_registry_refresh(lambda: self.category_filter.select_option(category))
+        expect(self.category_filter).to_have_value(category, timeout=10000)
 
     def select_auth_type(self, auth_type: str) -> None:
         """Select an auth type from the filter dropdown.
@@ -221,9 +252,11 @@ class MCPRegistryPage(BasePage):
         Args:
             auth_type: Auth type to select (e.g., "OAuth2.1", "API Key")
         """
-        self.auth_filter.select_option(auth_type)
-        # Wait for HTMX to swap the content after filter change
-        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
+        if self.auth_filter.input_value(timeout=10000) == auth_type:
+            return
+
+        self._wait_for_registry_refresh(lambda: self.auth_filter.select_option(auth_type))
+        expect(self.auth_filter).to_have_value(auth_type, timeout=10000)
 
     def search_servers(self, query: str) -> None:
         """Search for servers using the search input.
@@ -231,37 +264,27 @@ class MCPRegistryPage(BasePage):
         Args:
             query: Search query string
         """
-        self.search_input.fill(query)
-        self.page.wait_for_timeout(1000)
+        if self.search_input.input_value(timeout=10000) == query:
+            return
+
+        def _apply_search() -> None:
+            # Use real typing events because the HTMX search binding is wired to
+            # ``keyup changed delay:500ms``. ``fill()`` updates the value but does
+            # not reliably exercise the debounce path this UI uses in production.
+            self.search_input.click()
+            self.search_input.press("Control+A")
+            self.search_input.press("Backspace")
+            if query:
+                self.search_input.type(query, delay=30)
+
+        self._wait_for_registry_refresh(_apply_search)
+        expect(self.search_input).to_have_value(query, timeout=10000)
 
     def clear_filters(self) -> None:
         """Clear all filters and search."""
-        self.category_filter.select_option("")
-        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
-        self.auth_filter.select_option("")
-        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
-        self.search_input.fill("")
-        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
-
-        # Wait until the server grid count stabilizes (no change between two polls).
-        # This guards against HTMX partials that may reattach the grid multiple
-        # times and avoids races where the DOM is attached but not fully updated.
-        self.page.wait_for_function(
-            """() => {
-                const grid = document.querySelector('#server-grid');
-                if (!grid) return false;
-                const cnt = grid.querySelectorAll('.server-card').length;
-                if (window.__last_server_count_for_tests === cnt) {
-                    window.__last_server_count_for_tests = undefined;
-                    return true;
-                }
-                window.__last_server_count_for_tests = cnt;
-                return false;
-            }""",
-            timeout=30000,
-        )
-
-        self.page.wait_for_timeout(1000)
+        self.select_category("")
+        self.select_auth_type("")
+        self.search_servers("")
 
     def click_category_badge(self, category: str) -> None:
         """Click on a category badge to filter by that category.
@@ -421,6 +444,12 @@ class MCPRegistryPage(BasePage):
         expect(self.registry_panel).to_be_visible(timeout=timeout)
         expect(self.overview_card).to_be_visible(timeout=timeout)
         expect(self.server_grid).to_be_visible(timeout=timeout)
+
+    def wait_for_registry_results_ready(self, timeout: int = 60000) -> None:
+        """Wait for the registry panel and result container after a filter refresh."""
+        expect(self.registry_panel).to_be_visible(timeout=timeout)
+        expect(self.overview_card).to_be_visible(timeout=timeout)
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=timeout)
 
     def verify_filter_applied(self, filter_type: str, filter_value: str) -> bool:
         """Verify that a filter has been applied correctly.

@@ -5386,6 +5386,47 @@ class TestInvokeToolObservability:
         mock_span.set_attribute.assert_any_call("success", True)
 
     @pytest.mark.asyncio
+    async def test_observability_rest_path_creates_lookup_gateway_and_post_process_child_spans(self, tool_service):
+        """REST invocation should emit the expected nested child spans for Langfuse breakdowns."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*_a, **_kw):
+            return mock_response
+
+        @contextmanager
+        def _span_cm(*_a, **_kw):
+            yield MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span", _span_cm),
+            patch("mcpgateway.services.tool_service.create_child_span", side_effect=_span_cm) as mock_child_span,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        assert [call.args[0] for call in mock_child_span.call_args_list] == ["tool.lookup", "tool.gateway_call", "tool.post_process"]
+        assert mock_child_span.call_args_list[1].args[1]["tool.integration_type"] == "REST"
+
+    @pytest.mark.asyncio
     async def test_observability_span_start_failure(self, tool_service):
         """When span creation fails, invocation continues."""
         tp = _make_tool_payload(integration_type="REST", request_type="GET")

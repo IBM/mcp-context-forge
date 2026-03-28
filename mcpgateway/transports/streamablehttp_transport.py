@@ -79,6 +79,7 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
 # Initialize logging service first
@@ -2585,7 +2586,9 @@ class SessionManagerWrapper:
             headers[k.decode("latin-1").lower()] = v.decode("latin-1")
 
         # Log session info for debugging stateful sessions
-        mcp_session_id = headers.get("mcp-session-id", "not-provided")
+        mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"
+        if mcp_session_id != "not-provided":
+            set_trace_session_id(mcp_session_id)
         method = scope.get("method", "UNKNOWN")
         query_string = scope.get("query_string", b"").decode("utf-8")
         logger.debug("[STATEFUL] Streamable HTTP %s %s | MCP-Session-Id: %s | Query: %s | Stateful: %s", method, path, mcp_session_id, query_string, settings.use_stateful_sessions)
@@ -3042,6 +3045,7 @@ def _set_proxy_user_context(proxy_user: str) -> None:
             "permission_is_admin": False,
         }
     )
+    set_trace_context_from_teams([], user_email=proxy_user, is_admin=False, auth_method="proxy")
 
 
 def get_streamable_http_auth_context() -> dict[str, Any]:
@@ -3219,6 +3223,7 @@ class _StreamableHttpAuthHandler:
                 "permission_is_admin": False,
             }
         )
+        set_trace_context_from_teams([], auth_method="anonymous")
         return True  # Allow request to proceed with public-only access
 
     async def _auth_jwt(self, *, token: str) -> bool:
@@ -3477,6 +3482,7 @@ class _StreamableHttpAuthHandler:
             if isinstance(scoped_server_id, str) and scoped_server_id:
                 auth_user_ctx["scoped_server_id"] = scoped_server_id
             user_context_var.set(auth_user_ctx)
+            set_trace_context_from_teams(final_teams, user_email=user_email, is_admin=bool(db_user_is_admin or is_admin), auth_method="jwt")
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
