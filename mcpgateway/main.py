@@ -188,13 +188,21 @@ set_logging_service(logging_service)
 # Wait for database to be ready before creating tables
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
-# Create database tables
+# Create database tables — must complete before app starts serving.
+# When a running event loop exists (e.g. gunicorn --preload), run the
+# bootstrap in a separate thread and block until it finishes.  This
+# prevents the fire-and-forget race where workers start before roles
+# and the admin user are fully seeded.
 try:
     loop = asyncio.get_running_loop()
 except RuntimeError:
     asyncio.run(bootstrap_db())
 else:
-    loop.create_task(bootstrap_db())
+    import concurrent.futures  # noqa: PLC0415
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, bootstrap_db())
+        future.result()  # block until bootstrap completes
 
 # Initialize plugin manager as a singleton.
 _PLUGINS_ENABLED = settings.plugins.enabled
