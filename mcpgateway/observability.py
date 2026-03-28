@@ -98,6 +98,7 @@ except ImportError:
 # First-Party
 from mcpgateway.config import get_settings  # noqa: E402  # pylint: disable=wrong-import-position
 from mcpgateway.utils.correlation_id import get_correlation_id  # noqa: E402  # pylint: disable=wrong-import-position
+from mcpgateway.utils.log_sanitizer import sanitize_for_log  # noqa: E402  # pylint: disable=wrong-import-position
 from mcpgateway.utils.trace_context import (  # noqa: E402  # pylint: disable=wrong-import-position
     get_trace_auth_method,
     get_trace_session_id,
@@ -106,6 +107,7 @@ from mcpgateway.utils.trace_context import (  # noqa: E402  # pylint: disable=wr
     get_trace_user_is_admin,
     primary_team_from_scope,
 )
+from mcpgateway.utils.url_auth import sanitize_exception_message  # noqa: E402  # pylint: disable=wrong-import-position
 
 # Try to import optional exporters
 try:
@@ -134,11 +136,36 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 _LANGFUSE_OTEL_PATH_FRAGMENT = "/api/public/otel"
+_MAX_SPAN_EXCEPTION_MESSAGE_LENGTH = 1024
 
 
 # Global tracer instance - using UPPER_CASE for module-level constant
 # pylint: disable=invalid-name
 _TRACER = None
+
+
+def _sanitize_span_exception_message(exc_val: Optional[BaseException]) -> str:
+    """Return a sanitized, bounded exception message for span attributes.
+
+    Args:
+        exc_val: Exception instance captured by the span lifecycle.
+
+    Returns:
+        Sanitized exception text safe to attach to OTEL and Langfuse attributes.
+    """
+    if exc_val is None:
+        return ""
+
+    sanitized = sanitize_exception_message(str(exc_val))
+    sanitized = sanitize_for_log(sanitized).strip()
+    if not sanitized:
+        sanitized = exc_val.__class__.__name__
+
+    if len(sanitized) <= _MAX_SPAN_EXCEPTION_MESSAGE_LENGTH:
+        return sanitized
+
+    truncated_length = _MAX_SPAN_EXCEPTION_MESSAGE_LENGTH - 3
+    return f"{sanitized[:truncated_length]}..."
 
 
 def _get_deployment_environment() -> str:
@@ -236,11 +263,7 @@ def _validate_langfuse_configuration(endpoint: Optional[str], headers: str) -> N
     if headers:
         return
 
-    message = (
-        "Langfuse OTLP endpoint configured without credentials. "
-        + "Set OTEL_EXPORTER_OTLP_HEADERS, LANGFUSE_OTEL_AUTH, "
-        + "or LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY."
-    )
+    message = "Langfuse OTLP endpoint configured without credentials. " + "Set OTEL_EXPORTER_OTLP_HEADERS, LANGFUSE_OTEL_AUTH, " + "or LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY."
     raise RuntimeError(message)
 
 
@@ -567,8 +590,9 @@ def trace_operation(operation_name: str, attributes: Optional[Dict[str, Any]] = 
                     return result
                 except Exception as e:
                     # Record error in span
+                    error_message = _sanitize_span_exception_message(e)
                     span.set_attribute("status", "error")
-                    span.set_attribute("error.message", str(e))
+                    span.set_attribute("error.message", error_message)
                     span.record_exception(e)
                     raise
 
@@ -702,14 +726,15 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
                 """
                 # Record exception if one occurred
                 if exc_type is not None and self.span:
+                    error_message = _sanitize_span_exception_message(exc_val)
                     self.span.record_exception(exc_val)
                     if OTEL_AVAILABLE and Status and StatusCode:
-                        self.span.set_status(Status(StatusCode.ERROR, str(exc_val)))
+                        self.span.set_status(Status(StatusCode.ERROR, error_message))
                     self.span.set_attribute("error", True)
                     self.span.set_attribute("error.type", exc_type.__name__)
-                    self.span.set_attribute("error.message", str(exc_val))
+                    self.span.set_attribute("error.message", error_message)
                     self.span.set_attribute("langfuse.observation.level", "ERROR")
-                    self.span.set_attribute("langfuse.observation.status_message", str(exc_val))
+                    self.span.set_attribute("langfuse.observation.status_message", error_message)
                 elif self.span:
                     if OTEL_AVAILABLE and Status and StatusCode:
                         self.span.set_status(Status(StatusCode.OK))

@@ -280,6 +280,7 @@ If any of those host ports are already in use, override them before starting the
     OTEL_CAPTURE_OUTPUT_SPANS=llm.proxy,llm.chat
     ```
     `OTEL_CAPTURE_OUTPUT_SPANS` is opt-in. Leave it empty to disable observation output capture entirely.
+    Input capture for the current Langfuse-instrumented operations is enabled by default. Redaction is field-name based, so avoid placing secrets inside generic fields such as `query`, `message`, or `data` unless an upstream plugin/policy redacts them first.
 
 4. **Enable TLS** for the Langfuse endpoint in production.
     ```bash

@@ -15,6 +15,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from typing import Any, Callable
 
 # Third-Party
 import httpx
@@ -22,11 +23,14 @@ import pytest
 
 # Local
 from .mcp_test_helpers import ADMIN_EMAIL
+from .mcp_test_helpers import build_initialize as _build_initialize
+from .mcp_test_helpers import build_wrapper_env as _build_wrapper_env
 from .mcp_test_helpers import JWT_SECRET
 from .mcp_test_helpers import TOKEN_EXPIRY
 from .mcp_test_helpers import WRAPPER_PYTHON
-from .mcp_test_helpers import extract_json_from_output as _extract_json_from_output
+from .mcp_test_helpers import get_response_by_id as _get_response_by_id
 from .mcp_test_helpers import run_mcp_cli as _run_mcp_cli
+from .mcp_test_helpers import send_jsonrpc_via_wrapper as _send_jsonrpc_via_wrapper
 from .mcp_test_helpers import skip_no_mcp_cli
 
 
@@ -111,6 +115,24 @@ def _parse_timestamp(value: str | None) -> float:
         return 0.0
 
 
+def _wait_for_fresh_trace(triggered_after: float, predicate: Callable[[dict[str, Any]], bool], timeout_seconds: int = 60) -> dict[str, Any]:
+    """Poll Langfuse until a fresh trace matches the provided predicate."""
+    deadline = time.time() + timeout_seconds
+    last_payload: dict[str, Any] | None = None
+
+    while time.time() < deadline:
+        last_payload = _fetch_langfuse_traces(limit=100)
+        for trace in last_payload.get("data") or []:
+            if _parse_timestamp(trace.get("timestamp")) < triggered_after:
+                continue
+            if predicate(trace):
+                return trace
+        time.sleep(2)
+
+    trace_summaries = [f"{trace.get('timestamp')} {trace.get('name')}" for trace in (last_payload or {}).get("data", [])[:10]]
+    pytest.fail(f"Did not observe a matching fresh Langfuse trace within timeout. Recent traces: {trace_summaries}")
+
+
 @pytest.fixture(scope="module")
 def jwt_token() -> str:
     """Create an admin JWT for live MCP CLI smoke traffic."""
@@ -163,34 +185,56 @@ def test_langfuse_public_traces_endpoint_returns_trace_list():
 @skip_no_mcp_cli
 @pytest.mark.e2e
 def test_langfuse_trace_export_eventually_contains_fresh_mcp_cli_tool_list_trace(config_file: Path):
-    """A freshly generated MCP CLI tool listing should appear in Langfuse."""
+    """A fresh MCP CLI tool listing should expose Langfuse trace metadata."""
     triggered_after = time.time() - 1
     result = _run_mcp_cli(config_file, "tools", "--raw")
     assert result.returncode == 0, f"mcp-cli tools --raw failed: {result.stderr}"
-    tools = _extract_json_from_output(result.stdout)
-    assert isinstance(tools, list)
 
-    deadline = time.time() + 60
-    last_payload = None
+    trace = _wait_for_fresh_trace(triggered_after, lambda candidate: candidate.get("name") in {"tool.list", "Tools"})
+    metadata = trace.get("metadata") or {}
+    resource_attrs = metadata.get("resourceAttributes") or {}
+    trace_attrs = metadata.get("attributes") or {}
 
-    while time.time() < deadline:
-        last_payload = _fetch_langfuse_traces(limit=50)
+    assert resource_attrs.get("service.name") == "contextforge-gateway"
+    assert trace.get("userId") == ADMIN_EMAIL
+    assert isinstance(trace.get("tags"), list)
+    assert "auth:jwt" in trace.get("tags", [])
+    assert any(isinstance(tag, str) and tag.startswith("env:") for tag in trace.get("tags", []))
+    assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
+    assert "auth:jwt" in str(trace_attrs.get("langfuse.trace.tags"))
+    assert trace_attrs.get("langfuse.trace.name")
 
-        data = last_payload.get("data") or []
-        for trace in data:
-            if trace.get("name") not in {"tool.list", "Tools"}:
-                continue
-            if _parse_timestamp(trace.get("timestamp")) < triggered_after:
-                continue
 
-            metadata = trace.get("metadata") or {}
-            resource_attrs = metadata.get("resourceAttributes") or {}
-            assert resource_attrs.get("service.name") == "contextforge-gateway"
-            return
-        time.sleep(2)
+@skip_no_gateway
+@skip_no_langfuse
+@skip_no_langfuse_auth
+@pytest.mark.e2e
+def test_langfuse_trace_export_eventually_contains_tool_call_input(jwt_token: str):
+    """A raw tool call should export Langfuse input data for the invoked tool."""
+    triggered_after = time.time() - 1
+    responses = _send_jsonrpc_via_wrapper(
+        _build_wrapper_env(jwt_token),
+        [
+            _build_initialize(1),
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "fast-time-get-system-time", "arguments": {"timezone": "UTC"}}},
+        ],
+        settle_seconds=4.0,
+    )
+    call_response = _get_response_by_id(responses, 2)
+    assert call_response is not None, f"No tools/call response: {responses}"
+    assert "error" not in call_response, f"tools/call returned error: {call_response}"
 
-    trace_summaries = [
-        f"{trace.get('timestamp')} {trace.get('name')}"
-        for trace in (last_payload or {}).get("data", [])[:10]
-    ]
-    pytest.fail(f"Did not observe a fresh tool listing trace in Langfuse within timeout. Recent traces: {trace_summaries}")
+    trace = _wait_for_fresh_trace(
+        triggered_after,
+        lambda candidate: ((candidate.get("metadata") or {}).get("attributes") or {}).get("tool.name") == "fast-time-get-system-time" and candidate.get("input") == {"timezone": "UTC"},
+    )
+    metadata = trace.get("metadata") or {}
+    trace_attrs = metadata.get("attributes") or {}
+
+    assert trace.get("userId") == ADMIN_EMAIL
+    assert isinstance(trace.get("tags"), list)
+    assert "auth:jwt" in trace.get("tags", [])
+    assert trace.get("input") == {"timezone": "UTC"}
+    assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
+    assert trace_attrs.get("tool.name") == "fast-time-get-system-time"
+    assert trace_attrs.get("langfuse.trace.name") == "Tool: fast-time-get-system-time"

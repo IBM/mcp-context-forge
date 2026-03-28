@@ -376,6 +376,28 @@ class TestObservability:
         mock_span.set_attribute.assert_any_call("error.message", "Test error")
         mock_span.record_exception.assert_called_once()
 
+    @pytest.mark.asyncio
+    @patch("mcpgateway.observability._TRACER")
+    async def test_trace_operation_decorator_sanitizes_exception_message(self, mock_tracer):
+        """trace_operation should sanitize exception text before storing it."""
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+        mock_tracer.start_as_current_span.return_value = mock_context
+
+        @trace_operation("test.operation")
+        async def test_func():
+            raise ValueError("boom https://api.example.com?api_key=secret123\nCRITICAL")
+
+        with pytest.raises(ValueError):
+            await test_func()
+
+        error_message = next(call.args[1] for call in mock_span.set_attribute.call_args_list if call.args[0] == "error.message")
+        assert "secret123" not in error_message
+        assert "REDACTED" in error_message
+        assert "\n" not in error_message
+
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.JAEGER_EXPORTER", None)
     def test_init_telemetry_jaeger_import_error(self):
@@ -702,6 +724,49 @@ class TestObservability:
         status_arg = mock_span.set_status.call_args[0][0]
         assert isinstance(status_arg, DummyStatus)
         assert status_arg.code == DummyStatusCode.ERROR
+
+    def test_span_with_attributes_sanitizes_and_truncates_exception_message(self):
+        """SpanWithAttributes should sanitize and bound exception messages."""
+        # First-Party
+        import mcpgateway.observability
+
+        class DummyStatusCode:
+            OK = "ok"
+            ERROR = "error"
+
+        class DummyStatus:
+            def __init__(self, code, description=None):
+                self.code = code
+                self.description = description
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+
+        mock_tracer = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_context
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = mock_tracer
+
+        message = "boom https://api.example.com?api_key=secret123\n" + ("x" * 80)
+        with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
+            with patch("mcpgateway.observability.Status", DummyStatus):
+                with patch("mcpgateway.observability.StatusCode", DummyStatusCode):
+                    with patch("mcpgateway.observability._MAX_SPAN_EXCEPTION_MESSAGE_LENGTH", 48):
+                        with pytest.raises(ValueError):
+                            with create_span("test.operation", {"key": "value"}):
+                                raise ValueError(message)
+
+        error_message = next(call.args[1] for call in mock_span.set_attribute.call_args_list if call.args[0] == "error.message")
+        status_message = next(call.args[1] for call in mock_span.set_attribute.call_args_list if call.args[0] == "langfuse.observation.status_message")
+        assert error_message == status_message
+        assert "secret123" not in error_message
+        assert "\n" not in error_message
+        assert len(error_message) <= 48
+        assert error_message.endswith("...")
+        status_arg = mock_span.set_status.call_args[0][0]
+        assert status_arg.description == error_message
 
     def test_span_with_attributes_sets_ok_status(self):
         """Test SpanWithAttributes sets OK status on success."""
