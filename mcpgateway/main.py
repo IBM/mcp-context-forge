@@ -198,19 +198,24 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _bootstrap_pool:
     _bootstrap_future = _bootstrap_pool.submit(asyncio.run, bootstrap_db())
     _bootstrap_future.result()  # block until bootstrap completes
 del _bootstrap_pool, _bootstrap_future
+print("[STARTUP] bootstrap done, initializing plugins", flush=True)
 
 # Initialize plugin manager as a singleton.
 _PLUGINS_ENABLED = settings.plugins.enabled
+print(f"[STARTUP] PLUGINS_ENABLED={_PLUGINS_ENABLED}", flush=True)
 if _PLUGINS_ENABLED:
     _plugin_settings = settings.plugins
     # First-Party
     from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
 
+    print("[STARTUP] creating PluginManager", flush=True)
     plugin_manager: PluginManager | None = PluginManager(_plugin_settings.config_file, timeout=_plugin_settings.plugin_timeout, hook_policies=HOOK_PAYLOAD_POLICIES)
+    print("[STARTUP] PluginManager created", flush=True)
 else:
     plugin_manager = None  # pylint: disable=invalid-name
 
 
+print("[STARTUP] importing services", flush=True)
 # First-Party
 # First-Party - import module-level service singletons
 from mcpgateway.services.gateway_service import gateway_service  # noqa: E402
