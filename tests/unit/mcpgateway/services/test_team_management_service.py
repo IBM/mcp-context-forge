@@ -2367,6 +2367,60 @@ class TestTeamManagementService:
                 mock_role_service.assign_role_to_user.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_add_member_reactivate_updates_grant_source(self, service, mock_db, mock_team, mock_user, mock_membership):
+        """Test that reactivating a member updates grant_source when provided."""
+        mock_membership.is_active = False
+        mock_membership.grant_source = None
+
+        mock_team_query = MagicMock()
+        mock_team_query.filter.return_value.first.return_value = mock_team
+
+        mock_user_query = MagicMock()
+        mock_user_query.filter.return_value.first.return_value = mock_user
+
+        mock_existing_query = MagicMock()
+        mock_existing_query.filter.return_value.first.return_value = mock_membership
+
+        mock_count_query = MagicMock()
+        mock_count_query.filter.return_value.count.return_value = 5
+
+        def side_effect(model):
+            if model == EmailTeam:
+                return mock_team_query
+            elif model == EmailUser:
+                return mock_user_query
+            elif model == EmailTeamMember:
+                if not hasattr(side_effect, "call_count"):
+                    side_effect.call_count = 0
+                side_effect.call_count += 1
+                if side_effect.call_count == 1:
+                    return mock_existing_query
+                else:
+                    return mock_count_query
+
+        mock_db.query.side_effect = side_effect
+
+        mock_role = MagicMock()
+        mock_role.id = "role123"
+        mock_role.is_active = True
+        mock_role_service = MagicMock()
+        mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+        mock_role_service.get_user_role_assignment = AsyncMock(return_value=None)
+        mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
+        service._role_service = mock_role_service
+
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "viewer"
+            mock_settings.max_teams_per_user = 50
+
+            with patch.object(service, "get_team_by_id", return_value=mock_team):
+                result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com", grant_source="sso")
+
+                assert result is not None
+                assert mock_membership.is_active is True
+                assert mock_membership.grant_source == "sso"
+
+    @pytest.mark.asyncio
     async def test_remove_member_role_not_found(self, service, mock_db, mock_team):
         """Test that removing a member works when roles are not found."""
         # Setup membership mock

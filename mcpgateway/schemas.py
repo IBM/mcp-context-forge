@@ -6081,6 +6081,7 @@ class TeamMemberResponse(BaseModel):
         joined_at: When the member joined
         invited_by: Email of user who invited this member
         is_active: Whether the membership is active
+        grant_source: Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = TeamMemberResponse(
@@ -6104,6 +6105,7 @@ class TeamMemberResponse(BaseModel):
     joined_at: datetime = Field(..., description="When the member joined")
     invited_by: Optional[str] = Field(None, description="Email of user who invited this member")
     is_active: bool = Field(..., description="Whether the membership is active")
+    grant_source: Optional[str] = Field(None, description="Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')")
 
 
 class PaginatedTeamMembersResponse(BaseModel):

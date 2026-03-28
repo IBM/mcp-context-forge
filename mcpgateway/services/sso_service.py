@@ -16,13 +16,14 @@ import asyncio
 import base64
 from dataclasses import dataclass
 from datetime import timedelta
+from enum import Enum
 import hashlib
 import hmac
 import logging
 import secrets
 import string
 from time import monotonic
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 
 # Third-Party
@@ -41,6 +42,15 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token
 
 # Logger
 logger = logging.getLogger(__name__)
+
+
+class _Unset(Enum):
+    """Sentinel: distinguishes 'caller omitted the argument' from 'caller passed None'."""
+
+    UNSET = "UNSET"
+
+
+_UNSET = _Unset.UNSET
 
 
 @dataclass
@@ -530,6 +540,9 @@ class SSOService:
     async def _apply_team_mapping(self, user_email: str, user_info: Dict[str, Any], provider: Optional[SSOProvider]) -> None:
         """Apply provider team mappings based on SSO group claims.
 
+        Reconciles team memberships: grants new SSO-based memberships and revokes
+        stale ones when groups are removed from the identity provider.
+
         Args:
             user_email: Authenticated user email to map into teams.
             user_info: Identity claims payload containing optional group claims.
@@ -553,15 +566,65 @@ class SSOService:
         else:
             groups = []
 
-        if not groups:
-            return
-
         normalized_groups = {group.lower() for group in groups}
 
         # First-Party
-        from mcpgateway.services.team_management_service import MemberAlreadyExistsError, TeamManagementError, TeamManagementService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.team_management_service import (  # pylint: disable=import-outside-toplevel
+            MemberAlreadyExistsError,
+            TeamManagementError,
+            TeamManagementService,
+        )
 
         team_service = TeamManagementService(self.db)
+
+        # Get current SSO-granted team memberships for this user
+        # First-Party
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+        stmt = select(EmailTeamMember).where(
+            EmailTeamMember.user_email == user_email,
+            EmailTeamMember.grant_source == "sso",
+            EmailTeamMember.is_active.is_(True),
+        )
+        result = self.db.execute(stmt)
+        current_sso_memberships = result.scalars().all()
+
+        # Build set of desired team IDs from current groups + team_mapping
+        desired_team_ids = set()
+        for source_group, target in mapping.items():
+            if not isinstance(source_group, str):
+                continue
+            source_group_normalized = source_group.strip().lower()
+            if not source_group_normalized:
+                continue
+
+            if source_group_normalized in normalized_groups:
+                team_id, _ = self._resolve_team_mapping_target(target)
+                if team_id:
+                    desired_team_ids.add(team_id)
+
+        # Revoke SSO memberships that are no longer in desired set
+        for membership in current_sso_memberships:
+            if membership.team_id not in desired_team_ids:
+                try:
+                    await team_service.remove_member_from_team(
+                        team_id=membership.team_id,
+                        user_email=user_email,
+                    )
+                    logger.info(
+                        "Revoked SSO team membership for %s from team %s (group no longer in claims)",
+                        SecurityValidator.sanitize_log_message(user_email),
+                        membership.team_id,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to revoke SSO team membership for %s from team %s: %s",
+                        SecurityValidator.sanitize_log_message(user_email),
+                        membership.team_id,
+                        exc,
+                    )
+
+        # Grant new SSO memberships
         for source_group, target in mapping.items():
             if not isinstance(source_group, str):
                 continue
@@ -571,17 +634,49 @@ class SSOService:
 
             team_id, role = self._resolve_team_mapping_target(target)
             if not team_id:
-                logger.warning("Skipping invalid SSO team_mapping entry for provider %s and group '%s'", provider.id, source_group)
+                logger.warning(
+                    "Skipping invalid SSO team_mapping entry for provider %s and group '%s'",
+                    provider.id,
+                    source_group,
+                )
                 continue
 
             try:
-                await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=role, invited_by=user_email)
+                await team_service.add_member_to_team(
+                    team_id=team_id,
+                    user_email=user_email,
+                    role=role,
+                    invited_by=user_email,
+                    grant_source="sso",
+                )
+                logger.info(
+                    "Granted SSO team membership for %s to team %s via group '%s'",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    team_id,
+                    source_group,
+                )
             except MemberAlreadyExistsError:
-                logger.debug("SSO team_mapping: user %s already member of team %s", user_email, team_id)
+                logger.debug(
+                    "SSO team_mapping: user %s already member of team %s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    team_id,
+                )
             except TeamManagementError as exc:
-                logger.warning("SSO team_mapping failed for user %s, group '%s', team '%s': %s", user_email, source_group, team_id, exc)
+                logger.warning(
+                    "SSO team_mapping failed for user %s, group '%s', team '%s': %s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    source_group,
+                    team_id,
+                    exc,
+                )
             except Exception as exc:
-                logger.warning("Unexpected SSO team_mapping error for user %s and team '%s': %s", user_email, team_id, exc)
+                logger.error(
+                    "Unexpected error in SSO team_mapping for user %s, group '%s': %s",
+                    SecurityValidator.sanitize_log_message(user_email),
+                    source_group,
+                    exc,
+                    exc_info=True,
+                )
 
     async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
         """Create new SSO provider configuration.
@@ -1153,6 +1248,103 @@ class SSOService:
 
         return None
 
+    async def _enrich_user_data_from_claims(
+        self,
+        provider: SSOProvider,
+        user_data: Dict[str, Any],
+        access_token: str,
+        verified_id_token_claims: Optional[Dict[str, Any]],
+    ) -> None:
+        """Enrich userinfo response with provider-specific claims.
+
+        Mutates ``user_data`` in place by merging groups, roles, and other
+        claims from the id_token or external APIs (GitHub orgs, Entra Graph)
+        that the userinfo endpoint does not include on its own.
+
+        Args:
+            provider: SSO provider configuration.
+            user_data: Mutable userinfo dict from the provider endpoint.
+            access_token: OAuth access token for follow-up API calls.
+            verified_id_token_claims: Verified id_token claims, if available.
+        """
+        # GitHub: fetch organizations for admin assignment
+        if provider.id == "github" and settings.sso_github_admin_orgs:
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+            client = await get_http_client()
+            try:
+                orgs_response = await client.get("https://api.github.com/user/orgs", headers={"Authorization": f"Bearer {access_token}"})
+                if orgs_response.status_code == 200:
+                    user_data["organizations"] = [org["login"] for org in orgs_response.json()]
+                else:
+                    logger.warning(f"Failed to fetch GitHub organizations: HTTP {orgs_response.status_code}")
+                    user_data["organizations"] = []
+            except Exception as e:
+                logger.warning(f"Error fetching GitHub organizations: {e}")
+                user_data["organizations"] = []
+            return
+
+        # Entra ID: extract groups/roles from id_token since userinfo doesn't include them.
+        # Microsoft's /oidc/userinfo endpoint only returns basic claims (sub, name, email, picture).
+        # Groups and roles are included in the id_token when configured in Azure Portal.
+        if provider.id == "entra" and verified_id_token_claims:
+            entra_groups_from_graph: Optional[List[str]] = None
+            # Detect group overage — when user has too many groups (>200), EntraID can return
+            # overage markers (e.g. _claim_names/_claim_sources, hasgroups, groups:srcN)
+            # instead of an inline groups array.
+            # See: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
+            claim_names = verified_id_token_claims.get("_claim_names", {})
+            has_groups_src_key = any(isinstance(key, str) and key.startswith("groups:src") for key in verified_id_token_claims)
+            groups_claim_value = verified_id_token_claims.get("groups")
+            has_group_overage = (
+                (isinstance(claim_names, dict) and "groups" in claim_names) or bool(verified_id_token_claims.get("hasgroups")) or has_groups_src_key or isinstance(groups_claim_value, str)
+            )
+            if has_group_overage:
+                user_email = user_data.get("email") or user_data.get("preferred_username") or "unknown"
+                logger.warning(
+                    "Group overage detected for user %s - token contains too many groups (>200). Attempting Microsoft Graph fallback to resolve complete group membership.",
+                    user_email,
+                )
+                entra_groups_from_graph = await self._fetch_entra_groups_from_graph_api(access_token, user_email, provider.provider_metadata)
+                if entra_groups_from_graph is None:
+                    logger.warning("Proceeding without Graph-resolved Entra groups for user %s", user_email)
+
+            # Extract groups from id_token (Security Groups as Object IDs)
+            if entra_groups_from_graph is not None:
+                user_data["groups"] = entra_groups_from_graph
+            elif "groups" in verified_id_token_claims:
+                user_data["groups"] = verified_id_token_claims["groups"]
+                logger.debug(f"Extracted {len(verified_id_token_claims['groups'])} groups from Entra ID token")
+
+            # Extract roles from id_token (App Roles)
+            if "roles" in verified_id_token_claims:
+                user_data["roles"] = verified_id_token_claims["roles"]
+                logger.debug(f"Extracted {len(verified_id_token_claims['roles'])} roles from Entra ID token")
+
+            # Also extract any missing basic claims from id_token
+            for claim in ["email", "name", "preferred_username", "oid", "sub"]:
+                if claim not in user_data and claim in verified_id_token_claims:
+                    user_data[claim] = verified_id_token_claims[claim]
+            return
+
+        # Keycloak: merge realm_access, resource_access, and groups from id_token
+        if provider.id == "keycloak" and verified_id_token_claims:
+            for claim in ["realm_access", "resource_access", "groups"]:
+                if claim in verified_id_token_claims and claim not in user_data:
+                    user_data[claim] = verified_id_token_claims[claim]
+            return
+
+        # Generic OIDC (including Okta, IBM Verify, and any custom provider):
+        # merge groups and roles claims from the verified id_token when the
+        # userinfo response does not already contain them.
+        if provider.id not in ("github", "google") and verified_id_token_claims:
+            metadata = provider.provider_metadata or {}
+            groups_claim = metadata.get("groups_claim", "groups")
+            for claim in {groups_claim, "roles"}:
+                if claim in verified_id_token_claims and claim not in user_data:
+                    user_data[claim] = verified_id_token_claims[claim]
+
     async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None, expected_nonce: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get user information from provider using access token.
 
@@ -1178,92 +1370,11 @@ class SSOService:
             else:
                 verified_id_token_claims = await self._verify_oidc_id_token(provider, token_data["id_token"], expected_nonce=expected_nonce)
 
-        keycloak_id_token_claims: Optional[Dict[str, Any]] = None
-        if provider.id == "keycloak" and verified_id_token_claims:
-            keycloak_id_token_claims = verified_id_token_claims
-
         response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
 
         if response.status_code == 200:
             user_data = response.json()
-
-            # For GitHub, also fetch organizations if admin assignment is configured
-            if provider.id == "github" and settings.sso_github_admin_orgs:
-                try:
-                    orgs_response = await client.get("https://api.github.com/user/orgs", headers={"Authorization": f"Bearer {access_token}"})
-                    if orgs_response.status_code == 200:
-                        orgs_data = orgs_response.json()
-                        user_data["organizations"] = [org["login"] for org in orgs_data]
-                    else:
-                        logger.warning(f"Failed to fetch GitHub organizations: HTTP {orgs_response.status_code}")
-                        user_data["organizations"] = []
-                except Exception as e:
-                    logger.warning(f"Error fetching GitHub organizations: {e}")
-                    user_data["organizations"] = []
-
-            # For Entra ID, extract groups/roles from id_token since userinfo doesn't include them
-            # Microsoft's /oidc/userinfo endpoint only returns basic claims (sub, name, email, picture)
-            # Groups and roles are included in the id_token when configured in Azure Portal
-            if provider.id == "entra" and verified_id_token_claims:
-                id_token_claims = verified_id_token_claims
-                if id_token_claims:
-                    entra_groups_from_graph: Optional[List[str]] = None
-                    # Detect group overage - when user has too many groups (>200), EntraID can return
-                    # overage markers (e.g. _claim_names/_claim_sources, hasgroups, groups:srcN)
-                    # instead of an inline groups array.
-                    # See: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
-                    claim_names = id_token_claims.get("_claim_names", {})
-                    has_groups_src_key = any(isinstance(key, str) and key.startswith("groups:src") for key in id_token_claims)
-                    groups_claim_value = id_token_claims.get("groups")
-                    has_group_overage = (
-                        (isinstance(claim_names, dict) and "groups" in claim_names) or bool(id_token_claims.get("hasgroups")) or has_groups_src_key or isinstance(groups_claim_value, str)
-                    )
-                    if has_group_overage:
-                        user_email = user_data.get("email") or user_data.get("preferred_username") or "unknown"
-                        logger.warning(
-                            "Group overage detected for user %s - token contains too many groups (>200). Attempting Microsoft Graph fallback to resolve complete group membership.",
-                            user_email,
-                        )
-                        entra_groups_from_graph = await self._fetch_entra_groups_from_graph_api(access_token, user_email, provider.provider_metadata)
-                        if entra_groups_from_graph is None:
-                            logger.warning("Proceeding without Graph-resolved Entra groups for user %s", user_email)
-
-                    # Extract groups from id_token (Security Groups as Object IDs)
-                    if entra_groups_from_graph is not None:
-                        user_data["groups"] = entra_groups_from_graph
-                    elif "groups" in id_token_claims:
-                        user_data["groups"] = id_token_claims["groups"]
-                        logger.debug(f"Extracted {len(id_token_claims['groups'])} groups from Entra ID token")
-
-                    # Extract roles from id_token (App Roles)
-                    if "roles" in id_token_claims:
-                        user_data["roles"] = id_token_claims["roles"]
-                        logger.debug(f"Extracted {len(id_token_claims['roles'])} roles from Entra ID token")
-
-                    # Also extract any missing basic claims from id_token
-                    for claim in ["email", "name", "preferred_username", "oid", "sub"]:
-                        if claim not in user_data and claim in id_token_claims:
-                            user_data[claim] = id_token_claims[claim]
-
-            # For Keycloak, also extract groups/roles from id_token if available
-            if provider.id == "keycloak" and keycloak_id_token_claims:
-                # Keycloak includes realm_access, resource_access, and groups in id_token
-                for claim in ["realm_access", "resource_access", "groups"]:
-                    if claim in keycloak_id_token_claims and claim not in user_data:
-                        user_data[claim] = keycloak_id_token_claims[claim]
-
-            # For generic OIDC providers (including Okta, IBM Verify, and any custom
-            # provider), merge groups and roles claims from the verified id_token when
-            # the userinfo response does not already contain them.  Many OIDC providers
-            # (e.g. Okta, JumpCloud) only include group claims in the id_token.
-            if provider.id not in ("github", "google", "keycloak", "entra") and verified_id_token_claims:
-                metadata = provider.provider_metadata or {}
-                groups_claim = metadata.get("groups_claim", "groups")
-                for claim in {groups_claim, "roles"}:
-                    if claim in verified_id_token_claims and claim not in user_data:
-                        user_data[claim] = verified_id_token_claims[claim]
-
-            # Normalize user info across providers
+            await self._enrich_user_data_from_claims(provider, user_data, access_token, verified_id_token_claims)
             return self._normalize_user_info(provider, user_data)
 
         # Keycloak can issue tokens using the browser-facing issuer URL; if userinfo
@@ -1271,7 +1382,7 @@ class SSOService:
         # Only fall back to id_token claims for 401 with split-host configuration.
         # Other errors (403=revoked, 500=server error) must NOT fall back — the user
         # should be denied access, not silently authenticated via stale id_token claims.
-        if provider.id == "keycloak" and keycloak_id_token_claims and response.status_code == 401:
+        if provider.id == "keycloak" and verified_id_token_claims and response.status_code == 401:
             metadata = provider.provider_metadata or {}
             public_base_url = metadata.get("public_base_url")
             if public_base_url and public_base_url != metadata.get("base_url"):
@@ -1280,11 +1391,93 @@ class SSOService:
                     public_base_url,
                     metadata.get("base_url"),
                 )
-                return self._normalize_user_info(provider, keycloak_id_token_claims)
+                return self._normalize_user_info(provider, verified_id_token_claims)
 
         logger.error(f"User info request failed for {provider.name}: HTTP {response.status_code} - {response.text}")
 
         return None
+
+    @staticmethod
+    def _extract_groups_and_roles(user_data: Dict[str, Any], groups_claim: str = "groups") -> list[str]:
+        """Extract groups and roles from user data into a unified list.
+
+        Args:
+            user_data: Raw user data from provider.
+            groups_claim: Claim key for groups (default: ``"groups"``).
+
+        Returns:
+            Combined list of group and role strings.
+        """
+        groups: list[str] = []
+
+        if groups_claim in user_data:
+            groups_value = user_data.get(groups_claim, [])
+            if isinstance(groups_value, list):
+                groups.extend(g for g in groups_value if isinstance(g, str))
+            elif isinstance(groups_value, str):
+                groups.append(groups_value)
+
+        if "roles" in user_data:
+            roles_value = user_data.get("roles", [])
+            if isinstance(roles_value, list):
+                groups.extend(r for r in roles_value if isinstance(r, str))
+            elif isinstance(roles_value, str):
+                groups.append(roles_value)
+
+        return groups
+
+    @staticmethod
+    def _build_normalized_user_info(
+        user_data: Dict[str, Any],
+        provider_name: str,
+        groups: list[str],
+        *,
+        email: Union[Optional[str], _Unset] = _UNSET,
+        full_name: Union[Optional[str], _Unset] = _UNSET,
+        avatar_url: Union[Optional[str], _Unset] = _UNSET,
+        provider_id: Union[Optional[Any], _Unset] = _UNSET,
+        username: Union[Optional[str], _Unset] = _UNSET,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build a normalized user-info dict with common fields.
+
+        Provider-specific branches call this with overrides only for fields
+        that deviate from the standard OIDC claim mapping.  The
+        ``email_verified`` claim is propagated only when the IdP explicitly
+        includes it so that ``_is_email_verified_claim``'s
+        absent-means-pass-through logic applies correctly.
+
+        Pass ``None`` explicitly to force a field to ``None``; omit the
+        argument (default ``_UNSET``) to fall back to the standard claim.
+
+        Args:
+            user_data: Raw user data from the provider.
+            provider_name: Provider identifier for the ``"provider"`` field.
+            groups: Pre-extracted groups list (will be deduplicated).
+            email: Override for ``user_data["email"]``.
+            full_name: Override for ``user_data["name"]``.
+            avatar_url: Override for ``user_data["picture"]``.
+            provider_id: Override for ``user_data["sub"]``.
+            username: Override for the computed username.
+            extra: Additional keys merged into the result.
+
+        Returns:
+            Normalized user-info dict.
+        """
+        normalized: Dict[str, Any] = {
+            "email": email if email is not _UNSET else user_data.get("email"),
+            "full_name": full_name if full_name is not _UNSET else user_data.get("name"),
+            "avatar_url": avatar_url if avatar_url is not _UNSET else user_data.get("picture"),
+            "provider_id": provider_id if provider_id is not _UNSET else user_data.get("sub"),
+            "username": username if username is not _UNSET else (user_data.get("preferred_username") or user_data.get("email", "").split("@")[0]),
+            "provider": provider_name,
+            "groups": list(set(groups)),
+        }
+        if "email_verified" in user_data:
+            normalized["email_verified"] = user_data["email_verified"]
+        if extra:
+            normalized.update(extra)
+        return normalized
 
     def _normalize_user_info(self, provider: SSOProvider, user_data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize user info from different providers to common format.
@@ -1298,7 +1491,7 @@ class SSOService:
         """
         # Handle GitHub provider
         if provider.id == "github":
-            normalized = {
+            normalized: Dict[str, Any] = {
                 "email": user_data.get("email"),
                 "full_name": user_data.get("name") or user_data.get("login"),
                 "avatar_url": user_data.get("avatar_url"),
@@ -1319,107 +1512,43 @@ class SSOService:
 
         # Handle Google provider
         if provider.id == "google":
-            google_normalized: Dict[str, Any] = {
-                "email": user_data.get("email"),
-                "full_name": user_data.get("name"),
-                "avatar_url": user_data.get("picture"),
-                "provider_id": user_data.get("sub"),
-                "username": user_data.get("email", "").split("@")[0],
-                "provider": "google",
-            }
-            if "email_verified" in user_data:
-                google_normalized["email_verified"] = user_data["email_verified"]
-            return google_normalized
+            return self._build_normalized_user_info(
+                user_data,
+                "google",
+                [],
+                username=user_data.get("email", "").split("@")[0],
+            )
+
+        metadata = provider.provider_metadata or {}
+        groups_claim = metadata.get("groups_claim", "groups")
 
         # Handle IBM Verify provider
         if provider.id == "ibm_verify":
-            metadata = provider.provider_metadata or {}
-            groups_claim = metadata.get("groups_claim", "groups")
-            groups: list[str] = []
-
-            if groups_claim in user_data:
-                groups_value = user_data.get(groups_claim, [])
-                if isinstance(groups_value, list):
-                    groups.extend(g for g in groups_value if isinstance(g, str))
-                elif isinstance(groups_value, str):
-                    groups.append(groups_value)
-
-            if "roles" in user_data:
-                roles_value = user_data.get("roles", [])
-                if isinstance(roles_value, list):
-                    groups.extend(r for r in roles_value if isinstance(r, str))
-                elif isinstance(roles_value, str):
-                    groups.append(roles_value)
-
-            ibm_normalized: Dict[str, Any] = {
-                "email": user_data.get("email"),
-                "full_name": user_data.get("name"),
-                "avatar_url": user_data.get("picture"),
-                "provider_id": user_data.get("sub"),
-                "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
-                "provider": "ibm_verify",
-                "groups": list(set(groups)),
-            }
-            if "email_verified" in user_data:
-                ibm_normalized["email_verified"] = user_data["email_verified"]
-            return ibm_normalized
+            groups = self._extract_groups_and_roles(user_data, groups_claim)
+            return self._build_normalized_user_info(user_data, "ibm_verify", groups)
 
         # Handle Okta provider
         if provider.id == "okta":
-            metadata = provider.provider_metadata or {}
-            groups_claim = metadata.get("groups_claim", "groups")
-            groups: list[str] = []
-
-            if groups_claim in user_data:
-                groups_value = user_data.get(groups_claim, [])
-                if isinstance(groups_value, list):
-                    groups.extend(g for g in groups_value if isinstance(g, str))
-                elif isinstance(groups_value, str):
-                    groups.append(groups_value)
-
-            # Merge roles claim into groups (same pattern as Entra ID)
-            if "roles" in user_data:
-                roles_value = user_data.get("roles", [])
-                if isinstance(roles_value, list):
-                    groups.extend(r for r in roles_value if isinstance(r, str))
-                elif isinstance(roles_value, str):
-                    groups.append(roles_value)
-
-            okta_normalized: Dict[str, Any] = {
-                "email": user_data.get("email"),
-                "full_name": user_data.get("name"),
-                "avatar_url": user_data.get("picture"),
-                "provider_id": user_data.get("sub"),
-                "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
-                "provider": "okta",
-                "groups": list(set(groups)),
-            }
-            if "email_verified" in user_data:
-                okta_normalized["email_verified"] = user_data["email_verified"]
-            return okta_normalized
+            groups = self._extract_groups_and_roles(user_data, groups_claim)
+            return self._build_normalized_user_info(user_data, "okta", groups)
 
         # Handle Keycloak provider with role mapping
         if provider.id == "keycloak":
-            metadata = provider.provider_metadata or {}
             username_claim = metadata.get("username_claim", "preferred_username")
             email_claim = metadata.get("email_claim", "email")
-            groups_claim = metadata.get("groups_claim", "groups")
 
-            groups = []
+            groups: list[str] = []
 
             # Extract realm roles
             if metadata.get("map_realm_roles"):
                 realm_access = user_data.get("realm_access", {})
-                realm_roles = realm_access.get("roles", [])
-                groups.extend(realm_roles)
+                groups.extend(realm_access.get("roles", []))
 
             # Extract client roles
             if metadata.get("map_client_roles"):
                 resource_access = user_data.get("resource_access", {})
                 for client, access in resource_access.items():
-                    client_roles = access.get("roles", [])
-                    # Prefix with client name to avoid conflicts
-                    groups.extend([f"{client}:{role}" for role in client_roles])
+                    groups.extend(f"{client}:{role}" for role in access.get("roles", []))
 
             # Extract groups from custom claim
             if groups_claim in user_data:
@@ -1427,103 +1556,133 @@ class SSOService:
                 if isinstance(custom_groups, list):
                     groups.extend(custom_groups)
 
-            keycloak_normalized: Dict[str, Any] = {
-                "email": user_data.get(email_claim),
-                "full_name": user_data.get("name"),
-                "avatar_url": user_data.get("picture"),
-                "provider_id": user_data.get("sub"),
-                "username": user_data.get(username_claim) or user_data.get(email_claim, "").split("@")[0],
-                "provider": "keycloak",
-                "groups": list(set(groups)),  # Deduplicate
-            }
-            if "email_verified" in user_data:
-                keycloak_normalized["email_verified"] = user_data["email_verified"]
-            return keycloak_normalized
+            return self._build_normalized_user_info(
+                user_data,
+                "keycloak",
+                groups,
+                email=user_data.get(email_claim),
+                username=user_data.get(username_claim) or user_data.get(email_claim, "").split("@")[0],
+            )
 
         # Handle Microsoft Entra ID provider with role mapping
         if provider.id == "entra":
-            metadata = provider.provider_metadata or {}
-            groups_claim = metadata.get("groups_claim", "groups")
-
             # Microsoft's userinfo endpoint often omits the email claim
             # Fallback: preferred_username (UPN) or upn claim
             email = user_data.get("email") or user_data.get("preferred_username") or user_data.get("upn")
+            username = user_data.get("preferred_username") or (email.split("@")[0] if email else None)
 
-            # Extract username from email/UPN
-            username = None
-            if user_data.get("preferred_username"):
-                username = user_data.get("preferred_username")
-            elif email:
-                username = email.split("@")[0]
-
-            # Extract groups from token
-            groups = []
-
-            # Check configured groups claim (default: 'groups')
-            if groups_claim in user_data:
-                groups_value = user_data.get(groups_claim, [])
-                if isinstance(groups_value, list):
-                    groups.extend(groups_value)
-
-            # Also check 'roles' claim for App Role assignments
-            if "roles" in user_data:
-                roles_value = user_data.get("roles", [])
-                if isinstance(roles_value, list):
-                    groups.extend(roles_value)
-
-            # Microsoft Entra ID work/school accounts do not include an
-            # ``email_verified`` claim in their userinfo/ID-token response.
-            # Only propagate the claim when it is explicitly present so that
-            # ``_is_email_verified_claim`` can apply its absent-means-pass-through
-            # logic and not block legitimate Entra logins.
-            entra_normalized: Dict[str, Any] = {
-                "email": email,
-                "full_name": user_data.get("name") or email,  # Fallback to email if name missing
-                "avatar_url": user_data.get("picture"),
-                "provider_id": user_data.get("sub") or user_data.get("oid"),
-                "username": username,
-                "provider": "entra",
-                "groups": list(set(groups)),  # Deduplicate
-            }
-            if "email_verified" in user_data:
-                entra_normalized["email_verified"] = user_data["email_verified"]
-            return entra_normalized
+            groups = self._extract_groups_and_roles(user_data, groups_claim)
+            return self._build_normalized_user_info(
+                user_data,
+                "entra",
+                groups,
+                email=email,
+                full_name=user_data.get("name") or email,
+                provider_id=user_data.get("sub") or user_data.get("oid"),
+                username=username,
+            )
 
         # Generic OIDC format for all other providers.
-        # Only propagate email_verified when the IdP explicitly includes it so that
-        # _is_email_verified_claim's absent-means-pass-through logic applies correctly.
-        # Injecting None (via .get()) when the key is missing would cause the key to
-        # be present in the dict with a falsy value, silently blocking login.
-        metadata = provider.provider_metadata or {}
-        groups_claim = metadata.get("groups_claim", "groups")
-        groups: list[str] = []
-        if groups_claim in user_data:
-            gc = user_data.get(groups_claim, [])
-            if isinstance(gc, list):
-                groups = [g for g in gc if isinstance(g, str)]
-            elif isinstance(gc, str):
-                groups = [gc]
+        groups = self._extract_groups_and_roles(user_data, groups_claim)
+        return self._build_normalized_user_info(user_data, provider.id, groups)
 
-        # Merge roles claim into groups (same pattern as Entra ID)
-        if "roles" in user_data:
-            roles_value = user_data.get("roles", [])
-            if isinstance(roles_value, list):
-                groups.extend(r for r in roles_value if isinstance(r, str))
-            elif isinstance(roles_value, str):
-                groups.append(roles_value)
+    def _reset_pending_approval(self, pending: PendingUserApproval, incoming_provider: str, user_info: Dict[str, Any]) -> None:
+        """Reset a pending approval request to pending state with fresh metadata.
 
-        generic_normalized: Dict[str, Any] = {
-            "email": user_data.get("email"),
-            "full_name": user_data.get("name"),
-            "avatar_url": user_data.get("picture"),
-            "provider_id": user_data.get("sub"),
-            "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
-            "provider": provider.id,
-            "groups": list(set(groups)),
-        }
-        if "email_verified" in user_data:
-            generic_normalized["email_verified"] = user_data["email_verified"]
-        return generic_normalized
+        Args:
+            pending: Existing pending approval record.
+            incoming_provider: SSO provider identifier.
+            user_info: Normalized user info from SSO provider.
+        """
+        pending.status = "pending"
+        pending.requested_at = utc_now()
+        pending.expires_at = utc_now() + timedelta(days=30)
+        pending.auth_provider = incoming_provider
+        pending.sso_metadata = user_info
+        pending.approved_by = None
+        pending.approved_at = None
+        pending.rejection_reason = None
+        pending.admin_notes = None
+        self.db.commit()
+
+    @staticmethod
+    def _should_sync_roles(provider_id: Optional[str], provider_metadata: Dict[str, Any]) -> bool:
+        """Determine whether RBAC role sync should run for a login.
+
+        Checks the provider-level ``sync_roles`` flag in ``provider_metadata``
+        first, then falls back to the legacy Entra-specific setting.
+
+        Args:
+            provider_id: SSO provider identifier (e.g. ``"entra"``).
+            provider_metadata: Provider metadata dict from DB/config.
+
+        Returns:
+            True if role sync should proceed, False otherwise.
+        """
+        if "sync_roles" in provider_metadata:
+            return bool(provider_metadata.get("sync_roles", True))
+        if provider_id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
+            return bool(settings.sso_entra_sync_roles_on_login)
+        return True
+
+    def _check_pending_approval(self, email: str, incoming_provider: str, user_info: Dict[str, Any]) -> bool:
+        """Check admin approval state for a new SSO user.
+
+        Returns ``True`` only when the user has an active, non-expired
+        ``"approved"`` record and may proceed to account creation.  All
+        other states return ``False`` (caller should deny access).
+
+        Args:
+            email: Normalized user email.
+            incoming_provider: SSO provider identifier.
+            user_info: Normalized user info from SSO provider.
+
+        Returns:
+            True when user is approved for creation, False otherwise.
+        """
+        pending = self.db.execute(select(PendingUserApproval).where(PendingUserApproval.email == email)).scalar_one_or_none()
+
+        if not pending:
+            pending = PendingUserApproval(
+                email=email,
+                full_name=user_info.get("full_name", email),
+                auth_provider=incoming_provider,
+                sso_metadata=user_info,
+                expires_at=utc_now() + timedelta(days=30),
+            )
+            self.db.add(pending)
+            self.db.commit()
+            logger.info(f"Created pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+            return False
+
+        if pending.status == "pending":
+            if pending.is_expired():
+                pending.status = "expired"
+                self.db.commit()
+                self._reset_pending_approval(pending, incoming_provider, user_info)
+                logger.info(f"Refreshed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+            return False
+
+        if pending.status == "rejected":
+            return False
+
+        if pending.status == "approved":
+            if pending.is_expired():
+                pending.status = "expired"
+                self.db.commit()
+                return False
+            return True
+
+        if pending.status == "expired":
+            self._reset_pending_approval(pending, incoming_provider, user_info)
+            logger.info(f"Renewed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
+            return False
+
+        if pending.status == "completed":
+            return False
+
+        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {SecurityValidator.sanitize_log_message(email)}. Denying by default.")
+        return False
 
     async def authenticate_or_create_user(self, user_info: Dict[str, Any]) -> Optional[str]:
         """Authenticate existing user or create new user from SSO info.
@@ -1639,17 +1798,7 @@ class SSOService:
 
             self.db.commit()
 
-            # Determine if syncing should happen (default True, respect provider-level and Entra setting)
-            should_sync = True
-            if provider_ctx:
-                # Check provider-level sync_roles flag in provider_metadata (allows disabling per-provider)
-                if "sync_roles" in provider_metadata:
-                    should_sync = provider_metadata.get("sync_roles", True)
-                # Legacy Entra-specific setting (fallback for backwards compatibility)
-                elif provider_id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
-                    should_sync = settings.sso_entra_sync_roles_on_login
-
-            if provider_ctx and should_sync:
+            if provider_ctx and self._should_sync_roles(provider_id, provider_metadata):
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
                 await self._sync_user_roles(email, role_assignments, provider_ctx)
             await self._apply_team_mapping(email, user_info, provider)
@@ -1671,67 +1820,9 @@ class SSOService:
 
             # Check if admin approval is required
             if settings.sso_require_admin_approval:
-                # Check if user is already pending approval
-
-                pending = self.db.execute(select(PendingUserApproval).where(PendingUserApproval.email == email)).scalar_one_or_none()
-
-                if pending:
-                    if pending.status == "pending":
-                        if pending.is_expired():
-                            pending.status = "expired"
-                            self.db.commit()
-
-                            pending.status = "pending"
-                            pending.requested_at = utc_now()
-                            pending.expires_at = utc_now() + timedelta(days=30)
-                            pending.auth_provider = incoming_provider
-                            pending.sso_metadata = user_info
-                            pending.approved_by = None
-                            pending.approved_at = None
-                            pending.rejection_reason = None
-                            pending.admin_notes = None
-                            self.db.commit()
-                            logger.info(f"Refreshed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
-                            return None
-                        return None  # Still waiting for approval
-                    if pending.status == "rejected":
-                        return None  # User was rejected
-                    if pending.status == "approved":
-                        if pending.is_expired():
-                            pending.status = "expired"
-                            self.db.commit()
-                            return None
-                    elif pending.status == "expired":
-                        pending.status = "pending"
-                        pending.requested_at = utc_now()
-                        pending.expires_at = utc_now() + timedelta(days=30)
-                        pending.auth_provider = incoming_provider
-                        pending.sso_metadata = user_info
-                        pending.approved_by = None
-                        pending.approved_at = None
-                        pending.rejection_reason = None
-                        pending.admin_notes = None
-                        self.db.commit()
-                        logger.info(f"Renewed expired pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
-                        return None
-                    elif pending.status in {"completed"}:
-                        return None
-                    elif pending.status != "approved":
-                        logger.warning(f"Unknown SSO pending approval status '{pending.status}' for user {SecurityValidator.sanitize_log_message(email)}. Denying by default.")
-                        return None
-                else:
-                    # Create pending approval request
-                    pending = PendingUserApproval(
-                        email=email,
-                        full_name=user_info.get("full_name", email),
-                        auth_provider=incoming_provider,
-                        sso_metadata=user_info,
-                        expires_at=utc_now() + timedelta(days=30),  # 30-day approval window
-                    )
-                    self.db.add(pending)
-                    self.db.commit()
-                    logger.info(f"Created pending approval request for SSO user: {SecurityValidator.sanitize_log_message(email)}")
-                    return None  # No token until approved
+                approval_result = self._check_pending_approval(email, incoming_provider, user_info)
+                if approval_result is not True:
+                    return None  # Blocked by approval workflow
 
             # Create new user (either no approval required, or approval already granted)
             # Generate a secure random password for SSO users (they won't use it)
@@ -1758,14 +1849,7 @@ class SSOService:
             resolved_auth_provider = incoming_provider
             resolved_is_admin = is_admin
 
-            # Assign RBAC roles based on SSO groups (or default role if no groups)
-            # Check provider-level sync_roles flag in provider_metadata
-            should_sync = provider_metadata.get("sync_roles", True)
-            # Legacy Entra-specific setting (fallback for backwards compatibility)
-            if "sync_roles" not in provider_metadata and provider_id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
-                should_sync = settings.sso_entra_sync_roles_on_login
-
-            if should_sync:
+            if self._should_sync_roles(provider_id, provider_metadata):
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
                 if role_assignments:
                     await self._sync_user_roles(email, role_assignments, provider_ctx)
@@ -1814,26 +1898,25 @@ class SSOService:
         """
         # Check domain-based admin assignment
         domain = email.split("@")[1].lower()
-        if domain in [d.lower() for d in settings.sso_auto_admin_domains]:
+        if domain in {d.lower() for d in settings.sso_auto_admin_domains}:
             return True
 
         # Check provider-specific admin assignment
         if provider.id == "github" and settings.sso_github_admin_orgs:
-            # For GitHub, we'd need to fetch user's organizations
-            # This is a placeholder - in production, you'd make API calls to get orgs
+            github_admin_orgs = {o.lower() for o in settings.sso_github_admin_orgs}
             github_orgs = user_info.get("organizations", [])
-            if any(org.lower() in [o.lower() for o in settings.sso_github_admin_orgs] for org in github_orgs):
+            if any(org.lower() in github_admin_orgs for org in github_orgs):
                 return True
 
         if provider.id == "google" and settings.sso_google_admin_domains:
-            # Check if user's domain is in admin domains
-            if domain in [d.lower() for d in settings.sso_google_admin_domains]:
+            if domain in {d.lower() for d in settings.sso_google_admin_domains}:
                 return True
 
         # Check EntraID admin groups
         if provider.id == "entra" and settings.sso_entra_admin_groups:
+            entra_admin_groups = {g.lower() for g in settings.sso_entra_admin_groups}
             user_groups = user_info.get("groups", [])
-            if any(group.lower() in [g.lower() for g in settings.sso_entra_admin_groups] for group in user_groups):
+            if any(group.lower() in entra_admin_groups for group in user_groups):
                 return True
 
         return False
