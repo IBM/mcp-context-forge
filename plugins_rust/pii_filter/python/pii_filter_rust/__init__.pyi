@@ -3,6 +3,7 @@
 
 import builtins
 import typing
+
 __all__ = [
     "PIIDetectorRust",
 ]
@@ -27,6 +28,7 @@ class PIIDetectorRust:
     print(masked)  # "My SSN is [REDACTED] and email is [REDACTED]"
     ```
     """
+
     def __new__(cls, config: typing.Any) -> PIIDetectorRust:
         r"""
         Create a new PII detector
@@ -52,6 +54,7 @@ class PIIDetectorRust:
         * `block_on_detection` (bool): Whether to block on detection
         * `whitelist_patterns` (list[str]): Regex patterns to exclude from detection
         """
+
     def detect(self, text: builtins.str) -> typing.Any:
         r"""
         Detect PII in text
@@ -72,6 +75,7 @@ class PIIDetectorRust:
         }
         ```
         """
+
     def mask(self, text: builtins.str, detections: typing.Any) -> builtins.str:
         r"""
         Mask detected PII in text
@@ -83,6 +87,7 @@ class PIIDetectorRust:
         # Returns
         Masked text with PII replaced
         """
+
     def process_nested(self, data: typing.Any, path: builtins.str) -> tuple[builtins.bool, typing.Any, typing.Any]:
         r"""
         Process nested data structures (dicts, lists, strings)

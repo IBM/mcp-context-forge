@@ -320,15 +320,15 @@ plugins:
       allowed_mime_types: ["text/plain", "text/markdown", "text/html", "application/json"]
       allowed_extensions: [".md", ".txt", ".html", ".json"]
 
-  # Retry policy annotations
+  # Retry with exponential backoff — triggers real gateway re-invocation
   - name: "RetryWithBackoffPlugin"
     kind: "plugins.retry_with_backoff.retry_with_backoff.RetryWithBackoffPlugin"
-    description: "Annotates retry/backoff policy in metadata"
+    description: "Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay"
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["tool_post_invoke", "resource_post_fetch"]
-    tags: ["reliability", "retry"]
-    mode: "disabled"
+    hooks: ["tool_post_invoke"]
+    tags: ["retry", "backoff", "resilience"]
+    mode: "permissive"
     priority: 170
     conditions: []
     config:
@@ -336,6 +336,9 @@ plugins:
       backoff_base_ms: 200
       max_backoff_ms: 5000
       retry_on_status: [429, 500, 502, 503, 504]
+      jitter: true
+      check_text_content: false
+      tool_overrides: {}
 
   # Markdown cleaner
   - name: "MarkdownCleanerPlugin"

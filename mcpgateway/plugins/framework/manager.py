@@ -170,6 +170,7 @@ class PluginExecutor:
         combined_metadata: dict[str, Any] = {}
         current_payload: PluginPayload | None = None
         decision_plugin_name: Optional[str] = None
+        max_retry_delay_ms: int = 0
 
         for hook_ref in hook_refs:
             # Skip disabled plugins
@@ -223,6 +224,9 @@ class PluginExecutor:
                 global_context,
                 combined_metadata,
             )
+
+            # Propagate retry signal — take the largest delay requested by any plugin
+            max_retry_delay_ms = max(max_retry_delay_ms, result.retry_delay_ms)
 
             # Apply policy-based controlled merge (per-plugin)
             if result.modified_payload is not None:
@@ -292,7 +296,7 @@ class PluginExecutor:
         if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
             combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
 
-        return (PluginResult(continue_processing=True, modified_payload=current_payload, violation=None, metadata=combined_metadata), res_local_contexts)
+        return (PluginResult(continue_processing=True, modified_payload=current_payload, violation=None, metadata=combined_metadata, retry_delay_ms=max_retry_delay_ms), res_local_contexts)
 
     async def execute_plugin(
         self,
