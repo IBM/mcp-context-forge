@@ -80,9 +80,13 @@ BROAD_PATTERNS = {
 
 
 def _default_enabled_patterns() -> Dict[str, bool]:
-    """Return the default enabled-state map for all supported patterns."""
-    enabled = {k: True for k in PATTERNS.keys()}
-    enabled["generic_api_key_assignment"] = False
+    """Return the default enabled-state map for all supported patterns.
+
+    Broad heuristic patterns (listed in ``BROAD_PATTERNS``) default to
+    **disabled** so that a partial ``enabled:`` map in plugin YAML never
+    silently turns them on.
+    """
+    enabled = {k: (k not in BROAD_PATTERNS) for k in PATTERNS.keys()}
     return enabled
 
 
@@ -102,6 +106,10 @@ class SecretsDetectionConfig(BaseModel):
     redaction_text: str = "***REDACTED***"
     block_on_detection: bool = True
     min_findings_to_block: int = 1
+
+    def is_enabled(self, pattern_name: str) -> bool:
+        """Return whether *pattern_name* is enabled, defaulting to disabled."""
+        return self.enabled.get(pattern_name, False)
 
     @field_validator("enabled", mode="before")
     @classmethod
@@ -135,7 +143,7 @@ def _detect(text: str, cfg: SecretsDetectionConfig) -> list[dict[str, Any]]:
     """
     findings: list[dict[str, Any]] = []
     for name, pat in PATTERNS.items():
-        if not cfg.enabled.get(name, True):
+        if not cfg.is_enabled(name):
             continue
         for m in pat.finditer(text):
             findings.append({"type": name, "match": m.group(0)[:8] + "…" if len(m.group(0)) > 8 else m.group(0)})
@@ -175,7 +183,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool 
         if cfg.redact and f:
             # Replace matches with redaction text (best-effort)
             for name, pat in PATTERNS.items():
-                if cfg.enabled.get(name, True):
+                if cfg.is_enabled(name):
                     redacted = pat.sub(cfg.redaction_text, redacted)
         return total, redacted, all_findings
     if isinstance(container, dict):
@@ -220,7 +228,7 @@ class SecretsDetectionPlugin(Plugin):
 
     def _warn_on_broad_patterns(self) -> None:
         """Warn when broad heuristic patterns are enabled in the plugin config."""
-        enabled_broad_patterns = sorted(pattern_name for pattern_name in BROAD_PATTERNS if self._cfg.enabled.get(pattern_name, False))
+        enabled_broad_patterns = sorted(pattern_name for pattern_name in BROAD_PATTERNS if self._cfg.is_enabled(pattern_name))
         if enabled_broad_patterns:
             logger.warning(
                 "Broad secrets heuristics enabled: %s. These patterns are useful for generic API key/token coverage but can increase false positives.",

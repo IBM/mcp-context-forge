@@ -108,6 +108,3 @@ class SecretsDetectionUser(FastHttpUser):
                     print(f"⚠️  Warning: {self.secrets_not_blocked_count} secrets not blocked (may indicate detection disabled)")
             else:
                 response.failure(f"Unexpected status {response.status_code}")
-
-
-# Made with Bob

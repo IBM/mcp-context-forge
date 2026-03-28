@@ -10,11 +10,27 @@ pub struct SecretsDetectionConfig {
     pub min_findings_to_block: u32,
 }
 
+impl SecretsDetectionConfig {
+    /// Whether the named pattern is enabled, defaulting to disabled.
+    pub fn is_enabled(&self, name: &str) -> bool {
+        self.enabled.get(name).copied().unwrap_or(false)
+    }
+}
+
 impl Default for SecretsDetectionConfig {
     fn default() -> Self {
-        let mut enabled: HashMap<String, bool> =
-            PATTERNS.keys().map(|&k| (k.to_string(), true)).collect();
-        enabled.insert("generic_api_key_assignment".to_string(), false);
+        // Broad heuristic patterns default to disabled so that a partial
+        // `enabled:` map in plugin YAML never silently turns them on.
+        const BROAD: &[&str] = &[
+            "generic_api_key_assignment",
+            "jwt_like",
+            "hex_secret_32",
+            "base64_24",
+        ];
+        let enabled: HashMap<String, bool> = PATTERNS
+            .keys()
+            .map(|&k| (k.to_string(), !BROAD.contains(&k)))
+            .collect();
 
         Self {
             enabled,
@@ -45,13 +61,29 @@ mod tests {
             11,
             "Should have 11 patterns configured"
         );
-        assert_eq!(
-            config.enabled.get("generic_api_key_assignment"),
-            Some(&false),
-            "Broad generic API-key detection should be opt-in"
-        );
+        // Broad heuristic patterns should be opt-in (disabled by default)
+        for broad in &[
+            "generic_api_key_assignment",
+            "jwt_like",
+            "hex_secret_32",
+            "base64_24",
+        ] {
+            assert_eq!(
+                config.enabled.get(*broad),
+                Some(&false),
+                "Broad pattern '{}' should be opt-in",
+                broad
+            );
+        }
         for (pattern_name, enabled) in config.enabled.iter() {
-            if pattern_name == "generic_api_key_assignment" {
+            if [
+                "generic_api_key_assignment",
+                "jwt_like",
+                "hex_secret_32",
+                "base64_24",
+            ]
+            .contains(&pattern_name.as_str())
+            {
                 continue;
             }
             assert!(

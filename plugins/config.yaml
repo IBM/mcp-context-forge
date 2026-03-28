@@ -77,8 +77,6 @@ plugins:
       detect_email: true
       detect_phone: false
       detect_ip_address: false  # Disabled for development
-      detect_aws_keys: true
-      detect_api_keys: true
       # Masking Settings
       default_mask_strategy: "partial"  # redact | partial | hash | tokenize | remove
       redaction_text: "[PII_REDACTED]"
@@ -650,7 +648,7 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 51
     conditions: []
     config:
