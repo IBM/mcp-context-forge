@@ -8,6 +8,7 @@ requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 [tool.uv]
+# Temporary absolute cutoff for CI compatibility with uv 0.9.2; after 2026-04-04T15:10:42Z, switch this back to "10 days".
 exclude-newer = "2026-03-25T15:10:42Z"
 
 # ----------------------------------------------------------------
