@@ -1329,10 +1329,12 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 # help: langfuse-down            - Stop Langfuse stack
 # help: langfuse-status          - Show status of Langfuse services
 # help: langfuse-logs            - Show Langfuse stack logs
-# help: langfuse-clean           - Stop and remove all Langfuse data (volumes)
+# help: langfuse-reset-data      - Stop the Langfuse stack and remove only Langfuse data volumes
+# help: langfuse-clean-including-contextforge - Stop the combined stack and remove Langfuse + ContextForge volumes
 # help: langfuse-monitoring-up   - Start Langfuse + monitoring (gateway traces go to Langfuse)
 
 LANGFUSE_COMPOSE := $(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.with-langfuse.yml
+LANGFUSE_DATA_VOLUMES := langfuse-postgres-data langfuse-clickhouse-data langfuse-clickhouse-logs langfuse-minio-data langfuse-redis-data
 
 define VERIFY_LANGFUSE_GATEWAY_EXPORT
 	@echo "🔎 Verifying gateway OTLP exporter is wired to Langfuse..."
@@ -1408,11 +1410,37 @@ langfuse-status:                           ## Show status of Langfuse services
 langfuse-logs:                             ## Show Langfuse stack logs
 	$(LANGFUSE_COMPOSE) logs -f --tail=100
 
-.PHONY: langfuse-clean
-langfuse-clean:                            ## Stop and remove all Langfuse data (volumes)
-	@echo "🔭 Stopping and cleaning Langfuse stack..."
+.PHONY: langfuse-reset-data
+langfuse-reset-data:                       ## Stop the Langfuse stack and remove only Langfuse data volumes
+	@echo "🔭 Resetting Langfuse data volumes (ContextForge data preserved)..."
+	$(LANGFUSE_COMPOSE) down --remove-orphans
+	@for logical_volume in $(LANGFUSE_DATA_VOLUMES); do \
+		matches=$$(docker volume ls --format '{{.Name}}' | grep -E "(^|_)$${logical_volume}$$" || true); \
+		if [ -z "$$matches" ]; then \
+			echo "   • $$logical_volume: not present"; \
+			continue; \
+		fi; \
+		echo "$$matches" | while IFS= read -r volume_name; do \
+			[ -n "$$volume_name" ] || continue; \
+			echo "   • removing $$volume_name"; \
+			docker volume rm "$$volume_name" >/dev/null; \
+		done; \
+	done
+	@echo "✅ Langfuse data volumes removed."
+	@echo "   Re-run 'make langfuse-up' to start with a fresh Langfuse project."
+
+.PHONY: langfuse-clean-including-contextforge
+langfuse-clean-including-contextforge:     ## Stop the combined stack and remove Langfuse + ContextForge volumes
+	@echo "🔭 Stopping and cleaning the combined Langfuse + ContextForge stack..."
 	$(LANGFUSE_COMPOSE) down -v --remove-orphans
-	@echo "✅ Langfuse stack stopped and volumes removed."
+	@echo "✅ Combined stack stopped and volumes removed."
+
+.PHONY: langfuse-clean
+langfuse-clean:                            ## Deprecated ambiguous alias
+	@echo "❌ 'make langfuse-clean' is ambiguous and has been removed."
+	@echo "   Use 'make langfuse-reset-data' to wipe only Langfuse data."
+	@echo "   Use 'make langfuse-clean-including-contextforge' to wipe the full combined stack, including ContextForge data."
+	@exit 1
 
 .PHONY: langfuse-monitoring-up
 langfuse-monitoring-up:                    ## Start Langfuse + full monitoring stack (Grafana, Prometheus, Tempo)
@@ -1449,7 +1477,7 @@ langfuse-monitoring-up:                    ## Start Langfuse + full monitoring s
 	@echo "   🌐 Gateway:        http://localhost:$${NGINX_PORT:-8080}"
 	@echo ""
 	@echo "   OTEL traces → Langfuse (LLM analytics at :$${LANGFUSE_PORT:-3100})"
-	@echo "   Note: For dual-export to Tempo, deploy an OTEL Collector"
+	@echo "   Note: For dual-export to Tempo, use infra/monitoring/otel-collector/collector.langfuse-tempo.yaml"
 	@echo ""
 
 .PHONY: langfuse-monitoring-down

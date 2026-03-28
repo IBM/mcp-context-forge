@@ -133,6 +133,11 @@ def _wait_for_fresh_trace(triggered_after: float, predicate: Callable[[dict[str,
     pytest.fail(f"Did not observe a matching fresh Langfuse trace within timeout. Recent traces: {trace_summaries}")
 
 
+def _trace_attributes(trace: dict[str, Any]) -> dict[str, Any]:
+    """Extract flattened trace attributes from a Langfuse trace payload."""
+    return ((trace.get("metadata") or {}).get("attributes") or {})
+
+
 @pytest.fixture(scope="module")
 def jwt_token() -> str:
     """Create an admin JWT for live MCP CLI smoke traffic."""
@@ -224,12 +229,8 @@ def test_langfuse_trace_export_eventually_contains_tool_call_input(jwt_token: st
     assert call_response is not None, f"No tools/call response: {responses}"
     assert "error" not in call_response, f"tools/call returned error: {call_response}"
 
-    trace = _wait_for_fresh_trace(
-        triggered_after,
-        lambda candidate: ((candidate.get("metadata") or {}).get("attributes") or {}).get("tool.name") == "fast-time-get-system-time" and candidate.get("input") == {"timezone": "UTC"},
-    )
-    metadata = trace.get("metadata") or {}
-    trace_attrs = metadata.get("attributes") or {}
+    trace = _wait_for_fresh_trace(triggered_after, lambda candidate: _trace_attributes(candidate).get("tool.name") == "fast-time-get-system-time" and candidate.get("input") == {"timezone": "UTC"})
+    trace_attrs = _trace_attributes(trace)
 
     assert trace.get("userId") == ADMIN_EMAIL
     assert isinstance(trace.get("tags"), list)
@@ -238,3 +239,81 @@ def test_langfuse_trace_export_eventually_contains_tool_call_input(jwt_token: st
     assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
     assert trace_attrs.get("tool.name") == "fast-time-get-system-time"
     assert trace_attrs.get("langfuse.trace.name") == "Tool: fast-time-get-system-time"
+
+
+@skip_no_gateway
+@skip_no_langfuse
+@skip_no_langfuse_auth
+@pytest.mark.e2e
+def test_langfuse_trace_export_eventually_contains_prompt_render_linkage(jwt_token: str):
+    """A prompt render should export Langfuse prompt linkage metadata."""
+    prompt_args = {
+        "time": "2025-01-15T12:00:00Z",
+        "from_timezone": "UTC",
+        "to_timezones": "America/New_York,Europe/Dublin",
+        "include_context": "true",
+    }
+    triggered_after = time.time() - 1
+    responses = _send_jsonrpc_via_wrapper(
+        _build_wrapper_env(jwt_token),
+        [
+            _build_initialize(1),
+            {"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": "fast-time-convert-time-detailed", "arguments": prompt_args}},
+        ],
+        settle_seconds=4.0,
+    )
+    prompt_response = _get_response_by_id(responses, 2)
+    assert prompt_response is not None, f"No prompts/get response: {responses}"
+    assert "error" not in prompt_response, f"prompts/get returned error: {prompt_response}"
+
+    trace = _wait_for_fresh_trace(triggered_after, lambda candidate: _trace_attributes(candidate).get("langfuse.observation.prompt.name") == "fast-time-convert-time-detailed")
+    trace_attrs = _trace_attributes(trace)
+
+    assert trace.get("userId") == ADMIN_EMAIL
+    assert isinstance(trace.get("tags"), list)
+    assert "auth:jwt" in trace.get("tags", [])
+    assert trace_attrs.get("langfuse.observation.prompt.name") == "fast-time-convert-time-detailed"
+    assert trace_attrs.get("langfuse.trace.name") == "Prompt: fast-time-convert-time-detailed"
+    prompt_version = trace_attrs.get("langfuse.observation.prompt.version")
+    if prompt_version is not None:
+        if isinstance(prompt_version, str):
+            assert prompt_version.isdigit()
+        else:
+            assert isinstance(prompt_version, (int, float))
+
+
+@skip_no_gateway
+@skip_no_langfuse
+@skip_no_langfuse_auth
+@pytest.mark.e2e
+def test_langfuse_trace_export_eventually_contains_sanitized_prompt_error(jwt_token: str):
+    """Prompt failures should export sanitized Langfuse error metadata."""
+    bad_prompt_name = "https://prompt.example.com/item?api_key=supersecret"
+    triggered_after = time.time() - 1
+    responses = _send_jsonrpc_via_wrapper(
+        _build_wrapper_env(jwt_token),
+        [
+            _build_initialize(1),
+            {"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": bad_prompt_name}},
+        ],
+        settle_seconds=4.0,
+    )
+    prompt_response = _get_response_by_id(responses, 2)
+    assert prompt_response is not None, f"No prompts/get response: {responses}"
+    assert "error" in prompt_response, f"prompts/get unexpectedly succeeded: {prompt_response}"
+
+    trace = _wait_for_fresh_trace(
+        triggered_after,
+        lambda candidate: _trace_attributes(candidate).get("langfuse.trace.name") == "Prompt: https://prompt.example.com/item?api_key=REDACTED",
+    )
+    trace_attrs = _trace_attributes(trace)
+    status_message = str(trace_attrs.get("langfuse.observation.status_message") or "")
+    error_message = str(trace_attrs.get("error.message") or "")
+
+    assert trace.get("userId") == ADMIN_EMAIL
+    assert trace_attrs.get("error.type") == "PromptNotFoundError"
+    assert "supersecret" not in status_message
+    assert "supersecret" not in error_message
+    assert "supersecret" not in trace_attrs.get("langfuse.trace.name", "")
+    assert "REDACTED" in status_message
+    assert status_message == error_message

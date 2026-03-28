@@ -156,9 +156,12 @@ Each span includes:
 | `make langfuse-down` | Stop the Langfuse stack |
 | `make langfuse-status` | Show Langfuse service status |
 | `make langfuse-logs` | Tail Langfuse logs |
-| `make langfuse-clean` | Stop and remove all Langfuse data (volumes) |
+| `make langfuse-reset-data` | Stop the Langfuse stack and remove only Langfuse data volumes |
+| `make langfuse-clean-including-contextforge` | Stop the combined stack and remove Langfuse and ContextForge volumes |
 | `make langfuse-monitoring-up` | Start Langfuse alongside Grafana/Prometheus/Tempo |
 | `make langfuse-monitoring-down` | Stop Langfuse + monitoring stack |
+
+`make langfuse-clean` was removed because the name was ambiguous. Use one of the explicit targets above depending on whether you want to preserve ContextForge data.
 
 ## Environment Variables
 
@@ -181,12 +184,21 @@ Each span includes:
 | `LANGFUSE_NEXTAUTH_SECRET` | Optional local overlay NextAuth secret override | local compose default |
 | `LANGFUSE_SALT` | Optional local overlay application salt override | local compose default |
 | `LANGFUSE_ENCRYPTION_KEY` | Optional local overlay encryption key override | local compose default |
+| `OTEL_EMIT_LANGFUSE_ATTRIBUTES` | Force-enable or disable Langfuse-specific span attributes | auto in normal runtime, `true` in local Langfuse compose overlay |
+| `OTEL_CAPTURE_IDENTITY_ATTRIBUTES` | Force-enable or disable user/team identity enrichment | auto in normal runtime, `true` in local Langfuse compose overlay |
+| `OTEL_CAPTURE_INPUT_SPANS` | Comma-separated allowlist of span names allowed to capture observation input payloads | empty in normal runtime, `tool.invoke,prompt.render,llm.proxy,a2a.invoke` in local Langfuse compose overlay |
+| `OTEL_CAPTURE_OUTPUT_SPANS` | Comma-separated allowlist of span names allowed to capture observation output payloads | empty |
+| `OTEL_REDACT_FIELDS` | Structured-field and free-text redaction keys used before export | `password,secret,token,...` |
+| `OTEL_MAX_TRACE_PAYLOAD_SIZE` | Max serialized input/output payload size in characters | `32768` |
 
 !!! note "Gateway vs Self-Hosted Langfuse Secrets"
     ContextForge itself only reads `LANGFUSE_OTEL_ENDPOINT`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and optionally `LANGFUSE_OTEL_AUTH`. The other `LANGFUSE_*` secrets in this table apply only when you run the local self-hosted Langfuse compose overlay.
 
 !!! warning "Local Compose Defaults"
     The self-hosted Langfuse compose overlay uses local-only demo project keys when `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are unset. This convenience is limited to the compose path; ContextForge code does not embed Langfuse credentials.
+
+!!! note "Payload Capture Defaults"
+    ContextForge now uses allowlist-based payload capture. In normal runtime, `OTEL_CAPTURE_INPUT_SPANS` and `OTEL_CAPTURE_OUTPUT_SPANS` default to empty. The local Langfuse compose overlay enables a small dev-focused input allowlist for `tool.invoke`, `prompt.render`, `llm.proxy`, and `a2a.invoke`.
 
 ## Using the Langfuse UI
 
@@ -254,7 +266,28 @@ The gateway still exports traces to Langfuse in this mode. Tempo remains availab
 If any of those host ports are already in use, override them before starting the stack. Supported compose-only overrides include `LANGFUSE_PORT`, `LANGFUSE_WORKER_PORT`, `GRAFANA_PORT`, `LOKI_PORT`, `PROMETHEUS_PORT`, `TEMPO_PORT`, `TEMPO_OTLP_GRPC_PORT`, `TEMPO_OTLP_HTTP_PORT`, `PGADMIN_PORT`, and `REDIS_COMMANDER_PORT`. `LOKI_PORT` defaults to `3101` so it does not collide with Langfuse on `3100`.
 
 !!! tip "Dual Trace Export"
-    By default, OTEL traces go to Langfuse only. To send traces to both Langfuse and Tempo simultaneously, deploy an [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) with a fan-out pipeline.
+    By default, OTEL traces go to Langfuse only. To send traces to both Langfuse and Tempo simultaneously, run an [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) with a fan-out pipeline. This repo now includes a sample collector config at `infra/monitoring/otel-collector/collector.langfuse-tempo.yaml`.
+
+Example:
+
+```bash
+LANGFUSE_OTEL_AUTH=$(printf '%s' "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" | base64)
+docker run --rm \
+  --network mcp-context-forge_mcpnet \
+  -e LANGFUSE_OTEL_ENDPOINT=http://langfuse-web:3000/api/public/otel/v1/traces \
+  -e LANGFUSE_OTEL_AUTH="$LANGFUSE_OTEL_AUTH" \
+  -e TEMPO_OTLP_GRPC_ENDPOINT=tempo:4317 \
+  -v "$PWD/infra/monitoring/otel-collector/collector.langfuse-tempo.yaml:/etc/otelcol/config.yaml:ro" \
+  otel/opentelemetry-collector-contrib:0.123.0 \
+  --config=/etc/otelcol/config.yaml
+```
+
+Then point ContextForge at the collector instead of Langfuse directly:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+```
 
 ## Production Deployment
 
@@ -275,12 +308,15 @@ If any of those host ports are already in use, override them before starting the
 
 3. **Configure OTEL payload controls** for trace capture:
     ```bash
+    OTEL_EMIT_LANGFUSE_ATTRIBUTES=true
+    OTEL_CAPTURE_IDENTITY_ATTRIBUTES=true
     OTEL_REDACT_FIELDS=password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key
     OTEL_MAX_TRACE_PAYLOAD_SIZE=32768
+    OTEL_CAPTURE_INPUT_SPANS=tool.invoke,prompt.render,llm.proxy
     OTEL_CAPTURE_OUTPUT_SPANS=llm.proxy,llm.chat
     ```
-    `OTEL_CAPTURE_OUTPUT_SPANS` is opt-in. Leave it empty to disable observation output capture entirely.
-    Input capture for the current Langfuse-instrumented operations is enabled by default. Redaction is field-name based, so avoid placing secrets inside generic fields such as `query`, `message`, or `data` unless an upstream plugin/policy redacts them first.
+    `OTEL_CAPTURE_INPUT_SPANS` and `OTEL_CAPTURE_OUTPUT_SPANS` are allowlists. Leave them empty to disable observation payload capture entirely.
+    Structured payloads are redacted by field name, and all exported string values also pass through URL and free-text secret scrubbing. This covers common cases such as `token=...`, signed URLs, and embedded `Bearer` / `Basic` credentials, but it is still best practice to avoid placing secrets inside generic free-text fields such as `query`, `message`, or `data`.
 
 4. **Enable TLS** for the Langfuse endpoint in production.
     ```bash
@@ -290,7 +326,7 @@ If any of those host ports are already in use, override them before starting the
     If your OTLP endpoint uses a private CA, mount that CA into the gateway container or host trust store before enabling export.
 
 5. **Verify startup credential enforcement**.
-   ContextForge now fails startup when a Langfuse OTLP endpoint is configured without either `OTEL_EXPORTER_OTLP_HEADERS`, `LANGFUSE_OTEL_AUTH`, or both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`.
+   ContextForge now fails startup when a Langfuse OTLP endpoint is configured without a resolved `Authorization` header. Supplying arbitrary `OTEL_EXPORTER_OTLP_HEADERS` is not enough; the final header set must contain valid Langfuse basic auth, whether derived from `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`, `LANGFUSE_OTEL_AUTH`, or an explicit `Authorization=Basic ...` OTLP header.
 
 ### Kubernetes
 

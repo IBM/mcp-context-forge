@@ -93,10 +93,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.trace_redaction import is_output_capture_enabled, safe_serialize
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -2501,15 +2501,15 @@ class MCPChatService:
         if not message or not message.strip():
             raise ValueError("Message cannot be empty")
 
-        with create_span(
-            "llm.chat",
-            {
-                "langfuse.observation.type": "generation",
-                "gen_ai.system": _llm_system_name(self),
-                "gen_ai.request.model": self.llm_provider.get_model_name(),
-                "langfuse.observation.input": safe_serialize({"message": message}),
-            },
-        ) as span:
+        span_attributes = {
+            "langfuse.observation.type": "generation",
+            "gen_ai.system": _llm_system_name(self),
+            "gen_ai.request.model": self.llm_provider.get_model_name(),
+        }
+        if is_input_capture_enabled("llm.chat"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload({"message": message})
+
+        with create_span("llm.chat", span_attributes) as span:
             try:
                 logger.debug("Processing chat message...")
 
@@ -2524,7 +2524,7 @@ class MCPChatService:
                 if span:
                     _set_usage_attributes(span, ai_message)
                     if is_output_capture_enabled("llm.chat"):
-                        span.set_attribute("langfuse.observation.output", safe_serialize({"response": response_text}))
+                        set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"response": response_text}))
 
                 if self.user_id:
                     await self.history_manager.append_message(self.user_id, "user", message)
@@ -2768,16 +2768,16 @@ class MCPChatService:
                     logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track expired run_id {rid} (overflow count: {dropped_overflow_count})")
                 del pending_tool_ends[rid]
 
-        with create_span(
-            "llm.chat",
-            {
-                "langfuse.observation.type": "generation",
-                "gen_ai.system": _llm_system_name(self),
-                "gen_ai.request.model": self.llm_provider.get_model_name(),
-                "llm.stream": True,
-                "langfuse.observation.input": safe_serialize({"message": message}),
-            },
-        ) as span:
+        span_attributes = {
+            "langfuse.observation.type": "generation",
+            "gen_ai.system": _llm_system_name(self),
+            "gen_ai.request.model": self.llm_provider.get_model_name(),
+            "llm.stream": True,
+        }
+        if is_input_capture_enabled("llm.chat"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload({"message": message})
+
+        with create_span("llm.chat", span_attributes) as span:
             try:
                 async for event in self._agent.astream_events({"messages": lc_messages}, version="v2"):
                     kind = event.get("event")
@@ -2950,7 +2950,7 @@ class MCPChatService:
                 tools_used = list({tr["name"] for tr in tool_runs.values() if tr.get("name")})
 
                 if span and is_output_capture_enabled("llm.chat"):
-                    span.set_attribute("langfuse.observation.output", safe_serialize({"response": full_response}))
+                    set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"response": full_response}))
 
                 yield {"type": "final", "content": full_response, "tool_used": len(tools_used) > 0, "tools": tools_used, "elapsed_ms": elapsed_ms}
 

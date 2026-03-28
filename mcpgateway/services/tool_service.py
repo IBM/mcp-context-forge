@@ -58,7 +58,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
-from mcpgateway.observability import create_child_span, create_span
+from mcpgateway.observability import create_child_span, create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.framework import (
     get_plugin_manager,
     GlobalContext,
@@ -98,7 +98,7 @@ from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.trace_context import format_trace_team_scope
-from mcpgateway.utils.trace_redaction import is_output_capture_enabled, redact_sensitive_fields, safe_serialize
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 
@@ -3845,21 +3845,21 @@ class ToolService(BaseService):
                 db_span_id = None
 
         # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
-        with create_span(
-            "tool.invoke",
-            {
-                "tool.name": name,
-                "tool.id": tool_id,
-                "tool.integration_type": tool_integration_type,
-                "tool.gateway_id": tool_gateway_id,
-                "arguments_count": len(arguments) if arguments else 0,
-                "has_headers": bool(request_headers),
-                "user.email": user_email or app_user_email or "anonymous",
-                "team.scope": tool_team_scope,
-                "server_id": server_id,
-                "langfuse.observation.input": safe_serialize(redact_sensitive_fields(arguments or {})),
-            },
-        ) as span:
+        span_attributes = {
+            "tool.name": name,
+            "tool.id": tool_id,
+            "tool.integration_type": tool_integration_type,
+            "tool.gateway_id": tool_gateway_id,
+            "arguments_count": len(arguments) if arguments else 0,
+            "has_headers": bool(request_headers),
+            "user.email": user_email or app_user_email or "anonymous",
+            "team.scope": tool_team_scope,
+            "server_id": server_id,
+        }
+        if is_input_capture_enabled("tool.invoke"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload(arguments or {})
+
+        with create_span("tool.invoke", span_attributes) as span:
             try:
                 # Create a lightweight lookup child span so Langfuse shows the invoke breakdown.
                 with create_child_span(
@@ -4705,8 +4705,7 @@ class ToolService(BaseService):
                 # Do NOT call post_invoke again — the retry_delay_ms signal is carried on the exception.
                 error_message = str(e)
                 if span:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", error_message)
+                    set_span_error(span, error_message)
 
                 # Retry if the post-invoke hook (called by the timeout handler) requested it.
                 if e.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
@@ -4737,8 +4736,7 @@ class ToolService(BaseService):
                 error_message = str(root_cause)
                 # Set span error status
                 if span:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", error_message)
+                    set_span_error(span, error_message)
 
                 # Notify plugins of the failure so circuit breaker / retry plugin can track it.
                 # Capture the result so we can honour a retry_delay_ms signal from the retry plugin.
@@ -4811,10 +4809,10 @@ class ToolService(BaseService):
 
                 # Add final span attributes for OpenTelemetry
                 if span:
-                    span.set_attribute("success", success)
-                    span.set_attribute("duration.ms", duration_ms)
+                    set_span_attribute(span, "success", success)
+                    set_span_attribute(span, "duration.ms", duration_ms)
                     if success and tool_result and is_output_capture_enabled("tool.invoke"):
-                        span.set_attribute("langfuse.observation.output", safe_serialize(tool_result))
+                        set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(tool_result))
 
                 # ═══════════════════════════════════════════════════════════════════════════
                 # PHASE 4: Record metrics via buffered service (batches writes for performance)

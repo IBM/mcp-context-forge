@@ -32,7 +32,7 @@ from mcpgateway.llm_schemas import (
     ChatMessage,
     UsageStats,
 )
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute
 from mcpgateway.services.llm_provider_service import (
     decrypt_provider_config_for_runtime,
     LLMModelNotFoundError,
@@ -40,7 +40,7 @@ from mcpgateway.services.llm_provider_service import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.services_auth import decode_auth
-from mcpgateway.utils.trace_redaction import is_output_capture_enabled, redact_sensitive_fields, safe_serialize
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 # Initialize logging
 logging_service = LoggingService()
@@ -69,7 +69,7 @@ def _request_trace_input(request: ChatCompletionRequest) -> str:
     Returns:
         Redacted serialized request payload for the trace input field.
     """
-    return safe_serialize(redact_sensitive_fields(request.model_dump(mode="json", exclude_none=True)))
+    return serialize_trace_payload(request.model_dump(mode="json", exclude_none=True))
 
 
 def _usage_trace_attrs(response: ChatCompletionResponse) -> Dict[str, int]:
@@ -481,18 +481,18 @@ class LLMProxyService:
         except ValueError as url_err:
             raise LLMProxyRequestError(f"Invalid LLM provider URL: {url_err}") from url_err
 
-        with create_span(
-            "llm.proxy",
-            {
-                "langfuse.observation.type": "generation",
-                "gen_ai.system": _provider_trace_system(provider),
-                "gen_ai.request.model": model.model_id,
-                "llm.provider.id": str(provider.id),
-                "llm.provider.type": _provider_trace_system(provider),
-                "llm.model.id": str(model.id),
-                "langfuse.observation.input": _request_trace_input(request),
-            },
-        ) as span:
+        span_attributes = {
+            "langfuse.observation.type": "generation",
+            "gen_ai.system": _provider_trace_system(provider),
+            "gen_ai.request.model": model.model_id,
+            "llm.provider.id": str(provider.id),
+            "llm.provider.type": _provider_trace_system(provider),
+            "llm.model.id": str(model.id),
+        }
+        if is_input_capture_enabled("llm.proxy"):
+            span_attributes["langfuse.observation.input"] = _request_trace_input(request)
+
+        with create_span("llm.proxy", span_attributes) as span:
             try:
                 response = await self._client.post(url, headers=headers, json=body)
                 response.raise_for_status()
@@ -511,11 +511,11 @@ class LLMProxyService:
                     result = self._transform_openai_response(data)
 
                 if span:
-                    span.set_attribute("gen_ai.response.model", result.model)
+                    set_span_attribute(span, "gen_ai.response.model", result.model)
                     for key, value in _usage_trace_attrs(result).items():
-                        span.set_attribute(key, value)
+                        set_span_attribute(span, key, value)
                     if is_output_capture_enabled("llm.proxy"):
-                        span.set_attribute("langfuse.observation.output", safe_serialize(result))
+                        set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(result))
 
                 return result
 
@@ -572,19 +572,19 @@ class LLMProxyService:
         capture_output = is_output_capture_enabled("llm.proxy")
         captured_output = ""
 
-        with create_span(
-            "llm.proxy",
-            {
-                "langfuse.observation.type": "generation",
-                "gen_ai.system": _provider_trace_system(provider),
-                "gen_ai.request.model": model.model_id,
-                "llm.provider.id": str(provider.id),
-                "llm.provider.type": _provider_trace_system(provider),
-                "llm.model.id": str(model.id),
-                "llm.stream": True,
-                "langfuse.observation.input": _request_trace_input(request),
-            },
-        ) as span:
+        span_attributes = {
+            "langfuse.observation.type": "generation",
+            "gen_ai.system": _provider_trace_system(provider),
+            "gen_ai.request.model": model.model_id,
+            "llm.provider.id": str(provider.id),
+            "llm.provider.type": _provider_trace_system(provider),
+            "llm.model.id": str(model.id),
+            "llm.stream": True,
+        }
+        if is_input_capture_enabled("llm.proxy"):
+            span_attributes["langfuse.observation.input"] = _request_trace_input(request)
+
+        with create_span("llm.proxy", span_attributes) as span:
             try:
                 async with self._client.stream("POST", url, headers=headers, json=body) as response:
                     response.raise_for_status()
@@ -654,7 +654,7 @@ class LLMProxyService:
                 yield f"data: {orjson.dumps(error_chunk).decode()}\n\n"
             finally:
                 if span and capture_output and captured_output:
-                    span.set_attribute("langfuse.observation.output", safe_serialize({"stream": captured_output}))
+                    set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"stream": captured_output}))
 
     def _transform_openai_response(self, data: Dict[str, Any]) -> ChatCompletionResponse:
         """Transform OpenAI response to standard format.

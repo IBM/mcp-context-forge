@@ -57,7 +57,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -77,7 +77,7 @@ from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.trace_context import format_trace_team_scope
-from mcpgateway.utils.trace_redaction import is_output_capture_enabled, safe_serialize
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
 
@@ -1675,17 +1675,17 @@ class ResourceService(BaseService):
                         logger.warning(f"Failed to start the observability span for invoking resource: {e}")
                         db_span_id = None
 
-                with create_span(
-                    "invoke.resource",
-                    {
-                        "resource.name": resource_name if resource_name else "unknown",
-                        "resource.id": str(resource_id) if resource_id else "unknown",
-                        "resource.uri": str(uri) or "unknown",
-                        "gateway.transport": getattr(gateway, "transport") or "uknown",
-                        "gateway.url": getattr(gateway, "url") or "unknown",
-                        "langfuse.observation.input": safe_serialize({"uri": str(uri) if uri else "unknown"}),
-                    },
-                ) as span:
+                span_attributes = {
+                    "resource.name": resource_name if resource_name else "unknown",
+                    "resource.id": str(resource_id) if resource_id else "unknown",
+                    "resource.uri": str(uri) or "unknown",
+                    "gateway.transport": getattr(gateway, "transport") or "uknown",
+                    "gateway.url": getattr(gateway, "url") or "unknown",
+                }
+                if is_input_capture_enabled("invoke.resource"):
+                    span_attributes["langfuse.observation.input"] = serialize_trace_payload({"uri": str(uri) if uri else "unknown"})
+
+                with create_span("invoke.resource", span_attributes) as span:
                     valid = False
                     if gateway.ca_certificate:
                         if settings.enable_ed25519_signing:
@@ -1790,14 +1790,14 @@ class ResourceService(BaseService):
                                         headers["Authorization"] = f"Bearer {access_token}"
                                     else:
                                         if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", "No valid OAuth token for user")
+                                            set_span_attribute(span, "health.status", "unhealthy")
+                                            set_span_error(span, "No valid OAuth token for user")
 
                                 except Exception as e:
                                     logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                     if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "Failed to obtain stored OAuth token")
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
@@ -1805,8 +1805,8 @@ class ResourceService(BaseService):
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 except Exception as e:
                                     if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", str(e))
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, e)
                         else:
                             # Handle non-OAuth authentication (existing logic)
                             auth_data = gateway_auth_value or {}
@@ -1993,7 +1993,7 @@ class ResourceService(BaseService):
                             # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         if span and resource_text is not None and is_output_capture_enabled("invoke.resource"):
-                            span.set_attribute("langfuse.observation.output", safe_serialize({"content": resource_text}))
+                            set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
                         success = True  # Mark as successful before returning
                         return resource_text
                     except Exception as e:
@@ -2144,18 +2144,18 @@ class ResourceService(BaseService):
                 logger.warning(f"Failed to start observability span for resource reading: {e}")
                 db_span_id = None
 
-        with create_span(
-            "resource.read",
-            {
-                "resource.uri": resource_uri or "unknown",
-                "user": user or "anonymous",
-                "server_id": server_id,
-                "request_id": request_id,
-                "http.url": uri if uri is not None and uri.startswith("http") else None,
-                "resource.type": "template" if (uri is not None and "{" in uri and "}" in uri) else "static",
-                "langfuse.observation.input": safe_serialize({"uri": resource_uri or resource_id or "unknown"}),
-            },
-        ) as span:
+        span_attributes = {
+            "resource.uri": resource_uri or "unknown",
+            "user": user or "anonymous",
+            "server_id": server_id,
+            "request_id": request_id,
+            "http.url": uri if uri is not None and uri.startswith("http") else None,
+            "resource.type": "template" if (uri is not None and "{" in uri and "}" in uri) else "static",
+        }
+        if is_input_capture_enabled("resource.read"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload({"uri": resource_uri or resource_id or "unknown"})
+
+        with create_span("resource.read", span_attributes) as span:
             try:
                 # Generate request ID if not provided
                 if not request_id:
@@ -2488,7 +2488,7 @@ class ResourceService(BaseService):
                         content = post_result.modified_payload.content
 
                 if span and content is not None and is_output_capture_enabled("resource.read"):
-                    span.set_attribute("langfuse.observation.output", safe_serialize(content))
+                    set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(content))
 
                 return content
             except Exception as e:

@@ -64,6 +64,9 @@ services:
       - LANGFUSE_OTEL_ENDPOINT=${LANGFUSE_OTEL_ENDPOINT:-http://langfuse-web:3000/api/public/otel/v1/traces}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-contextforge}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-contextforge}
+      - OTEL_EMIT_LANGFUSE_ATTRIBUTES=${OTEL_EMIT_LANGFUSE_ATTRIBUTES:-true}
+      - OTEL_CAPTURE_IDENTITY_ATTRIBUTES=${OTEL_CAPTURE_IDENTITY_ATTRIBUTES:-true}
+      - OTEL_CAPTURE_INPUT_SPANS=${OTEL_CAPTURE_INPUT_SPANS:-tool.invoke,prompt.render,llm.proxy,a2a.invoke}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-contextforge-gateway}
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=contextforge}
     depends_on:

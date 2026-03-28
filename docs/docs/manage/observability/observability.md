@@ -4,7 +4,7 @@ ContextForge includes production-grade OpenTelemetry instrumentation for distrib
 
 ## Overview
 
-The observability implementation is **vendor-agnostic** and works with any OTLP-compatible backend. ContextForge supports multiple observability backends, each optimized for different use cases.
+The observability implementation is **vendor-agnostic** at the transport/export layer and works with any OTLP-compatible backend. ContextForge also supports optional Langfuse-oriented span enrichment when you point OTLP at a Langfuse ingestion endpoint, or when you explicitly enable that schema with `OTEL_EMIT_LANGFUSE_ATTRIBUTES=true`.
 
 ## Recommended Backend Options
 
@@ -276,6 +276,7 @@ docker run -e OTEL_ENABLE_OBSERVABILITY=true \
 | `DEPLOYMENT_ENV` / `ENVIRONMENT` | Environment tag | `development` | `development`, `staging`, `production` |
 | `OTEL_TRACES_EXPORTER` | Export backend | `otlp` | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES` | Custom attributes | - | `key=value,key2=value2` |
+| `OTEL_COPY_RESOURCE_ATTRS_TO_SPANS` | Copy selected resource attrs onto spans | `false` | `true`, `false` |
 
 ### OTLP Configuration
 
@@ -289,13 +290,28 @@ docker run -e OTEL_ENABLE_OBSERVABILITY=true \
 | `LANGFUSE_SECRET_KEY` | Langfuse project secret key for derived OTLP auth | - | `sk-lf-...` |
 | `LANGFUSE_OTEL_AUTH` | Optional base64-encoded `pk:sk` auth override | - | base64 string |
 | `OTEL_EXPORTER_OTLP_INSECURE` | Skip TLS verify | `true` | `true`, `false` |
+| `OTEL_EMIT_LANGFUSE_ATTRIBUTES` | Force-enable or disable Langfuse-specific span attributes | auto | `true`, `false` |
+| `OTEL_CAPTURE_IDENTITY_ATTRIBUTES` | Force-enable or disable user/team identity enrichment | auto | `true`, `false` |
 
 ### Alternative Backends
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `OTEL_EXPORTER_JAEGER_ENDPOINT` | Jaeger collector | `http://localhost:14268/api/traces` |
+| `OTEL_EXPORTER_JAEGER_USER` | Jaeger collector username | - |
+| `OTEL_EXPORTER_JAEGER_PASSWORD` | Jaeger collector password | - |
 | `OTEL_EXPORTER_ZIPKIN_ENDPOINT` | Zipkin collector | `http://localhost:9411/api/v2/spans` |
+
+### Payload Capture and Redaction
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OTEL_REDACT_FIELDS` | Comma-separated field names redacted from structured trace payloads and free-text error messages | `password,secret,token,...` |
+| `OTEL_MAX_TRACE_PAYLOAD_SIZE` | Maximum serialized trace payload size in characters | `32768` |
+| `OTEL_CAPTURE_INPUT_SPANS` | Comma-separated allowlist of span names that may capture observation input payloads | empty |
+| `OTEL_CAPTURE_OUTPUT_SPANS` | Comma-separated allowlist of span names that may capture observation output payloads | empty |
+
+Input/output capture is allowlist-based. ContextForge does not capture those payloads by default unless the relevant span names are listed. Structured payloads are redacted by field name, and exported string values are also scrubbed for sensitive URLs, `key=value` secret patterns, and embedded `Bearer` / `Basic` credentials. The local Langfuse compose overlay sets a dev-friendly input allowlist for `tool.invoke,prompt.render,llm.proxy,a2a.invoke`; production deployments should decide that list intentionally.
 
 ### Performance Tuning
 
@@ -343,7 +359,7 @@ Failed operations include:
 - `error`: `true`
 - `error.type`: Exception class name
 - `error.message`: Error description
-- Full stack trace via `span.record_exception()`
+- Sanitized exception event metadata (`exception.type`, `exception.message`)
 
 ## Production Deployment
 

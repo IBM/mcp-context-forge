@@ -30,7 +30,7 @@ from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -43,7 +43,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
-from mcpgateway.utils.trace_redaction import is_output_capture_enabled, redact_sensitive_fields, safe_serialize
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -556,32 +556,24 @@ class A2AAgentService(BaseService):
                 )
 
                 if span:
-                    span.set_attribute("success", True)
-                    span.set_attribute("a2a.agent.id", str(new_agent.id))
+                    set_span_attribute(span, "success", True)
+                    set_span_attribute(span, "a2a.agent.id", str(new_agent.id))
                 return self.convert_agent_to_read(new_agent, db=db)
 
             except A2AAgentNameConflictError as ie:
-                if span:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", str(ie))
+                set_span_error(span, ie)
                 db.rollback()
                 raise ie
             except IntegrityError as ie:
-                if span:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", str(ie))
+                set_span_error(span, ie)
                 db.rollback()
                 logger.error(f"IntegrityErrors in group: {ie}")
                 raise ie
             except ValueError as ve:
-                if span:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", str(ve))
+                set_span_error(span, ve)
                 raise ve
             except Exception as e:
-                if span:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", str(e))
+                set_span_error(span, e)
                 db.rollback()
                 raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
 
@@ -1343,12 +1335,10 @@ class A2AAgentService(BaseService):
 
                 result = self.convert_agent_to_read(agent, db=db)
                 if span:
-                    span.set_attribute("success", True)
+                    set_span_attribute(span, "success", True)
                 return result
             except Exception as exc:
-                if span:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", str(exc))
+                set_span_error(span, exc)
                 raise
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
@@ -1551,17 +1541,17 @@ class A2AAgentService(BaseService):
         from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
 
         sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_query_params_decrypted)
-        with create_span(
-            "a2a.invoke",
-            {
-                "a2a.agent.name": agent_name,
-                "a2a.agent.id": str(agent_id),
-                "a2a.agent.url": sanitized_endpoint_url,
-                "a2a.agent.type": agent_type,
-                "a2a.interaction_type": interaction_type,
-                "langfuse.observation.input": safe_serialize(redact_sensitive_fields(parameters or {})),
-            },
-        ) as span:
+        span_attributes = {
+            "a2a.agent.name": agent_name,
+            "a2a.agent.id": str(agent_id),
+            "a2a.agent.url": sanitized_endpoint_url,
+            "a2a.agent.type": agent_type,
+            "a2a.interaction_type": interaction_type,
+        }
+        if is_input_capture_enabled("a2a.invoke"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload(parameters or {})
+
+        with create_span("a2a.invoke", span_attributes) as span:
             try:
                 # Prepare the request to the A2A agent
                 # Format request based on agent type and endpoint
@@ -1613,7 +1603,7 @@ class A2AAgentService(BaseService):
                     response = http_response.json()
                     success = True
                     if span and is_output_capture_enabled("a2a.invoke"):
-                        span.set_attribute("langfuse.observation.output", safe_serialize(response))
+                        set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(response))
 
                     # Log successful A2A call
                     structured_logger.log(
@@ -1649,16 +1639,14 @@ class A2AAgentService(BaseService):
             except A2AAgentError:
                 # Re-raise A2AAgentError without wrapping
                 if span and error_message:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", error_message)
+                    set_span_error(span, error_message)
                 raise
             except Exception as e:
                 # Sanitize error message to prevent URL secrets from leaking in logs
                 error_message = sanitize_exception_message(str(e), auth_query_params_decrypted)
                 logger.error(f"Failed to invoke A2A agent '{agent_name}': {error_message}")
                 if span:
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.message", error_message)
+                    set_span_error(span, error_message)
                 raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}")
 
             finally:

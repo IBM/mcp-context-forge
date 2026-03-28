@@ -744,6 +744,7 @@ class TestPromptService:
         with (
             patch("mcpgateway.services.prompt_service.create_span", _span_cm),
             patch("mcpgateway.services.prompt_service.is_output_capture_enabled", return_value=True),
+            patch("mcpgateway.services.prompt_service.set_span_attribute", side_effect=lambda target, key, value: target.set_attribute(key, value)),
             patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_metrics_buffer,
         ):
             mock_metrics_buffer.record_prompt_metric = Mock()

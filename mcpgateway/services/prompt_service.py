@@ -43,7 +43,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -64,7 +64,7 @@ from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.trace_context import format_trace_team_scope
-from mcpgateway.utils.trace_redaction import is_output_capture_enabled, redact_sensitive_fields, safe_serialize
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 
 # Cache import (lazy to avoid circular dependencies)
@@ -1836,18 +1836,18 @@ class PromptService(BaseService):
                 db_span_id = None
 
         # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
-        with create_span(
-            "prompt.render",
-            {
-                "prompt.id": prompt_id,
-                "arguments_count": len(arguments) if arguments else 0,
-                "user": user or "anonymous",
-                "server_id": server_id,
-                "tenant_id": tenant_id,
-                "request_id": request_id or "none",
-                "langfuse.observation.input": safe_serialize(redact_sensitive_fields(arguments or {})),
-            },
-        ) as span:
+        span_attributes = {
+            "prompt.id": prompt_id,
+            "arguments_count": len(arguments) if arguments else 0,
+            "user": user or "anonymous",
+            "server_id": server_id,
+            "tenant_id": tenant_id,
+            "request_id": request_id or "none",
+        }
+        if is_input_capture_enabled("prompt.render"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload(arguments or {})
+
+        with create_span("prompt.render", span_attributes) as span:
             try:
                 # Check if any prompt hooks are registered to avoid unnecessary context creation
                 has_pre_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
@@ -1958,9 +1958,7 @@ class PromptService(BaseService):
                         messages = self._parse_messages(rendered)
                         result = PromptResult(messages=messages, description=prompt.description)
                     except Exception as e:
-                        if span:
-                            span.set_attribute("error", True)
-                            span.set_attribute("error.message", str(e))
+                        set_span_error(span, e)
                         raise PromptError(f"Failed to process prompt: {str(e)}")
 
                 if has_post_fetch:
@@ -2012,15 +2010,15 @@ class PromptService(BaseService):
 
                 # Set success attributes on span
                 if span:
-                    span.set_attribute("success", True)
-                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
-                    span.set_attribute("langfuse.observation.prompt.name", prompt.name)
+                    set_span_attribute(span, "success", True)
+                    set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
+                    set_span_attribute(span, "langfuse.observation.prompt.name", prompt.name)
                     if getattr(prompt, "version", None) is not None:
-                        span.set_attribute("langfuse.observation.prompt.version", int(prompt.version))
+                        set_span_attribute(span, "langfuse.observation.prompt.version", int(prompt.version))
                     if result and hasattr(result, "messages"):
-                        span.set_attribute("messages.count", len(result.messages))
+                        set_span_attribute(span, "messages.count", len(result.messages))
                         if is_output_capture_enabled("prompt.render"):
-                            span.set_attribute("langfuse.observation.output", safe_serialize(result))
+                            set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(result))
 
                 success = True
                 logger.info(f"Retrieved prompt: {prompt.id} successfully")
