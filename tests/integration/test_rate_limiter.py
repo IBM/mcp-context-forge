@@ -42,35 +42,12 @@ from mcpgateway.plugins.framework.base import HookRef, PluginRef
 from mcpgateway.plugins.framework.errors import PluginViolationError
 from mcpgateway.plugins.framework.manager import PluginExecutor
 from mcpgateway.plugins.framework.models import PluginMode
-from mcpgateway.utils.create_jwt_token import _create_jwt_token
 from plugins.rate_limiter.rate_limiter import RateLimiterPlugin
 
 
 # API Endpoints
 PROMPT_ENDPOINT = "/api/v1/prompts/"
 TOOL_INVOKE_ENDPOINT = "/api/v1/tools/invoke"
-
-
-@pytest.fixture
-def jwt_token_alice():
-    """JWT token for user alice in team1."""
-    return _create_jwt_token(
-        {"sub": "alice", "username": "alice"},
-        expires_in_minutes=60,
-        user_data={"email": "alice@example.com", "full_name": "Alice", "is_admin": False, "auth_provider": "test"},
-        teams=["team1"],
-    )
-
-
-@pytest.fixture
-def jwt_token_bob():
-    """JWT token for user bob in team2."""
-    return _create_jwt_token(
-        {"sub": "bob", "username": "bob"},
-        expires_in_minutes=60,
-        user_data={"email": "bob@example.com", "full_name": "Bob", "is_admin": False, "auth_provider": "test"},
-        teams=["team2"],
-    )
 
 
 @pytest.fixture
@@ -1319,7 +1296,7 @@ class TestRedisBackendIntegration:
         assert blocked.violation is not None
 
         # Wait for the 1-second window to expire via real Redis TTL
-        time.sleep(1.1)
+        await asyncio.sleep(1.1)
 
         result = await plugin.tool_pre_invoke(payload, ctx)
         assert result.violation is None, (
@@ -1398,7 +1375,7 @@ class TestRedisBackendIntegration:
         blocked = await plugin.tool_pre_invoke(payload, ctx)
         assert blocked.violation is not None
 
-        time.sleep(1.1)
+        await asyncio.sleep(1.1)
 
         result = await plugin.tool_pre_invoke(payload, ctx)
         assert result.violation is None, (
@@ -1464,7 +1441,7 @@ class TestRedisBackendIntegration:
         blocked = await plugin.tool_pre_invoke(payload, ctx)
         assert blocked.violation is not None
 
-        time.sleep(1.1)
+        await asyncio.sleep(1.1)
 
         result = await plugin.tool_pre_invoke(payload, ctx)
         assert result.violation is None, (

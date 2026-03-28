@@ -13,6 +13,15 @@ Enforces rate limits by user, tenant, and/or tool using a pluggable algorithm:
 All three algorithms support both memory and Redis backends with identical
 semantics. The Redis backend uses atomic Lua scripts for each algorithm —
 one round-trip per check with no race conditions.
+
+Security contract — fail-open on error:
+  Both hook methods (prompt_pre_fetch, tool_pre_invoke) catch all unexpected
+  exceptions and allow the request through.  This is a deliberate design
+  choice: an internal engine failure (Rust panic, Redis timeout, config bug)
+  must never block legitimate traffic.  The trade-off is that a sustained
+  engine failure silently disables rate limiting until the error is resolved.
+  Operators should monitor for rate-limiter error logs and treat them as
+  high-priority alerts.
 """
 
 # Future
@@ -22,6 +31,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
@@ -42,6 +52,58 @@ from mcpgateway.plugins.framework import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Optional Rust engine (ARCH-05: Python backend is the fallback when unavailable)
+# ---------------------------------------------------------------------------
+
+_RATE_LIMITER_FORCE_PYTHON = os.environ.get("RATE_LIMITER_FORCE_PYTHON", "").strip().lower() in ("1", "true", "yes")
+_RateLimiterEngine: Any = None  # Assigned below when the Rust extension is available.
+
+if _RATE_LIMITER_FORCE_PYTHON:
+    _RUST_AVAILABLE = False
+else:
+    try:
+        from rate_limiter_rust.rate_limiter_rust import RateLimiterEngine as _RateLimiterEngine  # type: ignore[import]
+
+        _RUST_AVAILABLE = True
+    except ImportError:
+        _RUST_AVAILABLE = False
+
+
+class RustRateLimiterEngine:
+    """Thin Python wrapper around the PyO3 RateLimiterEngine.
+
+    Exposes evaluate_many() / evaluate_many_async() as pure-Python methods so
+    tests can patch them with unittest.mock (PyO3 C extension methods are
+    read-only and cannot be patched directly). Pattern mirrors RustPIIDetector
+    in plugins/pii_filter/pii_filter_rust.py.
+    """
+
+    def __init__(self, config: dict) -> None:
+        """Initialise the Rust engine with the given config dict."""
+        self._engine = _RateLimiterEngine(config)
+
+    def evaluate_many(self, checks: List[Tuple[str, int, int]], now_unix: int) -> Any:
+        """Delegate to the PyO3 engine (ARCH-01: single call per hook)."""
+        return self._engine.evaluate_many(checks, now_unix)
+
+    async def evaluate_many_async(self, checks: List[Tuple[str, int, int]], now_unix: int) -> Any:
+        """Delegate to the PyO3 async engine for Redis-backed calls."""
+        return await self._engine.evaluate_many_async(checks, now_unix)
+
+    def check(self, user: str, tenant: Optional[str], tool: str, now_unix: int, include_retry_after: bool) -> Tuple[bool, dict, dict]:
+        """High-level check: returns (allowed, headers_dict, meta_dict).
+
+        Builds dimension keys internally, evaluates, and returns pre-built
+        dicts — eliminates per-attribute PyO3 boundary crossings.
+        """
+        return self._engine.check(user, tenant, tool, now_unix, include_retry_after)
+
+    async def check_async(self, user: str, tenant: Optional[str], tool: str, now_unix: int, include_retry_after: bool) -> Tuple[bool, dict, dict]:
+        """Async variant of check() for Redis-backed deployments."""
+        return await self._engine.check_async(user, tenant, tool, now_unix, include_retry_after)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -75,6 +137,8 @@ def _parse_rate(rate: str) -> tuple[int, int]:
         count = int(count_str)
     except (ValueError, AttributeError):
         raise ValueError(f"Invalid rate string {rate!r}: expected '<count>/<unit>' e.g. '60/m'")
+    if count <= 0:
+        raise ValueError(f"Invalid rate string {rate!r}: count must be > 0, got {count}")
     per = per.strip().lower()
     if per in ("s", "sec", "second"):
         return count, 1
@@ -130,6 +194,19 @@ def _select_most_restrictive(
     results: list[tuple[bool, int, int, dict[str, Any]]]
 ) -> tuple[bool, int, int, int, dict[str, Any]]:
     """Select the most restrictive rate limit from multiple dimensions.
+
+    Multi-dimension aggregation contract:
+      - Any blocked dimension → overall result is blocked.
+      - Among blocked dimensions: the one with the **lowest** retry_after
+        (soonest unblock) determines the Retry-After header.  This signals
+        the next state change — the caller learns when at least one dimension
+        will re-open, even if other dimensions remain blocked longer.  An
+        alternative (max) would guarantee success on retry but delays the
+        first attempt and hides which dimension unblocked.  This is a
+        deliberate product-level choice shared by both the Python and Rust
+        implementations.
+      - Among allowed dimensions: the one with the fewest remaining requests
+        determines the header values (closest to exhaustion).
 
     Args:
         results: List of (allowed, limit, reset_timestamp, metadata) tuples.
@@ -272,7 +349,9 @@ class SlidingWindowAlgorithm:
 
             if current >= count:
                 self._store[win_key] = timestamps
-                return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": reset_in}
+                # Ensure Retry-After is at least 1 so clients do not retry immediately
+                # when the oldest timestamp + window truncates to int(now).
+                return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": max(1, reset_in)}
 
             timestamps.append(now)
             self._store[win_key] = timestamps
@@ -320,9 +399,12 @@ class TokenBucketAlgorithm:
             bucket = self._store.get(key)
 
             if bucket is None:
-                # First request — start with a full bucket minus this request
+                # First request — start with a full bucket minus this request.
+                # Use tokens_needed / refill_rate for time_to_full — consistent
+                # with the subsequent-request path and the Redis Lua script.
                 self._store[key] = _Bucket(tokens=count - 1, last_refill=now)
-                time_to_full = window
+                tokens_needed = 1  # consumed 1 from a full bucket
+                time_to_full = max(1, int(tokens_needed / refill_rate)) if tokens_needed > 0 else 0
                 reset_timestamp = int(now + time_to_full)
                 return True, count, reset_timestamp, {"limited": True, "remaining": count - 1, "reset_in": time_to_full}
 
@@ -393,6 +475,7 @@ class MemoryBackend:
         self._lock = asyncio.Lock()
         self._sweep_interval = sweep_interval
         self._sweep_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
+        self._parsed_cache: Dict[str, tuple[int, int]] = {}  # rate_str → (count, window)
 
     def _ensure_sweep_task(self) -> None:
         """Start the background sweep task if it is not already running."""
@@ -414,7 +497,11 @@ class MemoryBackend:
         self._ensure_sweep_task()
         if not limit:
             return True, 0, 0, {"limited": False}
-        count, window = _parse_rate(limit)
+        parsed = self._parsed_cache.get(limit)
+        if parsed is None:
+            parsed = _parse_rate(limit)
+            self._parsed_cache[limit] = parsed
+        count, window = parsed
         return await self._algorithm.allow(self._lock, key, count, window)
 
 
@@ -510,6 +597,94 @@ redis.call('EXPIRE', KEYS[1], ttl)
 return {allowed, math.floor(tokens), time_to_next}
 """
 
+    # Batch fixed window: N keys, N windows in ARGV.
+    # KEYS: [key1..keyN]  ARGV: [window1..windowN]
+    # Returns: [[count1,ttl1], ..., [countN,ttlN]]
+    _LUA_BATCH_FIXED = """
+local results = {}
+for i = 1, #KEYS do
+    local current = redis.call('INCR', KEYS[i])
+    if current == 1 then
+        redis.call('EXPIRE', KEYS[i], ARGV[i])
+    end
+    local ttl = redis.call('TTL', KEYS[i])
+    results[i] = {current, ttl}
+end
+return results
+"""
+
+    # Batch sliding window: N keys.
+    # KEYS: [key1..keyN]  ARGV: [now, window1, limit1, member1, window2, limit2, member2, ...]
+    # Returns: [[allowed,count,oldest_ts], ...]
+    _LUA_BATCH_SLIDING = """
+local now = tonumber(ARGV[1])
+local results = {}
+for i = 1, #KEYS do
+    local base = 1 + (i-1)*3 + 1
+    local window = tonumber(ARGV[base])
+    local limit  = tonumber(ARGV[base+1])
+    local member = ARGV[base+2]
+    local cutoff = now - window
+    redis.call('ZREMRANGEBYSCORE', KEYS[i], '-inf', cutoff)
+    local count = tonumber(redis.call('ZCARD', KEYS[i]))
+    redis.call('EXPIRE', KEYS[i], window + 1)
+    local oldest = redis.call('ZRANGE', KEYS[i], 0, 0, 'WITHSCORES')
+    local oldest_ts = 0
+    if #oldest > 0 then oldest_ts = tonumber(oldest[2]) end
+    if count >= limit then
+        results[i] = {0, count, oldest_ts}
+    else
+        redis.call('ZADD', KEYS[i], now, member)
+        count = count + 1
+        oldest = redis.call('ZRANGE', KEYS[i], 0, 0, 'WITHSCORES')
+        oldest_ts = 0
+        if #oldest > 0 then oldest_ts = tonumber(oldest[2]) end
+        results[i] = {1, count, oldest_ts}
+    end
+end
+return results
+"""
+
+    # Batch token bucket: N keys.
+    # KEYS: [key1..keyN]  ARGV: [now, capacity1, rate1, capacity2, rate2, ...]
+    # Returns: [[allowed,remaining,time_to_next], ...]
+    _LUA_BATCH_TOKEN_BUCKET = """
+local now = tonumber(ARGV[1])
+local results = {}
+for i = 1, #KEYS do
+    local base = 1 + (i-1)*2 + 1
+    local capacity = tonumber(ARGV[base])
+    local rate = tonumber(ARGV[base+1])
+    local data = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill')
+    local tokens = tonumber(data[1])
+    local last_refill = tonumber(data[2])
+    if tokens == nil then
+        tokens = capacity - 1
+        redis.call('HSET', KEYS[i], 'tokens', tokens, 'last_refill', now)
+        local ttl = math.ceil(capacity / rate) + 1
+        redis.call('EXPIRE', KEYS[i], ttl)
+        results[i] = {1, math.floor(tokens), 0}
+    else
+        local elapsed = now - last_refill
+        tokens = math.min(capacity, tokens + elapsed * rate)
+        local allowed, time_to_next
+        if tokens >= 1.0 then
+            tokens = tokens - 1.0
+            allowed = 1
+            time_to_next = 0
+        else
+            allowed = 0
+            time_to_next = math.ceil((1.0 - tokens) / rate)
+        end
+        redis.call('HSET', KEYS[i], 'tokens', tokens, 'last_refill', now)
+        local ttl = math.ceil((capacity - tokens) / rate) + 1
+        redis.call('EXPIRE', KEYS[i], ttl)
+        results[i] = {allowed, math.floor(tokens), time_to_next}
+    end
+end
+return results
+"""
+
     def __init__(
         self,
         redis_url: str,
@@ -525,6 +700,13 @@ return {allowed, math.floor(tokens), time_to_next}
         self._fallback = fallback
         self._client = _client
         self._real_client: Any = None
+        # REDIS-02: SHA cache for EVALSHA — loaded once at first use, never on request path.
+        self._sha_fixed: Optional[str] = None
+        self._sha_sliding: Optional[str] = None
+        self._sha_token_bucket: Optional[str] = None
+        self._sha_batch_fixed: Optional[str] = None
+        self._sha_batch_sliding: Optional[str] = None
+        self._sha_batch_token_bucket: Optional[str] = None
 
     async def _get_client(self) -> Any:
         """Return the Redis client, lazily initialising a real connection if needed."""
@@ -534,6 +716,63 @@ return {allowed, math.floor(tokens), time_to_next}
             import redis.asyncio as aioredis  # noqa: PLC0415
             self._real_client = aioredis.from_url(self._url, decode_responses=False)
         return self._real_client
+
+    async def _ensure_scripts_loaded(self, client: Any) -> None:
+        """REDIS-02: Load all Lua scripts once via SCRIPT LOAD and cache their SHAs.
+
+        Subsequent calls are no-ops once all SHAs are cached. EVALSHA is then used on
+        every request path instead of EVAL — O(1) SHA lookup vs. re-parsing the script.
+        Only caches the result when `script_load` returns a real string SHA (guards
+        against test mock clients that return Mock objects).
+        """
+        pairs = (
+            ("_sha_fixed", self._LUA_FIXED),
+            ("_sha_sliding", self._LUA_SLIDING),
+            ("_sha_token_bucket", self._LUA_TOKEN_BUCKET),
+            ("_sha_batch_fixed", self._LUA_BATCH_FIXED),
+            ("_sha_batch_sliding", self._LUA_BATCH_SLIDING),
+            ("_sha_batch_token_bucket", self._LUA_BATCH_TOKEN_BUCKET),
+        )
+        for attr, script in pairs:
+            if getattr(self, attr) is None:
+                result = await client.script_load(script)
+                if isinstance(result, str):
+                    setattr(self, attr, result)
+
+    async def _evalsha(self, client: Any, sha: Optional[str], script: str, numkeys: int, *args: Any) -> Any:
+        """REDIS-02: Execute via EVALSHA when SHA is cached; fall back to EVAL otherwise.
+
+        Falls back to EVAL when:
+        - sha is None (script not yet loaded — first call before Redis responds, or test mock)
+        - NOSCRIPT error (Redis restarted and flushed its script cache)
+        After a NOSCRIPT fallback, reloads the SHA so the next call uses EVALSHA again.
+        """
+        if sha is None:
+            return await client.eval(script, numkeys, *args)
+        try:
+            return await client.evalsha(sha, numkeys, *args)
+        except Exception as exc:
+            if "NOSCRIPT" in str(exc):
+                logger.warning("EVALSHA cache miss (NOSCRIPT); falling back to EVAL and reloading SHA")
+                result = await client.eval(script, numkeys, *args)
+                try:
+                    new_sha = await client.script_load(script)
+                    if isinstance(new_sha, str):
+                        for attr, s in (
+                            ("_sha_fixed", self._LUA_FIXED),
+                            ("_sha_sliding", self._LUA_SLIDING),
+                            ("_sha_token_bucket", self._LUA_TOKEN_BUCKET),
+                            ("_sha_batch_fixed", self._LUA_BATCH_FIXED),
+                            ("_sha_batch_sliding", self._LUA_BATCH_SLIDING),
+                            ("_sha_batch_token_bucket", self._LUA_BATCH_TOKEN_BUCKET),
+                        ):
+                            if s.strip() == script.strip():
+                                setattr(self, attr, new_sha)
+                                break
+                except Exception:
+                    pass
+                return result
+            raise
 
     async def allow(self, key: str, limit: Optional[str]) -> tuple[bool, int, int, dict[str, Any]]:
         """Check the rate limit for *key* against *limit* using an atomic Redis Lua script."""
@@ -545,6 +784,7 @@ return {allowed, math.floor(tokens), time_to_next}
 
         try:
             client = await self._get_client()
+            await self._ensure_scripts_loaded(client)
 
             if self._algorithm_name == ALGORITHM_SLIDING_WINDOW:
                 return await self._allow_sliding(client, redis_key, count, window_seconds)
@@ -560,7 +800,7 @@ return {allowed, math.floor(tokens), time_to_next}
 
     async def _allow_fixed(self, client: Any, redis_key: str, count: int, window_seconds: int) -> tuple[bool, int, int, dict[str, Any]]:
         """Run the fixed-window Lua script and return the allow/block decision."""
-        result = await client.eval(self._LUA_FIXED, 1, redis_key, window_seconds)
+        result = await self._evalsha(client, self._sha_fixed, self._LUA_FIXED, 1, redis_key, window_seconds)
         current_count = int(result[0])
         ttl = int(result[1])
         now = int(time.time())
@@ -576,7 +816,7 @@ return {allowed, math.floor(tokens), time_to_next}
         """Run the sliding-window Lua script and return the allow/block decision."""
         now = time.time()
         unique_member = f"{now}:{uuid.uuid4().hex}"
-        result = await client.eval(self._LUA_SLIDING, 1, redis_key, now, window_seconds, count, unique_member)
+        result = await self._evalsha(client, self._sha_sliding, self._LUA_SLIDING, 1, redis_key, now, window_seconds, count, unique_member)
         allowed_int = int(result[0])
         current_count = int(result[1])
         oldest_ts = float(result[2]) if result[2] else now
@@ -585,14 +825,14 @@ return {allowed, math.floor(tokens), time_to_next}
         remaining = max(0, count - current_count)
 
         if not allowed_int:
-            return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": reset_in}
+            return False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": max(1, reset_in)}
         return True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": reset_in}
 
     async def _allow_token_bucket(self, client: Any, redis_key: str, count: int, window_seconds: int) -> tuple[bool, int, int, dict[str, Any]]:
         """Run the token-bucket Lua script and return the allow/block decision."""
         now = time.time()
         refill_rate = count / window_seconds  # tokens per second
-        result = await client.eval(self._LUA_TOKEN_BUCKET, 1, redis_key, count, refill_rate, now)
+        result = await self._evalsha(client, self._sha_token_bucket, self._LUA_TOKEN_BUCKET, 1, redis_key, count, refill_rate, now)
         allowed_int = int(result[0])
         remaining = int(result[1])
         time_to_next = int(result[2])
@@ -607,6 +847,116 @@ return {allowed, math.floor(tokens), time_to_next}
         time_to_full = max(1, int(tokens_needed / refill_rate)) if tokens_needed > 0 else 0
         reset_timestamp = int(now + time_to_full)
         return True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": time_to_full}
+
+    async def allow_many(self, checks: List[Tuple[str, str]]) -> List[tuple[bool, int, int, dict[str, Any]]]:
+        """Batch all dimension checks into a single Redis eval call (REDIS-01, REDIS-03).
+
+        Args:
+            checks: List of (dimension_key, rate_str) pairs, e.g. [("user:alice", "10/s")].
+
+        Returns:
+            One (allowed, limit, reset_timestamp, metadata) tuple per input check.
+        """
+        no_limit: tuple[bool, int, int, dict[str, Any]] = (True, 0, 0, {"limited": False})
+        active_indices = [i for i, (_, limit) in enumerate(checks) if limit]
+        if not active_indices:
+            return [no_limit] * len(checks)
+
+        active = [checks[i] for i in active_indices]
+        parsed: List[Tuple[str, int, int]] = [(key, *_parse_rate(limit)) for key, limit in active]  # type: ignore[misc]
+        redis_keys = [f"{self._prefix}:{key}:{window}" for key, _count, window in parsed]
+
+        try:
+            client = await self._get_client()
+            await self._ensure_scripts_loaded(client)
+            if self._algorithm_name == ALGORITHM_SLIDING_WINDOW:
+                active_results = await self._allow_many_sliding(client, parsed, redis_keys)
+            elif self._algorithm_name == ALGORITHM_TOKEN_BUCKET:
+                active_results = await self._allow_many_token_bucket(client, parsed, redis_keys)
+            else:
+                active_results = await self._allow_many_fixed(client, parsed, redis_keys)
+
+        except Exception:
+            logger.exception("RedisBackend.allow_many failed; %s", "falling back to memory" if self._fallback else "allowing request")
+            if self._fallback is not None:
+                active_results = [await self._fallback.allow(key, limit) for key, limit in active]
+            else:
+                active_results = [no_limit] * len(active)
+
+        # Map active results back to the full input list.
+        results: List[tuple[bool, int, int, dict[str, Any]]] = [no_limit] * len(checks)
+        for idx, result in zip(active_indices, active_results):
+            results[idx] = result
+        return results
+
+    async def _allow_many_fixed(
+        self, client: Any, parsed: List[Tuple[str, int, int]], redis_keys: List[str]
+    ) -> List[tuple[bool, int, int, dict[str, Any]]]:
+        """Batch fixed-window: one eval call for all N dimensions."""
+        argv = [str(window) for _, _, window in parsed]
+        raw = await self._evalsha(client, self._sha_batch_fixed, self._LUA_BATCH_FIXED, len(parsed), *redis_keys, *argv)
+        now = int(time.time())
+        results = []
+        for i, (_key, count, _window) in enumerate(parsed):
+            current_count = int(raw[i][0])
+            ttl = int(raw[i][1])
+            reset_timestamp = now + max(ttl, 0)
+            reset_in = max(ttl, 0)
+            remaining = max(0, count - current_count)
+            if current_count > count:
+                results.append((False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": reset_in}))
+            else:
+                results.append((True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": reset_in}))
+        return results
+
+    async def _allow_many_sliding(
+        self, client: Any, parsed: List[Tuple[str, int, int]], redis_keys: List[str]
+    ) -> List[tuple[bool, int, int, dict[str, Any]]]:
+        """Batch sliding-window: one eval call for all N dimensions."""
+        now = time.time()
+        argv: List[Any] = [now]
+        for _key, count, window in parsed:
+            argv += [window, count, f"{now}:{uuid.uuid4().hex}"]
+        raw = await self._evalsha(client, self._sha_batch_sliding, self._LUA_BATCH_SLIDING, len(parsed), *redis_keys, *argv)
+        results = []
+        for i, (_key, count, window) in enumerate(parsed):
+            allowed_int = int(raw[i][0])
+            current_count = int(raw[i][1])
+            oldest_ts = float(raw[i][2]) if raw[i][2] else now
+            reset_timestamp = int(oldest_ts + window)
+            reset_in = max(0, int(reset_timestamp - now))
+            remaining = max(0, count - current_count)
+            if not allowed_int:
+                results.append((False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": reset_in}))
+            else:
+                results.append((True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": reset_in}))
+        return results
+
+    async def _allow_many_token_bucket(
+        self, client: Any, parsed: List[Tuple[str, int, int]], redis_keys: List[str]
+    ) -> List[tuple[bool, int, int, dict[str, Any]]]:
+        """Batch token-bucket: one eval call for all N dimensions."""
+        now = time.time()
+        argv: List[Any] = [now]
+        for _key, count, window in parsed:
+            refill_rate = count / window
+            argv += [count, refill_rate]
+        raw = await self._evalsha(client, self._sha_batch_token_bucket, self._LUA_BATCH_TOKEN_BUCKET, len(parsed), *redis_keys, *argv)
+        results = []
+        for i, (_key, count, window) in enumerate(parsed):
+            refill_rate = count / window
+            allowed_int = int(raw[i][0])
+            remaining = int(raw[i][1])
+            time_to_next = int(raw[i][2])
+            if not allowed_int:
+                reset_timestamp = int(now + time_to_next)
+                results.append((False, count, reset_timestamp, {"limited": True, "remaining": 0, "reset_in": time_to_next}))
+            else:
+                tokens_needed = count - remaining
+                time_to_full = max(1, int(tokens_needed / refill_rate)) if tokens_needed > 0 else 0
+                reset_timestamp = int(now + time_to_full)
+                results.append((True, count, reset_timestamp, {"limited": True, "remaining": remaining, "reset_in": time_to_full}))
+        return results
 
 
 # ---------------------------------------------------------------------------
@@ -699,6 +1049,107 @@ class RateLimiterPlugin(Plugin):
             else {}
         )
 
+        # Rust engine — handles both memory and Redis backends when available.
+        # For Redis: Rust owns the connection and fires batch Lua scripts directly,
+        # keeping the shared counter semantics required for multi-instance deployments.
+        # Pre-parse limits here so the hot path never does string parsing (IFACE-01).
+        self._rust_engine: Optional[Any] = None
+        if _RUST_AVAILABLE:
+            try:
+                rust_config: Dict[str, Any] = {
+                    "by_user": self._cfg.by_user,
+                    "by_tenant": self._cfg.by_tenant,
+                    "by_tool": self._cfg.by_tool or {},
+                    "algorithm": self._cfg.algorithm,
+                    "backend": self._cfg.backend,
+                }
+                if self._cfg.backend == "redis":
+                    rust_config["redis_url"] = self._cfg.redis_url
+                    rust_config["redis_key_prefix"] = self._cfg.redis_key_prefix
+                self._rust_engine = RustRateLimiterEngine(rust_config)
+                # Pre-parsed (count, window_nanos) for each dimension — used to build
+                # the checks list passed to evaluate_many() on every hook call.
+                self._rust_by_user: Optional[Tuple[int, int]] = (
+                    self._parse_rate_nanos(self._cfg.by_user) if self._cfg.by_user else None
+                )
+                self._rust_by_tenant: Optional[Tuple[int, int]] = (
+                    self._parse_rate_nanos(self._cfg.by_tenant) if self._cfg.by_tenant else None
+                )
+                self._rust_by_tool: Dict[str, Tuple[int, int]] = {
+                    k.strip().lower(): self._parse_rate_nanos(v)
+                    for k, v in (self._cfg.by_tool or {}).items()
+                }
+                logger.debug("Rate limiter using Rust engine (backend=%s, algorithm=%s)", self._cfg.backend, self._cfg.algorithm)
+            except Exception:
+                logger.warning("Failed to initialise Rust rate limiter engine; falling back to Python backend", exc_info=True)
+                self._rust_engine = None
+
+    @staticmethod
+    def _parse_rate_nanos(rate: str) -> Tuple[int, int]:
+        """Parse a rate string and return (count, window_nanos)."""
+        count, window_secs = _parse_rate(rate)
+        return count, window_secs * 1_000_000_000
+
+    def _build_rust_checks(self, user: str, tenant: Optional[str], tool: str) -> List[Tuple[str, int, int]]:
+        """Build the checks list for evaluate_many() from the current request context.
+
+        Python extracts context; Rust engine does all rate math (ARCH-03).
+        None tenant is excluded — no check added (CORR-04).
+        """
+        checks: List[Tuple[str, int, int]] = []
+        if self._rust_by_user:
+            count, window_nanos = self._rust_by_user
+            checks.append((f"user:{user}", count, window_nanos))
+        if tenant and self._rust_by_tenant:
+            count, window_nanos = self._rust_by_tenant
+            checks.append((f"tenant:{tenant}", count, window_nanos))
+        if tool in self._rust_by_tool:
+            count, window_nanos = self._rust_by_tool[tool]
+            checks.append((f"tool:{tool}", count, window_nanos))
+        return checks
+
+    def _rust_to_plugin_headers(self, result: Any, include_retry_after: bool) -> dict[str, str]:
+        """Convert an EvalResult to HTTP rate-limit headers (CORR-02)."""
+        retry_after = result.retry_after if result.retry_after is not None else 0
+        return _make_headers(result.limit, result.remaining, result.reset_timestamp, retry_after, include_retry_after)
+
+    def _rust_to_plugin_meta(self, result: Any) -> dict[str, Any]:
+        """Convert a Rust EvalResult into the same metadata shape as the Python path."""
+
+        def _dimension_meta(dim: Any) -> dict[str, Any]:
+            """Convert a single Rust dimension result into Python plugin metadata."""
+            reset_in = dim.retry_after if dim.retry_after is not None else max(0, int(dim.reset_timestamp) - int(time.time()))
+            return {
+                "limited": True,
+                "remaining": int(dim.remaining),
+                "reset_in": reset_in,
+            }
+
+        reset_in = result.retry_after if result.retry_after is not None else max(0, int(result.reset_timestamp) - int(time.time()))
+        meta: dict[str, Any] = {
+            "limited": True,
+            "remaining": int(result.remaining),
+            "reset_in": reset_in,
+        }
+        if not result.allowed:
+            meta["dimensions"] = {
+                "violated": [_dimension_meta(dim) for dim in result.violated_dimensions],
+                "allowed": [_dimension_meta(dim) for dim in result.allowed_dimensions],
+            }
+        elif result.allowed_dimensions:
+            meta["dimensions"] = {
+                "allowed": [_dimension_meta(dim) for dim in result.allowed_dimensions],
+            }
+        return meta
+
+    def _should_fallback_to_python_redis(self) -> bool:
+        """Return True when Redis-backed Rust errors should drop to Python fallback."""
+        return self._cfg.backend == "redis" and self._cfg.redis_fallback and isinstance(self._rate_backend, RedisBackend)
+
+    def _should_use_async_rust_redis(self) -> bool:
+        """Return True when the Rust Redis fast path should use the async bridge."""
+        return self._cfg.backend == "redis"
+
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """Enforce rate limits before a prompt is fetched."""
         try:
@@ -706,14 +1157,59 @@ class RateLimiterPlugin(Plugin):
             user = _extract_user_identity(context.global_context.user)
             tenant = str(context.global_context.tenant_id).strip() if context.global_context.tenant_id else None
 
-            results = [
-                await self._rate_backend.allow(f"user:{user}", self._cfg.by_user),
-            ]
-            if tenant and self._cfg.by_tenant:
-                results.append(await self._rate_backend.allow(f"tenant:{tenant}", self._cfg.by_tenant))
+            # Rust fast-path: single PyO3 call builds keys, evaluates, and
+            # returns pre-built headers/meta dicts (ARCH-01).
+            if self._rust_engine is not None:
+                try:
+                    now_unix = int(time.time())
+                    if self._should_use_async_rust_redis():
+                        allowed, headers, meta = await self._rust_engine.check_async(user, tenant, prompt, now_unix, True)
+                    else:
+                        allowed, headers, meta = self._rust_engine.check(user, tenant, prompt, now_unix, True)
+                except Exception:
+                    if self._should_fallback_to_python_redis():
+                        logger.warning(
+                            "Rust Redis rate limiter failed during prompt_pre_fetch; falling back to Python Redis backend",
+                            exc_info=True,
+                        )
+                    else:
+                        raise
+                else:
+                    if meta.get("limited") is False:
+                        return PromptPrehookResult(metadata=meta)
+                    if not allowed:
+                        return PromptPrehookResult(
+                            continue_processing=False,
+                            violation=PluginViolation(
+                                reason="Rate limit exceeded",
+                                description=f"Rate limit exceeded for prompt '{prompt}'",
+                                code="RATE_LIMIT",
+                                details=meta,
+                                http_status_code=429,
+                                http_headers=headers,
+                            ),
+                        )
+                    # Allowed — strip Retry-After from headers (only sent on violations).
+                    headers.pop("Retry-After", None)
+                    return PromptPrehookResult(metadata=meta, http_headers=headers)
 
+            # Python path (ARCH-05: fallback when Rust engine unavailable).
+            checks: List[Tuple[str, str]] = []
+            if self._cfg.by_user:
+                checks.append((f"user:{user}", self._cfg.by_user))
+            if tenant and self._cfg.by_tenant:
+                checks.append((f"tenant:{tenant}", self._cfg.by_tenant))
             if self._normalised_by_tool and prompt in self._normalised_by_tool:
-                results.append(await self._rate_backend.allow(f"tool:{prompt}", self._normalised_by_tool[prompt]))
+                checks.append((f"tool:{prompt}", self._normalised_by_tool[prompt]))
+
+            if not checks:
+                return PromptPrehookResult(metadata={"limited": False})
+
+            # Batch for Redis (REDIS-01), per-call for memory.
+            if isinstance(self._rate_backend, RedisBackend):
+                results = await self._rate_backend.allow_many(checks)
+            else:
+                results = [await self._rate_backend.allow(key, limit) for key, limit in checks]
 
             allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
             retry_after = meta.get("reset_in", 0)
@@ -739,6 +1235,8 @@ class RateLimiterPlugin(Plugin):
             return PromptPrehookResult(metadata=meta)
 
         except Exception:
+            # Deliberate fail-open: engine errors must not block legitimate traffic.
+            # See module docstring "Security contract — fail-open on error".
             logger.exception("RateLimiterPlugin.prompt_pre_fetch encountered an unexpected error; allowing request")
             return PromptPrehookResult()
 
@@ -749,14 +1247,59 @@ class RateLimiterPlugin(Plugin):
             user = _extract_user_identity(context.global_context.user)
             tenant = str(context.global_context.tenant_id).strip() if context.global_context.tenant_id else None
 
-            results = [
-                await self._rate_backend.allow(f"user:{user}", self._cfg.by_user),
-            ]
-            if tenant and self._cfg.by_tenant:
-                results.append(await self._rate_backend.allow(f"tenant:{tenant}", self._cfg.by_tenant))
+            # Rust fast-path: single PyO3 call builds keys, evaluates, and
+            # returns pre-built headers/meta dicts (ARCH-01).
+            if self._rust_engine is not None:
+                try:
+                    now_unix = int(time.time())
+                    if self._should_use_async_rust_redis():
+                        allowed, headers, meta = await self._rust_engine.check_async(user, tenant, tool, now_unix, True)
+                    else:
+                        allowed, headers, meta = self._rust_engine.check(user, tenant, tool, now_unix, True)
+                except Exception:
+                    if self._should_fallback_to_python_redis():
+                        logger.warning(
+                            "Rust Redis rate limiter failed during tool_pre_invoke; falling back to Python Redis backend",
+                            exc_info=True,
+                        )
+                    else:
+                        raise
+                else:
+                    if meta.get("limited") is False:
+                        return ToolPreInvokeResult(metadata=meta)
+                    if not allowed:
+                        return ToolPreInvokeResult(
+                            continue_processing=False,
+                            violation=PluginViolation(
+                                reason="Rate limit exceeded",
+                                description=f"Rate limit exceeded for tool '{tool}'",
+                                code="RATE_LIMIT",
+                                details=meta,
+                                http_status_code=429,
+                                http_headers=headers,
+                            ),
+                        )
+                    # Allowed — strip Retry-After from headers (only sent on violations).
+                    headers.pop("Retry-After", None)
+                    return ToolPreInvokeResult(metadata=meta, http_headers=headers)
 
+            # Python path (ARCH-05: fallback when Rust engine unavailable).
+            checks: List[Tuple[str, str]] = []
+            if self._cfg.by_user:
+                checks.append((f"user:{user}", self._cfg.by_user))
+            if tenant and self._cfg.by_tenant:
+                checks.append((f"tenant:{tenant}", self._cfg.by_tenant))
             if self._normalised_by_tool and tool in self._normalised_by_tool:
-                results.append(await self._rate_backend.allow(f"tool:{tool}", self._normalised_by_tool[tool]))
+                checks.append((f"tool:{tool}", self._normalised_by_tool[tool]))
+
+            if not checks:
+                return ToolPreInvokeResult(metadata={"limited": False})
+
+            # Batch for Redis (REDIS-01), per-call for memory.
+            if isinstance(self._rate_backend, RedisBackend):
+                results = await self._rate_backend.allow_many(checks)
+            else:
+                results = [await self._rate_backend.allow(key, limit) for key, limit in checks]
 
             allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
             retry_after = meta.get("reset_in", 0)
@@ -782,5 +1325,7 @@ class RateLimiterPlugin(Plugin):
             return ToolPreInvokeResult(metadata=meta)
 
         except Exception:
+            # Deliberate fail-open: engine errors must not block legitimate traffic.
+            # See module docstring "Security contract — fail-open on error".
             logger.exception("RateLimiterPlugin.tool_pre_invoke encountered an unexpected error; allowing request")
             return ToolPreInvokeResult()

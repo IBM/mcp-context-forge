@@ -163,7 +163,7 @@ _detected_algorithm: str = ""
 # Number of bootstrapped users with valid JWT tokens
 _valid_users: int = 0
 
-_TEST_PASSWORD = "ScaleTest123!"
+_TEST_PASSWORD = "ScaleTest123!"  # pragma: allowlist secret
 _USER_PREFIX = "rl-scale"
 
 # =============================================================================
@@ -883,8 +883,7 @@ class ScaleComparisonUser(FastHttpUser):
         A single tools/call request is sent. The Locust stat name is set based on
         the semantic outcome — no second request is fired:
           - 'MCP tools/call [allowed]'      — gateway processed the call normally
-          - 'MCP tools/call [rate-limited]' — MCP result.isError is set; includes plugin rate-limit blocks
-                                              and other tool errors — the two cannot be distinguished here
+          - 'MCP tools/call [rate-limited]' — HTTP 429 or MCP result.isError (plugin rate-limit block)
           - 'MCP tools/call [infra-error]'  — HTTP error or malformed response
         """
         if not _tool_names or not _server_id:
@@ -913,6 +912,10 @@ class ScaleComparisonUser(FastHttpUser):
                 if sid:
                     self._mcp_session_id = sid
 
+                if response.status_code == 429:
+                    response.request_meta["name"] = "MCP tools/call [rate-limited]"
+                    response.success()
+                    return
                 if response.status_code in (502, 503, 504):
                     response.request_meta["name"] = "MCP tools/call [infra-error]"
                     response.failure(f"Infrastructure error: {response.status_code}")
@@ -933,6 +936,17 @@ class ScaleComparisonUser(FastHttpUser):
                     return
                 if "error" in data:
                     err = data["error"]
+                    err_msg = str(err.get("message", "")).lower()
+                    err_data_str = str(err.get("data", "")).lower()
+                    # Rate-limit violations may arrive as JSON-RPC errors when the
+                    # PluginViolationError is caught by FastAPI's global handler.
+                    if "rate" in err_msg or "rate_limit" in err_data_str or err.get("code") == 429:
+                        response.request_meta["name"] = "MCP tools/call [rate-limited]"
+                        response.success()
+                        bucket = int((time.time() - _test_start_time) / 30)
+                        with _stats_lock:
+                            _bucket_stats[bucket]["blocked"] += 1
+                        return
                     response.request_meta["name"] = "MCP tools/call [infra-error]"
                     response.failure(f"JSON-RPC error {err.get('code', '?')}: {err.get('message', '?')}")
                     return

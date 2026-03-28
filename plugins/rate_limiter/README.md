@@ -99,7 +99,7 @@ Each identity (user, tenant, tool) has a bucket that holds up to `count` tokens.
 
 ## Backends
 
-### Memory backend (default)
+### Memory backend (default, single-instance only)
 
 - Counters are stored in a process-local dict (`_store`)
 - An `asyncio.Lock` serialises all counter reads and writes — safe under concurrent asyncio tasks
@@ -116,7 +116,7 @@ Each identity (user, tenant, tool) has a bucket that holds up to `count` tokens.
 - If `redis_fallback: true` (default) and Redis is unavailable, the plugin falls back to the in-process `MemoryBackend` automatically — requests are never blocked due to Redis downtime
 - If `redis_fallback: false` and Redis is unavailable, the exception is caught and the request is allowed through (fail-open)
 
-**Multi-instance deployment:** use `backend: redis`. The Redis service is already included in the default Docker Compose stack at `redis://redis:6379/0`.
+**Multi-instance deployment (important):** The `memory` backend is local to a single gateway instance — rate limit counters are not shared across replicas. For multi-instance deployments (e.g., behind nginx or on OpenShift with multiple gateway pods), always use `backend: redis` to ensure rate limits are enforced correctly across all instances. The default production configuration (`plugins/config.yaml`) already sets `backend: redis`.
 
 ## Examples
 
