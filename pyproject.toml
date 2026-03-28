@@ -8,8 +8,7 @@ requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
 [tool.uv]
-exclude-newer = "10 days"
-exclude-newer-package = { langchain-core = false, langchain-openai = false }
+exclude-newer = "2026-03-25T15:10:42Z"
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
