@@ -110,8 +110,6 @@ impl PIIDetectorRust {
     /// * `detect_driver_license` (bool): Detect driver's license numbers
     /// * `detect_bank_account` (bool): Detect bank account numbers
     /// * `detect_medical_record` (bool): Detect medical record numbers
-    /// * `detect_aws_keys` (bool): Detect AWS access keys
-    /// * `detect_api_keys` (bool): Detect API keys
     /// * `default_mask_strategy` (str): "redact", "partial", "hash", "tokenize", "remove"
     /// * `redaction_text` (str): Text to use for redaction (default: "\[REDACTED\]")
     /// * `block_on_detection` (bool): Whether to block on detection
@@ -554,8 +552,6 @@ impl PIIDetectorRust {
             "driver_license" => Ok(PIIType::DriverLicense),
             "bank_account" => Ok(PIIType::BankAccount),
             "medical_record" => Ok(PIIType::MedicalRecord),
-            "aws_key" => Ok(PIIType::AwsKey),
-            "api_key" => Ok(PIIType::ApiKey),
             "custom" => Ok(PIIType::Custom),
             _ => Err(()),
         }
@@ -756,14 +752,13 @@ mod tests {
             detect_email: true,
             detect_phone: true,
             detect_ip_address: true,
-            detect_aws_keys: true,
             default_mask_strategy: MaskingStrategy::Hash,
             ..Default::default()
         };
         let patterns = compile_patterns(&config).unwrap();
         let detector = PIIDetectorRust { patterns, config };
         let detections = detector.detect_internal(
-            "SSN 123-45-6789 Email john@example.com Phone 555-123-4567 Card 4111-1111-1111-1111 IP 192.168.1.1 Key AKIAIOSFODNN7EXAMPLE",
+            "SSN 123-45-6789 Email john@example.com Phone 555-123-4567 Card 4111-1111-1111-1111 IP 192.168.1.1",
         );
 
         assert_eq!(
@@ -786,10 +781,6 @@ mod tests {
             detections[&PIIType::IpAddress][0].mask_strategy,
             MaskingStrategy::Redact
         );
-        assert_eq!(
-            detections[&PIIType::AwsKey][0].mask_strategy,
-            MaskingStrategy::Redact
-        );
     }
 
     #[test]
@@ -805,8 +796,6 @@ mod tests {
             detect_driver_license: false,
             detect_bank_account: false,
             detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: false,
             detect_bsn: false,
             ..Default::default()
         };
@@ -853,8 +842,6 @@ mod tests {
             detect_driver_license: false,
             detect_bank_account: false,
             detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: false,
             detect_bsn: false,
             ..Default::default()
         };
@@ -892,8 +879,6 @@ mod tests {
             detect_driver_license: false,
             detect_bank_account: true,
             detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: false,
             ..Default::default()
         };
         let patterns = compile_patterns(&config).unwrap();
@@ -912,39 +897,6 @@ mod tests {
     }
 
     #[test]
-    fn test_aws_secret_requires_context_to_avoid_broad_matches() {
-        let config = PIIConfig {
-            detect_ssn: false,
-            detect_bsn: false,
-            detect_credit_card: false,
-            detect_email: false,
-            detect_phone: false,
-            detect_ip_address: false,
-            detect_date_of_birth: false,
-            detect_passport: false,
-            detect_driver_license: false,
-            detect_bank_account: false,
-            detect_medical_record: false,
-            detect_aws_keys: true,
-            detect_api_keys: false,
-            ..Default::default()
-        };
-        let patterns = compile_patterns(&config).unwrap();
-        let detector = PIIDetectorRust { patterns, config };
-
-        assert!(
-            !detector
-                .detect_internal("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-                .contains_key(&PIIType::AwsKey)
-        );
-        assert!(
-            detector
-                .detect_internal("aws_secret_access_key = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-                .contains_key(&PIIType::AwsKey)
-        );
-    }
-
-    #[test]
     fn test_passport_requires_context_to_avoid_generic_ids() {
         let config = PIIConfig {
             detect_ssn: false,
@@ -958,8 +910,6 @@ mod tests {
             detect_driver_license: false,
             detect_bank_account: false,
             detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: false,
             ..Default::default()
         };
         let patterns = compile_patterns(&config).unwrap();
@@ -991,8 +941,6 @@ mod tests {
             detect_driver_license: false,
             detect_bank_account: false,
             detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: false,
             ..Default::default()
         };
         let patterns = compile_patterns(&config).unwrap();
@@ -1018,8 +966,6 @@ mod tests {
             detect_driver_license: false,
             detect_bank_account: false,
             detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: false,
             detect_bsn: false,
             ..Default::default()
         };
@@ -1107,8 +1053,8 @@ mod tests {
             config
                 .custom_patterns
                 .push(super::super::config::CustomPattern {
-                    pattern: r"\bAKIA[0-9A-Z]{16}\b".to_string(),
-                    description: "Access key".to_string(),
+                    pattern: r"\bEMP\d{6}\b".to_string(),
+                    description: "Employee ID".to_string(),
                     mask_strategy: MaskingStrategy::Redact,
                     enabled: true,
                 });
@@ -1117,7 +1063,7 @@ mod tests {
             let detector = PIIDetectorRust { patterns, config };
 
             let data = PyDict::new(py);
-            data.set_item(1, "AKIAFAKE12345EXAMPLE").unwrap();
+            data.set_item(1, "EMP123456").unwrap();
 
             let result = detector.process_nested(py, &data.into_any(), "");
             assert!(
@@ -1182,8 +1128,6 @@ mod tests {
                 detect_driver_license: false,
                 detect_bank_account: false,
                 detect_medical_record: false,
-                detect_aws_keys: false,
-                detect_api_keys: false,
                 ..Default::default()
             };
             let patterns = compile_patterns(&config).unwrap();
@@ -1208,8 +1152,6 @@ mod tests {
             detect_driver_license: false,
             detect_bank_account: false,
             detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: false,
             ..Default::default()
         };
         config
@@ -1282,34 +1224,6 @@ mod tests {
     }
 
     #[test]
-    fn test_detects_api_key_assignment_syntax() {
-        let config = PIIConfig {
-            detect_ssn: false,
-            detect_bsn: false,
-            detect_credit_card: false,
-            detect_email: false,
-            detect_phone: false,
-            detect_ip_address: false,
-            detect_date_of_birth: false,
-            detect_passport: false,
-            detect_driver_license: false,
-            detect_bank_account: false,
-            detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: true,
-            ..Default::default()
-        };
-        let patterns = compile_patterns(&config).unwrap();
-        let detector = PIIDetectorRust { patterns, config };
-
-        assert!(
-            detector
-                .detect_internal("OPENAI_API_KEY=fake_token_value_1234567890")
-                .contains_key(&PIIType::ApiKey)
-        );
-    }
-
-    #[test]
     fn test_detects_plus_prefixed_international_phone_number() {
         let config = PIIConfig {
             detect_ssn: false,
@@ -1323,8 +1237,6 @@ mod tests {
             detect_driver_license: false,
             detect_bank_account: false,
             detect_medical_record: false,
-            detect_aws_keys: false,
-            detect_api_keys: false,
             ..Default::default()
         };
         let patterns = compile_patterns(&config).unwrap();

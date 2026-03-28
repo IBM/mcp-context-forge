@@ -29,8 +29,6 @@ pub enum PIIType {
     DriverLicense,
     BankAccount,
     MedicalRecord,
-    AwsKey,
-    ApiKey,
     Custom,
 }
 
@@ -49,8 +47,6 @@ impl PIIType {
             PIIType::DriverLicense => "driver_license",
             PIIType::BankAccount => "bank_account",
             PIIType::MedicalRecord => "medical_record",
-            PIIType::AwsKey => "aws_key",
-            PIIType::ApiKey => "api_key",
             PIIType::Custom => "custom",
         }
     }
@@ -97,8 +93,6 @@ pub struct PIIConfig {
     pub detect_driver_license: bool,
     pub detect_bank_account: bool,
     pub detect_medical_record: bool,
-    pub detect_aws_keys: bool,
-    pub detect_api_keys: bool,
 
     // Masking configuration
     pub default_mask_strategy: MaskingStrategy,
@@ -137,8 +131,6 @@ impl Default for PIIConfig {
             detect_driver_license: true,
             detect_bank_account: true,
             detect_medical_record: true,
-            detect_aws_keys: true,
-            detect_api_keys: true,
 
             // Default masking
             default_mask_strategy: MaskingStrategy::Redact,
@@ -203,8 +195,6 @@ impl PIIConfig {
         extract_bool!(detect_driver_license);
         extract_bool!(detect_bank_account);
         extract_bool!(detect_medical_record);
-        extract_bool!(detect_aws_keys);
-        extract_bool!(detect_api_keys);
         extract_bool!(block_on_detection);
         extract_bool!(log_detections);
         extract_bool!(include_detection_details);

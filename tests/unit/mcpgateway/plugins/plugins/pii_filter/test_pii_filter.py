@@ -170,42 +170,6 @@ class TestPIIDetectorParametric:
         assert "6789" in masked
         assert "123-45-6789" not in masked
 
-    @pytest.mark.parametrize(
-        "text,description",
-        [
-            ("SSN: 000-12-3456", "area cannot be 000"),
-            ("SSN: 666-12-3456", "area cannot be 666"),
-            ("SSN: 901-12-3456", "area cannot be 900-999"),
-            ("SSN: 123-00-4567", "group cannot be 00"),
-            ("SSN: 123-45-0000", "serial cannot be 0000"),
-        ],
-    )
-    def test_structurally_impossible_ssns_follow_implementation_behavior(self, detector_class, text, description):
-        """Rust rejects SSA-invalid SSNs; the deprecated Python detector still documents legacy behavior."""
-        config = PIIFilterConfig(
-            detect_ssn=True,
-            detect_bsn=False,
-            detect_phone=False,
-            detect_bank_account=False,
-            detect_credit_card=False,
-            detect_email=False,
-            detect_ip_address=False,
-            detect_date_of_birth=False,
-            detect_passport=False,
-            detect_driver_license=False,
-            detect_medical_record=False,
-            detect_aws_keys=False,
-            detect_api_keys=False,
-        )
-        detector = detector_class(config)
-        detections = detector.detect(text)
-        detection_keys = normalize_detection_keys(detections)
-
-        if is_rust_detector_class(detector_class):
-            assert "ssn" not in detection_keys, f"{description}: Rust detector should reject {text}"
-        else:
-            assert "ssn" in detection_keys, f"{description}: expected legacy detector to match {text}"
-
     # BSN Detection Tests (Python-specific)
     @pytest.mark.parametrize(
         "text,should_detect",
@@ -536,41 +500,14 @@ class TestPIIDetectorParametric:
         detection_keys = normalize_detection_keys(detections)
         assert "date_of_birth" in detection_keys
 
-    # AWS Key Detection Tests
-    @pytest.mark.parametrize(
-        "text,should_detect",
-        [
-            ("Access key: AKIAIOSFODNN7EXAMPLE", True),
-            ("AWS_KEY=AKIAIOSFODNN7EXAMPLE", True),
-            ("AKIA1234567890123456", True),
-            ("SECRET=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", True),
-            ("No key here", False),
-        ],
-    )
-    def test_aws_key_detection(self, detector_class, text, should_detect):
-        """Test AWS key detection."""
-        config = PIIFilterConfig(detect_aws_keys=True)
-        detector = detector_class(config)
+    def test_secret_like_values_are_not_pii(self, detector):
+        """Secret-style tokens belong to the secrets detection plugin, not PII filter."""
+        text = "AWS_KEY=AKIAIOSFODNN7EXAMPLE X-API-Key: test12345678901234567890"  # gitleaks:allow
         detections = detector.detect(text)
 
         detection_keys = normalize_detection_keys(detections)
-        expected_detection = should_detect
-        if is_rust_detector_class(detector_class) and text == "SECRET=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY":
-            expected_detection = False
-
-        if expected_detection:
-            assert "aws_key" in detection_keys
-        else:
-            assert "aws_key" not in detection_keys
-
-    # API Key Detection Tests
-    def test_detect_api_key_header(self, detector):
-        """Test API key in header format."""
-        text = "X-API-Key: test12345678901234567890"  # gitleaks:allow
-        detections = detector.detect(text)
-
-        detection_keys = normalize_detection_keys(detections)
-        assert "api_key" in detection_keys
+        assert "aws_key" not in detection_keys
+        assert "api_key" not in detection_keys
 
     # Multiple PII Types Tests
     def test_detect_multiple_pii_types(self, detector):
@@ -798,14 +735,12 @@ class TestRustPIIDetectorSpecific:
                 detect_email=False,
                 detect_phone=False,
                 detect_ip_address=True,
-                detect_aws_keys=True,
                 default_mask_strategy=MaskingStrategy.PARTIAL,
             )
         )
-        detections = detector.detect("IP 192.168.1.1 KEY AKIAIOSFODNN7EXAMPLE")
+        detections = detector.detect("IP 192.168.1.1")
 
         assert detections["ip_address"][0]["mask_strategy"] == "redact"
-        assert detections["aws_key"][0]["mask_strategy"] == "redact"
 
     def test_custom_pattern_keeps_explicit_strategy_when_default_redacts(self):
         """Custom pattern overrides should win over the global default strategy."""
@@ -834,8 +769,6 @@ class TestRustPIIDetectorSpecific:
                 detect_passport=False,
                 detect_driver_license=False,
                 detect_medical_record=False,
-                detect_aws_keys=False,
-                detect_api_keys=False,
                 default_mask_strategy=MaskingStrategy.REDACT,
             )
         )
@@ -856,18 +789,16 @@ class TestRustPIIDetectorSpecific:
                 detect_email=True,
                 detect_phone=True,
                 detect_ip_address=True,
-                detect_aws_keys=True,
                 detect_bsn=False,
                 detect_bank_account=False,
                 detect_date_of_birth=False,
                 detect_passport=False,
                 detect_driver_license=False,
                 detect_medical_record=False,
-                detect_api_keys=False,
                 default_mask_strategy=MaskingStrategy.HASH,
             )
         )
-        text = "SSN: 123-45-6789 " "Email: john@example.com " "Phone: 555-123-4567 " "Card: 4111-1111-1111-1111 " "IP: 192.168.1.1 " "Key: AKIAIOSFODNN7EXAMPLE"
+        text = "SSN: 123-45-6789 " "Email: john@example.com " "Phone: 555-123-4567 " "Card: 4111-1111-1111-1111 " "IP: 192.168.1.1"
 
         detections = detector.detect(text)
         masked = detector.mask(text, detections)
@@ -877,13 +808,12 @@ class TestRustPIIDetectorSpecific:
         assert detections["email"][0]["mask_strategy"] == "partial"
         assert detections["phone"][0]["mask_strategy"] == "partial"
         assert detections["ip_address"][0]["mask_strategy"] == "redact"
-        assert detections["aws_key"][0]["mask_strategy"] == "redact"
 
         assert "***-**-6789" in masked
         assert "j***n@example.com" in masked
         assert "***-***-4567" in masked
         assert "****-****-****-1111" in masked
-        assert masked.count("[REDACTED]") == 2
+        assert masked.count("[REDACTED]") == 1
         assert "[HASH:" not in masked
 
     def test_very_long_text_performance(self, detector):
@@ -993,7 +923,6 @@ class TestPIIFilterPlugin:
                 "detect_email": True,
                 "detect_phone": True,
                 "detect_ip_address": True,
-                "detect_aws_keys": True,
                 "default_mask_strategy": "partial",
                 "block_on_detection": False,
                 "log_detections": True,
@@ -1050,7 +979,7 @@ class TestPIIFilterPlugin:
         # Create messages with PII
         messages = [
             Message(role=Role.USER, content=TextContent(type="text", text="Contact me at john@example.com or 555-123-4567")),
-            Message(role=Role.ASSISTANT, content=TextContent(type="text", text="I'll reach you at the provided contact: AKIAIOSFODNN7EXAMPLE")),
+            Message(role=Role.ASSISTANT, content=TextContent(type="text", text="I'll reach you at jane.doe@example.com once the ticket is processed")),
         ]
 
         payload = PromptPosthookPayload(prompt_id="test_prompt", result=PromptResult(messages=messages))
@@ -1064,7 +993,7 @@ class TestPIIFilterPlugin:
 
         assert "john@example.com" not in user_msg
         assert "555-123-4567" not in user_msg
-        assert "AKIAIOSFODNN7EXAMPLE" not in assistant_msg
+        assert "jane.doe@example.com" not in assistant_msg
 
         # Check metadata
         assert "pii_detections" in context.metadata

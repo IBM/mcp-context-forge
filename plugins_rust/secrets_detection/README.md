@@ -47,16 +47,34 @@ secrets_detection:
       aws_access_key_id: true
       aws_secret_access_key: true
       google_api_key: true
+      github_token: true
+      stripe_secret_key: true
+      generic_api_key_assignment: false  # Broad heuristic; useful for X-API-Key/api_key=... style coverage, but can increase false positives  # pragma: allowlist secret
       slack_token: true
       private_key_block: true
       jwt_like: true
       hex_secret_32: true
-      base64_24: true
+      base64_24: false  # Broad intrinsic-shape heuristic; keep opt-in unless you explicitly want aggressive blocking
     redact: false                    # Replace secrets with redaction_text
     redaction_text: "***REDACTED***"
     block_on_detection: true         # Block requests containing secrets
     min_findings_to_block: 1         # Threshold for blocking
 ```
+
+Warnings:
+- `google_api_key`, `github_token`, and `stripe_secret_key` are specific detectors and are safe to leave enabled by default.
+- `generic_api_key_assignment` is intentionally broad so it can catch header-style or assignment-style API keys across providers. It is disabled by default and should be enabled only when you want that extra coverage.
+- `jwt_like`, `hex_secret_32`, and `base64_24` are also heuristic patterns. If you combine them with blocking mode, expect more false positives.
+
+What the plugin can do:
+- Catch supported provider formats directly from their intrinsic token structure, without depending on surrounding labels.
+- Catch labeled assignments such as `X-API-Key: ...` when you explicitly enable the broader generic assignment heuristic. <!-- pragma: allowlist secret -->
+- Keep false positives relatively low by preferring provider-specific formats over generic entropy-based matching.
+
+What the plugin cannot do:
+- It cannot guarantee 100% recall for every secret format in the ecosystem while also maintaining low false positives.
+- It will not detect every arbitrary random-looking string with no provider prefix, no delimiter, and no stable structure.
+- If you need coverage for a new vendor token format, the right approach is to add a dedicated high-confidence pattern instead of broadening the generic heuristic indefinitely.
 
 ## Integration with ContextForge
 

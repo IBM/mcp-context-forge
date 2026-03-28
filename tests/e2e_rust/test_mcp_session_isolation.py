@@ -35,9 +35,9 @@ import pytest
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Local
-from tests.e2e.mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway, skip_no_rust_mcp_gateway
+from tests.e2e.mcp_test_helpers import BASE_URL, JWT_SECRET, TEST_PASSWORD, skip_no_gateway, skip_no_rust_mcp_gateway, skip_no_rust_mcp_session_core
 
-pytestmark = [pytest.mark.e2e, skip_no_gateway, skip_no_rust_mcp_gateway]
+pytestmark = [pytest.mark.e2e, skip_no_gateway, skip_no_rust_mcp_gateway, skip_no_rust_mcp_session_core]
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
 ISOLATION_PREFIX = "mcp-iso"
@@ -73,9 +73,7 @@ def _request_json(
 ) -> Any:
     """Send an API request and return the JSON payload."""
     response = client.request(method, path, **kwargs)
-    assert response.status_code in expected, (
-        f"{method} {path} expected {expected}, got {response.status_code}: {response.text}"
-    )
+    assert response.status_code in expected, f"{method} {path} expected {expected}, got {response.status_code}: {response.text}"
     return response.json() if response.content else None
 
 
@@ -242,13 +240,7 @@ def _assert_denied(response: httpx.Response) -> None:
         if response.headers.get("content-type", "").startswith("application/json"):
             body = response.json()
             body_text = json.dumps(body).lower()
-            assert (
-                "denied" in body_text
-                or "not found" in body_text
-                or "access" in body_text
-                or "revoked" in body_text
-                or "invalid" in body_text
-            ), body
+            assert "denied" in body_text or "not found" in body_text or "access" in body_text or "revoked" in body_text or "invalid" in body_text, body
         return
 
     assert response.status_code == 200, response.text
@@ -257,24 +249,14 @@ def _assert_denied(response: httpx.Response) -> None:
         error = body["error"]
         assert error.get("code") in (-32003, -32600), body
         error_message = str(error.get("message", "")).lower()
-        assert (
-            "denied" in error_message
-            or "not found" in error_message
-            or "revoked" in error_message
-            or "invalid" in error_message
-        ), body
+        assert "denied" in error_message or "not found" in error_message or "revoked" in error_message or "invalid" in error_message, body
         return
 
     result = body.get("result", {})
     assert result.get("isError", False), body
     content = result.get("content", [{}])
     message = str(content[0].get("text", "")).lower() if content else ""
-    assert (
-        "denied" in message
-        or "not found" in message
-        or "revoked" in message
-        or "invalid" in message
-    ), body
+    assert "denied" in message or "not found" in message or "revoked" in message or "invalid" in message, body
 
 
 def _extract_tool_names(response: httpx.Response) -> list[str]:
@@ -303,22 +285,12 @@ def _select_time_gateway(gateways: list[dict[str, Any]], tools: list[dict[str, A
     preferred_names = ("fast_time", "fast_test")
     for preferred_name in preferred_names:
         for candidate in gateways:
-            if (
-                candidate.get("name") == preferred_name
-                and candidate.get("transport") == "STREAMABLEHTTP"
-                and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0
-            ):
+            if candidate.get("name") == preferred_name and candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0:
                 return candidate
 
     for candidate in gateways:
         url = str(candidate.get("url", ""))
-        if (
-            candidate.get("transport") == "STREAMABLEHTTP"
-            and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0
-            and (
-            "fast_time_server:8080/http" in url or "fast_test_server:8880/mcp" in url
-            )
-        ):
+        if candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0 and ("fast_time_server:8080/http" in url or "fast_test_server:8880/mcp" in url):
             return candidate
 
     raise AssertionError("No compose-backed time-capable STREAMABLEHTTP gateway with synced tools found")
@@ -360,11 +332,7 @@ def _wait_for_session_denial(
     timeout_seconds: int | None = None,
 ) -> httpx.Response:
     """Poll until a session-bound request is denied or the bounded TTL contract is violated."""
-    deadline = time.time() + float(
-        timeout_seconds
-        if timeout_seconds is not None
-        else SESSION_AUTH_REUSE_TTL_SECONDS + SESSION_AUTH_REUSE_GRACE_SECONDS
-    )
+    deadline = time.time() + float(timeout_seconds if timeout_seconds is not None else SESSION_AUTH_REUSE_TTL_SECONDS + SESSION_AUTH_REUSE_GRACE_SECONDS)
     last_response = None
     while time.time() < deadline:
         last_response = _mcp_post(
@@ -379,11 +347,7 @@ def _wait_for_session_denial(
             return last_response
         time.sleep(1.0)
 
-    raise AssertionError(
-        "Session remained usable beyond the bounded auth-reuse TTL contract: "
-        f"status={getattr(last_response, 'status_code', None)} "
-        f"body={getattr(last_response, 'text', None)}"
-    )
+    raise AssertionError("Session remained usable beyond the bounded auth-reuse TTL contract: " f"status={getattr(last_response, 'status_code', None)} " f"body={getattr(last_response, 'text', None)}")
 
 
 def _revoke_team_role(admin_client: httpx.Client, user_info: dict[str, Any]) -> None:
@@ -501,9 +465,7 @@ class TestMcpSessionIsolation:
         peer_init_response, _, _ = _initialize_session(peer["access_token"], server_id)
         assert peer_init_response.headers.get("x-contextforge-mcp-runtime") == "rust"
 
-        owner_tools = _extract_tool_names(
-            _mcp_post(owner["access_token"], server_id, method="tools/list", session_id=owner_session_id, request_id=2)
-        )
+        owner_tools = _extract_tool_names(_mcp_post(owner["access_token"], server_id, method="tools/list", session_id=owner_session_id, request_id=2))
         assert owner_tools, "Owner should see team-scoped tools"
 
         peer_hijack = _mcp_post(
@@ -598,9 +560,7 @@ class TestMcpSessionIsolation:
         admin_token = _make_jwt("admin@example.com", is_admin=True, teams=None)
         _, _, owner_session_id = _initialize_session(admin_token, server_id)
 
-        tool_names = _extract_tool_names(
-            _mcp_post(admin_token, server_id, method="tools/list", session_id=owner_session_id, request_id=6)
-        )
+        tool_names = _extract_tool_names(_mcp_post(admin_token, server_id, method="tools/list", session_id=owner_session_id, request_id=6))
         time_tool = _find_tool_name(tool_names, "get-system-time")
 
         first = _extract_text_result(
@@ -636,9 +596,7 @@ class TestMcpSessionIsolation:
         admin_token = _make_jwt("admin@example.com", is_admin=True, teams=None)
         _, _, owner_session_id = _initialize_session(admin_token, server_id)
 
-        tool_names = _extract_tool_names(
-            _mcp_post(admin_token, server_id, method="tools/list", session_id=owner_session_id, request_id=9)
-        )
+        tool_names = _extract_tool_names(_mcp_post(admin_token, server_id, method="tools/list", session_id=owner_session_id, request_id=9))
         time_tool = _find_tool_name(tool_names, "get-system-time")
 
         def owner_call(index: int) -> tuple[str, int, str]:
@@ -664,9 +622,7 @@ class TestMcpSessionIsolation:
             return ("peer", response.status_code, response.text)
 
         with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(owner_call, i) for i in range(8)] + [
-                executor.submit(peer_hijack, i) for i in range(8)
-            ]
+            futures = [executor.submit(owner_call, i) for i in range(8)] + [executor.submit(peer_hijack, i) for i in range(8)]
             results = [future.result() for future in futures]
 
         owner_results = [result for result in results if result[0] == "owner"]
@@ -764,9 +720,7 @@ class TestMcpSessionIsolation:
         try:
             _, _, session_id = _initialize_session(user["access_token"], server_id)
 
-            tool_names = _extract_tool_names(
-                _mcp_post(user["access_token"], server_id, method="tools/list", session_id=session_id, request_id=10)
-            )
+            tool_names = _extract_tool_names(_mcp_post(user["access_token"], server_id, method="tools/list", session_id=session_id, request_id=10))
             time_tool = _find_tool_name(tool_names, "get-system-time")
 
             _revoke_team_role(admin_client, user)

@@ -78,9 +78,7 @@ def _request_json(
 ) -> Any:
     """Send a JSON API request and return the parsed payload."""
     response = client.request(method, path, **kwargs)
-    assert response.status_code in expected, (
-        f"{method} {path} expected {expected}, got {response.status_code}: {response.text}"
-    )
+    assert response.status_code in expected, f"{method} {path} expected {expected}, got {response.status_code}: {response.text}"
     return response.json() if response.content else None
 
 
@@ -244,7 +242,7 @@ def _assert_tools_list(result: dict[str, Any]) -> None:
     get_time = tools_by_name["fast-time-get-system-time"]
     assert get_time["annotations"]["title"] == "Get System Time"
     assert set(get_time["inputSchema"]["properties"]) == {"timezone"}
-    assert get_time["inputSchema"]["required"] == []
+    assert get_time["inputSchema"].get("required", []) == []
 
     convert_time = tools_by_name["fast-time-convert-time"]
     assert set(convert_time["inputSchema"]["required"]) == {"time", "source_timezone", "target_timezone"}
