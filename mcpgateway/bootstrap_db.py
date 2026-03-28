@@ -208,6 +208,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
     Args:
         conn: Active SQLAlchemy connection
     """
+    logger.info("bootstrap_default_roles: entering")
     if not settings.email_auth_enabled:
         logger.info("Email authentication disabled - skipping default roles bootstrap")
         return
@@ -217,13 +218,16 @@ async def bootstrap_default_roles(conn: Connection) -> None:
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
 
+        logger.info("bootstrap_default_roles: creating session")
         # Use session bound to the locked connection
         with Session(bind=conn) as db:
             role_service = RoleService(db)
             auth_service = EmailAuthService(db)
 
             # Check if admin user exists
+            logger.info("bootstrap_default_roles: looking up admin user")
             admin_user = await auth_service.get_user_by_email(settings.platform_admin_email)
+            logger.info(f"bootstrap_default_roles: admin_user={'found' if admin_user else 'not found'}")
             if not admin_user:
                 logger.info("Admin user not found - skipping role assignment")
                 return
@@ -650,10 +654,14 @@ async def main() -> None:
                     logger.info(f"Normalized {updated} team record(s) to supported visibility values")
 
                 # Bootstrap admin user first (creates user with is_admin=True)
+                logger.info("main: calling bootstrap_admin_user")
                 await bootstrap_admin_user(conn)
+                logger.info("main: bootstrap_admin_user completed")
 
                 # Bootstrap default RBAC roles and assign to admin user
+                logger.info("main: calling bootstrap_default_roles")
                 await bootstrap_default_roles(conn)
+                logger.info("main: bootstrap_default_roles completed")
 
                 # Assign orphaned resources to admin personal team after all setup is complete
                 await bootstrap_resource_assignments(conn)
