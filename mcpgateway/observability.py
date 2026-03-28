@@ -236,7 +236,12 @@ def _validate_langfuse_configuration(endpoint: Optional[str], headers: str) -> N
     if headers:
         return
 
-    raise RuntimeError("Langfuse OTLP endpoint configured without credentials. " "Set OTEL_EXPORTER_OTLP_HEADERS, LANGFUSE_OTEL_AUTH, " "or LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY.")
+    message = (
+        "Langfuse OTLP endpoint configured without credentials. "
+        + "Set OTEL_EXPORTER_OTLP_HEADERS, LANGFUSE_OTEL_AUTH, "
+        + "or LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY."
+    )
+    raise RuntimeError(message)
 
 
 def _derive_langfuse_trace_name(name: str, attributes: Dict[str, Any]) -> str:
