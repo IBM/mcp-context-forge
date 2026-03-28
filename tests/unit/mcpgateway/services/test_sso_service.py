@@ -2237,38 +2237,39 @@ class TestAuthenticateOrCreateUser:
             await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=provider)
 
         team_service.add_member_to_team.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_apply_team_mapping_removes_stale_sso_memberships(self, sso_service):
         """Test that SSO memberships are removed when groups are revoked."""
         provider = _make_provider(team_mapping={"engineering": "team-1"})
-        
+
         # Mock existing SSO membership in team-2 (user was in "finance" group before)
         mock_stale_membership = MagicMock()
         mock_stale_membership.team_id = "team-2"
         mock_stale_membership.user_email = "user@test.com"
-        
+
         # Mock DB query result
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_stale_membership]
         sso_service.db.execute = MagicMock(return_value=mock_result)
-        
+
         team_service = MagicMock()
         team_service.add_member_to_team = AsyncMock()
         team_service.remove_member_from_team = AsyncMock()
-        
+
         with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
             await sso_service._apply_team_mapping(
                 user_email="user@test.com",
                 user_info={"groups": ["engineering"]},  # Only in engineering now
                 provider=provider,
             )
-        
+
         # Should remove stale membership from team-2
         team_service.remove_member_from_team.assert_awaited_once_with(
             team_id="team-2",
             user_email="user@test.com",
         )
-        
+
         # Should add to team-1
         team_service.add_member_to_team.assert_awaited_once_with(
             team_id="team-1",
@@ -2282,31 +2283,31 @@ class TestAuthenticateOrCreateUser:
     async def test_apply_team_mapping_preserves_current_sso_memberships(self, sso_service):
         """Test that current SSO memberships are preserved."""
         provider = _make_provider(team_mapping={"engineering": "team-1", "finance": "team-2"})
-        
+
         # Mock existing SSO memberships (user is in both teams)
         mock_membership1 = MagicMock()
         mock_membership1.team_id = "team-1"
         mock_membership2 = MagicMock()
         mock_membership2.team_id = "team-2"
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_membership1, mock_membership2]
         sso_service.db.execute = MagicMock(return_value=mock_result)
-        
+
         team_service = MagicMock()
         team_service.add_member_to_team = AsyncMock()
         team_service.remove_member_from_team = AsyncMock()
-        
+
         with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
             await sso_service._apply_team_mapping(
                 user_email="user@test.com",
                 user_info={"groups": ["engineering", "finance"]},  # Still in both
                 provider=provider,
             )
-        
+
         # Should NOT remove any memberships
         team_service.remove_member_from_team.assert_not_awaited()
-        
+
         # Should attempt to add (will hit MemberAlreadyExistsError in real scenario)
         assert team_service.add_member_to_team.await_count == 2
 
@@ -2314,32 +2315,32 @@ class TestAuthenticateOrCreateUser:
     async def test_apply_team_mapping_removes_all_when_groups_empty(self, sso_service):
         """Test that all SSO memberships are removed when user has no groups."""
         provider = _make_provider(team_mapping={"engineering": "team-1"})
-        
+
         # Mock existing SSO memberships
         mock_membership = MagicMock()
         mock_membership.team_id = "team-1"
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_membership]
         sso_service.db.execute = MagicMock(return_value=mock_result)
-        
+
         team_service = MagicMock()
         team_service.add_member_to_team = AsyncMock()
         team_service.remove_member_from_team = AsyncMock()
-        
+
         with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
             await sso_service._apply_team_mapping(
                 user_email="user@test.com",
                 user_info={"groups": []},  # No groups
                 provider=provider,
             )
-        
+
         # Should remove the membership
         team_service.remove_member_from_team.assert_awaited_once_with(
             team_id="team-1",
             user_email="user@test.com",
         )
-        
+
         # Should NOT add any memberships
         team_service.add_member_to_team.assert_not_awaited()
 
@@ -2347,19 +2348,19 @@ class TestAuthenticateOrCreateUser:
     async def test_apply_team_mapping_handles_removal_errors_gracefully(self, sso_service):
         """Test that removal errors are logged but don't stop processing."""
         provider = _make_provider(team_mapping={"engineering": "team-1"})
-        
+
         # Mock existing SSO membership
         mock_membership = MagicMock()
         mock_membership.team_id = "team-2"
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_membership]
         sso_service.db.execute = MagicMock(return_value=mock_result)
-        
+
         team_service = MagicMock()
         team_service.add_member_to_team = AsyncMock()
         team_service.remove_member_from_team = AsyncMock(side_effect=Exception("Removal failed"))
-        
+
         with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
             # Should not raise exception
             await sso_service._apply_team_mapping(
@@ -2367,7 +2368,7 @@ class TestAuthenticateOrCreateUser:
                 user_info={"groups": ["engineering"]},
                 provider=provider,
             )
-        
+
         # Should still attempt to add new membership despite removal error
         team_service.add_member_to_team.assert_awaited_once()
 
@@ -2375,30 +2376,59 @@ class TestAuthenticateOrCreateUser:
     async def test_apply_team_mapping_queries_sso_memberships_correctly(self, sso_service):
         """Test that the DB query filters by grant_source='sso' and is_active=True."""
         provider = _make_provider(team_mapping={"engineering": "team-1"})
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
         sso_service.db.execute = MagicMock(return_value=mock_result)
-        
+
         team_service = MagicMock()
         team_service.add_member_to_team = AsyncMock()
-        
+
         with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
             await sso_service._apply_team_mapping(
                 user_email="user@test.com",
                 user_info={"groups": ["engineering"]},
                 provider=provider,
             )
-        
+
         # Verify DB query was called
         sso_service.db.execute.assert_called_once()
-        
-        # Verify the query filters correctly (check the SQL statement)
+
+        # Verify the query filters by user_email, grant_source="sso", and is_active=True
         call_args = sso_service.db.execute.call_args
         stmt = call_args[0][0]
-        # The statement should filter by user_email, grant_source="sso", and is_active=True
-        assert stmt is not None
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "user@test.com" in compiled
+        assert "sso" in compiled
+        assert "is_active" in compiled
 
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_skips_empty_mapping_keys(self, sso_service):
+        """Test that whitespace-only mapping keys are skipped during desired-team computation."""
+        provider = _make_provider(team_mapping={"  ": "team-1", "engineering": "team-2"})
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        sso_service.db.execute = MagicMock(return_value=mock_result)
+
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": ["engineering"]},
+                provider=provider,
+            )
+
+        # Only the valid "engineering" key should produce an add call
+        team_service.add_member_to_team.assert_awaited_once_with(
+            team_id="team-2",
+            user_email="user@test.com",
+            role="member",
+            invited_by="user@test.com",
+            grant_source="sso",
+        )
 
     @pytest.mark.asyncio
     async def test_apply_team_mapping_handles_expected_errors(self, sso_service):

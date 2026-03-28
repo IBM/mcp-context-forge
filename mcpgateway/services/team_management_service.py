@@ -147,9 +147,11 @@ class _Unset:
     __slots__ = ()
 
     def __repr__(self) -> str:
+        """Return string representation of the unset sentinel."""
         return "UNSET"
 
     def __bool__(self) -> bool:
+        """Return False so UNSET is falsy."""
         return False
 
 
@@ -753,6 +755,8 @@ class TeamManagementService:
                 existing_membership.role = role
                 existing_membership.joined_at = utc_now()
                 existing_membership.invited_by = invited_by
+                if grant_source is not None:
+                    existing_membership.grant_source = grant_source
                 self.db.commit()
                 self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
                 member = existing_membership
