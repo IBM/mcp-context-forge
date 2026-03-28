@@ -32,6 +32,13 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_LISTEN_UDS")]
     pub listen_uds: Option<PathBuf>,
 
+    /// Unix domain socket path for the gRPC-over-UDS internal IPC server (ADR-044).
+    /// When set and the `grpc-uds` feature is compiled in, a tonic gRPC server
+    /// is started on this socket alongside the existing Axum HTTP/UDS server.
+    /// Example: `/tmp/contextforge-mcp-grpc.sock`
+    #[arg(long, env = "MCP_RUST_GRPC_UDS")]
+    pub grpc_uds_path: Option<PathBuf>,
+
     #[arg(long, env = "MCP_RUST_PUBLIC_LISTEN_HTTP")]
     pub public_listen_http: Option<String>,
 
