@@ -21,6 +21,23 @@ pub static PATTERNS: LazyLock<HashMap<&'static str, Regex>> = LazyLock::new(|| {
             .expect("Failed to compile Google API Key regex pattern"),
     );
     m.insert(
+        "github_token",
+        Regex::new(r"\b(?:gh[opusr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,})\b")
+            .expect("Failed to compile GitHub Token regex pattern"),
+    );
+    m.insert(
+        "stripe_secret_key",
+        Regex::new(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b")
+            .expect("Failed to compile Stripe Secret Key regex pattern"),
+    );
+    m.insert(
+        "generic_api_key_assignment",
+        Regex::new(
+            r#"(?ix)\b(?:(?:x[-_])?api[-_]?key|apikey|api[_-]?token|access[_-]?token|bearer[_-]?token|auth[_-]?token)\b\s*[:=]\s*['"]?[A-Za-z0-9_\-]{20,}['"]?"#,
+        )
+        .expect("Failed to compile Generic API Key Assignment regex pattern"),
+    );
+    m.insert(
         "slack_token",
         Regex::new(r"\bxox[abpqr]-[0-9A-Za-z\-]{10,48}\b")
             .expect("Failed to compile Slack Token regex pattern"),
@@ -57,12 +74,15 @@ mod tests {
         assert!(PATTERNS.contains_key("aws_access_key_id"));
         assert!(PATTERNS.contains_key("aws_secret_access_key"));
         assert!(PATTERNS.contains_key("google_api_key"));
+        assert!(PATTERNS.contains_key("github_token"));
+        assert!(PATTERNS.contains_key("stripe_secret_key"));
+        assert!(PATTERNS.contains_key("generic_api_key_assignment"));
         assert!(PATTERNS.contains_key("slack_token"));
         assert!(PATTERNS.contains_key("private_key_block"));
         assert!(PATTERNS.contains_key("jwt_like"));
         assert!(PATTERNS.contains_key("hex_secret_32"));
         assert!(PATTERNS.contains_key("base64_24"));
-        assert_eq!(PATTERNS.len(), 8);
+        assert_eq!(PATTERNS.len(), 11);
     }
 
     #[test]
@@ -135,6 +155,92 @@ mod tests {
         assert!(
             !pattern.is_match("BIzaFAKE_KEY_FOR_TESTING_ONLY_fake12345"),
             "Should not match: wrong prefix"
+        );
+    }
+
+    #[test]
+    fn test_github_token_pattern() {
+        let pattern = PATTERNS.get("github_token").unwrap();
+
+        assert!(
+            pattern.is_match("ghp_1234567890abcdefghijklmnopqrstuvwxyZ"), // pragma: allowlist secret
+            "Should match GitHub classic token"
+        );
+        assert!(
+            pattern.is_match("ghs_1234567890abcdefghijklmnopqrstuvwxyZ"), // pragma: allowlist secret
+            "Should match GitHub server token"
+        );
+        assert!(
+            pattern.is_match(
+                "github_pat_abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ12", // pragma: allowlist secret
+            ),
+            "Should match GitHub fine-grained PAT"
+        );
+
+        assert!(
+            !pattern.is_match("github_token=short"),
+            "Should not match short GitHub-like strings"
+        );
+        assert!(
+            !pattern.is_match("github_pat_short"),
+            "Should not match short fine-grained PAT-like strings"
+        );
+        assert!(
+            !pattern.is_match("ghp_documentation_example"),
+            "Should not match prose/example fragments"
+        );
+    }
+
+    #[test]
+    fn test_stripe_secret_key_pattern() {
+        let pattern = PATTERNS.get("stripe_secret_key").unwrap();
+        let live_secret = format!("{}_{}_{}", "sk", "live", "1234567890abcdefghijklmnop"); // pragma: allowlist secret
+        let restricted_test_key = format!("{}_{}_{}", "rk", "test", "1234567890abcdefghijklmnop"); // pragma: allowlist secret
+        let publishable_key = format!("{}_{}_{}", "pk", "live", "1234567890abcdefghijklmnop"); // pragma: allowlist secret
+
+        assert!(
+            pattern.is_match(&live_secret),
+            "Should match Stripe live secret keys"
+        );
+        assert!(
+            pattern.is_match(&restricted_test_key),
+            "Should match Stripe restricted test keys"
+        );
+
+        assert!(
+            !pattern.is_match(&publishable_key),
+            "Should not match publishable Stripe keys"
+        );
+        assert!(
+            !pattern.is_match("sk_live_short"),
+            "Should not match short Stripe-like strings"
+        );
+    }
+
+    #[test]
+    fn test_generic_api_key_assignment_pattern() {
+        let pattern = PATTERNS.get("generic_api_key_assignment").unwrap();
+
+        assert!(
+            pattern.is_match("X-API-Key: test12345678901234567890"), // pragma: allowlist secret
+            "Should match X-API-Key header"
+        );
+        assert!(
+            pattern.is_match("api_key=my_service_token_1234567890"), // pragma: allowlist secret
+            "Should match api_key assignment"
+        );
+        assert!(
+            pattern.is_match("access_token = 'abcdefghijklmnopqrstuvwx'"),
+            "Should match quoted access_token assignment"
+        );
+
+        assert!(
+            !pattern.is_match("api_key=short"),
+            "Should not match short values"
+        );
+        assert!(
+            !pattern.is_match("api key rotation is enabled"),
+            "Should not match prose without assignment"
         );
     }
 

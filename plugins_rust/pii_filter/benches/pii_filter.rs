@@ -26,8 +26,6 @@ fn create_test_config() -> PIIConfig {
         detect_driver_license: true,
         detect_bank_account: true,
         detect_medical_record: true,
-        detect_aws_keys: true,
-        detect_api_keys: true,
         default_mask_strategy: MaskingStrategy::Partial,
         redaction_text: "[REDACTED]".to_string(),
         block_on_detection: false,
@@ -147,7 +145,7 @@ fn bench_parallel_regex_matching(c: &mut Criterion) {
     // Text with multiple PII types to test RegexSet parallelism
     let text = "User details: SSN 123-45-6789, Email john@example.com, \
                 Phone (555) 123-4567, Credit Card 4111-1111-1111-1111, \
-                AWS Key AKIAIOSFODNN7EXAMPLE, IP 192.168.1.100, \
+                IP 192.168.1.100, \
                 DOB 01/15/1990, Passport AB1234567";
 
     c.bench_function("parallel_regex_set", |b| {

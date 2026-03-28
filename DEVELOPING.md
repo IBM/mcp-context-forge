@@ -32,6 +32,9 @@ make dev
 # Run quality checks before committing
 make autoflake isort black pre-commit
 make doctest test htmlcov flake8 pylint verify
+
+# If you changed Rust code (plugins_rust/ or tools_rust/):
+make rust-check    # fmt-check, clippy -D warnings, cargo test
 ```
 
 Note that if the pre-commit check fails on detect secrets you need to identify if any secrets are in the code and remove them if necessary.
@@ -203,6 +206,9 @@ make lint-watch
 
 # Fix common issues automatically
 make lint-fix
+
+# Rust plugins (plugins_rust/ or tools_rust/) — run before committing Rust changes
+make rust-check    # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
 ```
 
 ### Pre-commit Workflow
@@ -218,6 +224,9 @@ make pre-commit
 make autoflake isort black pre-commit
 make doctest test htmlcov smoketest
 make flake8 bandit interrogate pylint verify
+
+# If Rust code was changed:
+make rust-check
 ```
 
 ### Nginx Cache Management
