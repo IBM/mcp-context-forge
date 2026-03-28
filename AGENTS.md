@@ -305,6 +305,9 @@ make test
 - Never create files unless absolutely necessary; prefer editing existing files
 - Never proactively create documentation files unless explicitly requested
 - Never commit secrets; use `.env` for configuration
+- Before saying work is ready for PR or using a PR creation flow, run a full pre-PR review that covers correctness, security, testing, docs/API usage, performance, maintainability, and architecture.
+- Treat review findings as provisional until they are supported by direct evidence from code paths, repo state, command output, or tests.
+- If a review claim depends on external behavior, library semantics, flags, versions, or product capabilities, verify it against primary online sources before asserting it as true.
 
 ## Key Files
 
