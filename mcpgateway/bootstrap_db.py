@@ -667,15 +667,18 @@ async def main() -> None:
                 await bootstrap_resource_assignments(conn)
 
                 conn.commit()  # Ensure all migration changes are permanently committed
+                print("[BOOTSTRAP] conn.commit() done", flush=True)
 
     except Exception as e:
+        print(f"[BOOTSTRAP] EXCEPTION: {e}", flush=True)
         logger.error(f"Migration/Bootstrap failed: {e}")
-        # Allow retry logic or container restart to handle transient issues
         raise
     finally:
-        # Dispose the engine to close all connections in the pool
+        print("[BOOTSTRAP] disposing engine", flush=True)
         engine.dispose()
+        print("[BOOTSTRAP] engine disposed", flush=True)
 
+    print("[BOOTSTRAP] Database ready", flush=True)
     logger.info("Database ready")
 
 
