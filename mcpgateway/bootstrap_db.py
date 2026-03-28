@@ -208,7 +208,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
     Args:
         conn: Active SQLAlchemy connection
     """
-    logger.info("bootstrap_default_roles: entering")
+    print("[BOOTSTRAP] bootstrap_default_roles: entering", flush=True)
     if not settings.email_auth_enabled:
         logger.info("Email authentication disabled - skipping default roles bootstrap")
         return
@@ -654,14 +654,14 @@ async def main() -> None:
                     logger.info(f"Normalized {updated} team record(s) to supported visibility values")
 
                 # Bootstrap admin user first (creates user with is_admin=True)
-                logger.info("main: calling bootstrap_admin_user")
+                print("[BOOTSTRAP] calling bootstrap_admin_user", flush=True)
                 await bootstrap_admin_user(conn)
-                logger.info("main: bootstrap_admin_user completed")
+                print("[BOOTSTRAP] bootstrap_admin_user completed", flush=True)
 
                 # Bootstrap default RBAC roles and assign to admin user
-                logger.info("main: calling bootstrap_default_roles")
+                print("[BOOTSTRAP] calling bootstrap_default_roles", flush=True)
                 await bootstrap_default_roles(conn)
-                logger.info("main: bootstrap_default_roles completed")
+                print("[BOOTSTRAP] bootstrap_default_roles completed", flush=True)
 
                 # Assign orphaned resources to admin personal team after all setup is complete
                 await bootstrap_resource_assignments(conn)
