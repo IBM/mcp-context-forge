@@ -934,6 +934,26 @@ For development workflows, see:
 - **[Developer Workstation Setup](https://ibm.github.io/mcp-context-forge/development/developer-workstation/)**
 - **[Building & Packaging](https://ibm.github.io/mcp-context-forge/development/building/)**
 
+### IBM Bob pre-PR review workflow
+
+If you use IBM Bob in this repository, Bob reads the repository root [AGENTS.md](./AGENTS.md) and the Bob-specific mode rules under `.bob/`.
+
+- Shared Bob rule source: `.bob/AGENTS.md`
+- Mode-specific links:
+  - `.bob/rules-code/AGENTS.md`
+  - `.bob/rules-plan/AGENTS.md`
+
+The mode-specific files are symlinks to `.bob/AGENTS.md`, so updating the shared file updates both Bob modes automatically.
+
+Before using Bob to say work is PR-ready or to create a PR, run the Bob pre-PR review workflow. The repository rules require review across correctness, security, testing, docs/API usage, performance, maintainability, and architecture. Findings should be backed by direct evidence from the codebase, command output, or tests, and external or version-sensitive claims should be verified against primary online sources before being asserted as true.
+
+In Bob, the usual path is:
+
+1. Open the repository in IBM Bob.
+2. Start a Bob review task or use the Source Control `Review` panel when it is available.
+3. Ask Bob to run the pre-PR review for the branch or diff and to summarize findings by severity.
+4. Only after that review is complete, use Bob's PR creation flow.
+
 ---
 
 ## Troubleshooting
