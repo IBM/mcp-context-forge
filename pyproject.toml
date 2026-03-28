@@ -9,6 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.uv]
 exclude-newer = "10 days"
+exclude-newer-package = { langchain-core = false, langchain-openai = false }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
