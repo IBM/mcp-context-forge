@@ -1983,6 +1983,7 @@ class EmailTeamMember(Base):
         joined_at (datetime): When the user joined the team
         invited_by (str): Email of the user who invited this member
         is_active (bool): Whether the membership is active
+        grant_source (str): Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = EmailTeamMember(
@@ -2009,6 +2010,7 @@ class EmailTeamMember(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     invited_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     team: Mapped["EmailTeam"] = relationship("EmailTeam", back_populates="members")

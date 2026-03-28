@@ -602,77 +602,6 @@ class TestTokenExchange:
 
 
 class TestGetUserInfo:
-    def test_resolve_entra_graph_fallback_settings_valid_overrides(self, sso_service):
-        """Provider metadata should parse valid string overrides."""
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.sso_entra_graph_api_enabled = False
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-
-            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings(
-                {
-                    "graph_api_enabled": "true",
-                    "graph_api_timeout": "15",
-                    "graph_api_max_groups": "4",
-                }
-            )
-
-        assert enabled is True
-        assert timeout == 15
-        assert max_groups == 4
-
-    def test_resolve_entra_graph_fallback_settings_invalid_string_enabled(self, sso_service):
-        """Invalid string values should keep defaults for graph_api_enabled."""
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 9
-
-            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_enabled": "maybe"})
-
-        assert enabled is True
-        assert timeout == 10
-        assert max_groups == 9
-
-    def test_resolve_entra_graph_fallback_settings_non_string_enabled(self, sso_service):
-        """Non-string metadata values should be coerced to bool for graph_api_enabled."""
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 9
-
-            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_enabled": 0})
-
-        assert enabled is False
-        assert timeout == 10
-        assert max_groups == 9
-
-    def test_resolve_entra_graph_fallback_settings_invalid_timeout_and_max_groups(self, sso_service):
-        """Invalid timeout/max values should keep defaults."""
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 9
-
-            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_timeout": "0", "graph_api_max_groups": "-1"})
-
-        assert enabled is True
-        assert timeout == 10
-        assert max_groups == 9
-
-    def test_resolve_entra_graph_fallback_settings_unparseable_timeout_and_max_groups(self, sso_service):
-        """Unparseable timeout/max values should keep defaults."""
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 9
-
-            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_timeout": "abc", "graph_api_max_groups": "xyz"})
-
-        assert enabled is True
-        assert timeout == 10
-        assert max_groups == 9
-
     @pytest.mark.asyncio
     async def test_get_user_info_github_with_orgs(self, sso_service):
         user_response = MagicMock()
@@ -818,7 +747,7 @@ class TestGetUserInfo:
 
     @pytest.mark.asyncio
     async def test_get_user_info_github_orgs_exception(self, sso_service):
-        """GitHub orgs fetch raises exception → orgs set to empty list."""
+        """GitHub orgs fetch raises exception -> orgs set to empty list."""
         user_response = MagicMock()
         user_response.status_code = 200
         user_response.json.return_value = {"login": "testuser", "email": "test@github.com"}
@@ -960,195 +889,6 @@ class TestGetUserInfo:
         assert result["provider"] == "entra"
         assert "group-id-2" in result["groups"]
         mock_client.post.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_handles_401(self, sso_service):
-        """Graph API failures should degrade safely and return None."""
-        graph_response = MagicMock()
-        graph_response.status_code = 401
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=graph_response)
-
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_get_client.return_value = mock_client
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups is None
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_handles_403(self, sso_service):
-        """Graph API forbidden responses should degrade safely and return None."""
-        graph_response = MagicMock()
-        graph_response.status_code = 403
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=graph_response)
-
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_get_client.return_value = mock_client
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups is None
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_handles_500(self, sso_service):
-        """Non-auth Graph API failures should degrade safely and return None."""
-        graph_response = MagicMock()
-        graph_response.status_code = 500
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=graph_response)
-
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_get_client.return_value = mock_client
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups is None
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_invalid_json_response(self, sso_service):
-        """Invalid Graph JSON payload should degrade safely and return None."""
-        graph_response = MagicMock()
-        graph_response.status_code = 200
-        graph_response.json.side_effect = ValueError("invalid json")
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=graph_response)
-
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_get_client.return_value = mock_client
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups is None
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_non_list_value(self, sso_service):
-        """Graph response with non-list value should return empty list."""
-        graph_response = MagicMock()
-        graph_response.status_code = 200
-        graph_response.json.return_value = {"value": "not-a-list"}
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=graph_response)
-
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_get_client.return_value = mock_client
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups == []
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_skips_non_string_ids(self, sso_service):
-        """Graph response should ignore non-string group IDs."""
-        graph_response = MagicMock()
-        graph_response.status_code = 200
-        graph_response.json.return_value = {"value": [123, "group-1", None, "group-2"]}
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=graph_response)
-
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_get_client.return_value = mock_client
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups == ["group-1", "group-2"]
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_applies_max_group_cap(self, sso_service):
-        """Configured Graph max_groups should truncate the returned list."""
-        graph_response = MagicMock()
-        graph_response.status_code = 200
-        graph_response.json.return_value = {"value": ["g1", "g2", "g3"]}
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=graph_response)
-
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_get_client.return_value = mock_client
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 2
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups == ["g1", "g2"]
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_disabled(self, sso_service):
-        """Disabled Graph fallback should skip network calls."""
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.sso_entra_graph_api_enabled = False
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups is None
-        mock_get_client.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_timeout(self, sso_service):
-        """Timeouts or transport errors should not break login flow."""
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=TimeoutError("request timed out"))
-
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_get_client.return_value = mock_client
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 1
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
-
-        assert groups is None
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_respects_provider_metadata_override(self, sso_service):
-        """Provider metadata should override global Graph fallback defaults."""
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api(
-                "at",
-                "user@contoso.com",
-                {"graph_api_enabled": False},
-            )
-
-        assert groups is None
-        mock_get_client.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_fetch_entra_groups_from_graph_api_respects_string_bool_override(self, sso_service):
-        """String provider metadata values should be parsed for graph_api_enabled."""
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
-            mock_settings.sso_entra_graph_api_enabled = True
-            mock_settings.sso_entra_graph_api_timeout = 10
-            mock_settings.sso_entra_graph_api_max_groups = 0
-            groups = await sso_service._fetch_entra_groups_from_graph_api(
-                "at",
-                "user@contoso.com",
-                {"graph_api_enabled": "false"},
-            )
-
-        assert groups is None
-        mock_get_client.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_user_info_entra_group_overage_graph_fallback_failure(self, sso_service):
@@ -1438,6 +1178,471 @@ class TestGetUserInfo:
 
 
 # ---------------------------------------------------------------------------
+# _enrich_user_data_from_claims tests
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichUserDataFromClaims:
+    """Tests for _enrich_user_data_from_claims extracted from _get_user_info."""
+
+    @pytest.mark.asyncio
+    async def test_github_orgs_fetched_when_configured(self, sso_service):
+        """GitHub orgs are fetched and added to user_data when sso_github_admin_orgs is set."""
+        provider = _make_provider(id="github")
+        user_data = {"email": "user@github.com"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [{"login": "org1"}, {"login": "org2"}]
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_github_admin_orgs = ["org1"]
+            with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+                mock_client = AsyncMock()
+                mock_client.get.return_value = mock_response
+                mock_get_client.return_value = mock_client
+
+                await sso_service._enrich_user_data_from_claims(provider, user_data, "access-token", None)
+
+        assert user_data["organizations"] == ["org1", "org2"]
+
+    @pytest.mark.asyncio
+    async def test_github_orgs_empty_when_fetch_fails(self, sso_service):
+        """GitHub orgs default to empty list when API call fails."""
+        provider = _make_provider(id="github")
+        user_data = {"email": "user@github.com"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_github_admin_orgs = ["org1"]
+            with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+                mock_client = AsyncMock()
+                mock_client.get.return_value = mock_response
+                mock_get_client.return_value = mock_client
+
+                await sso_service._enrich_user_data_from_claims(provider, user_data, "access-token", None)
+
+        assert user_data["organizations"] == []
+
+    @pytest.mark.asyncio
+    async def test_github_skipped_when_no_admin_orgs_configured(self, sso_service):
+        """No orgs fetch when sso_github_admin_orgs is empty."""
+        provider = _make_provider(id="github")
+        user_data = {"email": "user@github.com"}
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_github_admin_orgs = []
+            await sso_service._enrich_user_data_from_claims(provider, user_data, "access-token", None)
+
+        assert "organizations" not in user_data
+
+    @pytest.mark.asyncio
+    async def test_entra_extracts_groups_and_roles_from_id_token(self, sso_service):
+        """Entra enrichment merges groups and roles from verified id_token claims."""
+        provider = _make_provider(id="entra", provider_metadata={})
+        user_data = {"email": "user@entra.com"}
+        verified_claims = {
+            "groups": ["grp-id-1", "grp-id-2"],
+            "roles": ["role-a"],
+            "oid": "oid-123",
+        }
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert user_data["groups"] == ["grp-id-1", "grp-id-2"]
+        assert user_data["roles"] == ["role-a"]
+        assert user_data["oid"] == "oid-123"
+
+    @pytest.mark.asyncio
+    async def test_entra_no_op_without_verified_claims(self, sso_service):
+        """Entra enrichment is a no-op when verified_id_token_claims is None."""
+        provider = _make_provider(id="entra", provider_metadata={})
+        user_data = {"email": "user@entra.com"}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", None)
+
+        assert "groups" not in user_data
+        assert "roles" not in user_data
+
+    @pytest.mark.asyncio
+    async def test_entra_backfills_missing_basic_claims(self, sso_service):
+        """Entra enrichment fills missing basic claims from id_token."""
+        provider = _make_provider(id="entra", provider_metadata={})
+        user_data = {}
+        verified_claims = {"email": "from-token@e.com", "name": "Token Name", "sub": "sub-1"}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert user_data["email"] == "from-token@e.com"
+        assert user_data["name"] == "Token Name"
+
+    @pytest.mark.asyncio
+    async def test_entra_does_not_overwrite_existing_claims(self, sso_service):
+        """Entra enrichment does not overwrite claims already in user_data."""
+        provider = _make_provider(id="entra", provider_metadata={})
+        user_data = {"email": "from-userinfo@e.com"}
+        verified_claims = {"email": "from-token@e.com", "sub": "sub-1"}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert user_data["email"] == "from-userinfo@e.com"
+
+    @pytest.mark.asyncio
+    async def test_keycloak_merges_realm_access_from_id_token(self, sso_service):
+        """Keycloak enrichment merges realm_access, resource_access, groups from id_token."""
+        provider = _make_provider(id="keycloak")
+        user_data = {"email": "user@kc.com"}
+        verified_claims = {
+            "realm_access": {"roles": ["admin"]},
+            "resource_access": {"client1": {"roles": ["editor"]}},
+            "groups": ["/team-a"],
+        }
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert user_data["realm_access"] == {"roles": ["admin"]}
+        assert user_data["resource_access"] == {"client1": {"roles": ["editor"]}}
+        assert user_data["groups"] == ["/team-a"]
+
+    @pytest.mark.asyncio
+    async def test_keycloak_does_not_overwrite_existing_claims(self, sso_service):
+        """Keycloak enrichment skips claims already present in user_data."""
+        provider = _make_provider(id="keycloak")
+        user_data = {"email": "user@kc.com", "groups": ["existing-group"]}
+        verified_claims = {"groups": ["/from-token"]}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert user_data["groups"] == ["existing-group"]
+
+    @pytest.mark.asyncio
+    async def test_generic_oidc_merges_groups_from_id_token(self, sso_service):
+        """Generic OIDC enrichment merges groups claim from id_token when not in userinfo."""
+        provider = _make_provider(id="okta", provider_metadata={})
+        user_data = {"email": "user@okta.com"}
+        verified_claims = {"groups": ["okta-grp1"], "roles": ["okta-role1"]}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert user_data["groups"] == ["okta-grp1"]
+        assert user_data["roles"] == ["okta-role1"]
+
+    @pytest.mark.asyncio
+    async def test_generic_oidc_prefers_userinfo_over_id_token(self, sso_service):
+        """Generic OIDC enrichment does not overwrite groups already from userinfo."""
+        provider = _make_provider(id="okta", provider_metadata={})
+        user_data = {"email": "user@okta.com", "groups": ["from-userinfo"]}
+        verified_claims = {"groups": ["from-token"]}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert user_data["groups"] == ["from-userinfo"]
+
+    @pytest.mark.asyncio
+    async def test_generic_oidc_custom_groups_claim(self, sso_service):
+        """Generic OIDC enrichment respects custom groups_claim from provider_metadata."""
+        provider = _make_provider(id="custom_oidc", provider_metadata={"groups_claim": "team_groups"})
+        user_data = {"email": "user@custom.com"}
+        verified_claims = {"team_groups": ["custom-grp"]}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert user_data["team_groups"] == ["custom-grp"]
+
+    @pytest.mark.asyncio
+    async def test_google_is_not_enriched(self, sso_service):
+        """Google provider does not get generic OIDC enrichment."""
+        provider = _make_provider(id="google")
+        user_data = {"email": "user@google.com"}
+        verified_claims = {"groups": ["should-not-appear"]}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", verified_claims)
+
+        assert "groups" not in user_data
+
+    @pytest.mark.asyncio
+    async def test_no_enrichment_without_verified_claims(self, sso_service):
+        """Generic OIDC enrichment is a no-op when verified claims are None."""
+        provider = _make_provider(id="custom_oidc", provider_metadata={})
+        user_data = {"email": "user@custom.com"}
+
+        await sso_service._enrich_user_data_from_claims(provider, user_data, "token", None)
+
+        assert "groups" not in user_data
+
+
+# ---------------------------------------------------------------------------
+# Entra Graph API fallback tests
+# ---------------------------------------------------------------------------
+
+
+class TestEntraGraphFallback:
+    """Tests for _resolve_entra_graph_fallback_settings and _fetch_entra_groups_from_graph_api."""
+
+    def test_resolve_entra_graph_fallback_settings_valid_overrides(self, sso_service):
+        """Provider metadata should parse valid string overrides."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = False
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings(
+                {
+                    "graph_api_enabled": "true",
+                    "graph_api_timeout": "15",
+                    "graph_api_max_groups": "4",
+                }
+            )
+
+        assert enabled is True
+        assert timeout == 15
+        assert max_groups == 4
+
+    def test_resolve_entra_graph_fallback_settings_invalid_string_enabled(self, sso_service):
+        """Invalid string values should keep defaults for graph_api_enabled."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 9
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_enabled": "maybe"})
+
+        assert enabled is True
+        assert timeout == 10
+        assert max_groups == 9
+
+    def test_resolve_entra_graph_fallback_settings_non_string_enabled(self, sso_service):
+        """Non-string metadata values should be coerced to bool for graph_api_enabled."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 9
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_enabled": 0})
+
+        assert enabled is False
+        assert timeout == 10
+        assert max_groups == 9
+
+    def test_resolve_entra_graph_fallback_settings_invalid_timeout_and_max_groups(self, sso_service):
+        """Invalid timeout/max values should keep defaults."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 9
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_timeout": "0", "graph_api_max_groups": "-1"})
+
+        assert enabled is True
+        assert timeout == 10
+        assert max_groups == 9
+
+    def test_resolve_entra_graph_fallback_settings_unparseable_timeout_and_max_groups(self, sso_service):
+        """Unparseable timeout/max values should keep defaults."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 9
+
+            enabled, timeout, max_groups = sso_service._resolve_entra_graph_fallback_settings({"graph_api_timeout": "abc", "graph_api_max_groups": "xyz"})
+
+        assert enabled is True
+        assert timeout == 10
+        assert max_groups == 9
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_handles_401(self, sso_service):
+        """Graph API failures should degrade safely and return None."""
+        graph_response = MagicMock()
+        graph_response.status_code = 401
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_handles_403(self, sso_service):
+        """Graph API forbidden responses should degrade safely and return None."""
+        graph_response = MagicMock()
+        graph_response.status_code = 403
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_handles_500(self, sso_service):
+        """Non-auth Graph API failures should degrade safely and return None."""
+        graph_response = MagicMock()
+        graph_response.status_code = 500
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_invalid_json_response(self, sso_service):
+        """Invalid Graph JSON payload should degrade safely and return None."""
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.side_effect = ValueError("invalid json")
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_non_list_value(self, sso_service):
+        """Graph response with non-list value should return empty list."""
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": "not-a-list"}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups == []
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_skips_non_string_ids(self, sso_service):
+        """Graph response should ignore non-string group IDs."""
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": [123, "group-1", None, "group-2"]}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups == ["group-1", "group-2"]
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_applies_max_group_cap(self, sso_service):
+        """Configured Graph max_groups should truncate the returned list."""
+        graph_response = MagicMock()
+        graph_response.status_code = 200
+        graph_response.json.return_value = {"value": ["g1", "g2", "g3"]}
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=graph_response)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 2
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups == ["g1", "g2"]
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_disabled(self, sso_service):
+        """Disabled Graph fallback should skip network calls."""
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = False
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+        mock_get_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_timeout(self, sso_service):
+        """Timeouts or transport errors should not break login flow."""
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(side_effect=TimeoutError("request timed out"))
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 1
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api("at", "user@contoso.com")
+
+        assert groups is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_respects_provider_metadata_override(self, sso_service):
+        """Provider metadata should override global Graph fallback defaults."""
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api(
+                "at",
+                "user@contoso.com",
+                {"graph_api_enabled": False},
+            )
+
+        assert groups is None
+        mock_get_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fetch_entra_groups_from_graph_api_respects_string_bool_override(self, sso_service):
+        """String provider metadata values should be parsed for graph_api_enabled."""
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_graph_api_enabled = True
+            mock_settings.sso_entra_graph_api_timeout = 10
+            mock_settings.sso_entra_graph_api_max_groups = 0
+            groups = await sso_service._fetch_entra_groups_from_graph_api(
+                "at",
+                "user@contoso.com",
+                {"graph_api_enabled": "false"},
+            )
+
+        assert groups is None
+        mock_get_client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Normalization tests
 # ---------------------------------------------------------------------------
 
@@ -1540,6 +1745,199 @@ class TestNormalization:
         assert "admin" in result["groups"]
         assert "my-app:editor" in result["groups"]
         assert "/team-a" in result["groups"]
+
+
+# ---------------------------------------------------------------------------
+# Helper tests (extracted from normalization-related code)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractGroupsAndRoles:
+    """Tests for the extracted _extract_groups_and_roles helper."""
+
+    def test_extracts_groups_from_default_claim(self):
+        user_data = {"groups": ["engineering", "finance"]}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["engineering", "finance"]
+
+    def test_extracts_groups_from_custom_claim(self):
+        user_data = {"team_groups": ["alpha", "beta"]}
+        result = SSOService._extract_groups_and_roles(user_data, groups_claim="team_groups")
+        assert result == ["alpha", "beta"]
+
+    def test_merges_roles_into_groups(self):
+        user_data = {"groups": ["eng"], "roles": ["admin", "viewer"]}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["eng", "admin", "viewer"]
+
+    def test_handles_string_groups_claim(self):
+        user_data = {"groups": "single-group"}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["single-group"]
+
+    def test_handles_string_roles_claim(self):
+        user_data = {"roles": "single-role"}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["single-role"]
+
+    def test_filters_non_string_values(self):
+        user_data = {"groups": ["valid", 123, None, "also-valid"], "roles": [True, "role1"]}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["valid", "also-valid", "role1"]
+
+    def test_returns_empty_when_no_claims(self):
+        result = SSOService._extract_groups_and_roles({})
+        assert result == []
+
+    def test_returns_empty_for_empty_lists(self):
+        user_data = {"groups": [], "roles": []}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == []
+
+
+class TestBuildNormalizedUserInfo:
+    """Tests for the extracted _build_normalized_user_info helper."""
+
+    def test_builds_base_dict_from_standard_claims(self):
+        user_data = {"email": "u@e.com", "name": "User", "picture": "https://img", "sub": "123", "preferred_username": "user1"}
+        result = SSOService._build_normalized_user_info(user_data, "test_provider", ["grp1"])
+        assert result["email"] == "u@e.com"
+        assert result["full_name"] == "User"
+        assert result["avatar_url"] == "https://img"
+        assert result["provider_id"] == "123"
+        assert result["username"] == "user1"
+        assert result["provider"] == "test_provider"
+        assert result["groups"] == ["grp1"]
+
+    def test_overrides_take_precedence(self):
+        user_data = {"email": "original@e.com", "name": "Original"}
+        result = SSOService._build_normalized_user_info(user_data, "p", [], email="override@e.com", full_name="Override")
+        assert result["email"] == "override@e.com"
+        assert result["full_name"] == "Override"
+
+    def test_propagates_email_verified_only_when_present(self):
+        with_claim = {"email": "u@e.com", "email_verified": True}
+        without_claim = {"email": "u@e.com"}
+
+        result_with = SSOService._build_normalized_user_info(with_claim, "p", [])
+        result_without = SSOService._build_normalized_user_info(without_claim, "p", [])
+
+        assert "email_verified" in result_with
+        assert result_with["email_verified"] is True
+        assert "email_verified" not in result_without
+
+    def test_deduplicates_groups(self):
+        result = SSOService._build_normalized_user_info({}, "p", ["a", "b", "a"])
+        assert sorted(result["groups"]) == ["a", "b"]
+
+    def test_extra_keys_merged(self):
+        result = SSOService._build_normalized_user_info({}, "p", [], extra={"organizations": ["org1"]})
+        assert result["organizations"] == ["org1"]
+
+    def test_username_falls_back_to_email_prefix(self):
+        user_data = {"email": "alice@example.com"}
+        result = SSOService._build_normalized_user_info(user_data, "p", [])
+        assert result["username"] == "alice"
+
+    def test_username_falls_back_to_empty_string_when_no_email(self):
+        result = SSOService._build_normalized_user_info({}, "p", [])
+        assert result["username"] == ""
+
+
+class TestShouldSyncRoles:
+    """Tests for the extracted _should_sync_roles helper."""
+
+    def test_returns_true_by_default(self):
+        assert SSOService._should_sync_roles("github", {}) is True
+
+    def test_respects_sync_roles_true(self):
+        assert SSOService._should_sync_roles("entra", {"sync_roles": True}) is True
+
+    def test_respects_sync_roles_false(self):
+        assert SSOService._should_sync_roles("entra", {"sync_roles": False}) is False
+
+    def test_entra_fallback_to_legacy_setting(self):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_sync_roles_on_login = False
+            assert SSOService._should_sync_roles("entra", {}) is False
+
+    def test_non_entra_ignores_legacy_setting(self):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_sync_roles_on_login = False
+            assert SSOService._should_sync_roles("github", {}) is True
+
+    def test_sync_roles_overrides_entra_legacy(self):
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_sync_roles_on_login = False
+            assert SSOService._should_sync_roles("entra", {"sync_roles": True}) is True
+
+
+class TestCheckPendingApproval:
+    """Tests for the extracted _check_pending_approval helper."""
+
+    def test_creates_new_pending_when_none_exists(self, sso_service, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        result = sso_service._check_pending_approval("user@test.com", "github", {"full_name": "User"})
+        assert result is False
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called()
+
+    def test_returns_false_for_pending_status(self, sso_service, mock_db):
+        pending = MagicMock()
+        pending.status = "pending"
+        pending.is_expired.return_value = False
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+        assert sso_service._check_pending_approval("u@t.com", "github", {}) is False
+
+    def test_resets_expired_pending(self, sso_service, mock_db):
+        pending = MagicMock()
+        pending.status = "pending"
+        pending.is_expired.return_value = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+        result = sso_service._check_pending_approval("u@t.com", "github", {"full_name": "User"})
+        assert result is False
+        # After reset, status should have been set to "pending" via _reset_pending_approval
+        assert pending.auth_provider == "github"
+
+    def test_returns_false_for_rejected(self, sso_service, mock_db):
+        pending = MagicMock()
+        pending.status = "rejected"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+        assert sso_service._check_pending_approval("u@t.com", "github", {}) is False
+
+    def test_returns_true_for_approved(self, sso_service, mock_db):
+        pending = MagicMock()
+        pending.status = "approved"
+        pending.is_expired.return_value = False
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+        assert sso_service._check_pending_approval("u@t.com", "github", {}) is True
+
+    def test_returns_false_for_expired_approved(self, sso_service, mock_db):
+        pending = MagicMock()
+        pending.status = "approved"
+        pending.is_expired.return_value = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+        assert sso_service._check_pending_approval("u@t.com", "github", {}) is False
+
+    def test_resets_expired_status(self, sso_service, mock_db):
+        pending = MagicMock()
+        pending.status = "expired"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+        result = sso_service._check_pending_approval("u@t.com", "github", {"full_name": "User"})
+        assert result is False
+        assert pending.auth_provider == "github"
+
+    def test_returns_false_for_completed(self, sso_service, mock_db):
+        pending = MagicMock()
+        pending.status = "completed"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+        assert sso_service._check_pending_approval("u@t.com", "github", {}) is False
+
+    def test_returns_false_for_unknown_status(self, sso_service, mock_db):
+        pending = MagicMock()
+        pending.status = "something_unexpected"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+        assert sso_service._check_pending_approval("u@t.com", "github", {}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -2085,6 +2483,199 @@ class TestMapGroupsToRoles:
 
 
 # ---------------------------------------------------------------------------
+# Entra legacy role mapping fallback
+# ---------------------------------------------------------------------------
+
+
+class TestEntraLegacyRoleMappings:
+    @pytest.mark.asyncio
+    async def test_entra_legacy_role_mappings_fallback(self, sso_service):
+        """When no role_mappings in metadata, falls back to sso_entra_role_mappings."""
+        mock_role = SimpleNamespace(name="developer", scope="team", id="r1")
+        provider = _make_provider(id="entra", provider_metadata={})
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {"dev-group": "developer"}
+            role_svc = AsyncMock()
+            role_svc.get_role_by_name = AsyncMock(return_value=mock_role)
+            MockRoleService.return_value = role_svc
+            result = await sso_service._map_groups_to_roles("user@test.com", ["dev-group"], provider)
+
+        assert len(result) == 1
+        assert result[0]["role_name"] == "developer"
+
+    @pytest.mark.asyncio
+    async def test_role_not_found_in_cache(self, sso_service):
+        """Role mapping to non-existent role logs warning."""
+        provider = _make_provider(provider_metadata={"role_mappings": {"grp": "missing-role"}})
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            role_svc = AsyncMock()
+            role_svc.get_role_by_name = AsyncMock(return_value=None)
+            MockRoleService.return_value = role_svc
+            result = await sso_service._map_groups_to_roles("user@test.com", ["grp"], provider)
+
+        assert result == []  # Nothing mapped
+
+    @pytest.mark.asyncio
+    async def test_entra_admin_group_checked_before_role_mappings(self, sso_service):
+        """Entra admin groups produce platform_admin even without role_mappings."""
+        provider = _make_provider(id="entra", provider_metadata={})
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_settings.sso_entra_admin_groups = ["admin-grp"]
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
+            role_svc = AsyncMock()
+            MockRoleService.return_value = role_svc
+            result = await sso_service._map_groups_to_roles("user@test.com", ["admin-grp", "other"], provider)
+
+        assert any(r["role_name"] == "platform_admin" for r in result)
+
+
+# ---------------------------------------------------------------------------
+# _sync_user_roles tests
+# ---------------------------------------------------------------------------
+
+
+class TestSyncUserRoles:
+    @pytest.mark.asyncio
+    async def test_revokes_removed_roles(self, sso_service):
+        """Roles no longer in desired set are revoked."""
+        old_role = SimpleNamespace(
+            role=SimpleNamespace(name="old-role", id="r-old"),
+            scope="team",
+            scope_id=None,
+            grant_source="sso",
+            role_id="r-old",
+        )
+
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[old_role])
+            role_svc.revoke_role_from_user = AsyncMock()
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="new-role", id="r-new", scope="team"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock()
+            MockRoleService.return_value = role_svc
+
+            provider = _make_provider()
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "new-role", "scope": "team", "scope_id": None}],
+                provider,
+            )
+
+        role_svc.revoke_role_from_user.assert_called_once()
+        role_svc.assign_role_to_user.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_assigns_new_roles(self, sso_service):
+        """New roles are assigned when not existing."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])  # No existing
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="developer", id="r1", scope="team"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock()
+            MockRoleService.return_value = role_svc
+
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "developer", "scope": "team"}],
+                _make_provider(),
+            )
+
+        role_svc.assign_role_to_user.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_existing_active_role(self, sso_service):
+        """Existing active role assignment is not re-assigned."""
+        existing_assignment = SimpleNamespace(is_active=True)
+
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="viewer", id="r2", scope="global"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=existing_assignment)
+            role_svc.assign_role_to_user = AsyncMock()
+            MockRoleService.return_value = role_svc
+
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "viewer", "scope": "global"}],
+                _make_provider(),
+            )
+
+        role_svc.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_role_not_found_skipped(self, sso_service):
+        """Role not found by name is logged and skipped."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])
+            role_svc.get_role_by_name = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock()
+            MockRoleService.return_value = role_svc
+
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "nonexistent", "scope": "team"}],
+                _make_provider(),
+            )
+
+        role_svc.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_assignment_exception_handled(self, sso_service):
+        """Exception during role assignment is caught and logged."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="dev", id="r1", scope="team"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock(side_effect=RuntimeError("db error"))
+            MockRoleService.return_value = role_svc
+
+            # Should not raise
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "dev", "scope": "team"}],
+                _make_provider(),
+            )
+
+        sso_service.db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_assignment_exception_handles_rollback_failure(self, sso_service):
+        """Rollback errors after assignment failure are swallowed and logged."""
+        sso_service.db.rollback.side_effect = RuntimeError("rollback failed")
+
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="dev", id="r1", scope="team"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock(side_effect=RuntimeError("db error"))
+            MockRoleService.return_value = role_svc
+
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "dev", "scope": "team"}],
+                _make_provider(),
+            )
+
+        sso_service.db.rollback.assert_called()
+
+
+# ---------------------------------------------------------------------------
 # authenticate_or_create_user tests
 # ---------------------------------------------------------------------------
 
@@ -2163,108 +2754,6 @@ class TestAuthenticateOrCreateUser:
         assert result == "jwt-token"
         assert existing_user.full_name == "New Name"
         assert existing_user.auth_provider == "github"
-
-    @pytest.mark.asyncio
-    async def test_apply_team_mapping_assigns_matching_group(self, sso_service):
-        provider = _make_provider(team_mapping={"Engineering": {"team_id": "team-1", "role": "owner"}})
-        team_service = MagicMock()
-        team_service.add_member_to_team = AsyncMock()
-
-        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
-            await sso_service._apply_team_mapping(
-                user_email="user@test.com",
-                user_info={"groups": ["engineering"]},
-                provider=provider,
-            )
-
-        team_service.add_member_to_team.assert_awaited_once_with(
-            team_id="team-1",
-            user_email="user@test.com",
-            role="owner",
-            invited_by="user@test.com",
-        )
-
-    def test_resolve_team_mapping_target_string_and_invalid(self, sso_service):
-        team_id, role = sso_service._resolve_team_mapping_target("team-raw")
-        assert team_id == "team-raw"
-        assert role == "member"
-
-        team_id, role = sso_service._resolve_team_mapping_target(123)
-        assert team_id is None
-        assert role == "member"
-
-    @pytest.mark.asyncio
-    async def test_apply_team_mapping_returns_early_for_missing_provider_or_groups(self, sso_service):
-        await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=None)
-        await sso_service._apply_team_mapping("user@test.com", {"groups": {"not": "a-list"}}, provider=_make_provider(team_mapping={"engineering": "team-1"}))
-
-    @pytest.mark.asyncio
-    async def test_apply_team_mapping_supports_string_group_and_skips_non_string_mapping_key(self, sso_service):
-        provider = _make_provider(team_mapping={1: "team-ignored", "engineering": "team-1"})
-        team_service = MagicMock()
-        team_service.add_member_to_team = AsyncMock()
-
-        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
-            await sso_service._apply_team_mapping("user@test.com", {"groups": "engineering"}, provider=provider)
-
-        team_service.add_member_to_team.assert_awaited_once_with(
-            team_id="team-1",
-            user_email="user@test.com",
-            role="member",
-            invited_by="user@test.com",
-        )
-
-    @pytest.mark.asyncio
-    async def test_apply_team_mapping_invalid_target_logs_warning(self, sso_service):
-        provider = _make_provider(team_mapping={"engineering": {}})
-        team_service = MagicMock()
-        team_service.add_member_to_team = AsyncMock()
-
-        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
-            await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=provider)
-
-        team_service.add_member_to_team.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_apply_team_mapping_skips_unmatched_group(self, sso_service):
-        provider = _make_provider(team_mapping={"sales": "team-9"})
-        team_service = MagicMock()
-        team_service.add_member_to_team = AsyncMock()
-
-        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
-            await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=provider)
-
-        team_service.add_member_to_team.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_apply_team_mapping_handles_expected_errors(self, sso_service):
-        # First-Party
-        from mcpgateway.services.team_management_service import MemberAlreadyExistsError, TeamManagementError
-
-        provider = _make_provider(
-            team_mapping={
-                "engineering": "team-1",
-                "platform": "team-2",
-                "ops": "team-3",
-            }
-        )
-        team_service = MagicMock()
-        team_service.add_member_to_team = AsyncMock(
-            side_effect=[
-                MemberAlreadyExistsError("already-member"),
-                TeamManagementError("team-error"),
-                RuntimeError("unexpected-error"),
-            ]
-        )
-
-        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
-            await sso_service._apply_team_mapping(
-                "user@test.com",
-                {"groups": ["engineering", "platform", "ops", "other"]},
-                provider=provider,
-            )
-
-        assert team_service.add_member_to_team.await_count == 3
 
     @pytest.mark.asyncio
     async def test_existing_user_calls_apply_team_mapping(self, sso_service, mock_db):
@@ -2354,7 +2843,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_sync_roles_on_login = False
             mock_jwt.return_value = "jwt-token"
-            # No email_verified key — simulates Entra ID / GitHub work accounts
+            # No email_verified key -- simulates Entra ID / GitHub work accounts
             result = await sso_service.authenticate_or_create_user(
                 {
                     "email": "user@test.com",
@@ -2689,7 +3178,7 @@ class TestAuthenticateOrCreateUser:
                 "name": "Entra User",
                 "preferred_username": "user@company.com",
                 "sub": "entra-sub-123",
-                # No email_verified — typical Microsoft Entra ID response
+                # No email_verified -- typical Microsoft Entra ID response
             },
         )
         # Confirm normalization did not inject the key
@@ -2836,7 +3325,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_pending(self, sso_service, mock_db):
-        """Admin approval required + no existing pending → creates pending request."""
+        """Admin approval required + no existing pending -> creates pending request."""
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing pending
@@ -3057,7 +3546,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_approved(self, sso_service, mock_db):
-        """Existing pending approval that was approved → user gets created."""
+        """Existing pending approval that was approved -> user gets created."""
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         new_user = SimpleNamespace(
@@ -3097,7 +3586,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_create_fails(self, sso_service, mock_db):
-        """create_user returns None → returns None."""
+        """create_user returns None -> returns None."""
         sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
         sso_service.auth_service.create_user = AsyncMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
@@ -3157,193 +3646,305 @@ class TestAuthenticateOrCreateUser:
 
 
 # ---------------------------------------------------------------------------
-# _sync_user_roles tests
+# _apply_team_mapping tests
 # ---------------------------------------------------------------------------
 
 
-class TestSyncUserRoles:
+class TestApplyTeamMapping:
+    """Tests for _apply_team_mapping and _resolve_team_mapping_target."""
+
     @pytest.mark.asyncio
-    async def test_revokes_removed_roles(self, sso_service):
-        """Roles no longer in desired set are revoked."""
-        old_role = SimpleNamespace(
-            role=SimpleNamespace(name="old-role", id="r-old"),
-            scope="team",
-            scope_id=None,
+    async def test_apply_team_mapping_assigns_matching_group(self, sso_service):
+        provider = _make_provider(team_mapping={"Engineering": {"team_id": "team-1", "role": "owner"}})
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": ["engineering"]},
+                provider=provider,
+            )
+
+        team_service.add_member_to_team.assert_awaited_once_with(
+            team_id="team-1",
+            user_email="user@test.com",
+            role="owner",
+            invited_by="user@test.com",
             grant_source="sso",
-            role_id="r-old",
         )
 
-        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            role_svc = AsyncMock()
-            role_svc.list_user_roles = AsyncMock(return_value=[old_role])
-            role_svc.revoke_role_from_user = AsyncMock()
-            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="new-role", id="r-new", scope="team"))
-            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
-            role_svc.assign_role_to_user = AsyncMock()
-            MockRoleService.return_value = role_svc
+    def test_resolve_team_mapping_target_string_and_invalid(self, sso_service):
+        team_id, role = sso_service._resolve_team_mapping_target("team-raw")
+        assert team_id == "team-raw"
+        assert role == "member"
 
-            provider = _make_provider()
-            await sso_service._sync_user_roles(
-                "user@test.com",
-                [{"role_name": "new-role", "scope": "team", "scope_id": None}],
-                provider,
+        team_id, role = sso_service._resolve_team_mapping_target(123)
+        assert team_id is None
+        assert role == "member"
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_returns_early_for_missing_provider_or_groups(self, sso_service):
+        await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=None)
+        await sso_service._apply_team_mapping("user@test.com", {"groups": {"not": "a-list"}}, provider=_make_provider(team_mapping={"engineering": "team-1"}))
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_supports_string_group_and_skips_non_string_mapping_key(self, sso_service):
+        provider = _make_provider(team_mapping={1: "team-ignored", "engineering": "team-1"})
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping("user@test.com", {"groups": "engineering"}, provider=provider)
+
+        team_service.add_member_to_team.assert_awaited_once_with(
+            team_id="team-1",
+            user_email="user@test.com",
+            role="member",
+            invited_by="user@test.com",
+            grant_source="sso",
+        )
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_invalid_target_logs_warning(self, sso_service):
+        provider = _make_provider(team_mapping={"engineering": {}})
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=provider)
+
+        team_service.add_member_to_team.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_skips_unmatched_group(self, sso_service):
+        provider = _make_provider(team_mapping={"sales": "team-9"})
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping("user@test.com", {"groups": ["engineering"]}, provider=provider)
+
+        team_service.add_member_to_team.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_apply_team_mapping_removes_stale_sso_memberships(self, sso_service):
+        """Test that SSO memberships are removed when groups are revoked."""
+        provider = _make_provider(team_mapping={"engineering": "team-1"})
+
+        # Mock existing SSO membership in team-2 (user was in "finance" group before)
+        mock_stale_membership = MagicMock()
+        mock_stale_membership.team_id = "team-2"
+        mock_stale_membership.user_email = "user@test.com"
+
+        # Mock DB query result
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_stale_membership]
+        sso_service.db.execute = MagicMock(return_value=mock_result)
+
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+        team_service.remove_member_from_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": ["engineering"]},  # Only in engineering now
+                provider=provider,
             )
 
-        role_svc.revoke_role_from_user.assert_called_once()
-        role_svc.assign_role_to_user.assert_called_once()
+        # Should remove stale membership from team-2
+        team_service.remove_member_from_team.assert_awaited_once_with(
+            team_id="team-2",
+            user_email="user@test.com",
+        )
+
+        # Should add to team-1
+        team_service.add_member_to_team.assert_awaited_once_with(
+            team_id="team-1",
+            user_email="user@test.com",
+            role="member",
+            invited_by="user@test.com",
+            grant_source="sso",
+        )
 
     @pytest.mark.asyncio
-    async def test_assigns_new_roles(self, sso_service):
-        """New roles are assigned when not existing."""
-        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            role_svc = AsyncMock()
-            role_svc.list_user_roles = AsyncMock(return_value=[])  # No existing
-            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="developer", id="r1", scope="team"))
-            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
-            role_svc.assign_role_to_user = AsyncMock()
-            MockRoleService.return_value = role_svc
+    async def test_apply_team_mapping_preserves_current_sso_memberships(self, sso_service):
+        """Test that current SSO memberships are preserved."""
+        provider = _make_provider(team_mapping={"engineering": "team-1", "finance": "team-2"})
 
-            await sso_service._sync_user_roles(
-                "user@test.com",
-                [{"role_name": "developer", "scope": "team"}],
-                _make_provider(),
+        # Mock existing SSO memberships (user is in both teams)
+        mock_membership1 = MagicMock()
+        mock_membership1.team_id = "team-1"
+        mock_membership2 = MagicMock()
+        mock_membership2.team_id = "team-2"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_membership1, mock_membership2]
+        sso_service.db.execute = MagicMock(return_value=mock_result)
+
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+        team_service.remove_member_from_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": ["engineering", "finance"]},  # Still in both
+                provider=provider,
             )
 
-        role_svc.assign_role_to_user.assert_called_once()
+        # Should NOT remove any memberships
+        team_service.remove_member_from_team.assert_not_awaited()
+
+        # Should attempt to add (will hit MemberAlreadyExistsError in real scenario)
+        assert team_service.add_member_to_team.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_skips_existing_active_role(self, sso_service):
-        """Existing active role assignment is not re-assigned."""
-        existing_assignment = SimpleNamespace(is_active=True)
+    async def test_apply_team_mapping_removes_all_when_groups_empty(self, sso_service):
+        """Test that all SSO memberships are removed when user has no groups."""
+        provider = _make_provider(team_mapping={"engineering": "team-1"})
 
-        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            role_svc = AsyncMock()
-            role_svc.list_user_roles = AsyncMock(return_value=[])
-            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="viewer", id="r2", scope="global"))
-            role_svc.get_user_role_assignment = AsyncMock(return_value=existing_assignment)
-            role_svc.assign_role_to_user = AsyncMock()
-            MockRoleService.return_value = role_svc
+        # Mock existing SSO memberships
+        mock_membership = MagicMock()
+        mock_membership.team_id = "team-1"
 
-            await sso_service._sync_user_roles(
-                "user@test.com",
-                [{"role_name": "viewer", "scope": "global"}],
-                _make_provider(),
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_membership]
+        sso_service.db.execute = MagicMock(return_value=mock_result)
+
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+        team_service.remove_member_from_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": []},  # No groups
+                provider=provider,
             )
 
-        role_svc.assign_role_to_user.assert_not_called()
+        # Should remove the membership
+        team_service.remove_member_from_team.assert_awaited_once_with(
+            team_id="team-1",
+            user_email="user@test.com",
+        )
+
+        # Should NOT add any memberships
+        team_service.add_member_to_team.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_role_not_found_skipped(self, sso_service):
-        """Role not found by name is logged and skipped."""
-        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            role_svc = AsyncMock()
-            role_svc.list_user_roles = AsyncMock(return_value=[])
-            role_svc.get_role_by_name = AsyncMock(return_value=None)
-            role_svc.assign_role_to_user = AsyncMock()
-            MockRoleService.return_value = role_svc
+    async def test_apply_team_mapping_handles_removal_errors_gracefully(self, sso_service):
+        """Test that removal errors are logged but don't stop processing."""
+        provider = _make_provider(team_mapping={"engineering": "team-1"})
 
-            await sso_service._sync_user_roles(
-                "user@test.com",
-                [{"role_name": "nonexistent", "scope": "team"}],
-                _make_provider(),
+        # Mock existing SSO membership
+        mock_membership = MagicMock()
+        mock_membership.team_id = "team-2"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_membership]
+        sso_service.db.execute = MagicMock(return_value=mock_result)
+
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+        team_service.remove_member_from_team = AsyncMock(side_effect=Exception("Removal failed"))
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            # Should not raise exception
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": ["engineering"]},
+                provider=provider,
             )
 
-        role_svc.assign_role_to_user.assert_not_called()
+        # Should still attempt to add new membership despite removal error
+        team_service.add_member_to_team.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_assignment_exception_handled(self, sso_service):
-        """Exception during role assignment is caught and logged."""
-        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            role_svc = AsyncMock()
-            role_svc.list_user_roles = AsyncMock(return_value=[])
-            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="dev", id="r1", scope="team"))
-            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
-            role_svc.assign_role_to_user = AsyncMock(side_effect=RuntimeError("db error"))
-            MockRoleService.return_value = role_svc
+    async def test_apply_team_mapping_queries_sso_memberships_correctly(self, sso_service):
+        """Test that the DB query filters by grant_source='sso' and is_active=True."""
+        provider = _make_provider(team_mapping={"engineering": "team-1"})
 
-            # Should not raise
-            await sso_service._sync_user_roles(
-                "user@test.com",
-                [{"role_name": "dev", "scope": "team"}],
-                _make_provider(),
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        sso_service.db.execute = MagicMock(return_value=mock_result)
+
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": ["engineering"]},
+                provider=provider,
             )
 
-        sso_service.db.rollback.assert_called()
+        # Verify DB query was called
+        sso_service.db.execute.assert_called_once()
+
+        # Verify the query filters by user_email, grant_source="sso", and is_active=True
+        call_args = sso_service.db.execute.call_args
+        stmt = call_args[0][0]
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "user@test.com" in compiled
+        assert "sso" in compiled
+        assert "is_active" in compiled
 
     @pytest.mark.asyncio
-    async def test_assignment_exception_handles_rollback_failure(self, sso_service):
-        """Rollback errors after assignment failure are swallowed and logged."""
-        sso_service.db.rollback.side_effect = RuntimeError("rollback failed")
+    async def test_apply_team_mapping_skips_empty_mapping_keys(self, sso_service):
+        """Test that whitespace-only mapping keys are skipped during desired-team computation."""
+        provider = _make_provider(team_mapping={"  ": "team-1", "engineering": "team-2"})
 
-        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            role_svc = AsyncMock()
-            role_svc.list_user_roles = AsyncMock(return_value=[])
-            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="dev", id="r1", scope="team"))
-            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
-            role_svc.assign_role_to_user = AsyncMock(side_effect=RuntimeError("db error"))
-            MockRoleService.return_value = role_svc
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        sso_service.db.execute = MagicMock(return_value=mock_result)
 
-            await sso_service._sync_user_roles(
-                "user@test.com",
-                [{"role_name": "dev", "scope": "team"}],
-                _make_provider(),
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                user_email="user@test.com",
+                user_info={"groups": ["engineering"]},
+                provider=provider,
             )
 
-        sso_service.db.rollback.assert_called()
-
-
-# ---------------------------------------------------------------------------
-# Entra legacy role mapping fallback
-# ---------------------------------------------------------------------------
-
-
-class TestEntraLegacyRoleMappings:
-    @pytest.mark.asyncio
-    async def test_entra_legacy_role_mappings_fallback(self, sso_service):
-        """When no role_mappings in metadata, falls back to sso_entra_role_mappings."""
-        mock_role = SimpleNamespace(name="developer", scope="team", id="r1")
-        provider = _make_provider(id="entra", provider_metadata={})
-
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            mock_settings.sso_entra_admin_groups = []
-            mock_settings.sso_entra_default_role = None
-            mock_settings.sso_entra_role_mappings = {"dev-group": "developer"}
-            role_svc = AsyncMock()
-            role_svc.get_role_by_name = AsyncMock(return_value=mock_role)
-            MockRoleService.return_value = role_svc
-            result = await sso_service._map_groups_to_roles("user@test.com", ["dev-group"], provider)
-
-        assert len(result) == 1
-        assert result[0]["role_name"] == "developer"
+        # Only the valid "engineering" key should produce an add call
+        team_service.add_member_to_team.assert_awaited_once_with(
+            team_id="team-2",
+            user_email="user@test.com",
+            role="member",
+            invited_by="user@test.com",
+            grant_source="sso",
+        )
 
     @pytest.mark.asyncio
-    async def test_role_not_found_in_cache(self, sso_service):
-        """Role mapping to non-existent role logs warning."""
-        provider = _make_provider(provider_metadata={"role_mappings": {"grp": "missing-role"}})
+    async def test_apply_team_mapping_handles_expected_errors(self, sso_service):
+        # First-Party
+        from mcpgateway.services.team_management_service import MemberAlreadyExistsError, TeamManagementError
 
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            mock_settings.sso_entra_admin_groups = []
-            mock_settings.sso_entra_default_role = None
-            mock_settings.sso_entra_role_mappings = {}
-            role_svc = AsyncMock()
-            role_svc.get_role_by_name = AsyncMock(return_value=None)
-            MockRoleService.return_value = role_svc
-            result = await sso_service._map_groups_to_roles("user@test.com", ["grp"], provider)
+        provider = _make_provider(
+            team_mapping={
+                "engineering": "team-1",
+                "platform": "team-2",
+                "ops": "team-3",
+            }
+        )
+        team_service = MagicMock()
+        team_service.add_member_to_team = AsyncMock(
+            side_effect=[
+                MemberAlreadyExistsError("already-member"),
+                TeamManagementError("team-error"),
+                RuntimeError("unexpected-error"),
+            ]
+        )
 
-        assert result == []  # Nothing mapped
+        with patch("mcpgateway.services.team_management_service.TeamManagementService", return_value=team_service):
+            await sso_service._apply_team_mapping(
+                "user@test.com",
+                {"groups": ["engineering", "platform", "ops", "other"]},
+                provider=provider,
+            )
 
-    @pytest.mark.asyncio
-    async def test_entra_admin_group_checked_before_role_mappings(self, sso_service):
-        """Entra admin groups produce platform_admin even without role_mappings."""
-        provider = _make_provider(id="entra", provider_metadata={})
-
-        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
-            mock_settings.sso_entra_admin_groups = ["admin-grp"]
-            mock_settings.sso_entra_default_role = None
-            mock_settings.sso_entra_role_mappings = {}
-            mock_settings.default_admin_role = "platform_admin"
-            role_svc = AsyncMock()
-            MockRoleService.return_value = role_svc
-            result = await sso_service._map_groups_to_roles("user@test.com", ["admin-grp", "other"], provider)
-
-        assert any(r["role_name"] == "platform_admin" for r in result)
+        assert team_service.add_member_to_team.await_count == 3
