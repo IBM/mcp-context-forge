@@ -972,8 +972,37 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                 )
             )
             team_rows = team_ids_result.all()
-            result["team_ids"] = [row[0] for row in team_rows]
-            result["team_names"] = {row[0]: row[1] for row in team_rows if row[1]}
+            team_ids: list[str] = []
+            team_names: dict[str, str] = {}
+
+            for row in team_rows:
+                team_id = None
+                team_name = None
+
+                mapping = getattr(row, "_mapping", None)
+                if mapping is not None:
+                    team_id = mapping.get("team_id")
+                    team_name = mapping.get("name")
+
+                if team_id is None:
+                    team_id = getattr(row, "team_id", None)
+                if team_name is None:
+                    team_name = getattr(row, "name", None)
+
+                if team_id is None and isinstance(row, tuple):
+                    team_id = row[0] if len(row) > 0 else None
+                    team_name = row[1] if len(row) > 1 else None
+
+                if not team_id:
+                    continue
+
+                team_id_str = str(team_id)
+                team_ids.append(team_id_str)
+                if team_name:
+                    team_names[team_id_str] = str(team_name)
+
+            result["team_ids"] = team_ids
+            result["team_names"] = team_names
 
         # Query 3: Check token revocation (if JTI provided)
         if jti:
