@@ -87,6 +87,55 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+def _normalize_mcp_prompt_arguments(arguments: Any) -> Optional[List[types.PromptArgument]]:
+    """Convert internal prompt-argument objects to MCP prompt arguments.
+
+    The prompt service returns internal schema models, while the MCP transport
+    must emit ``mcp.types.PromptArgument`` instances. Pydantic does not treat
+    different model classes as interchangeable, so raw pass-through raises
+    validation errors during prompt listing.
+
+    Args:
+        arguments: Prompt arguments from internal services. Items may already be
+            ``mcp.types.PromptArgument`` instances, dicts, or other Pydantic
+            models with matching attributes.
+
+    Returns:
+        Normalized MCP prompt arguments, or ``None`` when the prompt has no
+        argument list.
+    """
+    if arguments is None:
+        return None
+
+    normalized_arguments: List[types.PromptArgument] = []
+    for argument in arguments:
+        if isinstance(argument, types.PromptArgument):
+            normalized_arguments.append(argument)
+        else:
+            normalized_arguments.append(types.PromptArgument.model_validate(argument, from_attributes=True))
+    return normalized_arguments
+
+
+def _to_mcp_prompt(prompt: Any) -> types.Prompt:
+    """Convert an internal prompt object to the MCP transport model.
+
+    Args:
+        prompt: Internal prompt object returned by prompt_service.
+
+    Returns:
+        MCP prompt model suitable for protocol responses.
+    """
+    title = getattr(prompt, "title", None)
+    if not isinstance(title, str):
+        title = None
+
+    meta = getattr(prompt, "meta", None)
+    if not isinstance(meta, dict):
+        meta = None
+
+    return types.Prompt(name=prompt.name, title=title, description=prompt.description, arguments=_normalize_mcp_prompt_arguments(getattr(prompt, "arguments", None)), meta=meta)
+
+
 def _record_mcp_auth_cache_event(outcome: str) -> None:
     """Best-effort Prometheus counter update for MCP auth cache flow.
 
@@ -1805,7 +1854,7 @@ async def list_prompts() -> List[types.Prompt]:
         try:
             async with get_db() as db:
                 prompts = await prompt_service.list_server_prompts(db, server_id, user_email=user_email, token_teams=token_teams)
-                return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
+                return [_to_mcp_prompt(prompt) for prompt in prompts]
         except Exception as e:
             logger.exception("Error listing Prompts:%s", e)
             return []
@@ -1813,7 +1862,7 @@ async def list_prompts() -> List[types.Prompt]:
         try:
             async with get_db() as db:
                 prompts, _ = await prompt_service.list_prompts(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
-                return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
+                return [_to_mcp_prompt(prompt) for prompt in prompts]
         except Exception as e:
             logger.exception("Error listing prompts:%s", e)
             return []

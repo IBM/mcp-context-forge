@@ -762,12 +762,14 @@ async def test_list_tools_exception_with_server_id(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_list_prompts_with_server_id(monkeypatch):
     """Test list_prompts returns prompts for a server_id."""
+    # First-Party
+    from mcpgateway.schemas import PromptArgument as SchemaPromptArgument
 
     mock_db = MagicMock()
     mock_prompt = MagicMock()
     mock_prompt.name = "prompt1"
     mock_prompt.description = "test prompt"
-    mock_prompt.arguments = [PromptArgument(name="arg1", description="desc1", required=None)]
+    mock_prompt.arguments = [SchemaPromptArgument(name="arg1", description="desc1", required=False)]
 
     @asynccontextmanager
     async def fake_get_db():
@@ -789,6 +791,7 @@ async def test_list_prompts_with_server_id(monkeypatch):
     assert result[0].name == "prompt1"
     assert result[0].description == "test prompt"
     assert len(result[0].arguments) == 1
+    assert isinstance(result[0].arguments[0], PromptArgument)
     assert result[0].arguments[0].name == "arg1"
 
 
@@ -796,13 +799,14 @@ async def test_list_prompts_with_server_id(monkeypatch):
 async def test_list_prompts_no_server_id(monkeypatch):
     """Test list_prompts returns prompts when no server_id is set."""
     # First-Party
+    from mcpgateway.schemas import PromptArgument as SchemaPromptArgument
     from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var
 
     mock_db = MagicMock()
     mock_prompt = MagicMock()
     mock_prompt.name = "global_prompt"
     mock_prompt.description = "global test prompt"
-    mock_prompt.arguments = []
+    mock_prompt.arguments = [SchemaPromptArgument(name="global_arg", description="desc", required=True)]
 
     @asynccontextmanager
     async def fake_get_db():
@@ -819,6 +823,9 @@ async def test_list_prompts_no_server_id(monkeypatch):
     assert len(result) == 1
     assert result[0].name == "global_prompt"
     assert result[0].description == "global test prompt"
+    assert len(result[0].arguments) == 1
+    assert isinstance(result[0].arguments[0], PromptArgument)
+    assert result[0].arguments[0].name == "global_arg"
 
 
 @pytest.mark.asyncio
