@@ -649,11 +649,12 @@ async def main() -> None:
                 if updated:
                     logger.info(f"Normalized {updated} team record(s) to supported visibility values")
 
-                # Bootstrap admin user after database is ready, using the LOCKED connection
-                await bootstrap_admin_user(conn)
-
-                # Bootstrap default RBAC roles after admin user is created
+                # Bootstrap default RBAC roles first so platform_admin role exists
+                # before admin user creation attempts to assign it
                 await bootstrap_default_roles(conn)
+
+                # Bootstrap admin user after roles are seeded
+                await bootstrap_admin_user(conn)
 
                 # Assign orphaned resources to admin personal team after all setup is complete
                 await bootstrap_resource_assignments(conn)
