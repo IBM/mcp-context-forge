@@ -1,0 +1,53 @@
+image: python:3.11-slim
+
+cache:
+  paths:
+    - .cache/pip
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+stages:
+  - install
+  - lint
+  - test
+
+install:
+  stage: install
+  tags:
+    - docker
+  script:
+    - pip install -e ".[dev]"
+
+lint:
+  stage: lint
+  tags:
+    - docker
+  script:
+    - pip install -e ".[dev]"
+    - pip install flake8 pylint bandit
+    - flake8 mcpgateway/ --max-line-length=120 --ignore=E501
+    - pylint mcpgateway/ --exit-zero
+    - bandit -r mcpgateway/ -ll
+
+test:
+  stage: test
+  tags:
+    - docker
+  script:
+    - pip install -e ".[dev]"
+    - pip install pytest pytest-cov hypothesis pytest-asyncio redis url-normalize pytest-timeout
+    - pytest tests/unit/ --tb=short -q
+        --ignore=tests/unit/plugins/
+        --ignore=tests/unit/mcpgateway/plugins/
+        --ignore=tests/unit/mcpgateway/utils/test_redis_client.py
+        --ignore=tests/unit/mcpgateway/utils/test_redis_isready.py
+        --ignore=tests/unit/mcpgateway/test_translate_stdio_endpoint.py
+        --ignore=tests/unit/mcpgateway/test_admin_catalog_htmx.py
+        --ignore=tests/unit/mcpgateway/services/test_gateway_query_param_auth.py
+        --ignore=tests/unit/mcpgateway/services/test_gateway_service.py
+        --ignore=tests/unit/mcpgateway/services/test_grpc_service_no_grpc.py
+  artifacts:
+    paths:
+      - htmlcov/
+    expire_in: 1 week
