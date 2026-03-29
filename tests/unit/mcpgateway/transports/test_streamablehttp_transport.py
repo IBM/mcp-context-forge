@@ -367,6 +367,7 @@ def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
     original = {
         "email": "user@example.com",
         "teams": ["team-a"],
+        "auth_method": "jwt",
         "is_authenticated": True,
         "is_admin": False,
         "token_use": "session",
@@ -384,6 +385,7 @@ def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
     assert forwarded == {
         "email": "user@example.com",
         "teams": ["team-a"],
+        "auth_method": "jwt",
         "is_authenticated": True,
         "is_admin": False,
         "token_use": "session",
@@ -12434,6 +12436,7 @@ async def test_auth_jwt_scoped_permissions_in_user_context(monkeypatch):
     ctx = user_context_var.get()
     assert ctx["scoped_permissions"] == ["tools.read", "tools.execute", "servers.use"]
     assert ctx["email"] == "user@example.com"
+    assert ctx["auth_method"] == "jwt"
 
 
 @pytest.mark.asyncio
@@ -12470,6 +12473,7 @@ async def test_auth_jwt_uses_cached_auth_context_and_cached_teams(monkeypatch):
     assert ctx["teams"] == ["team-a"]
     assert ctx["permission_is_admin"] is True
     assert ctx["scoped_server_id"] == "srv-1"
+    assert ctx["auth_method"] == "jwt"
 
 
 @pytest.mark.asyncio

@@ -2944,7 +2944,10 @@ class ToolService(BaseService):
         if has_post_invoke:
             return {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
 
-        if current_trace_id.get():
+        # Rust direct `tools/call` does not emit native OTEL spans yet. When
+        # observability is enabled, keep the existing Python invoke path so
+        # Langfuse/OTEL tool traces retain parity with the Python runtime.
+        if settings.otel_enable_observability or current_trace_id.get():
             return {"eligible": False, "fallbackReason": "observability-trace-active"}
 
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)

@@ -1348,7 +1348,15 @@ define VERIFY_LANGFUSE_GATEWAY_EXPORT
 		exit 1; \
 	}
 	@expected_endpoint=$$($(LANGFUSE_COMPOSE) exec -T gateway /bin/sh -c 'printf "%s" "$$LANGFUSE_OTEL_ENDPOINT"'); \
-	if ! $(LANGFUSE_COMPOSE) logs gateway --tail=200 2>/dev/null | grep -F "Endpoint: $$expected_endpoint" >/dev/null; then \
+	found_endpoint=0; \
+	for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if $(LANGFUSE_COMPOSE) logs gateway --tail=400 2>/dev/null | grep -F "Endpoint: $$expected_endpoint" >/dev/null; then \
+			found_endpoint=1; \
+			break; \
+		fi; \
+		sleep 2; \
+	done; \
+	if [ "$$found_endpoint" -ne 1 ]; then \
 		echo "❌ Gateway did not initialize OpenTelemetry with the expected Langfuse endpoint ($$expected_endpoint)."; \
 		echo "   Rebuild the gateway image if the running container is stale, then rerun make langfuse-up."; \
 		exit 1; \

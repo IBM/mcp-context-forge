@@ -379,6 +379,7 @@ class TestInternalTrustedMcpTransportBridge:
                     {
                         "email": "user@example.com",
                         "teams": ["team-a"],
+                        "auth_method": "jwt",
                         "is_authenticated": True,
                         "is_admin": False,
                         "permission_is_admin": False,
@@ -418,6 +419,7 @@ class TestInternalTrustedMcpTransportBridge:
         assert observed["modified_path"] == "/servers/server-1/mcp"
         assert observed["user_context"]["email"] == "user@example.com"
         assert observed["user_context"]["teams"] == ["team-a"]
+        assert observed["user_context"]["auth_method"] == "jwt"
         assert events[0]["status"] == 204
 
     @pytest.mark.asyncio
@@ -990,6 +992,7 @@ class TestInternalMcpHelperCoverage:
                 "is_authenticated": True,
                 "is_admin": False,
                 "permission_is_admin": False,
+                "auth_method": "jwt",
             }
         )
         request.client = SimpleNamespace(host="127.0.0.1")
@@ -998,7 +1001,7 @@ class TestInternalMcpHelperCoverage:
         _build_internal_mcp_forwarded_user(request)
 
         assert get_trace_user_email() == "trace@example.com"
-        assert get_trace_auth_method() == "mcp_internal_forward"
+        assert get_trace_auth_method() == "jwt"
         assert get_trace_team_scope() == "team-x"
         clear_trace_context()
 
@@ -9196,17 +9199,19 @@ class TestRpcHandling:
         assert result["error"]["message"] == "Not authorized to cancel this run"
 
     @pytest.mark.asyncio
-    async def test_handle_rpc_notifications_cancelled_denies_unknown_run_for_non_admin(self):
+    async def test_handle_rpc_notifications_cancelled_accepts_unknown_run_as_noop(self):
         payload_cancel = {"jsonrpc": "2.0", "id": "33", "method": "notifications/cancelled", "params": {"requestId": "unknown-run", "reason": "stop"}}
         request_cancel = self._make_request(payload_cancel)
 
         with (
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.cancellation_service.cancel_run", new=AsyncMock(return_value=False)) as cancel_run,
             patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com", "is_admin": False})
 
-        assert result["error"]["message"] == "Not authorized to cancel this run"
+        assert result["result"] == {}
+        cancel_run.assert_awaited_once_with("unknown-run", reason="stop")
 
 
 class TestA2AListAndGet:

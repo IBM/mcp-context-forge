@@ -4066,7 +4066,7 @@ async fn representative_specialized_endpoints_wrap_success_and_error_payloads_in
         .send()
         .await
         .expect("resources/list error response");
-    assert_eq!(resources_err.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resources_err.status(), StatusCode::OK);
     let resources_err_body: Value = resources_err
         .json()
         .await
@@ -4107,7 +4107,7 @@ async fn representative_specialized_endpoints_wrap_success_and_error_payloads_in
         .send()
         .await
         .expect("prompts/get error response");
-    assert_eq!(prompts_err.status(), StatusCode::FORBIDDEN);
+    assert_eq!(prompts_err.status(), StatusCode::OK);
     let prompts_err_body: Value = prompts_err.json().await.expect("prompts/get error json");
     assert_eq!(prompts_err_body["jsonrpc"], json!("2.0"));
     assert_eq!(prompts_err_body["id"], json!(66));
@@ -4151,7 +4151,7 @@ async fn representative_specialized_endpoints_wrap_success_and_error_payloads_in
         .send()
         .await
         .expect("completion/complete error response");
-    assert_eq!(completion_err.status(), StatusCode::FORBIDDEN);
+    assert_eq!(completion_err.status(), StatusCode::OK);
     assert_eq!(
         completion_err
             .headers()

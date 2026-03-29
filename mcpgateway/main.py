@@ -40,6 +40,7 @@ import logging
 import re
 import signal
 import sys
+import threading
 from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
@@ -454,11 +455,13 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     if request.headers.get(_INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
         auth_context["_rust_session_validated"] = True
 
+    forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
+
     set_trace_context_from_teams(
         auth_context.get("teams"),
         user_email=auth_context.get("email"),
         is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
-        auth_method="mcp_internal_forward",
+        auth_method=forwarded_auth_method,
         team_name=auth_context.get("team_name"),
     )
 
@@ -466,7 +469,7 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
         "email": auth_context.get("email"),
         "full_name": auth_context.get("email") or "MCP Internal Forward",
         "is_admin": bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
-        "auth_method": "mcp_internal_forward",
+        "auth_method": forwarded_auth_method,
         "token_use": auth_context.get("token_use"),
     }
 
@@ -1151,17 +1154,16 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
     requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
     run_status = await cancellation_service.get_status(request_id)
 
-    unauthorized = False
     if run_status is None:
-        # Default deny for non-admin users when run is not known on this worker.
-        # Session-affinity clients should route cancellation to the worker that owns the run.
-        unauthorized = not requester_is_admin
-    else:
-        run_owner_email = run_status.get("owner_email")
-        run_owner_team_ids = run_status.get("owner_team_ids") or []
-        requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
-        requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
-        unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
+        # Notifications are best-effort; unknown request ids should be accepted
+        # as no-ops rather than rejected as authorization failures.
+        return
+
+    run_owner_email = run_status.get("owner_email")
+    run_owner_team_ids = run_status.get("owner_team_ids") or []
+    requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
+    requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
+    unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
 
     if unauthorized:
         if as_jsonrpc_error:
@@ -1524,6 +1526,43 @@ async def attempt_to_bootstrap_sso_providers():
 ####################
 # Startup/Shutdown #
 ####################
+def _can_manage_sighup_handler() -> bool:
+    """Return whether this runtime context can safely install process signal handlers.
+
+    Returns:
+        ``True`` when startup is running on the process main thread and SIGHUP is available.
+    """
+    return hasattr(signal, "SIGHUP") and threading.current_thread() is threading.main_thread()
+
+
+def _install_sighup_handler() -> bool:
+    """Install the SIGHUP handler when the current runtime context supports it.
+
+    Returns:
+        ``True`` when the handler was installed in the current runtime context.
+    """
+    if not _can_manage_sighup_handler():
+        logger.debug("Skipping SIGHUP handler registration outside the main thread")
+        return False
+
+    # First-Party
+    from mcpgateway.handlers.signal_handlers import sighup_handler  # pylint: disable=import-outside-toplevel
+
+    signal.signal(signal.SIGHUP, sighup_handler)
+    return True
+
+
+def _restore_default_sighup_handler() -> None:
+    """Restore the default SIGHUP handler when the current runtime context supports it.
+
+    Returns:
+        ``None``.
+    """
+    if not _can_manage_sighup_handler():
+        return
+    signal.signal(signal.SIGHUP, signal.SIG_DFL)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1711,10 +1750,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
-        # First-Party
-        from mcpgateway.handlers.signal_handlers import sighup_handler  # pylint: disable=import-outside-toplevel
-
-        signal.signal(signal.SIGHUP, sighup_handler)
+        _install_sighup_handler()
 
         # Start cache invalidation subscriber for cross-worker cache synchronization
         # First-Party
@@ -1786,7 +1822,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         # Restore default SIGHUP handling in case we reset signal handlers.
         try:
-            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+            _restore_default_sighup_handler()
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"Failed to restore default SIGHUP handler: {exc}")
 
@@ -11126,6 +11162,7 @@ class InternalTrustedMCPTransportBridge:
         forwarded_scope = dict(scope)
         forwarded_scope["path"] = "/mcp/"
         forwarded_scope["modified_path"] = f"/servers/{server_id}/mcp" if server_id else "/mcp/"
+        forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
 
         token = user_context_var.set(auth_context)
         try:
@@ -11133,7 +11170,7 @@ class InternalTrustedMCPTransportBridge:
                 auth_context.get("teams"),
                 user_email=auth_context.get("email"),
                 is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
-                auth_method="mcp_internal_forward",
+                auth_method=forwarded_auth_method,
                 team_name=auth_context.get("team_name"),
             )
             await self.transport_app.handle_streamable_http(forwarded_scope, receive, send)

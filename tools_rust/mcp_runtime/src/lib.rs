@@ -602,6 +602,33 @@ struct McpToolDefinition {
     output_schema: Option<Value>,
 }
 
+fn normalize_tool_input_schema(input_schema: Option<Value>) -> Value {
+    let mut schema = input_schema.unwrap_or_else(|| json!({"type": "object", "properties": {}}));
+
+    let Some(schema_object) = schema.as_object_mut() else {
+        return schema;
+    };
+
+    let is_object_schema = schema_object.get("type").and_then(Value::as_str) == Some("object");
+    let has_properties = schema_object
+        .get("properties")
+        .is_some_and(Value::is_object);
+
+    if (is_object_schema || has_properties) && !schema_object.contains_key("required") {
+        schema_object.insert("required".to_string(), Value::Array(Vec::new()));
+    }
+
+    schema
+}
+
+fn jsonrpc_response_status(status: StatusCode) -> StatusCode {
+    if status.is_success() {
+        status
+    } else {
+        StatusCode::OK
+    }
+}
+
 impl JsonRpcRequest {
     fn is_notification(&self) -> bool {
         matches!(self.id.as_ref(), None | Some(Value::Null))
@@ -4466,7 +4493,11 @@ async fn forward_server_tools_list_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn direct_server_tools_list(
@@ -4573,9 +4604,7 @@ async fn query_server_tools_list_from_db(
         .map(|row| McpToolDefinition {
             name: row.get("name"),
             description: row.get("description"),
-            input_schema: row
-                .get::<_, Option<Value>>("input_schema")
-                .unwrap_or_else(|| json!({"type": "object", "properties": {}})),
+            input_schema: normalize_tool_input_schema(row.get::<_, Option<Value>>("input_schema")),
             annotations: row
                 .get::<_, Option<Value>>("annotations")
                 .unwrap_or_else(|| json!({})),
@@ -5374,7 +5403,7 @@ async fn authorize_server_method_via_backend(
     };
 
     Err(response_from_json_with_headers(
-        status,
+        jsonrpc_response_status(status),
         json!({
             "jsonrpc": JSONRPC_VERSION,
             "id": request_id,
@@ -5519,7 +5548,11 @@ async fn forward_resources_list_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_resources_read_to_backend(
@@ -5569,7 +5602,11 @@ async fn forward_resources_read_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_resources_subscribe_to_backend(
@@ -5619,7 +5656,11 @@ async fn forward_resources_subscribe_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_resources_unsubscribe_to_backend(
@@ -5669,7 +5710,11 @@ async fn forward_resources_unsubscribe_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_resource_templates_list_to_backend(
@@ -5719,7 +5764,11 @@ async fn forward_resource_templates_list_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_roots_list_to_backend(
@@ -5768,7 +5817,11 @@ async fn forward_roots_list_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_prompts_list_to_backend(
@@ -5817,7 +5870,11 @@ async fn forward_prompts_list_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_prompts_get_to_backend(
@@ -5866,7 +5923,11 @@ async fn forward_prompts_get_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_completion_complete_to_backend(
@@ -5916,7 +5977,11 @@ async fn forward_completion_complete_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_sampling_create_message_to_backend(
@@ -5966,7 +6031,11 @@ async fn forward_sampling_create_message_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_logging_set_level_to_backend(
@@ -6016,7 +6085,11 @@ async fn forward_logging_set_level_to_backend(
         })
     };
 
-    response_from_json_with_headers(status, response_payload, &backend_headers)
+    response_from_json_with_headers(
+        jsonrpc_response_status(status),
+        response_payload,
+        &backend_headers,
+    )
 }
 
 async fn forward_cancelled_notification_to_backend(
@@ -7655,9 +7728,10 @@ mod unit_tests {
         hex_decode, hex_encode, inject_server_id_header, inject_session_header,
         invalid_request_response, is_affinity_forwarded_request, load_pem_certificates,
         maybe_bind_session_auth_context, maybe_upsert_runtime_session_from_transport_response,
-        normalize_postgres_database_url, parse_error_response, parse_sse_line, pool_owner_key,
-        prompt_arguments_from_schema, public_client_ip, query_param, remove_runtime_session,
-        replay_events_endpoint, requested_initialize_session_id, requested_protocol_version,
+        normalize_postgres_database_url, normalize_tool_input_schema, parse_error_response,
+        parse_sse_line, pool_owner_key, prompt_arguments_from_schema, public_client_ip,
+        query_param, remove_runtime_session, replay_events_endpoint,
+        requested_initialize_session_id, requested_protocol_version,
         response_from_affinity_forward_response, run, runtime_session_access_outcome,
         runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
         send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
@@ -7693,9 +7767,7 @@ mod unit_tests {
         for load_error in native_certs.errors {
             warn!("Rust MCP test native root load warning: {load_error}");
         }
-        let Some(certificate) = native_certs.certs.into_iter().next() else {
-            return None;
-        };
+        let certificate = native_certs.certs.into_iter().next()?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(certificate.as_ref());
         let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
         for chunk in encoded.as_bytes().chunks(64) {
@@ -10291,7 +10363,7 @@ mod unit_tests {
     }
 
     #[tokio::test]
-    async fn direct_server_methods_return_authz_denials_before_db_fallback() {
+    async fn direct_server_methods_return_structured_authz_errors_before_db_fallback() {
         let backend = Router::new()
             .route(
                 "/_internal/mcp/resources/list/authz",
@@ -10347,7 +10419,7 @@ mod unit_tests {
 
         let resources_list =
             direct_server_resources_list(&state, trusted_headers.clone(), Some(json!(26))).await;
-        assert_eq!(resources_list.status(), StatusCode::FORBIDDEN);
+        assert_eq!(resources_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(resources_list).await["error"]["detail"],
             "resources/list denied"
@@ -10356,7 +10428,7 @@ mod unit_tests {
         let templates_list =
             direct_server_resource_templates_list(&state, trusted_headers.clone(), Some(json!(27)))
                 .await;
-        assert_eq!(templates_list.status(), StatusCode::FORBIDDEN);
+        assert_eq!(templates_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(templates_list).await["error"]["detail"],
             "templates denied"
@@ -10364,7 +10436,7 @@ mod unit_tests {
 
         let prompts_list =
             direct_server_prompts_list(&state, trusted_headers.clone(), Some(json!(28))).await;
-        assert_eq!(prompts_list.status(), StatusCode::FORBIDDEN);
+        assert_eq!(prompts_list.status(), StatusCode::OK);
         assert_eq!(
             response_json(prompts_list).await["error"]["detail"],
             "prompts/list denied"
@@ -10385,7 +10457,7 @@ mod unit_tests {
             ),
         )
         .await;
-        assert_eq!(resources_read.status(), StatusCode::FORBIDDEN);
+        assert_eq!(resources_read.status(), StatusCode::OK);
         assert_eq!(
             response_json(resources_read).await["error"]["detail"],
             "resources/read denied"
@@ -10406,7 +10478,7 @@ mod unit_tests {
             ),
         )
         .await;
-        assert_eq!(prompts_get.status(), StatusCode::FORBIDDEN);
+        assert_eq!(prompts_get.status(), StatusCode::OK);
         assert_eq!(
             response_json(prompts_get).await["error"]["detail"],
             "prompts/get denied"
@@ -10457,7 +10529,7 @@ mod unit_tests {
         )
         .await
         .expect_err("deny should return response");
-        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        assert_eq!(denied.status(), StatusCode::OK);
         assert_eq!(response_json(denied).await["error"]["code"], "denied");
 
         let bad_json = authorize_server_method_via_backend(
@@ -10499,6 +10571,81 @@ mod unit_tests {
         assert!(arguments.iter().any(|value| {
             value["name"] == "age" && value["description"] == "" && value["required"] == false
         }));
+    }
+
+    #[test]
+    fn normalize_tool_input_schema_adds_empty_required_for_object_schemas() {
+        let normalized = normalize_tool_input_schema(Some(json!({
+            "type": "object",
+            "properties": {
+                "timezone": {"type": "string"}
+            }
+        })));
+
+        assert_eq!(normalized["required"], json!([]));
+        assert_eq!(normalized["properties"]["timezone"]["type"], "string");
+    }
+
+    #[test]
+    fn normalize_tool_input_schema_preserves_existing_required_values() {
+        let normalized = normalize_tool_input_schema(Some(json!({
+            "type": "object",
+            "properties": {
+                "time": {"type": "string"}
+            },
+            "required": ["time"]
+        })));
+
+        assert_eq!(normalized["required"], json!(["time"]));
+    }
+
+    #[tokio::test]
+    async fn direct_server_prompts_get_wraps_backend_not_found_as_jsonrpc_ok_response() {
+        let backend = Router::new()
+            .route(
+                "/_internal/mcp/prompts/get/authz",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/_internal/mcp/prompts/get",
+                post(|| async {
+                    (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({
+                            "code": -32002,
+                            "message": "Prompt not found",
+                            "data": {"name": "missing"}
+                        })),
+                    )
+                }),
+            );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.backend_rpc_url = format!("{backend_url}/rpc");
+        let state = AppState::new(&config).expect("state");
+
+        let response = direct_server_prompts_get(
+            &state,
+            trusted_server_headers("server-1"),
+            Some(json!(41)),
+            &JsonRpcRequest {
+                jsonrpc: Some("2.0".to_string()),
+                method: "prompts/get".to_string(),
+                params: json!({"name": "missing"}),
+                id: Some(json!(41)),
+            },
+            Bytes::from_static(
+                br#"{"jsonrpc":"2.0","id":41,"method":"prompts/get","params":{"name":"missing"}}"#,
+            ),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let payload = response_json(response).await;
+        assert_eq!(payload["id"], 41);
+        assert_eq!(payload["error"]["code"], -32002);
+        assert_eq!(payload["error"]["message"], "Prompt not found");
     }
 
     #[tokio::test]

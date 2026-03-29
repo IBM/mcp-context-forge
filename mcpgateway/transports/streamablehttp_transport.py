@@ -3092,6 +3092,7 @@ def _set_proxy_user_context(proxy_user: str) -> None:
             "is_authenticated": True,
             "is_admin": False,
             "permission_is_admin": False,
+            "auth_method": "proxy",
         }
     )
     set_trace_context_from_teams([], user_email=proxy_user, is_admin=False, auth_method="proxy")
@@ -3119,6 +3120,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         "team_name",
         "is_authenticated",
         "is_admin",
+        "auth_method",
         "token_use",
         "permission_is_admin",
         "scoped_permissions",
@@ -3271,6 +3273,7 @@ class _StreamableHttpAuthHandler:
                 "is_authenticated": False,
                 "is_admin": False,
                 "permission_is_admin": False,
+                "auth_method": "anonymous",
             }
         )
         set_trace_context_from_teams([], auth_method="anonymous")
@@ -3520,6 +3523,7 @@ class _StreamableHttpAuthHandler:
                 "teams": final_teams,
                 "is_authenticated": True,
                 "is_admin": is_admin,
+                "auth_method": "jwt",
                 "permission_is_admin": db_user_is_admin or is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }

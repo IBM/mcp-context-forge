@@ -6950,6 +6950,19 @@ class TestRustMcpExecutionPlan:
         assert plan == {"eligible": False, "fallbackReason": "observability-trace-active"}
 
     @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_otel_enabled_forces_fallback(self, tool_service):
+        """Enabled OTEL observability should keep tools/call on the Python path."""
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service.settings.otel_enable_observability", True),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan == {"eligible": False, "fallbackReason": "observability-trace-active"}
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("status", "error_match"),
         [
