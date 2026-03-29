@@ -3983,7 +3983,6 @@ class ToolService(BaseService):
                                     exc_info=True,
                                 )
                             if self._plugin_manager:
-                            if self._plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
@@ -4617,16 +4616,6 @@ class ToolService(BaseService):
                             if self._plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table)
 
-                                if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                                    timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
-                                    await self._plugin_manager.invoke_hook(
-                                        ToolHookType.TOOL_POST_INVOKE,
-                                        payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
-                                        global_context=global_context,
-                                        local_contexts=context_table,
-                                        violations_as_exceptions=False,
-                                    )
-
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
 
                         if http_response.status_code == 200:
@@ -4646,6 +4635,7 @@ class ToolService(BaseService):
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
                 with create_child_span("tool.post_process", {"tool.name": name, "tool.id": tool_id}):
+                    post_result = None
                     # Plugin hook: tool post-invoke
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
                         post_result, _ = await self._plugin_manager.invoke_hook(
@@ -4676,7 +4666,7 @@ class ToolService(BaseService):
                     # retry_attempt is 0-based (0 = original call).  The condition allows retry_attempt
                     # values 0..max_tool_retries-1, meaning up to max_tool_retries *retry* attempts on
                     # top of the original call (total attempts = max_tool_retries + 1).
-                    if post_result.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
+                    if post_result is not None and post_result.retry_delay_ms > 0 and retry_attempt < settings.max_tool_retries:
                         return await self._retry_tool_invocation(
                             post_result.retry_delay_ms,
                             retry_attempt,
