@@ -1,0 +1,147 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: pci-dss-cardholder-data
+  version: 1.0.0
+  description: "PCI-DSS cardholder data protection — enforces strict access controls for primary account numbers (PAN), CVV, and full magnetic stripe data"
+  category: compliance/pci-dss
+  compliance_frameworks: [PCI-DSS]
+  risk_level: critical
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [pci-dss, cardholder-data, pan, payment, access-control]
+spec:
+  engine: cedar
+  parameters:
+    - name: chd_resource_pattern
+      type: string
+      description: "Pattern matching cardholder data resources"
+      default: "chd-*"
+      required: true
+    - name: authorized_processor_roles
+      type: list
+      description: "Roles authorized to process cardholder data"
+      default: ["payment_processor", "fraud_analyst"]
+      required: true
+    - name: pan_mask_required
+      type: boolean
+      description: "Require PAN masking (show only last 4 digits) for display operations"
+      default: true
+    - name: cardholder_data_environment
+      type: string
+      description: "CDE boundary identifier for network segmentation checks"
+      default: "cde-production"
+  template: |
+    // PCI-DSS Cardholder Data Access Controls
+    // Template: {name} v{version}
+    // Compliance: PCI DSS v4.0 Requirements 3, 7, 8
+
+    // Restrict cardholder data access to authorized processors
+    permit(
+      principal in [Role::"payment_processor", Role::"fraud_analyst"],
+      action in [Action::"read_chd", Action::"process_payment"],
+      resource matches Resource::"{chd_resource_pattern}"
+    ) when {
+      principal.pci_training_complete == true &&
+      principal.mfa_verified == true &&
+      context.source_environment == "{cardholder_data_environment}" &&
+      context.encrypted_channel == true
+    };
+
+    // Permit masked PAN display for customer service (last 4 only)
+    permit(
+      principal in [Role::"customer_service", Role::"support_agent"],
+      action == Action::"view_masked_pan",
+      resource matches Resource::"{chd_resource_pattern}"
+    ) when {
+      principal.pci_training_complete == true &&
+      context.pan_display_mode == "masked"
+    };
+
+    // Absolutely forbid storage of CVV/CVC after authorization
+    forbid(
+      principal,
+      action == Action::"store_cvv",
+      resource matches Resource::"{chd_resource_pattern}"
+    );
+
+    // Forbid full PAN display to non-authorized roles
+    forbid(
+      principal,
+      action == Action::"view_full_pan",
+      resource matches Resource::"{chd_resource_pattern}"
+    ) unless {
+      principal.role == "payment_processor" &&
+      principal.pci_training_complete == true &&
+      principal.mfa_verified == true
+    };
+
+    // Forbid access from outside the CDE
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{chd_resource_pattern}"
+    ) when {
+      context.source_environment != "{cardholder_data_environment}"
+    };
+
+    // Deny unencrypted channel access to CHD
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{chd_resource_pattern}"
+    ) when {
+      context.encrypted_channel == false
+    };
+  validation:
+    - rule: "authorized_processor_roles must not be empty"
+      check: "len(parameters.get('authorized_processor_roles', [])) > 0"
+    - rule: "chd_resource_pattern must not be empty"
+      check: "len(parameters.get('chd_resource_pattern', '')) > 0"
+  tests:
+    - name: "Trained payment processor with MFA can read CHD over encrypted channel in CDE"
+      given:
+        principal:
+          role: payment_processor
+          pci_training_complete: true
+          mfa_verified: true
+        action: read_chd
+        resource: chd-txn-00123
+        context:
+          source_environment: cde-production
+          encrypted_channel: true
+      expect: allow
+    - name: "Customer service can view masked PAN only"
+      given:
+        principal:
+          role: customer_service
+          pci_training_complete: true
+        action: view_masked_pan
+        resource: chd-card-456
+        context:
+          pan_display_mode: masked
+      expect: allow
+    - name: "CVV storage is always denied"
+      given:
+        principal:
+          role: payment_processor
+          pci_training_complete: true
+          mfa_verified: true
+        action: store_cvv
+        resource: chd-card-789
+        context:
+          source_environment: cde-production
+          encrypted_channel: true
+      expect: deny
+    - name: "Access from outside CDE is denied"
+      given:
+        principal:
+          role: payment_processor
+          pci_training_complete: true
+          mfa_verified: true
+        action: read_chd
+        resource: chd-txn-999
+        context:
+          source_environment: non-cde-network
+          encrypted_channel: true
+      expect: deny

@@ -1,0 +1,10 @@
+description: "Pre-built compliance-ready policy templates library for HIPAA, PCI-DSS, SOX, GDPR, RBAC, ABAC, and MCP-specific access control"
+author: "ContextForge Security Team"
+version: "0.1.0"
+available_hooks:
+  - "startup"
+default_configs:
+  template_dirs:
+    - "plugins/policy_templates/templates"
+  validate_on_instantiate: true
+  run_tests_before_deploy: true

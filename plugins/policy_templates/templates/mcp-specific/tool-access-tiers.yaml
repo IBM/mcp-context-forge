@@ -1,0 +1,148 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: mcp-tool-access-tiers
+  version: 1.0.0
+  description: "MCP tool access tier policy — classifies tools into read-only, standard, privileged, and dangerous tiers with corresponding access controls for agents and users"
+  category: mcp-specific
+  compliance_frameworks: []
+  risk_level: medium
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [mcp, tools, tiers, access-control, agents]
+spec:
+  engine: cedar
+  parameters:
+    - name: read_only_tools
+      type: list
+      description: "Tools classified as read-only (lowest privilege tier)"
+      default: ["list_servers", "get_status", "read_resource", "list_tools", "get_schema"]
+      required: true
+    - name: standard_tools
+      type: list
+      description: "Tools classified as standard (general-purpose tools)"
+      default: ["search", "fetch_url", "run_query", "call_api"]
+      required: true
+    - name: privileged_tools
+      type: list
+      description: "Tools requiring elevated privileges"
+      default: ["execute_code", "write_file", "send_notification", "modify_config"]
+      required: true
+    - name: dangerous_tools
+      type: list
+      description: "Dangerous tools requiring maximum privilege and explicit approval"
+      default: ["delete_all", "drop_database", "shutdown_server", "deploy_code"]
+      required: true
+  template: |
+    // MCP Tool Access Tier Policy
+    // Template: {name} v{version}
+
+    // Tier 1 — Read-only tools: accessible to all authenticated agents
+    permit(
+      principal,
+      action == Action::"invoke_tool",
+      resource in [Resource::"list_servers", Resource::"get_status", Resource::"read_resource", Resource::"list_tools", Resource::"get_schema"]
+    ) when {
+      principal.authenticated == true &&
+      principal.account_active == true
+    };
+
+    // Tier 2 — Standard tools: accessible to agents with standard permissions
+    permit(
+      principal,
+      action == Action::"invoke_tool",
+      resource in [Resource::"search", Resource::"fetch_url", Resource::"run_query", Resource::"call_api"]
+    ) when {
+      principal.authenticated == true &&
+      principal.account_active == true &&
+      principal.tool_tier >= 2
+    };
+
+    // Tier 3 — Privileged tools: require explicit privilege grant
+    permit(
+      principal,
+      action == Action::"invoke_tool",
+      resource in [Resource::"execute_code", Resource::"write_file", Resource::"send_notification", Resource::"modify_config"]
+    ) when {
+      principal.authenticated == true &&
+      principal.account_active == true &&
+      principal.tool_tier >= 3 &&
+      principal.privileged_tools_approved == true
+    };
+
+    // Tier 4 — Dangerous tools: require admin approval and audit context
+    permit(
+      principal in [Role::"platform_admin", Role::"ops_engineer"],
+      action == Action::"invoke_tool",
+      resource in [Resource::"delete_all", Resource::"drop_database", Resource::"shutdown_server", Resource::"deploy_code"]
+    ) when {
+      principal.authenticated == true &&
+      principal.mfa_verified == true &&
+      context.approval_ticket != "" &&
+      context.change_window_active == true
+    };
+
+    // Deny dangerous tools to non-admin roles
+    forbid(
+      principal,
+      action == Action::"invoke_tool",
+      resource in [Resource::"delete_all", Resource::"drop_database", Resource::"shutdown_server", Resource::"deploy_code"]
+    ) unless {
+      principal.role in ["platform_admin", "ops_engineer"]
+    };
+
+    // Deny all tool invocations for unauthenticated principals
+    forbid(
+      principal,
+      action == Action::"invoke_tool",
+      resource
+    ) when {
+      principal.authenticated == false
+    };
+  validation:
+    - rule: "read_only_tools must not be empty"
+      check: "len(parameters.get('read_only_tools', [])) > 0"
+    - rule: "dangerous_tools must not be empty"
+      check: "len(parameters.get('dangerous_tools', [])) > 0"
+  tests:
+    - name: "Authenticated agent can invoke read-only tool"
+      given:
+        principal:
+          role: agent
+          authenticated: true
+          account_active: true
+          tool_tier: 1
+        action: invoke_tool
+        resource: list_servers
+      expect: allow
+    - name: "Standard tool requires tool_tier >= 2"
+      given:
+        principal:
+          role: agent
+          authenticated: true
+          account_active: true
+          tool_tier: 1
+        action: invoke_tool
+        resource: search
+      expect: deny
+    - name: "Unauthenticated principal is denied all tools"
+      given:
+        principal:
+          role: anonymous
+          authenticated: false
+        action: invoke_tool
+        resource: list_servers
+      expect: deny
+    - name: "Admin with MFA and approval can invoke dangerous tool"
+      given:
+        principal:
+          role: platform_admin
+          authenticated: true
+          mfa_verified: true
+          account_active: true
+        action: invoke_tool
+        resource: deploy_code
+        context:
+          approval_ticket: "CHG-2024-001"
+          change_window_active: true
+      expect: allow

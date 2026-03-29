@@ -1,0 +1,139 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: mcp-server-isolation
+  version: 1.0.0
+  description: "MCP server isolation policy — enforces namespace and tenant isolation between MCP servers, preventing cross-server tool leakage and unauthorized server federation"
+  category: mcp-specific
+  compliance_frameworks: []
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [mcp, server-isolation, multi-tenant, namespace, federation]
+spec:
+  engine: cedar
+  parameters:
+    - name: server_namespace_prefix
+      type: string
+      description: "Namespace prefix used to scope server resources"
+      default: "mcp-server-"
+      required: true
+    - name: federation_allowed_servers
+      type: list
+      description: "Explicitly allowed server IDs for cross-server federation"
+      default: []
+    - name: tenant_isolation_mode
+      type: string
+      description: "Isolation mode: strict (no cross-tenant) or permissive (explicit allowlist)"
+      default: "strict"
+    - name: gateway_admin_role
+      type: string
+      description: "Role identifier for the MCP gateway administrator"
+      default: "gateway_admin"
+  template: |
+    // MCP Server Isolation Policy
+    // Template: {name} v{version}
+
+    // Permit agents to invoke tools on servers they are scoped to
+    permit(
+      principal,
+      action in [Action::"invoke_tool", Action::"list_tools", Action::"read_resource"],
+      resource matches Resource::"{server_namespace_prefix}{resource}"
+    ) when {
+      principal.authenticated == true &&
+      context.target_server_id in principal.scoped_servers &&
+      context.target_tenant_id == principal.tenant_id
+    };
+
+    // Gateway admin can manage any server
+    permit(
+      principal in [Role::"gateway_admin"],
+      action,
+      resource matches Resource::"{server_namespace_prefix}{resource}"
+    ) when {
+      principal.mfa_verified == true &&
+      principal.authenticated == true
+    };
+
+    // Federated cross-server calls are only permitted between explicitly allowed servers
+    permit(
+      principal in [Role::"mcp_federation_service"],
+      action in [Action::"federated_invoke", Action::"federated_list"],
+      resource matches Resource::"{server_namespace_prefix}{resource}"
+    ) when {
+      context.source_server_id in context.federation_allowlist &&
+      context.target_server_id in context.federation_allowlist
+    };
+
+    // Strict tenant isolation: deny cross-tenant access
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{server_namespace_prefix}{resource}"
+    ) when {
+      context.target_tenant_id != principal.tenant_id &&
+      principal.role != "gateway_admin"
+    };
+
+    // Deny access to servers not in the agent's scope list
+    forbid(
+      principal,
+      action in [Action::"invoke_tool", Action::"read_resource"],
+      resource matches Resource::"{server_namespace_prefix}{resource}"
+    ) when {
+      context.target_server_id not in principal.scoped_servers &&
+      principal.role != "gateway_admin"
+    };
+
+    // Deny unauthenticated server access
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{server_namespace_prefix}{resource}"
+    ) when {
+      principal.authenticated == false
+    };
+  validation:
+    - rule: "server_namespace_prefix must not be empty"
+      check: "len(parameters.get('server_namespace_prefix', '')) > 0"
+    - rule: "tenant_isolation_mode must be strict or permissive"
+      check: "parameters.get('tenant_isolation_mode', 'strict') in ['strict', 'permissive']"
+  tests:
+    - name: "Scoped authenticated agent can invoke tool on its server"
+      given:
+        principal:
+          role: agent
+          authenticated: true
+          tenant_id: tenant-001
+          scoped_servers: ["server-alpha"]
+        action: invoke_tool
+        resource: mcp-server-server-alpha/tool
+        context:
+          target_server_id: server-alpha
+          target_tenant_id: tenant-001
+      expect: allow
+    - name: "Cross-tenant access is denied"
+      given:
+        principal:
+          role: agent
+          authenticated: true
+          tenant_id: tenant-001
+          scoped_servers: ["server-alpha"]
+        action: invoke_tool
+        resource: mcp-server-server-beta/tool
+        context:
+          target_server_id: server-beta
+          target_tenant_id: tenant-002
+      expect: deny
+    - name: "Unauthenticated access is denied"
+      given:
+        principal:
+          role: anonymous
+          authenticated: false
+          tenant_id: tenant-001
+        action: list_tools
+        resource: mcp-server-server-alpha
+        context:
+          target_server_id: server-alpha
+          target_tenant_id: tenant-001
+      expect: deny

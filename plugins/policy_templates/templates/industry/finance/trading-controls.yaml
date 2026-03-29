@@ -1,0 +1,168 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: finance-trading-controls
+  version: 1.0.0
+  description: "Financial trading access controls — enforces position limits, pre-trade risk checks, and regulatory controls for equity, fixed income, and derivatives trading desks"
+  category: industry/finance
+  compliance_frameworks: [PCI-DSS, SOX]
+  risk_level: critical
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [finance, trading, risk-management, pre-trade, compliance, sox]
+spec:
+  engine: cedar
+  parameters:
+    - name: trading_resource_pattern
+      type: string
+      description: "Pattern matching trading system resources"
+      default: "trading-*"
+      required: true
+    - name: max_position_size_usd
+      type: integer
+      description: "Maximum single position size in USD before requiring additional approval"
+      default: 1000000
+    - name: authorized_trader_roles
+      type: list
+      description: "Roles authorized to execute trades"
+      default: ["equity_trader", "fixed_income_trader", "derivatives_trader"]
+      required: true
+    - name: risk_management_roles
+      type: list
+      description: "Roles authorized for risk management oversight"
+      default: ["risk_manager", "chief_risk_officer", "compliance_officer"]
+      required: true
+    - name: market_hours_only
+      type: boolean
+      description: "Restrict trade execution to market hours only"
+      default: true
+  template: |
+    // Financial Trading Controls Policy
+    // Template: {name} v{version}
+    // Compliance: SOX Section 404, MiFID II Article 17
+
+    // Authorize licensed traders to place orders within limits
+    permit(
+      principal in [Role::"equity_trader", Role::"fixed_income_trader", Role::"derivatives_trader"],
+      action in [Action::"place_order", Action::"modify_order", Action::"cancel_order"],
+      resource matches Resource::"{trading_resource_pattern}"
+    ) when {
+      principal.licensed == true &&
+      principal.trading_authorized == true &&
+      principal.account_active == true &&
+      context.position_size_usd <= {max_position_size_usd} &&
+      context.pre_trade_check_passed == true &&
+      context.market_open == true
+    };
+
+    // Risk managers can override and view all positions
+    permit(
+      principal in [Role::"risk_manager", Role::"chief_risk_officer"],
+      action in [Action::"view_positions", Action::"view_pnl", Action::"apply_risk_limit", Action::"halt_trading"],
+      resource matches Resource::"{trading_resource_pattern}"
+    ) when {
+      principal.licensed == true &&
+      principal.mfa_verified == true
+    };
+
+    // Large orders require risk manager pre-approval
+    forbid(
+      principal,
+      action == Action::"place_order",
+      resource matches Resource::"{trading_resource_pattern}"
+    ) when {
+      context.position_size_usd > {max_position_size_usd} &&
+      context.risk_approval_id == ""
+    };
+
+    // Deny trading outside market hours for standard traders
+    forbid(
+      principal,
+      action == Action::"place_order",
+      resource matches Resource::"{trading_resource_pattern}"
+    ) when {
+      context.market_open == false &&
+      principal.extended_hours_authorized == false
+    };
+
+    // Compliance officers may not place trades (SoD control)
+    forbid(
+      principal in [Role::"compliance_officer"],
+      action in [Action::"place_order", Action::"modify_order"],
+      resource matches Resource::"{trading_resource_pattern}"
+    );
+
+    // Deny trade execution if pre-trade risk check failed
+    forbid(
+      principal,
+      action == Action::"place_order",
+      resource matches Resource::"{trading_resource_pattern}"
+    ) when {
+      context.pre_trade_check_passed == false
+    };
+  validation:
+    - rule: "authorized_trader_roles must not be empty"
+      check: "len(parameters.get('authorized_trader_roles', [])) > 0"
+    - rule: "risk_management_roles must not be empty"
+      check: "len(parameters.get('risk_management_roles', [])) > 0"
+    - rule: "max_position_size_usd must be positive"
+      check: "int(parameters.get('max_position_size_usd', 1000000)) > 0"
+  tests:
+    - name: "Licensed trader can place order within limits during market hours"
+      given:
+        principal:
+          role: equity_trader
+          licensed: true
+          trading_authorized: true
+          account_active: true
+        action: place_order
+        resource: trading-equity-desk
+        context:
+          position_size_usd: 500000
+          pre_trade_check_passed: true
+          market_open: true
+          risk_approval_id: ""
+      expect: allow
+    - name: "Large order without risk approval is denied"
+      given:
+        principal:
+          role: equity_trader
+          licensed: true
+          trading_authorized: true
+          account_active: true
+        action: place_order
+        resource: trading-equity-desk
+        context:
+          position_size_usd: 2000000
+          pre_trade_check_passed: true
+          market_open: true
+          risk_approval_id: ""
+      expect: deny
+    - name: "Compliance officer cannot place trades (SoD)"
+      given:
+        principal:
+          role: compliance_officer
+          licensed: true
+          account_active: true
+        action: place_order
+        resource: trading-fixed-income
+        context:
+          position_size_usd: 100000
+          pre_trade_check_passed: true
+          market_open: true
+      expect: deny
+    - name: "Pre-trade check failure blocks order"
+      given:
+        principal:
+          role: derivatives_trader
+          licensed: true
+          trading_authorized: true
+          account_active: true
+        action: place_order
+        resource: trading-derivatives
+        context:
+          position_size_usd: 200000
+          pre_trade_check_passed: false
+          market_open: true
+          risk_approval_id: ""
+      expect: deny

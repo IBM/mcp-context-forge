@@ -1,0 +1,126 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: hipaa-data-access-controls
+  version: 1.0.0
+  description: "HIPAA minimum necessary data access controls — enforces need-to-know principle for PHI access based on treatment relationship and care team membership"
+  category: compliance/hipaa
+  compliance_frameworks: [HIPAA, HITECH]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [hipaa, minimum-necessary, access-control, phi]
+spec:
+  engine: cedar
+  parameters:
+    - name: phi_resource_pattern
+      type: string
+      description: "Pattern matching PHI resources"
+      default: "phi-*"
+      required: true
+    - name: treatment_context_required
+      type: boolean
+      description: "Require active treatment relationship for PHI access"
+      default: true
+    - name: break_glass_roles
+      type: list
+      description: "Emergency access roles with break-glass override capability"
+      default: ["emergency_physician", "on_call_nurse"]
+    - name: restricted_phi_pattern
+      type: string
+      description: "Pattern matching highly-restricted PHI (mental health, substance use)"
+      default: "phi-sensitive-*"
+  template: |
+    // HIPAA Minimum Necessary Access Controls
+    // Template: {name} v{version}
+    // Compliance: HIPAA Privacy Rule 45 CFR §164.514(d)
+
+    // Care team members may access PHI for direct patient care
+    permit(
+      principal in [Role::"physician", Role::"nurse", Role::"care_coordinator"],
+      action in [Action::"read_phi", Action::"view_record"],
+      resource matches Resource::"{phi_resource_pattern}"
+    ) when {
+      principal.has_hipaa_training == true &&
+      principal.in_care_team == true &&
+      context.treatment_relationship == true
+    };
+
+    // Restrict access to sensitive PHI to treating clinicians only
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{restricted_phi_pattern}"
+    ) unless {
+      principal.in_care_team == true &&
+      principal.has_sensitive_phi_clearance == true
+    };
+
+    // Break-glass emergency access — permits access but requires post-hoc review
+    permit(
+      principal in [Role::"emergency_physician", Role::"on_call_nurse"],
+      action in [Action::"read_phi", Action::"write_phi"],
+      resource matches Resource::"{phi_resource_pattern}"
+    ) when {
+      context.emergency_override == true &&
+      context.break_glass_reason != ""
+    };
+
+    // Administrative access for operations (no clinical data modification)
+    permit(
+      principal in [Role::"health_information_manager", Role::"compliance_officer"],
+      action in [Action::"read_phi", Action::"audit_phi"],
+      resource matches Resource::"{phi_resource_pattern}"
+    ) when {
+      principal.has_hipaa_training == true &&
+      principal.mfa_verified == true
+    };
+
+    // Deny bulk export unless explicitly authorized
+    forbid(
+      principal,
+      action == Action::"bulk_export_phi",
+      resource matches Resource::"{phi_resource_pattern}"
+    ) unless {
+      principal.bulk_export_authorized == true &&
+      context.data_sharing_agreement_active == true
+    };
+  validation:
+    - rule: "phi_resource_pattern must not be empty"
+      check: "len(parameters.get('phi_resource_pattern', '')) > 0"
+    - rule: "break_glass_roles must not be empty"
+      check: "len(parameters.get('break_glass_roles', [])) > 0"
+  tests:
+    - name: "Care team physician can read PHI with treatment relationship"
+      given:
+        principal:
+          role: physician
+          has_hipaa_training: true
+          in_care_team: true
+        action: read_phi
+        resource: phi-patient-001
+        context:
+          treatment_relationship: true
+      expect: allow
+    - name: "Physician outside care team is denied PHI access"
+      given:
+        principal:
+          role: physician
+          has_hipaa_training: true
+          in_care_team: false
+        action: read_phi
+        resource: phi-patient-001
+        context:
+          treatment_relationship: false
+      expect: deny
+    - name: "Emergency physician with break-glass can access PHI"
+      given:
+        principal:
+          role: emergency_physician
+          has_hipaa_training: true
+        action: read_phi
+        resource: phi-patient-999
+        context:
+          emergency_override: true
+          break_glass_reason: "Cardiac emergency — patient unconscious"
+      expect: allow

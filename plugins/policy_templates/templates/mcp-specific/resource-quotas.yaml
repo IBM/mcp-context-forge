@@ -1,0 +1,130 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: mcp-resource-quotas
+  version: 1.0.0
+  description: "MCP resource quota policy — enforces per-tenant, per-agent, and per-tool consumption limits to prevent resource exhaustion and ensure fair usage across the gateway"
+  category: mcp-specific
+  compliance_frameworks: []
+  risk_level: medium
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [mcp, quotas, rate-limiting, fairness, resource-management]
+spec:
+  engine: opa
+  parameters:
+    - name: max_tool_calls_per_minute
+      type: integer
+      description: "Maximum tool invocations per minute per tenant"
+      default: 60
+      required: true
+    - name: max_concurrent_agents
+      type: integer
+      description: "Maximum number of concurrent agent sessions per tenant"
+      default: 10
+      required: true
+    - name: max_response_tokens
+      type: integer
+      description: "Maximum tokens per tool response to prevent unbounded output"
+      default: 8192
+    - name: burst_multiplier
+      type: integer
+      description: "Multiplier applied to base quotas for burst allowance (1-3x)"
+      default: 2
+  template: |
+    # MCP Resource Quota Policy
+    # Template: {name} v{version}
+    # Rego policy for Open Policy Agent
+
+    package mcp.quotas
+
+    import future.keywords.if
+    import future.keywords.in
+
+    # Default deny
+    default allow = false
+
+    # Allow tool invocation when within quota limits
+    allow if {{
+      not quota_exceeded
+      not concurrent_limit_exceeded
+      input.principal.authenticated == true
+    }}
+
+    # Check if tool call rate quota is exceeded
+    quota_exceeded if {{
+      input.context.tool_calls_per_minute > {max_tool_calls_per_minute}
+    }}
+
+    # Burst allowance for premium tenants
+    quota_exceeded = false if {{
+      input.principal.tier == "premium"
+      input.context.tool_calls_per_minute <= ({max_tool_calls_per_minute} * {burst_multiplier})
+    }}
+
+    # Check concurrent agent session limit
+    concurrent_limit_exceeded if {{
+      input.context.active_agent_sessions > {max_concurrent_agents}
+    }}
+
+    # Response token limit check
+    allow_response if {{
+      input.context.response_token_count <= {max_response_tokens}
+    }}
+
+    # Violations produce descriptive messages
+    violation[msg] if {{
+      quota_exceeded
+      msg := sprintf("Tool call rate limit exceeded: %v calls/min (limit: {max_tool_calls_per_minute})",
+                     [input.context.tool_calls_per_minute])
+    }}
+
+    violation[msg] if {{
+      concurrent_limit_exceeded
+      msg := sprintf("Concurrent agent limit exceeded: %v sessions (limit: {max_concurrent_agents})",
+                     [input.context.active_agent_sessions])
+    }}
+  validation:
+    - rule: "max_tool_calls_per_minute must be positive"
+      check: "int(parameters.get('max_tool_calls_per_minute', 60)) > 0"
+    - rule: "max_concurrent_agents must be at least 1"
+      check: "int(parameters.get('max_concurrent_agents', 10)) >= 1"
+    - rule: "burst_multiplier must be between 1 and 3"
+      check: "1 <= int(parameters.get('burst_multiplier', 2)) <= 3"
+  tests:
+    - name: "Agent within quota limits is allowed"
+      given:
+        principal:
+          role: agent
+          authenticated: true
+          tier: standard
+        action: invoke_tool
+        resource: search
+        context:
+          tool_calls_per_minute: 30
+          active_agent_sessions: 5
+      expect: allow
+    - name: "Agent exceeding tool call quota is denied"
+      given:
+        principal:
+          role: agent
+          authenticated: true
+          tier: standard
+        action: invoke_tool
+        resource: search
+        context:
+          tool_calls_per_minute: 100
+          active_agent_sessions: 5
+      expect: deny
+    - name: "Unauthenticated agent is denied"
+      given:
+        principal:
+          role: anonymous
+          authenticated: false
+          tier: none
+        action: invoke_tool
+        resource: search
+        context:
+          tool_calls_per_minute: 1
+          active_agent_sessions: 1
+      expect: deny

@@ -1,0 +1,132 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: sox-financial-controls
+  version: 1.0.0
+  description: "SOX financial controls policy — enforces access controls for financial data systems, general ledger, and financial reporting to satisfy Sarbanes-Oxley Section 302/404 requirements"
+  category: compliance/sox
+  compliance_frameworks: [SOX]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [sox, financial-controls, general-ledger, audit, compliance]
+spec:
+  engine: cedar
+  parameters:
+    - name: financial_resource_pattern
+      type: string
+      description: "Pattern matching financial data resources"
+      default: "fin-*"
+      required: true
+    - name: authorized_finance_roles
+      type: list
+      description: "Roles authorized to access financial records"
+      default: ["accountant", "financial_analyst", "controller"]
+      required: true
+    - name: quarter_close_lockout
+      type: boolean
+      description: "Restrict modifications during quarter close periods"
+      default: true
+    - name: journal_entry_approval_required
+      type: boolean
+      description: "Require dual approval for journal entries above threshold"
+      default: true
+  template: |
+    // SOX Financial Controls Policy
+    // Template: {name} v{version}
+    // Compliance: Sarbanes-Oxley Act Sections 302, 404
+
+    // Authorize financial staff to read financial records
+    permit(
+      principal in [Role::"accountant", Role::"financial_analyst", Role::"controller"],
+      action in [Action::"read_financial_record", Action::"view_ledger", Action::"run_report"],
+      resource matches Resource::"{financial_resource_pattern}"
+    ) when {
+      principal.sox_training_complete == true &&
+      principal.account_active == true
+    };
+
+    // Permit journal entry creation by authorized staff
+    permit(
+      principal in [Role::"accountant", Role::"controller"],
+      action == Action::"create_journal_entry",
+      resource matches Resource::"{financial_resource_pattern}"
+    ) when {
+      principal.sox_training_complete == true &&
+      context.quarter_close_active == false
+    };
+
+    // Require CFO/Controller approval for journal entries
+    permit(
+      principal in [Role::"cfo", Role::"controller"],
+      action == Action::"approve_journal_entry",
+      resource matches Resource::"{financial_resource_pattern}"
+    ) when {
+      principal.sox_training_complete == true &&
+      principal.mfa_verified == true
+    };
+
+    // Deny financial record modifications during quarter close
+    forbid(
+      principal,
+      action in [Action::"create_journal_entry", Action::"modify_ledger", Action::"delete_financial_record"],
+      resource matches Resource::"{financial_resource_pattern}"
+    ) when {
+      context.quarter_close_active == true &&
+      principal.role != "cfo"
+    };
+
+    // Deny deletion of financial records (immutability for audit trail)
+    forbid(
+      principal,
+      action == Action::"delete_financial_record",
+      resource matches Resource::"{financial_resource_pattern}"
+    ) unless {
+      principal.role == "cfo" &&
+      context.regulatory_deletion_order == true
+    };
+
+    // Deny access outside audit-defined business hours
+    forbid(
+      principal,
+      action in [Action::"create_journal_entry", Action::"approve_journal_entry"],
+      resource matches Resource::"{financial_resource_pattern}"
+    ) when {
+      context.hour_of_day < 6 || context.hour_of_day > 20
+    };
+  validation:
+    - rule: "authorized_finance_roles must not be empty"
+      check: "len(parameters.get('authorized_finance_roles', [])) > 0"
+    - rule: "financial_resource_pattern must not be empty"
+      check: "len(parameters.get('financial_resource_pattern', '')) > 0"
+  tests:
+    - name: "Trained accountant can read financial records"
+      given:
+        principal:
+          role: accountant
+          sox_training_complete: true
+          account_active: true
+        action: read_financial_record
+        resource: fin-ledger-q1
+      expect: allow
+    - name: "Journal entry creation blocked during quarter close"
+      given:
+        principal:
+          role: accountant
+          sox_training_complete: true
+          account_active: true
+        action: create_journal_entry
+        resource: fin-gl-entries
+        context:
+          quarter_close_active: true
+      expect: deny
+    - name: "Financial record deletion denied without regulatory order"
+      given:
+        principal:
+          role: controller
+          sox_training_complete: true
+        action: delete_financial_record
+        resource: fin-ledger-entry-001
+        context:
+          regulatory_deletion_order: false
+      expect: deny

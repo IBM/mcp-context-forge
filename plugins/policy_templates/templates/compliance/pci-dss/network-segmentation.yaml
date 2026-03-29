@@ -1,0 +1,124 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: pci-dss-network-segmentation
+  version: 1.0.0
+  description: "PCI-DSS network segmentation policy — isolates Cardholder Data Environment (CDE) from untrusted networks and enforces zone-based access controls"
+  category: compliance/pci-dss
+  compliance_frameworks: [PCI-DSS]
+  risk_level: critical
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [pci-dss, network-segmentation, cde, firewall, zero-trust]
+spec:
+  engine: cedar
+  parameters:
+    - name: cde_zone_id
+      type: string
+      description: "Identifier for the Cardholder Data Environment zone"
+      default: "zone-cde"
+      required: true
+    - name: trusted_zones
+      type: list
+      description: "Zones authorized to communicate with the CDE"
+      default: ["zone-payment-gateway", "zone-fraud-services"]
+      required: true
+    - name: management_network
+      type: string
+      description: "Management network CIDR for administrative access"
+      default: "10.0.0.0/8"
+    - name: allow_internet_egress
+      type: boolean
+      description: "Allow CDE systems to initiate outbound internet connections"
+      default: false
+  template: |
+    // PCI-DSS Network Segmentation Controls
+    // Template: {name} v{version}
+    // Compliance: PCI DSS v4.0 Requirements 1, 4
+
+    // Permit traffic from authorized zones to the CDE
+    permit(
+      principal in [NetworkZone::"zone-payment-gateway", NetworkZone::"zone-fraud-services"],
+      action in [Action::"network_connect", Action::"api_call"],
+      resource == Resource::"{cde_zone_id}"
+    ) when {
+      context.tls_version >= "1.2" &&
+      context.certificate_valid == true
+    };
+
+    // Permit administrative access from management network only
+    permit(
+      principal in [Role::"network_admin", Role::"security_admin"],
+      action in [Action::"ssh_connect", Action::"rdp_connect", Action::"admin_api"],
+      resource == Resource::"{cde_zone_id}"
+    ) when {
+      context.source_network == "{management_network}" &&
+      principal.mfa_verified == true &&
+      principal.pci_training_complete == true
+    };
+
+    // Deny all inbound traffic from untrusted zones
+    forbid(
+      principal,
+      action == Action::"network_connect",
+      resource == Resource::"{cde_zone_id}"
+    ) when {
+      context.source_zone != "zone-payment-gateway" &&
+      context.source_zone != "zone-fraud-services" &&
+      context.source_zone != "{management_network}"
+    };
+
+    // Deny direct internet access from CDE systems
+    forbid(
+      principal,
+      action in [Action::"network_connect", Action::"http_request"],
+      resource == Resource::"internet"
+    ) when {
+      context.source_zone == "{cde_zone_id}"
+    };
+
+    // Deny connections using deprecated TLS versions
+    forbid(
+      principal,
+      action == Action::"network_connect",
+      resource == Resource::"{cde_zone_id}"
+    ) when {
+      context.tls_version < "1.2"
+    };
+  validation:
+    - rule: "trusted_zones must not be empty"
+      check: "len(parameters.get('trusted_zones', [])) > 0"
+    - rule: "cde_zone_id must not be empty"
+      check: "len(parameters.get('cde_zone_id', '')) > 0"
+  tests:
+    - name: "Payment gateway with valid TLS can connect to CDE"
+      given:
+        principal:
+          role: payment_gateway_service
+        action: network_connect
+        resource: zone-cde
+        context:
+          source_zone: zone-payment-gateway
+          tls_version: "1.3"
+          certificate_valid: true
+      expect: allow
+    - name: "Connection with old TLS is denied"
+      given:
+        principal:
+          role: payment_gateway_service
+        action: network_connect
+        resource: zone-cde
+        context:
+          source_zone: zone-payment-gateway
+          tls_version: "1.0"
+          certificate_valid: true
+      expect: deny
+    - name: "CDE system cannot connect to internet"
+      given:
+        principal:
+          role: cde_application
+        action: network_connect
+        resource: internet
+        context:
+          source_zone: zone-cde
+      expect: deny

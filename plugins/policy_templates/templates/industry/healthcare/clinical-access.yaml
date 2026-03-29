@@ -1,0 +1,145 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: healthcare-clinical-access
+  version: 1.0.0
+  description: "Healthcare clinical access policy — role-based access for clinical systems including EHR, PACS, lab systems, and pharmacy, with appropriate safeguards for each system type"
+  category: industry/healthcare
+  compliance_frameworks: [HIPAA, HITECH]
+  risk_level: high
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [healthcare, clinical, ehr, pacs, pharmacy, lab, hipaa]
+spec:
+  engine: cedar
+  parameters:
+    - name: ehr_resource_pattern
+      type: string
+      description: "Pattern matching EHR system resources"
+      default: "ehr-*"
+      required: true
+    - name: pacs_resource_pattern
+      type: string
+      description: "Pattern matching PACS (imaging) resources"
+      default: "pacs-*"
+    - name: lab_resource_pattern
+      type: string
+      description: "Pattern matching laboratory system resources"
+      default: "lab-*"
+    - name: pharmacy_resource_pattern
+      type: string
+      description: "Pattern matching pharmacy system resources"
+      default: "rx-*"
+    - name: require_clinical_license_verification
+      type: boolean
+      description: "Verify active clinical license before granting access"
+      default: true
+  template: |
+    // Healthcare Clinical Access Policy
+    // Template: {name} v{version}
+    // Compliance: HIPAA Security Rule
+
+    // Physicians have broad clinical access with license verification
+    permit(
+      principal in [Role::"physician", Role::"hospitalist", Role::"specialist"],
+      action in [Action::"read", Action::"write", Action::"order"],
+      resource matches Resource::"{ehr_resource_pattern}"
+    ) when {
+      principal.has_hipaa_training == true &&
+      principal.clinical_license_active == true &&
+      principal.in_care_team == true
+    };
+
+    // Nurses have full EHR access for care delivery
+    permit(
+      principal in [Role::"nurse", Role::"charge_nurse", Role::"nurse_practitioner"],
+      action in [Action::"read", Action::"write", Action::"chart"],
+      resource matches Resource::"{ehr_resource_pattern}"
+    ) when {
+      principal.has_hipaa_training == true &&
+      principal.clinical_license_active == true
+    };
+
+    // Radiologists and radiology techs access PACS
+    permit(
+      principal in [Role::"radiologist", Role::"radiology_tech"],
+      action in [Action::"read", Action::"annotate", Action::"report"],
+      resource matches Resource::"{pacs_resource_pattern}"
+    ) when {
+      principal.clinical_license_active == true &&
+      principal.has_hipaa_training == true
+    };
+
+    // Pharmacists and pharmacy techs access pharmacy systems
+    permit(
+      principal in [Role::"pharmacist", Role::"pharmacy_tech"],
+      action in [Action::"read", Action::"verify", Action::"dispense"],
+      resource matches Resource::"{pharmacy_resource_pattern}"
+    ) when {
+      principal.clinical_license_active == true &&
+      principal.has_hipaa_training == true
+    };
+
+    // Lab technicians access laboratory systems
+    permit(
+      principal in [Role::"lab_technician", Role::"lab_director"],
+      action in [Action::"read", Action::"write", Action::"result"],
+      resource matches Resource::"{lab_resource_pattern}"
+    ) when {
+      principal.clinical_license_active == true &&
+      principal.has_hipaa_training == true
+    };
+
+    // Deny access to any clinical system without active license
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{ehr_resource_pattern}"
+    ) when {
+      principal.clinical_license_active == false
+    };
+
+    // Deny medication orders by non-prescribers
+    forbid(
+      principal,
+      action == Action::"prescribe",
+      resource matches Resource::"{pharmacy_resource_pattern}"
+    ) unless {
+      principal.prescribing_authority == true &&
+      principal.dea_number != ""
+    };
+  validation:
+    - rule: "ehr_resource_pattern must not be empty"
+      check: "len(parameters.get('ehr_resource_pattern', '')) > 0"
+  tests:
+    - name: "Licensed physician in care team can write EHR"
+      given:
+        principal:
+          role: physician
+          has_hipaa_training: true
+          clinical_license_active: true
+          in_care_team: true
+        action: write
+        resource: ehr-patient-john-doe
+      expect: allow
+    - name: "Unlicensed provider is denied EHR access"
+      given:
+        principal:
+          role: physician
+          has_hipaa_training: true
+          clinical_license_active: false
+          in_care_team: true
+        action: read
+        resource: ehr-patient-jane-doe
+      expect: deny
+    - name: "Nurse without prescribing authority cannot prescribe"
+      given:
+        principal:
+          role: nurse
+          has_hipaa_training: true
+          clinical_license_active: true
+          prescribing_authority: false
+          dea_number: ""
+        action: prescribe
+        resource: rx-controlled-substance
+      expect: deny

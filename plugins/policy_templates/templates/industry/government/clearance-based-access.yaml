@@ -1,0 +1,197 @@
+apiVersion: contextforge.io/v1
+kind: PolicyTemplate
+metadata:
+  name: government-clearance-based-access
+  version: 1.0.0
+  description: "Government clearance-based access control — implements mandatory access control (MAC) for classified government systems with clearance levels: Unclassified, Confidential, Secret, Top Secret, and SCI compartments"
+  category: industry/government
+  compliance_frameworks: [FedRAMP, FISMA, NIST]
+  risk_level: critical
+  author: ContextForge Security Team
+  last_reviewed: "2024-01-15"
+  tags: [government, clearance, classified, mac, fedramp, fisma, nist]
+spec:
+  engine: cedar
+  parameters:
+    - name: resource_pattern
+      type: string
+      description: "Pattern matching classified resources"
+      default: "gov-*"
+      required: true
+    - name: unclassified_level
+      type: integer
+      description: "Clearance level for Unclassified resources"
+      default: 0
+    - name: confidential_level
+      type: integer
+      description: "Clearance level for Confidential resources"
+      default: 1
+    - name: secret_level
+      type: integer
+      description: "Clearance level for Secret resources"
+      default: 2
+    - name: top_secret_level
+      type: integer
+      description: "Clearance level for Top Secret resources"
+      default: 3
+    - name: sci_compartments
+      type: list
+      description: "Sensitive Compartmented Information (SCI) compartments in this deployment"
+      default: ["HCS", "SI", "TK"]
+  template: |
+    // Government Clearance-Based Access Control Policy
+    // Template: {name} v{version}
+    // Compliance: FedRAMP High, FISMA, NIST SP 800-53
+    // Classification levels: 0=Unclassified, 1=Confidential, 2=Secret, 3=Top Secret
+
+    // Simple clearance-based read access (no-read-up principle)
+    permit(
+      principal,
+      action in [Action::"read", Action::"list", Action::"search"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.clearance_level >= context.resource_classification_level &&
+      principal.cac_verified == true &&
+      principal.account_active == true &&
+      principal.need_to_know == true
+    };
+
+    // Write access requires equal classification level (no-write-down principle)
+    permit(
+      principal,
+      action in [Action::"write", Action::"create", Action::"update"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.clearance_level == context.resource_classification_level &&
+      principal.cac_verified == true &&
+      principal.account_active == true &&
+      principal.write_authorized == true
+    };
+
+    // SCI compartment access requires explicit compartment authorization
+    permit(
+      principal,
+      action in [Action::"read", Action::"write"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.resource_sci_compartment != "" &&
+      context.resource_sci_compartment in principal.sci_authorizations &&
+      principal.clearance_level >= 3 &&
+      principal.cac_verified == true &&
+      principal.polygraph_current == true
+    };
+
+    // System administrator access to unclassified systems
+    permit(
+      principal in [Role::"system_administrator", Role::"isso"],
+      action in [Action::"manage", Action::"configure", Action::"audit"],
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.clearance_level >= 2 &&
+      principal.cac_verified == true &&
+      principal.mfa_verified == true &&
+      context.resource_classification_level <= 2
+    };
+
+    // Enforce no-read-up: deny access above clearance level
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.clearance_level < context.resource_classification_level
+    };
+
+    // Enforce need-to-know: deny without explicit need-to-know
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.need_to_know == false &&
+      context.resource_classification_level > 0
+    };
+
+    // Deny without valid CAC authentication
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      principal.cac_verified == false
+    };
+
+    // SCI: deny without polygraph for TS/SCI resources
+    forbid(
+      principal,
+      action,
+      resource matches Resource::"{resource_pattern}"
+    ) when {
+      context.resource_sci_compartment != "" &&
+      principal.polygraph_current == false
+    };
+  validation:
+    - rule: "top_secret_level must be greater than secret_level"
+      check: "int(parameters.get('top_secret_level', 3)) > int(parameters.get('secret_level', 2))"
+    - rule: "sci_compartments must not be empty"
+      check: "len(parameters.get('sci_compartments', [])) > 0"
+  tests:
+    - name: "Secret-cleared official with need-to-know can read Secret resource"
+      given:
+        principal:
+          role: intelligence_analyst
+          clearance_level: 2
+          cac_verified: true
+          account_active: true
+          need_to_know: true
+          write_authorized: false
+        action: read
+        resource: gov-intel-report-classified
+        context:
+          resource_classification_level: 2
+          resource_sci_compartment: ""
+      expect: allow
+    - name: "Confidential-cleared user cannot read Secret resource (no-read-up)"
+      given:
+        principal:
+          role: analyst
+          clearance_level: 1
+          cac_verified: true
+          account_active: true
+          need_to_know: true
+        action: read
+        resource: gov-secret-document
+        context:
+          resource_classification_level: 2
+          resource_sci_compartment: ""
+      expect: deny
+    - name: "User without need-to-know is denied classified resource"
+      given:
+        principal:
+          role: contractor
+          clearance_level: 3
+          cac_verified: true
+          account_active: true
+          need_to_know: false
+        action: read
+        resource: gov-ts-brief
+        context:
+          resource_classification_level: 3
+          resource_sci_compartment: ""
+      expect: deny
+    - name: "SCI access denied without current polygraph"
+      given:
+        principal:
+          role: intelligence_analyst
+          clearance_level: 3
+          cac_verified: true
+          account_active: true
+          need_to_know: true
+          polygraph_current: false
+          sci_authorizations: ["HCS"]
+        action: read
+        resource: gov-sci-hcs-document
+        context:
+          resource_classification_level: 3
+          resource_sci_compartment: HCS
+      expect: deny
