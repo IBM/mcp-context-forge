@@ -7731,6 +7731,7 @@ async def test_admin_update_team_with_zero_max_members(monkeypatch, mock_db, all
 async def test_admin_get_team_edit_renders_max_members(monkeypatch, mock_request, mock_db, allow_permission):
     """Edit team form includes max_members input pre-populated with current value."""
     monkeypatch.setattr(settings, "email_auth_enabled", True)
+    monkeypatch.setattr(settings, "max_members_per_team", 100)
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private", is_personal=False, max_members=25))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)

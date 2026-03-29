@@ -36,6 +36,11 @@ except ImportError:
     otel_extract = None
     otel_inject = None
 
+    class _SpanKindShim:
+        """Minimal SpanKind shim used when OpenTelemetry isn't installed."""
+
+        SERVER = "server"
+
     # Provide a lightweight shim so tests can patch Resource.create
     class _ResourceShim:
         """Minimal Resource shim used when OpenTelemetry SDK isn't installed.
@@ -62,7 +67,7 @@ except ImportError:
     BatchSpanProcessor = None
     ConsoleSpanExporter = None
     SimpleSpanProcessor = None
-    SpanKind = None
+    SpanKind = cast(Any, _SpanKindShim)
     Status = None
     StatusCode = None
 
@@ -526,13 +531,21 @@ def _derive_langfuse_trace_name(name: str, attributes: Dict[str, Any]) -> str:
 
 
 def otel_tracing_enabled() -> bool:
-    """Return whether OpenTelemetry tracing is active in this process."""
+    """Return whether OpenTelemetry tracing is active in this process.
+
+    Returns:
+        bool: ``True`` when a tracer has been initialised, otherwise ``False``.
+    """
 
     return _TRACER is not None
 
 
 def otel_context_active() -> bool:
-    """Return whether the current async context carries an active OTEL span."""
+    """Return whether the current async context carries an active OTEL span.
+
+    Returns:
+        bool: ``True`` when the current context has a valid OTEL span.
+    """
 
     if not OTEL_AVAILABLE or trace is None:
         return False
@@ -547,7 +560,14 @@ def otel_context_active() -> bool:
 
 
 def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
-    """Return a header carrier populated with the active W3C trace context."""
+    """Return a header carrier populated with the active W3C trace context.
+
+    Args:
+        headers: Existing outbound headers to copy into the carrier before trace injection.
+
+    Returns:
+        Dict[str, str]: Header mapping including any injected trace context.
+    """
 
     carrier = {str(key): str(value) for key, value in (headers or {}).items() if key and value}
     if not otel_context_active() or otel_inject is None:
@@ -560,28 +580,40 @@ def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) ->
 
 
 def _scope_headers_to_carrier(scope_headers: list[tuple[bytes, bytes]]) -> Dict[str, str]:
-    """Convert ASGI scope headers to a text carrier for propagation/extraction."""
+    """Convert ASGI scope headers to a text carrier for propagation/extraction.
+
+    Args:
+        scope_headers: Raw ASGI header tuples from the request scope.
+
+    Returns:
+        Dict[str, str]: Decoded lower-cased header carrier suitable for OTEL propagation.
+    """
 
     carrier: Dict[str, str] = {}
     for key, value in scope_headers:
         try:
             decoded_key = key.decode("latin-1").lower()
             decoded_value = value.decode("latin-1")
-        except Exception:
+        except (AttributeError, TypeError, UnicodeDecodeError):
             continue
         carrier[decoded_key] = decoded_value
     return carrier
 
 
 def _should_trace_request_path(path: str) -> bool:
-    """Return whether Phase 1 OTEL request tracing should instrument the path."""
+    """Return whether Phase 1 OTEL request tracing should instrument the path.
+
+    Args:
+        path: Incoming request path.
+
+    Returns:
+        bool: ``True`` when the path should be wrapped in a request span.
+    """
 
     normalized = path.rstrip("/") or "/"
     if normalized in {"/rpc", "/mcp", "/message", "/sse"}:
         return True
-    if normalized.startswith("/servers/") and (
-        normalized.endswith("/mcp") or normalized.endswith("/message") or normalized.endswith("/sse")
-    ):
+    if normalized.startswith("/servers/") and (normalized.endswith("/mcp") or normalized.endswith("/message") or normalized.endswith("/sse")):
         return True
     if normalized.startswith("/_internal/mcp/"):
         return True
@@ -600,6 +632,12 @@ class OpenTelemetryRequestMiddleware:
 
         This preserves access to app-specific attributes such as ``routes`` when
         the middleware is used as the top-level object passed to uvicorn.
+
+        Args:
+            name: Attribute name to resolve on the wrapped ASGI app.
+
+        Returns:
+            Any: The proxied attribute value from ``self.app``.
         """
 
         return getattr(self.app, name)

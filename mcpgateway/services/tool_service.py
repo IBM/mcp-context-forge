@@ -2917,8 +2917,7 @@ class ToolService(BaseService):
                                 "mcp.tool.name": remote_name,
                                 "contextforge.gateway_id": str(gateway.id),
                                 "contextforge.runtime": "python",
-                                "upstream.response.success": not getattr(tool_result, "is_error", False)
-                                and not getattr(tool_result, "isError", False),
+                                "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
                             },
                         ):
                             pass
@@ -4453,8 +4452,7 @@ class ToolService(BaseService):
                                                     "contextforge.tool.id": tool_id,
                                                     "contextforge.gateway_id": tool_gateway_id,
                                                     "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False)
-                                                    and not getattr(tool_call_result, "isError", False),
+                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
                                                 },
                                             ):
                                                 pass
@@ -4610,7 +4608,11 @@ class ToolService(BaseService):
                                     request_headers = inject_trace_context_headers(headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
-                                    async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+                                    async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
+                                        read_stream,
+                                        write_stream,
+                                        _get_session_id,
+                                    ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
                                                 await session.initialize()
@@ -4632,8 +4634,7 @@ class ToolService(BaseService):
                                                     "contextforge.tool.id": tool_id,
                                                     "contextforge.gateway_id": tool_gateway_id,
                                                     "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False)
-                                                    and not getattr(tool_call_result, "isError", False),
+                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
                                                 },
                                             ):
                                                 pass

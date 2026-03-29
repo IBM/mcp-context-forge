@@ -147,10 +147,10 @@ class _Unset:
     __slots__ = ()
 
     def __repr__(self) -> str:
-        """Return a stable sentinel representation for logs and debugging.
+        """Return string representation of the unset sentinel.
 
         Returns:
-            str: The sentinel label used in diagnostic output.
+            str: The literal string ``"UNSET"``.
         """
         return "UNSET"
 
@@ -159,6 +159,10 @@ class _Unset:
 
         Returns:
             bool: Always ``False`` for the unset sentinel.
+        """Return False so UNSET is falsy.
+
+        Returns:
+            bool: Always ``False``.
         """
         return False
 

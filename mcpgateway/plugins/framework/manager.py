@@ -172,11 +172,22 @@ class PluginExecutor:
         current_payload: PluginPayload | None = None
         decision_plugin_name: Optional[str] = None
         max_retry_delay_ms: int = 0
+        executed_plugins = 0
+        skipped_plugins = 0
+        stopped_by_plugin: Optional[str] = None
 
-        for hook_ref in hook_refs:
-            # Skip disabled plugins
-            if hook_ref.plugin_ref.mode == PluginMode.DISABLED:
-                continue
+        with create_span(
+            "plugin.hook.invoke",
+            {
+                "plugin.hook.type": hook_type,
+                "plugin.chain.length": len(hook_refs),
+            },
+        ) as hook_chain_span:
+            for hook_ref in hook_refs:
+                # Skip disabled plugins
+                if hook_ref.plugin_ref.mode == PluginMode.DISABLED:
+                    skipped_plugins += 1
+                    continue
 
                 # Check if plugin conditions match current context
                 if hook_ref.plugin_ref.conditions and not payload_matches(payload, hook_type, hook_ref.plugin_ref.conditions, global_context):
@@ -202,39 +213,32 @@ class PluginExecutor:
                 res_local_contexts[local_context_key] = local_context
 
                 # When a policy exists or default=deny is active, deep-copy the
-                # payload before handing it to the plugin.  The plugin operates on
-                # the copy, so in-place nested mutations (e.g. payload.args[k]=v)
-                # cannot pollute the live chain.  model_copy(deep=True) is used
-                # for Pydantic models; copy.deepcopy handles plain dicts that
-                # arrive via cross-type hooks (e.g. http_auth_resolve_user).
+                # payload before handing it to the plugin. The plugin operates on
+                # the copy, so in-place nested mutations cannot pollute the live chain.
                 effective_payload = current_payload if current_payload is not None else payload
-                # RootModel subclasses (e.g. HttpHeaderPayload) wrap mutable containers
-                # that bypass the frozen=True constraint via __setitem__, so they must
-                # always be deep-copied to prevent in-place corruption of the live chain.
                 needs_isolation = policy or self.default_hook_policy == DefaultHookPolicy.DENY or isinstance(effective_payload, RootModel)
                 if needs_isolation:
                     plugin_input = effective_payload.model_copy(deep=True) if isinstance(effective_payload, BaseModel) else copy.deepcopy(effective_payload)
                 else:
                     plugin_input = effective_payload
 
-            # Execute plugin with timeout protection
-            result = await self.execute_plugin(
-                hook_ref,
-                plugin_input,
-                local_context,
-                violations_as_exceptions,
-                global_context,
-                combined_metadata,
-            )
+                result = await self.execute_plugin(
+                    hook_ref,
+                    plugin_input,
+                    local_context,
+                    violations_as_exceptions,
+                    global_context,
+                    combined_metadata,
+                )
+                executed_plugins += 1
 
-            # Propagate retry signal — take the largest delay requested by any plugin
-            max_retry_delay_ms = max(max_retry_delay_ms, result.retry_delay_ms)
+                # Propagate retry signal — take the largest delay requested by any plugin
+                max_retry_delay_ms = max(max_retry_delay_ms, result.retry_delay_ms)
 
                 # Apply policy-based controlled merge (per-plugin)
                 if result.modified_payload is not None:
                     if policy:
                         if isinstance(result.modified_payload, type(effective_payload)) and isinstance(effective_payload, BaseModel):
-                            # Same-type BaseModel payload — apply field-level policy filtering
                             filtered = apply_policy(
                                 effective_payload,
                                 result.modified_payload,
@@ -244,11 +248,6 @@ class PluginExecutor:
                                 current_payload = filtered
                                 decision_plugin_name = hook_ref.plugin_ref.name
                         else:
-                            # Cross-type payload (e.g. HTTP hooks returning a different
-                            # result type than the input).  Field-level filtering is not
-                            # applicable; the policy's presence authorises the hook.
-                            # Guard: only accept PluginPayload subtypes or dict (used
-                            # by http_auth_resolve_user and similar hooks).
                             if isinstance(result.modified_payload, (PluginPayload, dict)):
                                 logger.debug(
                                     "Plugin %s returned cross-type payload (%s -> %s) on hook %s; accepting without field filtering",
@@ -267,11 +266,9 @@ class PluginExecutor:
                                     hook_type,
                                 )
                     elif self.default_hook_policy == DefaultHookPolicy.ALLOW:
-                        # No explicit policy + default=allow -- accept all modifications
                         current_payload = result.modified_payload
                         decision_plugin_name = hook_ref.plugin_ref.name
                     else:
-                        # No explicit policy + default=deny -- reject all modifications
                         logger.warning(
                             "Plugin %s attempted payload modification on hook %s but no policy is defined and default is deny",
                             hook_ref.plugin_ref.name,
@@ -279,19 +276,16 @@ class PluginExecutor:
                         )
 
                 # Both ENFORCE and ENFORCE_IGNORE_ERROR honour continue_processing=False
-                # and halt the chain.  They differ only in error handling: ENFORCE raises
-                # on plugin errors/timeouts, while ENFORCE_IGNORE_ERROR swallows them and
-                # lets the chain continue (see execute_plugin exception handlers).
+                # and halt the chain. They differ only in error handling.
                 if not result.continue_processing and hook_ref.plugin_ref.mode in (PluginMode.ENFORCE, PluginMode.ENFORCE_IGNORE_ERROR):
                     stopped_by_plugin = hook_ref.plugin_ref.name
                     if hook_chain_span is not None:
                         hook_chain_span.set_attribute("plugin.chain.stopped", True)
                         hook_chain_span.set_attribute("plugin.chain.stopped_by", hook_ref.plugin_ref.name)
-                    if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
-                        combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
-                    if hook_chain_span is not None:
                         hook_chain_span.set_attribute("plugin.executed_count", executed_plugins)
                         hook_chain_span.set_attribute("plugin.skipped_count", skipped_plugins)
+                    if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
+                        combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
                     return (
                         PluginResult(
                             continue_processing=False,
@@ -307,8 +301,8 @@ class PluginExecutor:
                 hook_chain_span.set_attribute("plugin.skipped_count", skipped_plugins)
                 hook_chain_span.set_attribute("plugin.chain.stopped", stopped_by_plugin is not None)
 
-            if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
-                combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
+        if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
+            combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
 
         return (PluginResult(continue_processing=True, modified_payload=current_payload, violation=None, metadata=combined_metadata, retry_delay_ms=max_retry_delay_ms), res_local_contexts)
 

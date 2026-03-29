@@ -168,7 +168,14 @@ async def invoke_hook(hook_type: str, plugin_name: str, payload: Dict[str, Any],
 
 
 def _should_trace_plugin_server_path(path: str) -> bool:
-    """Trace streamable MCP traffic while excluding health and metrics endpoints."""
+    """Trace streamable MCP traffic while excluding health and metrics endpoints.
+
+    Args:
+        path: Incoming plugin server request path.
+
+    Returns:
+        bool: ``True`` when the request path should be traced.
+    """
 
     normalized = path.rstrip("/") or "/"
     return normalized not in {"/health", "/metrics/prometheus"}
@@ -418,7 +425,7 @@ class SSLCapableFastMCP(FastMCP):
         app_to_serve: Any = starlette_app
         if os.getenv("OTEL_ENABLE_OBSERVABILITY", "false").lower() == "true":
             # First-Party
-            from mcpgateway.observability import OpenTelemetryRequestMiddleware, init_telemetry, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
+            from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
 
             os.environ.setdefault("OTEL_SERVICE_NAME", MCP_SERVER_NAME)
             init_telemetry()
