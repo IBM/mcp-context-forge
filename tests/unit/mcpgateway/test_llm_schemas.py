@@ -78,6 +78,17 @@ class TestLLMProviderSchemas:
         assert provider.api_key == "test-key"
         assert provider.default_max_tokens == 4096
 
+    def test_provider_create_portkey(self):
+        """Test creating a Portkey provider."""
+        provider = LLMProviderCreate(
+            name="Portkey Provider",
+            provider_type=LLMProviderTypeEnum.PORTKEY,
+            api_base="http://localhost:8787/v1",
+            config={"provider": "openai"},
+        )
+        assert provider.provider_type == LLMProviderTypeEnum.PORTKEY
+        assert provider.config["provider"] == "openai"
+
     def test_provider_create_invalid_temperature(self):
         """Test provider creation fails with invalid temperature."""
         with pytest.raises(ValidationError):

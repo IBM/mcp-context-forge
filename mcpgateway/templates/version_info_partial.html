@@ -211,6 +211,78 @@
     {% endif %}
   </div>
 
+  <!-- LLM Gateway Card -->
+  <div id="version-llm-gateway-card" class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
+    <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+      <div>
+        <h3 class="text-lg font-medium mb-1 dark:text-gray-200 flex items-center">
+          <span class="text-2xl mr-2" aria-hidden="true">
+            {% if payload.llm_gateway.proxy_mode == 'portkey' %}🧭{% else %}🔀{% endif %}
+          </span>
+          LLM Gateway
+        </h3>
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          External LLM gateway rollout state for public `/v1` traffic and internal gateway-managed chat clients.
+        </p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <span
+          id="version-llm-gateway-provider-badge"
+          class="px-3 py-1 rounded-full text-sm font-medium {% if payload.llm_gateway.proxy_mode == 'portkey' %}bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200{% endif %}"
+        >
+          {% if payload.llm_gateway.proxy_mode == 'portkey' %}Portkey in path{% else %}Python direct{% endif %}
+        </span>
+        <span
+          id="version-llm-gateway-mode-badge"
+          class="px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
+        >
+          {{ payload.llm_gateway.mode }}
+        </span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-4">
+      <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
+        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+          Public Proxy
+        </div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.llm_gateway.proxy_mode == 'portkey' %}Portkey{% else %}Python{% endif %}
+        </div>
+      </div>
+      <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
+        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+          Internal Chat
+        </div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.llm_gateway.internal_mode == 'portkey' %}Portkey{% else %}Python{% endif %}
+        </div>
+      </div>
+      <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
+        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+          Provider
+        </div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {{ payload.llm_gateway.provider }}
+        </div>
+      </div>
+      <div class="bg-gray-50 rounded p-4 dark:bg-gray-700">
+        <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+          Sidecar Ownership
+        </div>
+        <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {% if payload.llm_gateway.managed %}Managed{% else %}External{% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if payload.llm_gateway.shadow_enabled %}
+    <div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
+      Public responses are still sourced from direct providers while the same requests are mirrored to Portkey for safe comparison.
+    </div>
+    {% endif %}
+  </div>
+
   <!-- Services Status Card -->
   <div id="version-services-status-card" class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
     <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">

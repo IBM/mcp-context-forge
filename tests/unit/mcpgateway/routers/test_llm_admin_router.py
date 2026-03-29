@@ -559,6 +559,97 @@ async def test_fetch_provider_models_with_api_key(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
+async def test_fetch_provider_models_portkey_headers(monkeypatch: pytest.MonkeyPatch):
+    provider = _provider()
+    provider.provider_type = "portkey"
+    provider.api_base = "http://portkey:8787/v1"
+    provider.api_key = "encrypted_key"
+    provider.config = {"provider": "openai", "portkey_api_key": "pk-live"}
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr(
+        llm_admin_router.LLMProviderType,
+        "get_provider_defaults",
+        lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://portkey:8787/v1", "models_endpoint": "/models"}},
+    )
+
+    import mcpgateway.services.http_client_service as http_service
+    import mcpgateway.services.llm_provider_service as provider_service_module
+
+    monkeypatch.setattr(provider_service_module, "decode_auth", lambda *_a, **_k: {"api_key": "upstream-secret"})
+
+    captured = {}
+
+    class DummyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "gpt-4o-mini"}]}
+
+    class DummyClient:
+        async def get(self, *_args, **kwargs):
+            captured["headers"] = kwargs.get("headers", {})
+            return DummyResponse()
+
+    monkeypatch.setattr(http_service, "get_http_client", AsyncMock(return_value=DummyClient()))
+    monkeypatch.setattr(http_service, "get_admin_timeout", lambda: 1)
+
+    result = await llm_admin_router.fetch_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is True
+    assert captured["headers"]["x-portkey-provider"] == "openai"
+    assert captured["headers"]["x-portkey-api-key"] == "pk-live"
+    assert captured["headers"]["Authorization"] == "Bearer upstream-secret"
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_models_full_mode_routes_openai_via_portkey(monkeypatch: pytest.MonkeyPatch):
+    provider = _provider()
+    provider.provider_type = "openai"
+    provider.api_base = "https://api.openai.com/v1"
+    provider.api_key = "encrypted_key"
+    provider.config = {}
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr(
+        llm_admin_router.LLMProviderType,
+        "get_provider_defaults",
+        lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "https://api.openai.com/v1", "models_endpoint": "/models"}},
+    )
+
+    import mcpgateway.services.http_client_service as http_service
+    import mcpgateway.services.llm_provider_service as provider_service_module
+
+    monkeypatch.setattr(provider_service_module, "decode_auth", lambda *_a, **_k: {"api_key": "upstream-secret"})
+    monkeypatch.setattr(provider_service_module.settings, "llm_gateway_mode", "full", raising=False)
+    monkeypatch.setattr(provider_service_module.settings, "llm_gateway_url", "http://portkey:8787/v1", raising=False)
+
+    captured = {}
+
+    class DummyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "gpt-4o-mini"}]}
+
+    class DummyClient:
+        async def get(self, url, *_args, **kwargs):
+            captured["url"] = url
+            captured["headers"] = kwargs.get("headers", {})
+            return DummyResponse()
+
+    monkeypatch.setattr(http_service, "get_http_client", AsyncMock(return_value=DummyClient()))
+    monkeypatch.setattr(http_service, "get_admin_timeout", lambda: 1)
+
+    result = await llm_admin_router.fetch_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is True
+    assert captured["url"] == "http://portkey:8787/v1/models"
+    assert captured["headers"]["x-portkey-provider"] == "openai"
+    assert captured["headers"]["Authorization"] == "Bearer upstream-secret"
+
+
+@pytest.mark.asyncio
 async def test_sync_provider_models_failure_result(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(llm_admin_router, "fetch_provider_models", AsyncMock(return_value={"success": False, "error": "fail"}))
 

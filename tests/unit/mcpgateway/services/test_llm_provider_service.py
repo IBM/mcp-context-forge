@@ -24,10 +24,12 @@ from mcpgateway.llm_schemas import (
     LLMProviderUpdate,
 )
 from mcpgateway.services.llm_provider_service import (
+    build_portkey_headers,
     _encrypt_provider_config_secret,
     _mask_provider_config_fragment,
     _protect_provider_config_fragment,
     decrypt_provider_config_for_runtime,
+    get_provider_api_key,
     LLMModelConflictError,
     LLMModelNotFoundError,
     LLMProviderNameConflictError,
@@ -118,6 +120,130 @@ def test_create_provider_encrypts_sensitive_config(service, db, monkeypatch: pyt
     assert isinstance(provider.config["api_key"], dict)
     assert "_mcpgateway_encrypted_value_v1" in provider.config["api_key"]
     assert provider.config["region"] == "us-east-1"
+
+
+def test_get_provider_api_key_decodes_secret(monkeypatch: pytest.MonkeyPatch):
+    provider = SimpleNamespace(name="Provider", api_key="encoded")
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "secret"})
+
+    assert get_provider_api_key(provider) == "secret"
+
+
+def test_build_portkey_headers_direct_provider(monkeypatch: pytest.MonkeyPatch):
+    provider = SimpleNamespace(
+        name="Portkey",
+        provider_type="portkey",
+        api_key="encoded",
+        config={
+            "provider": "openai",
+            "portkey_api_key": "pk-live",
+            "portkey_config": {"retry": {"attempts": 2}},
+            "custom_host": "https://llm.internal/v1",
+        },
+    )
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})
+
+    headers = build_portkey_headers(provider, include_content_type=True)
+
+    assert headers["Content-Type"] == "application/json"
+    assert headers["x-portkey-provider"] == "openai"
+    assert headers["x-portkey-api-key"] == "pk-live"
+    assert headers["Authorization"] == "Bearer upstream-secret"
+    assert headers["x-portkey-custom-host"] == "https://llm.internal/v1"
+    assert headers["x-portkey-config"] == '{"retry": {"attempts": 2}}'
+
+
+def test_build_portkey_headers_managed_provider_skips_authorization(monkeypatch: pytest.MonkeyPatch):
+    provider = SimpleNamespace(
+        name="Portkey",
+        provider_type="portkey",
+        api_key="encoded",
+        config={"provider": "@managed-openai", "portkey_api_key": "pk-live"},
+    )
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})
+
+    headers = build_portkey_headers(provider)
+
+    assert headers["x-portkey-provider"] == "@managed-openai"
+    assert headers["x-portkey-api-key"] == "pk-live"
+    assert "Authorization" not in headers
+
+
+def test_build_portkey_headers_virtual_key_keeps_provider(monkeypatch: pytest.MonkeyPatch):
+    provider = SimpleNamespace(
+        name="Portkey",
+        provider_type="portkey",
+        api_key="encoded",
+        config={"provider": "openai", "virtual_key": "vk-live", "portkey_api_key": "pk-live"},
+    )
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})
+
+    headers = build_portkey_headers(provider)
+
+    assert headers["x-portkey-provider"] == "openai"
+    assert headers["x-portkey-virtual-key"] == "vk-live"
+    assert "Authorization" not in headers
+
+
+def test_build_portkey_headers_translated_azure_provider(monkeypatch: pytest.MonkeyPatch):
+    provider = SimpleNamespace(
+        name="Azure",
+        provider_type="azure_openai",
+        api_key="encoded",
+        api_base="https://my-azure.openai.azure.com",
+        api_version="2024-02-15-preview",
+        config={"deployment_name": "dep-123"},
+    )
+    model = SimpleNamespace(model_id="gpt-4o")
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "azure-secret"})
+
+    headers = build_portkey_headers(provider, model=model)
+
+    assert headers["x-portkey-provider"] == "azure-openai"
+    assert headers["x-portkey-azure-resource-name"] == "my-azure"
+    assert headers["x-portkey-azure-deployment-id"] == "dep-123"
+    assert headers["x-portkey-azure-model-name"] == "gpt-4o"
+    assert headers["Authorization"] == "Bearer azure-secret"
+
+
+def test_build_portkey_headers_translated_openai_compatible_custom_host(monkeypatch: pytest.MonkeyPatch):
+    provider = SimpleNamespace(
+        name="Compat",
+        provider_type="openai_compatible",
+        api_key="encoded",
+        api_base="https://compat.example.com/v1",
+        config={},
+    )
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "compat-secret"})
+
+    headers = build_portkey_headers(provider)
+
+    assert headers["x-portkey-provider"] == "openai"
+    assert headers["x-portkey-custom-host"] == "https://compat.example.com/v1"
+    assert headers["Authorization"] == "Bearer compat-secret"
+
+
+def test_build_portkey_headers_translated_bedrock_credentials_no_authorization():
+    provider = SimpleNamespace(
+        name="Bedrock",
+        provider_type="bedrock",
+        api_key=None,
+        config={
+            "access_key_id": "AKIA_TEST",
+            "secret_access_key": "secret",
+            "session_token": "session",
+            "region": "us-east-1",
+        },
+    )
+
+    headers = build_portkey_headers(provider)
+
+    assert headers["x-portkey-provider"] == "bedrock"
+    assert headers["x-portkey-aws-access-key-id"] == "AKIA_TEST"
+    assert headers["x-portkey-aws-secret-access-key"] == "secret"
+    assert headers["x-portkey-aws-session-token"] == "session"
+    assert headers["x-portkey-aws-region"] == "us-east-1"
+    assert "Authorization" not in headers
 
 
 def test_create_provider_conflict(service, db):

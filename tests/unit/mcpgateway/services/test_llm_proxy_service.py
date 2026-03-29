@@ -232,6 +232,170 @@ def test_build_ollama_request_native_options(service):
     assert body["options"]["temperature"] == 0.5
 
 
+def test_build_portkey_request(service, monkeypatch: pytest.MonkeyPatch):
+    request = ChatCompletionRequest(
+        model="gpt-4o-mini",
+        messages=[ChatMessage(role="user", content="hi")],
+        stream=True,
+        temperature=0.4,
+    )
+    provider = _make_provider(
+        provider_type=LLMProviderType.PORTKEY,
+        api_base="http://portkey:8787/v1",
+        api_key="encoded",
+        config={"provider": "openai", "portkey_api_key": "pk-live"},
+    )
+    model = _make_model(model_id="gpt-4o-mini")
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "upstream-secret"})
+
+    url, headers, body = service._build_portkey_request(request, provider, model)
+
+    assert url == "http://portkey:8787/v1/chat/completions"
+    assert headers["x-portkey-provider"] == "openai"
+    assert headers["x-portkey-api-key"] == "pk-live"
+    assert headers["Authorization"] == "Bearer upstream-secret"
+    assert body["model"] == "gpt-4o-mini"
+    assert body["stream"] is True
+    assert body["temperature"] == 0.4
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_portkey_success(service):
+    provider = _make_provider(
+        provider_type=LLMProviderType.PORTKEY,
+        api_base="http://portkey:8787/v1",
+        config={"provider": "openai"},
+    )
+    model = _make_model(model_id="gpt-4o-mini")
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(model="gpt-4o-mini", messages=[ChatMessage(role="user", content="hi")])
+
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "id": "resp-portkey",
+        "created": 1,
+        "model": "gpt-4o-mini",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    service._client = AsyncMock()
+    service._client.post = AsyncMock(return_value=response)
+
+    result = await service.chat_completion(MagicMock(), request)
+
+    assert result.id == "resp-portkey"
+    service._client.post.assert_awaited_once()
+    call_kwargs = service._client.post.call_args.kwargs
+    assert call_kwargs["headers"]["x-portkey-provider"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_edge_routes_openai_via_portkey(service, monkeypatch: pytest.MonkeyPatch):
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base="https://api.openai.com/v1", api_key="encoded")
+    model = _make_model(model_id="gpt-4o-mini")
+    service._resolve_model = MagicMock(return_value=(provider, model))
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "openai-secret"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.settings.llm_gateway_mode", "edge", raising=False)
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.settings.llm_gateway_url", "http://portkey:8787/v1", raising=False)
+
+    request = ChatCompletionRequest(model="gpt-4o-mini", messages=[ChatMessage(role="user", content="hi")])
+
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "id": "resp-edge",
+        "created": 1,
+        "model": "gpt-4o-mini",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    service._client = AsyncMock()
+    service._client.post = AsyncMock(return_value=response)
+
+    result = await service.chat_completion(MagicMock(), request)
+
+    assert result.id == "resp-edge"
+    call_args = service._client.post.call_args
+    assert call_args.args[0] == "http://portkey:8787/v1/chat/completions"
+    assert call_args.kwargs["headers"]["x-portkey-provider"] == "openai"
+    assert call_args.kwargs["headers"]["Authorization"] == "Bearer openai-secret"
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_edge_treats_anthropic_portkey_response_as_openai(service, monkeypatch: pytest.MonkeyPatch):
+    provider = _make_provider(provider_type=LLMProviderType.ANTHROPIC, api_base="https://api.anthropic.com", api_key="encoded")
+    model = _make_model(model_id="claude-3-5-sonnet")
+    service._resolve_model = MagicMock(return_value=(provider, model))
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda _: {"api_key": "anthropic-secret"})
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.settings.llm_gateway_mode", "edge", raising=False)
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.settings.llm_gateway_url", "http://portkey:8787/v1", raising=False)
+
+    request = ChatCompletionRequest(model="claude-3-5-sonnet", messages=[ChatMessage(role="user", content="hi")])
+
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "id": "resp-anthropic-edge",
+        "created": 1,
+        "model": "claude-3-5-sonnet",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    service._client = AsyncMock()
+    service._client.post = AsyncMock(return_value=response)
+
+    result = await service.chat_completion(MagicMock(), request)
+
+    assert result.id == "resp-anthropic-edge"
+    assert result.choices[0].message.content == "ok"
+    assert service._client.post.call_args.kwargs["headers"]["x-portkey-provider"] == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_shadow_schedules_portkey_mirror(service, monkeypatch: pytest.MonkeyPatch):
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI, api_base="http://direct-provider/v1", api_key=None)
+    model = _make_model(model_id="gpt-4o-mini")
+    service._resolve_model = MagicMock(return_value=(provider, model))
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.settings.llm_gateway_mode", "shadow", raising=False)
+    monkeypatch.setattr("mcpgateway.services.llm_provider_service.settings.llm_gateway_url", "http://portkey:8787/v1", raising=False)
+
+    scheduled = {}
+
+    def _fake_create_task(coro):
+        scheduled["called"] = True
+        coro.close()
+        return MagicMock()
+
+    monkeypatch.setattr("mcpgateway.services.llm_proxy_service.asyncio.create_task", _fake_create_task)
+
+    request = ChatCompletionRequest(model="gpt-4o-mini", messages=[ChatMessage(role="user", content="hi")])
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "id": "resp-shadow",
+        "created": 1,
+        "model": "gpt-4o-mini",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+    }
+
+    service._client = AsyncMock()
+    service._client.post = AsyncMock(return_value=response)
+
+    result = await service.chat_completion(MagicMock(), request)
+
+    assert result.id == "resp-shadow"
+    assert scheduled["called"] is True
+    call_args = service._client.post.call_args
+    assert call_args.args[0] == "http://direct-provider/v1/chat/completions"
+    assert "x-portkey-provider" not in call_args.kwargs["headers"]
+
+
 def test_transform_anthropic_response(service):
     data = {
         "id": "resp",

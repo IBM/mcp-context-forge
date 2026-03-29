@@ -11,6 +11,7 @@ formats and handles streaming responses.
 """
 
 # Standard
+import asyncio
 import time
 from typing import Any, AsyncGenerator, Dict, Optional, Tuple
 import uuid
@@ -33,9 +34,13 @@ from mcpgateway.llm_schemas import (
     UsageStats,
 )
 from mcpgateway.services.llm_provider_service import (
+    build_portkey_headers,
     decrypt_provider_config_for_runtime,
+    get_portkey_api_base,
     LLMModelNotFoundError,
     LLMProviderNotFoundError,
+    should_route_provider_via_llm_gateway,
+    should_shadow_provider_via_llm_gateway,
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.services_auth import decode_auth
@@ -396,6 +401,122 @@ class LLMProxyService:
 
         return url, headers, body
 
+    def _build_portkey_request(
+        self,
+        request: ChatCompletionRequest,
+        provider: LLMProvider,
+        model: LLMModel,
+    ) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
+        """Build request for a Portkey gateway."""
+        base_url = get_portkey_api_base(provider)
+        url = f"{base_url.rstrip('/')}/chat/completions"
+        headers = build_portkey_headers(provider, model=model, include_content_type=True)
+
+        body: Dict[str, Any] = {
+            "model": model.model_id,
+            "messages": [msg.model_dump(exclude_none=True) for msg in request.messages],
+        }
+
+        if request.temperature is not None:
+            body["temperature"] = request.temperature
+        elif provider.default_temperature:
+            body["temperature"] = provider.default_temperature
+
+        if request.max_tokens is not None:
+            body["max_tokens"] = request.max_tokens
+        elif provider.default_max_tokens:
+            body["max_tokens"] = provider.default_max_tokens
+
+        if request.stream:
+            body["stream"] = True
+
+        if request.tools:
+            body["tools"] = [tool.model_dump() for tool in request.tools]
+        if request.tool_choice:
+            body["tool_choice"] = request.tool_choice
+        if request.top_p is not None:
+            body["top_p"] = request.top_p
+        if request.frequency_penalty is not None:
+            body["frequency_penalty"] = request.frequency_penalty
+        if request.presence_penalty is not None:
+            body["presence_penalty"] = request.presence_penalty
+        if request.stop:
+            body["stop"] = request.stop
+
+        return url, headers, body
+
+    def _build_direct_request(
+        self,
+        request: ChatCompletionRequest,
+        provider: LLMProvider,
+        model: LLMModel,
+    ) -> Tuple[str, Dict[str, str], Dict[str, Any]]:
+        """Build the direct upstream request for a provider."""
+        if provider.provider_type == LLMProviderType.AZURE_OPENAI:
+            return self._build_azure_request(request, provider, model)
+        if provider.provider_type == LLMProviderType.ANTHROPIC:
+            return self._build_anthropic_request(request, provider, model)
+        if provider.provider_type == LLMProviderType.OLLAMA:
+            return self._build_ollama_request(request, provider, model)
+        return self._build_openai_request(request, provider, model)
+
+    async def _shadow_portkey_request(
+        self,
+        url: str,
+        headers: Dict[str, str],
+        body: Dict[str, Any],
+        *,
+        provider_name: str,
+        model_id: str,
+    ) -> None:
+        """Mirror a request to Portkey in shadow mode and log the outcome."""
+        if not self._client:
+            return
+
+        started_at = time.perf_counter()
+        try:
+            response = await self._client.post(url, headers=headers, json=body)
+            latency_ms = (time.perf_counter() - started_at) * 1000
+            logger.info(
+                "LLM gateway shadow request completed provider=%s model=%s status=%s latency_ms=%.2f",
+                provider_name,
+                model_id,
+                response.status_code,
+                latency_ms,
+            )
+        except Exception as exc:  # pragma: no cover - defensive log path
+            latency_ms = (time.perf_counter() - started_at) * 1000
+            logger.warning(
+                "LLM gateway shadow request failed provider=%s model=%s latency_ms=%.2f error=%s",
+                provider_name,
+                model_id,
+                latency_ms,
+                exc,
+            )
+
+    def _maybe_schedule_shadow_request(
+        self,
+        request: ChatCompletionRequest,
+        provider: LLMProvider,
+        model: LLMModel,
+    ) -> None:
+        """Schedule a best-effort Portkey shadow request when enabled."""
+        if not should_shadow_provider_via_llm_gateway(provider):
+            return
+
+        shadow_url, shadow_headers, shadow_body = self._build_portkey_request(request, provider, model)
+        shadow_body = dict(shadow_body)
+        shadow_body["stream"] = False
+        asyncio.create_task(
+            self._shadow_portkey_request(
+                shadow_url,
+                shadow_headers,
+                shadow_body,
+                provider_name=provider.name,
+                model_id=model.model_id,
+            )
+        )
+
     async def chat_completion(
         self,
         db: Session,
@@ -417,17 +538,13 @@ class LLMProxyService:
             await self.initialize()
 
         provider, model = self._resolve_model(db, request.model)
+        self._maybe_schedule_shadow_request(request, provider, model)
 
         # Build request based on provider type
-        if provider.provider_type == LLMProviderType.AZURE_OPENAI:
-            url, headers, body = self._build_azure_request(request, provider, model)
-        elif provider.provider_type == LLMProviderType.ANTHROPIC:
-            url, headers, body = self._build_anthropic_request(request, provider, model)
-        elif provider.provider_type == LLMProviderType.OLLAMA:
-            url, headers, body = self._build_ollama_request(request, provider, model)
+        if should_route_provider_via_llm_gateway(provider):
+            url, headers, body = self._build_portkey_request(request, provider, model)
         else:
-            # Default to OpenAI-compatible
-            url, headers, body = self._build_openai_request(request, provider, model)
+            url, headers, body = self._build_direct_request(request, provider, model)
 
         # Ensure non-streaming
         body["stream"] = False
@@ -444,6 +561,8 @@ class LLMProxyService:
             data = response.json()
 
             # Transform response based on provider
+            if should_route_provider_via_llm_gateway(provider):
+                return self._transform_openai_response(data)
             if provider.provider_type == LLMProviderType.ANTHROPIC:
                 return self._transform_anthropic_response(data, model.model_id)
             if provider.provider_type == LLMProviderType.OLLAMA:
@@ -482,16 +601,13 @@ class LLMProxyService:
             await self.initialize()
 
         provider, model = self._resolve_model(db, request.model)
+        self._maybe_schedule_shadow_request(request, provider, model)
 
         # Build request based on provider type
-        if provider.provider_type == LLMProviderType.AZURE_OPENAI:
-            url, headers, body = self._build_azure_request(request, provider, model)
-        elif provider.provider_type == LLMProviderType.ANTHROPIC:
-            url, headers, body = self._build_anthropic_request(request, provider, model)
-        elif provider.provider_type == LLMProviderType.OLLAMA:
-            url, headers, body = self._build_ollama_request(request, provider, model)
+        if should_route_provider_via_llm_gateway(provider):
+            url, headers, body = self._build_portkey_request(request, provider, model)
         else:
-            url, headers, body = self._build_openai_request(request, provider, model)
+            url, headers, body = self._build_direct_request(request, provider, model)
 
         # Ensure streaming
         body["stream"] = True
@@ -526,7 +642,9 @@ class LLMProxyService:
                             data = orjson.loads(data_str)
 
                             # Transform based on provider
-                            if provider.provider_type == LLMProviderType.ANTHROPIC:
+                            if should_route_provider_via_llm_gateway(provider):
+                                chunk = data_str
+                            elif provider.provider_type == LLMProviderType.ANTHROPIC:
                                 chunk = self._transform_anthropic_stream_chunk(data, response_id, created, model.model_id)
                             elif provider.provider_type == LLMProviderType.OLLAMA:
                                 # Check if using OpenAI-compatible endpoint

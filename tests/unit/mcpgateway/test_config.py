@@ -1067,6 +1067,29 @@ def test_experimental_rust_mcp_runtime_defaults():
     assert s.experimental_rust_mcp_session_auth_reuse_enabled is False
 
 
+def test_llm_gateway_defaults():
+    """External LLM gateway settings should default to direct mode with local Portkey URL."""
+    s = Settings(_env_file=None)
+    assert s.llm_gateway_mode == "direct"
+    assert s.llm_gateway_provider == "portkey"
+    assert s.llm_gateway_url == "http://127.0.0.1:8787/v1"
+    assert s.llm_gateway_managed is True
+    assert s.llm_gateway_portkey_api_key.get_secret_value() == ""
+    assert s.llm_gateway_portkey_config == ""
+
+
+def test_llm_gateway_mode_accepts_off_alias():
+    """The external LLM gateway mode should accept `off` as an alias for `direct`."""
+    s = Settings(llm_gateway_mode="off", _env_file=None)
+    assert s.llm_gateway_mode == "direct"
+
+
+def test_llm_gateway_mode_rejects_unknown_value():
+    """Unknown LLM gateway modes should fail validation."""
+    with pytest.raises(ValueError, match="llm_gateway_mode must be one of"):
+        Settings(llm_gateway_mode="invalid", _env_file=None)
+
+
 def test_experimental_rust_mcp_runtime_uds_accepts_absolute_path(tmp_path: Path):
     """The optional Rust runtime UDS path should round-trip when configured."""
     uds_path = tmp_path / "contextforge-rust.sock"

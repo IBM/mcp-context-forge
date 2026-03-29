@@ -41,6 +41,7 @@ class LLMProviderTypeEnum(str, Enum):
     WATSONX = "watsonx"
     OLLAMA = "ollama"
     OPENAI_COMPATIBLE = "openai_compatible"
+    PORTKEY = "portkey"
     COHERE = "cohere"
     MISTRAL = "mistral"
     GROQ = "groq"
