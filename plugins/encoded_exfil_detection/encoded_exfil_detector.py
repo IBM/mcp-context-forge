@@ -173,7 +173,7 @@ class EncodedExfilDetectorConfig(BaseModel):
                 raise ValueError(f"Invalid allowlist regex pattern '{pattern}': {exc}") from exc
         return v
 
-    def model_post_init(self, _context: Any) -> None:
+    def model_post_init(self, _context: Any) -> None:  # pylint: disable=arguments-differ
         """Pre-compile and cache derived values after validation."""
         setattr(self, "_allowlist_compiled", [re.compile(p) for p in self.allowlist_patterns])
         setattr(self, "_extra_keywords_bytes", tuple(kw.encode() for kw in self.extra_sensitive_keywords))

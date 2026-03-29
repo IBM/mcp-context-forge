@@ -600,21 +600,19 @@ fn scan_text(
             let mut finding = evaluate_candidate(text, path, encoding, candidate, start, end, cfg);
 
             // Try nested decoding — peel encoding layers to find deeper secrets
-            if decode_depth < cfg.max_decode_depth.saturating_sub(1) {
-                if let Some(decoded) = decode_candidate(encoding, candidate) {
-                    if decoded.len() >= cfg.min_decoded_length {
-                        let decoded_text = String::from_utf8_lossy(&decoded);
-                        let (_, nested_findings) =
-                            scan_text(&decoded_text, path, cfg, decode_depth + 1);
-                        for nf in nested_findings {
-                            let use_nested = match &finding {
-                                Some(f) => nf.score > f.score,
-                                None => true,
-                            };
-                            if use_nested {
-                                finding = Some(Finding { start, end, ..nf });
-                            }
-                        }
+            if decode_depth < cfg.max_decode_depth.saturating_sub(1)
+                && let Some(decoded) = decode_candidate(encoding, candidate)
+                && decoded.len() >= cfg.min_decoded_length
+            {
+                let decoded_text = String::from_utf8_lossy(&decoded);
+                let (_, nested_findings) = scan_text(&decoded_text, path, cfg, decode_depth + 1);
+                for nf in nested_findings {
+                    let use_nested = match &finding {
+                        Some(f) => nf.score > f.score,
+                        None => true,
+                    };
+                    if use_nested {
+                        finding = Some(Finding { start, end, ..nf });
                     }
                 }
             }
@@ -718,22 +716,20 @@ fn scan_container<'py>(
         }
 
         // Try parsing string as JSON and recurse into the parsed structure
-        if cfg.parse_json_strings && depth < cfg.max_recursion_depth {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                if parsed.is_object() || parsed.is_array() {
-                    let json_path = if path.is_empty() {
-                        "(json)".to_string()
-                    } else {
-                        format!("{}(json)", path)
-                    };
-                    // Convert serde_json::Value to Python object for recursive scanning
-                    let py_parsed = json_value_to_py(py, &parsed)?;
-                    let (_, _, json_findings) =
-                        scan_container(py, &py_parsed, &json_path, cfg, depth + 1)?;
-                    for item in json_findings.iter() {
-                        findings_list.append(item)?;
-                    }
-                }
+        if cfg.parse_json_strings
+            && depth < cfg.max_recursion_depth
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text)
+            && (parsed.is_object() || parsed.is_array())
+        {
+            let json_path = if path.is_empty() {
+                "(json)".to_string()
+            } else {
+                format!("{}(json)", path)
+            };
+            let py_parsed = json_value_to_py(py, &parsed)?;
+            let (_, _, json_findings) = scan_container(py, &py_parsed, &json_path, cfg, depth + 1)?;
+            for item in json_findings.iter() {
+                findings_list.append(item)?;
             }
         }
 
