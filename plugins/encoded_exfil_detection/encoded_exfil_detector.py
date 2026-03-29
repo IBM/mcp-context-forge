@@ -173,11 +173,11 @@ class EncodedExfilDetectorConfig(BaseModel):
                 raise ValueError(f"Invalid allowlist regex pattern '{pattern}': {exc}") from exc
         return v
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, _context: Any) -> None:
         """Pre-compile and cache derived values after validation."""
-        object.__setattr__(self, "_allowlist_compiled", [re.compile(p) for p in self.allowlist_patterns])
-        object.__setattr__(self, "_extra_keywords_bytes", tuple(kw.encode() for kw in self.extra_sensitive_keywords))
-        object.__setattr__(self, "_extra_hints_lower", tuple(self.extra_egress_hints))
+        setattr(self, "_allowlist_compiled", [re.compile(p) for p in self.allowlist_patterns])
+        setattr(self, "_extra_keywords_bytes", tuple(kw.encode() for kw in self.extra_sensitive_keywords))
+        setattr(self, "_extra_hints_lower", tuple(self.extra_egress_hints))
 
 
 def _shannon_entropy(data: bytes) -> float:

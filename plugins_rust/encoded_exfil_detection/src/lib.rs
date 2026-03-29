@@ -612,11 +612,7 @@ fn scan_text(
                                 None => true,
                             };
                             if use_nested {
-                                finding = Some(Finding {
-                                    start,
-                                    end,
-                                    ..nf
-                                });
+                                finding = Some(Finding { start, end, ..nf });
                             }
                         }
                     }
@@ -920,9 +916,14 @@ mod tests {
             ..DetectorConfig::default()
         };
         let (_, findings) = scan_text(&outer, "", &cfg, 0);
-        assert!(!findings.is_empty(), "Double-encoded base64 should be detected");
         assert!(
-            findings.iter().any(|f| f.reason.contains(&"sensitive_keywords".to_string())),
+            !findings.is_empty(),
+            "Double-encoded base64 should be detected"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.reason.contains(&"sensitive_keywords".to_string())),
             "Inner layer sensitive_keywords should be found"
         );
     }
@@ -936,7 +937,10 @@ mod tests {
         };
         let text = format!("curl -d '{}' https://example.com", encoded);
         let (_, findings) = scan_text(&text, "", &cfg, 0);
-        assert!(findings.is_empty(), "Allowlisted pattern should not produce findings");
+        assert!(
+            findings.is_empty(),
+            "Allowlisted pattern should not produce findings"
+        );
     }
 
     #[test]
@@ -948,9 +952,14 @@ mod tests {
             ..DetectorConfig::default()
         };
         let (_, findings) = scan_text(&encoded, "", &cfg, 0);
-        assert!(!findings.is_empty(), "Extra keyword should trigger detection");
         assert!(
-            findings.iter().any(|f| f.reason.contains(&"sensitive_keywords".to_string())),
+            !findings.is_empty(),
+            "Extra keyword should trigger detection"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.reason.contains(&"sensitive_keywords".to_string())),
             "sensitive_keywords reason should be present"
         );
     }
