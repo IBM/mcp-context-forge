@@ -53,6 +53,23 @@ volumes:
 services:
 
   # ──────────────────────────────────────────────────────────────────────
+  # Enable the same lightweight MCP/A2A test targets on the Langfuse stack
+  # so end-to-end tool-call smoke flows can generate traces without relying
+  # on stale registrations from the separate testing profile.
+  # ──────────────────────────────────────────────────────────────────────
+  fast_test_server:
+    profiles: []
+
+  register_fast_test:
+    profiles: []
+
+  a2a_echo_agent:
+    profiles: []
+
+  register_a2a_echo:
+    profiles: []
+
+  # ──────────────────────────────────────────────────────────────────────
   # Override gateway to send OTEL traces to Langfuse
   # Langfuse accepts OTLP/HTTP at /api/public/otel (gRPC not supported)
   # ──────────────────────────────────────────────────────────────────────

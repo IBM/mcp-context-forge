@@ -9133,7 +9133,15 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
     except (PluginError, PluginViolationError):
         raise
     except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+        request_id = body.get("id") if isinstance(body, dict) else None
+        return ORJSONResponse(
+            status_code=403,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": exc.code, "message": exc.message, **({"data": exc.data} if exc.data is not None else {})},
+                "id": exc.request_id if exc.request_id is not None else request_id,
+            },
+        )
     except Exception:
         try:
             db.rollback()

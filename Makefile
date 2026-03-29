@@ -1380,6 +1380,10 @@ langfuse-up:                               ## Start Langfuse LLM observability s
 	$(LANGFUSE_COMPOSE) up -d --force-recreate gateway
 	@# Nginx resolves gateway backends when it starts; recreate it after gateway churn.
 	$(LANGFUSE_COMPOSE) up -d --no-deps --force-recreate nginx
+	@# Bring up the same lightweight MCP/A2A test targets used by the live smoke
+	@# suites so Langfuse runs can generate real end-to-end tool traffic without
+	@# depending on stale registrations from the testing profile.
+	$(LANGFUSE_COMPOSE) up -d fast_test_server register_fast_test a2a_echo_agent register_a2a_echo
 	$(VERIFY_LANGFUSE_GATEWAY_EXPORT)
 	@echo "⏳ Waiting for Langfuse to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \

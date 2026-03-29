@@ -7967,7 +7967,12 @@ class TestRpcHandling:
             response = await handle_internal_mcp_tools_call_resolve(request)
 
         assert response.status_code == 403
-        assert json.loads(response.body.decode())["code"] == -32003
+        payload = json.loads(response.body.decode())
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["id"] == "resolve-2"
+        assert payload["error"]["code"] == -32003
+        assert payload["error"]["message"] == "Access denied"
+        assert payload["error"]["data"] == {"method": "tools/call"}
 
     async def test_handle_internal_mcp_tools_call_resolve_commits_success_and_invalidates_on_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resolve-3", "method": "tools/call", "params": {"name": "echo"}})

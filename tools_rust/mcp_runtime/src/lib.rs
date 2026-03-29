@@ -9,6 +9,7 @@
 //! still delegating authentication and RBAC authority to Python.
 
 pub mod config;
+pub mod observability;
 
 use axum::{
     Json, Router,
@@ -54,7 +55,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio_postgres::config::SslMode;
 use tokio_postgres_rustls::MakeRustlsConnect;
-use tracing::{debug, error, info, warn};
+use tracing::{Instrument, debug, error, info, warn};
 use uuid::Uuid;
 
 #[cfg(feature = "rmcp-upstream-client")]
@@ -73,6 +74,12 @@ use rmcp::{
 };
 
 use crate::config::{ListenTarget, RuntimeConfig};
+use crate::observability::{
+    derive_langfuse_trace_name, inject_current_trace_context, is_input_capture_enabled,
+    is_output_capture_enabled, serialize_trace_payload, set_langfuse_trace_name,
+    set_span_attribute, set_span_error, start_child_span, start_root_span,
+    trace_request_context, TraceRequestContext,
+};
 
 const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_HEADER: &str = "x-contextforge-mcp-runtime";
@@ -347,9 +354,21 @@ struct InternalAuthContext {
     email: Option<String>,
     teams: Option<Vec<String>>,
     #[serde(default)]
+    team_name: Option<String>,
+    #[serde(default)]
+    auth_method: Option<String>,
+    #[serde(default)]
+    permission_is_admin: Option<bool>,
+    #[serde(default)]
     is_admin: bool,
     #[serde(default)]
     is_authenticated: bool,
+}
+
+impl InternalAuthContext {
+    fn effective_is_admin(&self) -> bool {
+        self.permission_is_admin.unwrap_or(self.is_admin)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -386,7 +405,11 @@ struct ResolvedMcpToolCallPlan {
     #[serde(default)]
     fallback_reason: Option<String>,
     #[serde(default)]
+    tool_name: Option<String>,
+    #[serde(default)]
     tool_id: Option<String>,
+    #[serde(default)]
+    gateway_id: Option<String>,
     #[serde(default)]
     server_id: Option<String>,
     #[serde(default)]
@@ -2755,13 +2778,55 @@ async fn forward_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let backend_response =
-        match send_to_backend_url(state, state.backend_rpc_url(), incoming_headers, body).await {
-            Ok(response) => response,
-            Err(response) => return response,
-        };
+    let request_payload = parse_jsonrpc_request_payload(&body);
+    let method_name =
+        extract_jsonrpc_method(request_payload.as_ref()).unwrap_or_else(|| "unknown".to_string());
+    let request_params = extract_jsonrpc_params(request_payload.as_ref());
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) =
+        start_runtime_operation_span("mcp.forward", &incoming_headers, auth_context.as_ref());
+    set_span_attribute(&span, "mcp.method", method_name.clone());
+    if is_root_span {
+        set_langfuse_trace_name(&span, format!("MCP: {}", method_name.replace('/', ".")));
+    }
+    if is_input_capture_enabled("mcp.forward") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&request_params),
+        );
+    }
 
-    response_from_backend(backend_response)
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_to_backend_url(state, state.backend_rpc_url(), incoming_headers, body).await
+            {
+                Ok(response) => response,
+                Err(response) => {
+                    set_span_error(
+                        &span_for_body,
+                        "Backend MCP dispatch failed",
+                        Some("RuntimeError"),
+                    );
+                    return response;
+                }
+            };
+
+        let status = backend_response.status();
+        set_span_attribute(&span_for_body, "success", status.is_success());
+        if !status.is_success() {
+            set_span_error(
+                &span_for_body,
+                format!("Backend MCP dispatch returned status {status}"),
+                Some("RuntimeError"),
+            );
+        }
+
+        response_from_backend(backend_response)
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_initialize_to_backend(
@@ -2769,19 +2834,58 @@ async fn forward_initialize_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let backend_response = match send_to_backend_url(
-        state,
-        state.backend_initialize_url(),
-        incoming_headers,
-        body,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
+    let request_payload = parse_jsonrpc_request_payload(&body);
+    let request_params = extract_jsonrpc_params(request_payload.as_ref());
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) =
+        start_runtime_operation_span("mcp.initialize", &incoming_headers, auth_context.as_ref());
+    set_span_attribute(&span, "mcp.method", "initialize");
+    if is_root_span {
+        set_langfuse_trace_name(&span, "mcp.initialize");
+    }
+    if is_input_capture_enabled("mcp.initialize") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&request_params),
+        );
+    }
 
-    response_from_backend(backend_response)
+    let span_for_body = span.clone();
+    async move {
+        let backend_response = match send_to_backend_url(
+            state,
+            state.backend_initialize_url(),
+            incoming_headers,
+            body,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(response) => {
+                set_span_error(
+                    &span_for_body,
+                    "Backend MCP initialize dispatch failed",
+                    Some("RuntimeError"),
+                );
+                return response;
+            }
+        };
+
+        let status = backend_response.status();
+        set_span_attribute(&span_for_body, "success", status.is_success());
+        if !status.is_success() {
+            set_span_error(
+                &span_for_body,
+                format!("Backend MCP initialize returned status {status}"),
+                Some("RuntimeError"),
+            );
+        }
+
+        response_from_backend(backend_response)
+    }
+    .instrument(span)
+    .await
 }
 
 async fn handle_initialize_with_session_core(
@@ -2794,94 +2898,141 @@ async fn handle_initialize_with_session_core(
     let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
     let session_id = requested_initialize_session_id(&incoming_headers, &uri, request)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-
-    if let Some(existing) = get_runtime_session(state, &session_id).await
-        && let Err(reason) =
-            runtime_session_access_outcome(&existing, auth_context.as_ref(), &incoming_headers)
-    {
-        state.runtime_stats().record_session_access_denial(reason);
-        return json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request.id,
-                "error": {
-                    "code": -32003,
-                    "message": "Access denied",
-                    "data": {"method": "initialize"},
-                }
-            }),
+    let request_id = request.id.clone();
+    let request_params = request.params.clone();
+    let (span, is_root_span) =
+        start_runtime_operation_span("mcp.initialize", &incoming_headers, auth_context.as_ref());
+    set_span_attribute(&span, "mcp.method", "initialize");
+    set_span_attribute(&span, "mcp.session_id", session_id.clone());
+    set_span_attribute(&span, "langfuse.session.id", session_id.clone());
+    if is_root_span {
+        set_langfuse_trace_name(&span, "mcp.initialize");
+    }
+    if is_input_capture_enabled("mcp.initialize") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&request_params),
         );
     }
+    let span_for_body = span.clone();
 
-    inject_session_header(&mut incoming_headers, &session_id);
-    if let Some(server_id) = extract_server_id_header(&incoming_headers) {
-        inject_server_id_header(&mut incoming_headers, &server_id);
-    }
+    async move {
+        if let Some(existing) = get_runtime_session(state, &session_id).await
+            && let Err(reason) =
+                runtime_session_access_outcome(&existing, auth_context.as_ref(), &incoming_headers)
+        {
+            state.runtime_stats().record_session_access_denial(reason);
+            set_span_error(&span_for_body, "Access denied", Some("PermissionDenied"));
+            return json_response(
+                StatusCode::OK,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32003,
+                        "message": "Access denied",
+                        "data": {"method": "initialize"},
+                    }
+                }),
+            );
+        }
 
-    let backend_response = match send_transport_to_backend(
-        state,
-        reqwest::Method::POST,
-        &incoming_headers,
-        &uri,
-        Some(body.clone()),
-        false,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
+        inject_session_header(&mut incoming_headers, &session_id);
+        if let Some(server_id) = extract_server_id_header(&incoming_headers) {
+            inject_server_id_header(&mut incoming_headers, &server_id);
+        }
 
-    let status = backend_response.status();
-    let response_session_id = backend_response
-        .headers()
-        .get("mcp-session-id")
-        .and_then(|value| value.to_str().ok())
-        .map_or_else(|| session_id.clone(), str::to_string);
-
-    if status.is_success() {
-        let mut record = RuntimeSessionRecord {
-            owner_email: auth_context
-                .as_ref()
-                .and_then(|context| context.email.clone()),
-            server_id: extract_server_id_header(&incoming_headers),
-            protocol_version: requested_protocol_version(request),
-            client_capabilities: extract_client_capabilities(request),
-            encoded_auth_context: None,
-            auth_binding_fingerprint: None,
-            auth_context_expires_at_epoch_ms: None,
-            created_at: std::time::Instant::now(),
-            last_used: std::time::Instant::now(),
-        };
-        maybe_bind_session_auth_context(
+        let backend_response = match send_transport_to_backend(
             state,
-            &mut record,
+            reqwest::Method::POST,
             &incoming_headers,
-            auth_context.as_ref(),
-        );
-        upsert_runtime_session(state, response_session_id.clone(), record).await;
-    } else {
-        remove_runtime_session(state, &response_session_id).await;
-    }
+            &uri,
+            Some(body.clone()),
+            false,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(response) => {
+                set_span_error(
+                    &span_for_body,
+                    "Backend MCP initialize transport dispatch failed",
+                    Some("RuntimeError"),
+                );
+                return response;
+            }
+        };
 
-    let mut response = response_from_backend_with_session_hint(
-        backend_response,
-        Some(response_session_id.as_str()),
-    );
-    inject_runtime_capability_headers(
-        &mut response,
-        &[
-            (SESSION_CORE_HEADER, state.session_core_enabled()),
-            (EVENT_STORE_HEADER, state.event_store_enabled()),
-            (
-                SESSION_AUTH_REUSE_HEADER,
-                state.session_auth_reuse_enabled(),
-            ),
-            (RESUME_CORE_HEADER, state.resume_core_enabled()),
-        ],
-    );
-    response
+        let status = backend_response.status();
+        let response_session_id = backend_response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+            .map_or_else(|| session_id.clone(), str::to_string);
+        set_span_attribute(
+            &span_for_body,
+            "mcp.session_id",
+            response_session_id.clone(),
+        );
+        set_span_attribute(
+            &span_for_body,
+            "langfuse.session.id",
+            response_session_id.clone(),
+        );
+
+        if status.is_success() {
+            set_span_attribute(&span_for_body, "success", true);
+            let mut record = RuntimeSessionRecord {
+                owner_email: auth_context
+                    .as_ref()
+                    .and_then(|context| context.email.clone()),
+                server_id: extract_server_id_header(&incoming_headers),
+                protocol_version: requested_protocol_version(request),
+                client_capabilities: extract_client_capabilities(request),
+                encoded_auth_context: None,
+                auth_binding_fingerprint: None,
+                auth_context_expires_at_epoch_ms: None,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            };
+            maybe_bind_session_auth_context(
+                state,
+                &mut record,
+                &incoming_headers,
+                auth_context.as_ref(),
+            );
+            upsert_runtime_session(state, response_session_id.clone(), record).await;
+        } else {
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(
+                &span_for_body,
+                format!("Backend MCP initialize returned status {status}"),
+                Some("RuntimeError"),
+            );
+            remove_runtime_session(state, &response_session_id).await;
+        }
+
+        let mut response = response_from_backend_with_session_hint(
+            backend_response,
+            Some(response_session_id.as_str()),
+        );
+        inject_runtime_capability_headers(
+            &mut response,
+            &[
+                (SESSION_CORE_HEADER, state.session_core_enabled()),
+                (EVENT_STORE_HEADER, state.event_store_enabled()),
+                (
+                    SESSION_AUTH_REUSE_HEADER,
+                    state.session_auth_reuse_enabled(),
+                ),
+                (RESUME_CORE_HEADER, state.resume_core_enabled()),
+            ],
+        );
+        response
+    }
+    .instrument(span)
+    .await
 }
 
 async fn active_runtime_session_count(state: &AppState) -> usize {
@@ -4456,48 +4607,135 @@ async fn forward_transport_request(
     response
 }
 
+fn start_runtime_operation_span(
+    name: &'static str,
+    incoming_headers: &HeaderMap,
+    auth_context: Option<&InternalAuthContext>,
+) -> (tracing::Span, bool) {
+    let trace_context = trace_request_context(incoming_headers, auth_context);
+    let current_span = tracing::Span::current();
+    if !current_span.is_none() {
+        let child_span = start_child_span(name, &trace_context);
+        if !child_span.is_none() {
+            return (child_span, false);
+        }
+    }
+
+    (start_root_span(name, &trace_context), true)
+}
+
+fn parse_jsonrpc_request_payload(body: &Bytes) -> Option<Value> {
+    serde_json::from_slice::<Value>(body).ok()
+}
+
+fn extract_jsonrpc_method(payload: Option<&Value>) -> Option<String> {
+    payload
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("method"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn extract_jsonrpc_params(payload: Option<&Value>) -> Value {
+    payload
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("params"))
+        .cloned()
+        .unwrap_or_else(|| json!({}))
+}
+
 async fn forward_server_tools_list_to_backend(
     state: &AppState,
     incoming_headers: HeaderMap,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response = match send_tools_list_to_backend(state, incoming_headers).await {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) =
+        start_runtime_operation_span("tool.list", &incoming_headers, auth_context.as_ref());
+    if is_root_span {
+        set_langfuse_trace_name(&span, derive_langfuse_trace_name("tool.list", &[]));
+    }
+    if let Some(server_id) = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+    {
+        set_span_attribute(&span, "server_id", server_id.to_string());
+    }
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP tools/list response decode failed: {err}");
-            return backend_jsonrpc_error_response(
-                request_id.clone(),
-                "Backend MCP tools/list decode failed",
-            );
+    let span_for_body = span.clone();
+    async move {
+        let backend_response = match send_tools_list_to_backend(state, incoming_headers).await {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP tools/list response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP tools/list decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return backend_jsonrpc_error_response(
+                    request_id.clone(),
+                    "Backend MCP tools/list decode failed",
+                );
+            }
+        };
+
+        if status.is_success() {
+            let tool_count = payload
+                .get("tools")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            set_span_attribute(&span_for_body, "success", true);
+            set_span_attribute(&span_for_body, "tool.count", tool_count);
+            if is_output_capture_enabled("tool.list") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            let error_type = match status {
+                StatusCode::FORBIDDEN => "PermissionDenied",
+                _ => "RuntimeError",
+            };
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some(error_type));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn direct_server_tools_list(
@@ -4530,24 +4768,45 @@ async fn direct_server_tools_list(
         return response;
     }
 
-    match query_server_tools_list_from_db(state, &server_id, &auth_context).await {
-        Ok(tools) => json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
-                "result": {
-                    "tools": tools,
-                },
-            }),
-        ),
-        Err(err) => {
-            error!(
-                "Rust MCP direct tools/list DB query failed: {err}; falling back to Python dispatcher"
-            );
-            forward_server_tools_list_to_backend(state, incoming_headers, request_id).await
+    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
+    let span = start_root_span("tool.list", &trace_context);
+    set_span_attribute(&span, "server_id", server_id.as_str());
+    set_langfuse_trace_name(&span, derive_langfuse_trace_name("tool.list", &[]));
+
+    let span_for_body = span.clone();
+    async move {
+        match query_server_tools_list_from_db(state, &server_id, &auth_context).await {
+            Ok(tools) => {
+                set_span_attribute(&span_for_body, "tool.count", tools.len());
+                if is_output_capture_enabled("tool.list") {
+                    set_span_attribute(
+                        &span_for_body,
+                        "langfuse.observation.output",
+                        serialize_trace_payload(&json!({ "tools": tools })),
+                    );
+                }
+                json_response(
+                    StatusCode::OK,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "result": {
+                            "tools": tools,
+                        },
+                    }),
+                )
+            }
+            Err(err) => {
+                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
+                error!(
+                    "Rust MCP direct tools/list DB query failed: {err}; falling back to Python dispatcher"
+                );
+                forward_server_tools_list_to_backend(state, incoming_headers, request_id).await
+            }
         }
     }
+    .instrument(span)
+    .await
 }
 
 async fn query_server_tools_list_from_db(
@@ -4562,7 +4821,7 @@ async fn query_server_tools_list_from_db(
         RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
     })?;
 
-    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
     let rows = if is_unrestricted_admin {
         client
             .query(
@@ -4652,30 +4911,51 @@ async fn direct_server_resources_list(
         return response;
     }
 
-    match query_server_resources_list_from_db(state, &server_id, &auth_context).await {
-        Ok(resources) => json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
-                "result": {
-                    "resources": resources,
-                },
-            }),
-        ),
-        Err(err) => {
-            error!(
-                "Rust MCP direct resources/list DB query failed: {err}; falling back to Python dispatcher"
-            );
-            forward_resources_list_to_backend(
-                state,
-                incoming_headers,
-                Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
-                request_id,
-            )
-            .await
+    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
+    let span = start_root_span("resource.list", &trace_context);
+    set_span_attribute(&span, "server_id", server_id.as_str());
+    set_langfuse_trace_name(&span, derive_langfuse_trace_name("resource.list", &[]));
+
+    let span_for_body = span.clone();
+    async move {
+        match query_server_resources_list_from_db(state, &server_id, &auth_context).await {
+            Ok(resources) => {
+                set_span_attribute(&span_for_body, "resource.count", resources.len());
+                if is_output_capture_enabled("resource.list") {
+                    set_span_attribute(
+                        &span_for_body,
+                        "langfuse.observation.output",
+                        serialize_trace_payload(&json!({ "resources": resources })),
+                    );
+                }
+                json_response(
+                    StatusCode::OK,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "result": {
+                            "resources": resources,
+                        },
+                    }),
+                )
+            }
+            Err(err) => {
+                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
+                error!(
+                    "Rust MCP direct resources/list DB query failed: {err}; falling back to Python dispatcher"
+                );
+                forward_resources_list_to_backend(
+                    state,
+                    incoming_headers,
+                    Bytes::from_static(br#"{"jsonrpc":"2.0","method":"resources/list","params":{}}"#),
+                    request_id,
+                )
+                .await
+            }
         }
     }
+    .instrument(span)
+    .await
 }
 
 async fn direct_server_resource_templates_list(
@@ -4719,32 +4999,56 @@ async fn direct_server_resource_templates_list(
         return response;
     }
 
-    match query_server_resource_templates_list_from_db(state, &server_id, &auth_context).await {
-        Ok(resource_templates) => json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
-                "result": {
-                    "resourceTemplates": resource_templates,
-                },
-            }),
-        ),
-        Err(err) => {
-            error!(
-                "Rust MCP direct resources/templates/list DB query failed: {err}; falling back to Python dispatcher"
-            );
-            forward_resource_templates_list_to_backend(
-                state,
-                incoming_headers,
-                Bytes::from_static(
-                    br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
-                ),
-                request_id,
-            )
-            .await
+    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
+    let span = start_root_span("resource_template.list", &trace_context);
+    set_span_attribute(&span, "server_id", server_id.as_str());
+    set_langfuse_trace_name(
+        &span,
+        derive_langfuse_trace_name("resource_template.list", &[]),
+    );
+
+    let span_for_body = span.clone();
+    async move {
+        match query_server_resource_templates_list_from_db(state, &server_id, &auth_context).await {
+            Ok(resource_templates) => {
+                set_span_attribute(&span_for_body, "resource_template.count", resource_templates.len());
+                if is_output_capture_enabled("resource_template.list") {
+                    set_span_attribute(
+                        &span_for_body,
+                        "langfuse.observation.output",
+                        serialize_trace_payload(&json!({ "resourceTemplates": resource_templates })),
+                    );
+                }
+                json_response(
+                    StatusCode::OK,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "result": {
+                            "resourceTemplates": resource_templates,
+                        },
+                    }),
+                )
+            }
+            Err(err) => {
+                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
+                error!(
+                    "Rust MCP direct resources/templates/list DB query failed: {err}; falling back to Python dispatcher"
+                );
+                forward_resource_templates_list_to_backend(
+                    state,
+                    incoming_headers,
+                    Bytes::from_static(
+                        br#"{"jsonrpc":"2.0","method":"resources/templates/list","params":{}}"#,
+                    ),
+                    request_id,
+                )
+                .await
+            }
         }
     }
+    .instrument(span)
+    .await
 }
 
 async fn direct_server_prompts_list(
@@ -4785,30 +5089,51 @@ async fn direct_server_prompts_list(
         return response;
     }
 
-    match query_server_prompts_list_from_db(state, &server_id, &auth_context).await {
-        Ok(prompts) => json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
-                "result": {
-                    "prompts": prompts,
-                },
-            }),
-        ),
-        Err(err) => {
-            error!(
-                "Rust MCP direct prompts/list DB query failed: {err}; falling back to Python dispatcher"
-            );
-            forward_prompts_list_to_backend(
-                state,
-                incoming_headers,
-                Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
-                request_id,
-            )
-            .await
+    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
+    let span = start_root_span("prompt.list", &trace_context);
+    set_span_attribute(&span, "server_id", server_id.as_str());
+    set_langfuse_trace_name(&span, derive_langfuse_trace_name("prompt.list", &[]));
+
+    let span_for_body = span.clone();
+    async move {
+        match query_server_prompts_list_from_db(state, &server_id, &auth_context).await {
+            Ok(prompts) => {
+                set_span_attribute(&span_for_body, "prompt.count", prompts.len());
+                if is_output_capture_enabled("prompt.list") {
+                    set_span_attribute(
+                        &span_for_body,
+                        "langfuse.observation.output",
+                        serialize_trace_payload(&json!({ "prompts": prompts })),
+                    );
+                }
+                json_response(
+                    StatusCode::OK,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "result": {
+                            "prompts": prompts,
+                        },
+                    }),
+                )
+            }
+            Err(err) => {
+                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
+                error!(
+                    "Rust MCP direct prompts/list DB query failed: {err}; falling back to Python dispatcher"
+                );
+                forward_prompts_list_to_backend(
+                    state,
+                    incoming_headers,
+                    Bytes::from_static(br#"{"jsonrpc":"2.0","method":"prompts/list","params":{}}"#),
+                    request_id,
+                )
+                .await
+            }
         }
     }
+    .instrument(span)
+    .await
 }
 
 async fn direct_server_resources_read(
@@ -4857,39 +5182,77 @@ async fn direct_server_resources_read(
         return response;
     }
 
-    match query_server_resource_read_from_db(state, &server_id, &auth_context, uri).await {
-        Ok(Some(content)) => json_response(
-            StatusCode::OK,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
-                "result": {
-                    "contents": [content],
-                },
-            }),
-        ),
-        Ok(None) => json_response(
-            StatusCode::NOT_FOUND,
-            json!({
-                "jsonrpc": JSONRPC_VERSION,
-                "id": request_id,
-                "error": {
-                    "code": -32002,
-                    "message": format!("Resource not found: {uri}"),
-                    "data": {"uri": uri},
-                },
-            }),
-        ),
-        Err(RuntimeError::Config(reason)) if reason == "fallback-python" => {
-            forward_resources_read_to_backend(state, incoming_headers, body, request_id).await
-        }
-        Err(err) => {
-            error!(
-                "Rust MCP direct resources/read DB query failed: {err}; falling back to Python dispatcher"
-            );
-            forward_resources_read_to_backend(state, incoming_headers, body, request_id).await
+    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
+    let span = start_root_span("resource.read", &trace_context);
+    set_span_attribute(&span, "server_id", server_id.as_str());
+    set_span_attribute(&span, "resource.uri", uri.to_string());
+    set_langfuse_trace_name(
+        &span,
+        derive_langfuse_trace_name("resource.read", &[("resource.uri", uri.to_string())]),
+    );
+    if is_input_capture_enabled("resource.read") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&json!({ "uri": uri })),
+        );
+    }
+
+    let span_for_body = span.clone();
+    async move {
+        match query_server_resource_read_from_db(state, &server_id, &auth_context, uri).await {
+            Ok(Some(content)) => {
+                if is_output_capture_enabled("resource.read") {
+                    set_span_attribute(
+                        &span_for_body,
+                        "langfuse.observation.output",
+                        serialize_trace_payload(&json!({ "contents": [content.clone()] })),
+                    );
+                }
+                json_response(
+                    StatusCode::OK,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "result": {
+                            "contents": [content],
+                        },
+                    }),
+                )
+            }
+            Ok(None) => {
+                set_span_error(
+                    &span_for_body,
+                    format!("Resource not found: {uri}"),
+                    Some("ResourceNotFound"),
+                );
+                json_response(
+                    StatusCode::NOT_FOUND,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32002,
+                            "message": format!("Resource not found: {uri}"),
+                            "data": {"uri": uri},
+                        },
+                    }),
+                )
+            }
+            Err(RuntimeError::Config(reason)) if reason == "fallback-python" => {
+                forward_resources_read_to_backend(state, incoming_headers, body, request_id).await
+            }
+            Err(err) => {
+                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
+                error!(
+                    "Rust MCP direct resources/read DB query failed: {err}; falling back to Python dispatcher"
+                );
+                forward_resources_read_to_backend(state, incoming_headers, body, request_id).await
+            }
         }
     }
+    .instrument(span)
+    .await
 }
 
 async fn direct_server_prompts_get(
@@ -4951,7 +5314,7 @@ async fn query_server_resources_list_from_db(
         RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
     })?;
 
-    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
     let rows = if is_unrestricted_admin {
         client
             .query(
@@ -5004,7 +5367,7 @@ async fn query_server_resource_templates_list_from_db(
         RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
     })?;
 
-    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
     let rows = if is_unrestricted_admin {
         client
             .query(
@@ -5057,7 +5420,7 @@ async fn query_server_prompts_list_from_db(
         RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
     })?;
 
-    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
     let rows = if is_unrestricted_admin {
         client
             .query(
@@ -5113,7 +5476,7 @@ async fn query_server_resource_read_from_db(
         RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
     })?;
 
-    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
     let rows = if is_unrestricted_admin {
         client
             .query(
@@ -5209,7 +5572,7 @@ async fn query_server_prompt_get_from_db(
         RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
     })?;
 
-    let is_unrestricted_admin = auth_context.is_admin && auth_context.teams.is_none();
+    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
     let row = if is_unrestricted_admin {
         client
             .query_opt(
@@ -5258,6 +5621,64 @@ async fn query_server_prompt_get_from_db(
             }
         }],
     })))
+}
+
+async fn query_server_prompt_observability_metadata(
+    state: &AppState,
+    server_id: &str,
+    auth_context: &InternalAuthContext,
+    name_or_id: &str,
+) -> Result<Option<(String, Option<i64>)>, RuntimeError> {
+    let pool = state
+        .db_pool()
+        .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
+    let client = pool.get().await.map_err(|err| {
+        RuntimeError::Config(format!("failed to acquire Rust MCP DB connection: {err}"))
+    })?;
+
+    let is_unrestricted_admin = auth_context.effective_is_admin() && auth_context.teams.is_none();
+    let row = if is_unrestricted_admin {
+        client
+            .query_opt(
+                "SELECT p.name, p.version \
+                 FROM prompts p \
+                 JOIN server_prompt_association spa ON p.id = spa.prompt_id \
+                 WHERE spa.server_id = $1 \
+                   AND (p.name = $2 OR p.id = $2) \
+                   AND p.enabled = TRUE",
+                &[&server_id, &name_or_id],
+            )
+            .await?
+    } else {
+        let team_ids = auth_context.teams.clone().unwrap_or_default();
+        let is_public_only = auth_context.teams.as_ref().is_none_or(Vec::is_empty);
+        let allow_owner_access = !is_public_only && auth_context.email.is_some();
+        let owner_email = auth_context.email.as_deref();
+
+        client
+            .query_opt(
+                "SELECT p.name, p.version \
+                 FROM prompts p \
+                 JOIN server_prompt_association spa ON p.id = spa.prompt_id \
+                 WHERE spa.server_id = $1 \
+                   AND (p.name = $2 OR p.id = $2) \
+                   AND p.enabled = TRUE \
+                   AND ( \
+                        p.visibility = 'public' \
+                        OR ($3::bool AND p.owner_email = $4) \
+                        OR (COALESCE(array_length($5::text[], 1), 0) > 0 AND p.team_id = ANY($5::text[]) AND p.visibility IN ('team', 'public')) \
+                   )",
+                &[&server_id, &name_or_id, &allow_owner_access, &owner_email, &team_ids],
+            )
+            .await?
+    };
+
+    Ok(row.map(|row| {
+        (
+            row.get::<_, String>("name"),
+            row.get::<_, Option<i32>>("version").map(i64::from),
+        )
+    }))
 }
 
 fn resource_row_to_value(row: &tokio_postgres::Row) -> Value {
@@ -5441,16 +5862,60 @@ async fn forward_notification_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let backend_response = match send_to_backend(state, incoming_headers, body).await {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
-
-    if backend_response.status().is_success() {
-        return empty_response(StatusCode::ACCEPTED);
+    let request_payload = parse_jsonrpc_request_payload(&body);
+    let method_name = extract_jsonrpc_method(request_payload.as_ref())
+        .unwrap_or_else(|| "notifications/unknown".to_string());
+    let request_params = extract_jsonrpc_params(request_payload.as_ref());
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) = start_runtime_operation_span(
+        "notification.forward",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    set_span_attribute(&span, "mcp.method", method_name.clone());
+    if is_root_span {
+        set_langfuse_trace_name(
+            &span,
+            format!("Notification: {}", method_name.replace('/', ".")),
+        );
+    }
+    if is_input_capture_enabled("notification.forward") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&request_params),
+        );
     }
 
-    response_from_backend(backend_response)
+    let span_for_body = span.clone();
+    async move {
+        let backend_response = match send_to_backend(state, incoming_headers, body).await {
+            Ok(response) => response,
+            Err(response) => {
+                set_span_error(
+                    &span_for_body,
+                    "Backend MCP notification dispatch failed",
+                    Some("RuntimeError"),
+                );
+                return response;
+            }
+        };
+
+        let status = backend_response.status();
+        set_span_attribute(&span_for_body, "success", status.is_success());
+        if status.is_success() {
+            return empty_response(StatusCode::ACCEPTED);
+        }
+        set_span_error(
+            &span_for_body,
+            format!("Backend MCP notification returned status {status}"),
+            Some("RuntimeError"),
+        );
+
+        response_from_backend(backend_response)
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_initialized_notification_to_backend(
@@ -5458,23 +5923,62 @@ async fn forward_initialized_notification_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let backend_response = match send_to_backend_url(
-        state,
-        state.backend_notifications_initialized_url(),
-        incoming_headers,
-        body,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
-
-    if backend_response.status().is_success() {
-        return empty_response(StatusCode::ACCEPTED);
+    let request_payload = parse_jsonrpc_request_payload(&body);
+    let request_params = extract_jsonrpc_params(request_payload.as_ref());
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) = start_runtime_operation_span(
+        "notification.initialized",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    set_span_attribute(&span, "mcp.method", "notifications/initialized");
+    if is_root_span {
+        set_langfuse_trace_name(&span, "notification.initialized");
+    }
+    if is_input_capture_enabled("notification.initialized") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&request_params),
+        );
     }
 
-    response_from_backend(backend_response)
+    let span_for_body = span.clone();
+    async move {
+        let backend_response = match send_to_backend_url(
+            state,
+            state.backend_notifications_initialized_url(),
+            incoming_headers,
+            body,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(response) => {
+                set_span_error(
+                    &span_for_body,
+                    "Backend MCP notifications/initialized dispatch failed",
+                    Some("RuntimeError"),
+                );
+                return response;
+            }
+        };
+
+        let status = backend_response.status();
+        set_span_attribute(&span_for_body, "success", status.is_success());
+        if status.is_success() {
+            return empty_response(StatusCode::ACCEPTED);
+        }
+        set_span_error(
+            &span_for_body,
+            format!("Backend MCP notifications/initialized returned status {status}"),
+            Some("RuntimeError"),
+        );
+
+        response_from_backend(backend_response)
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_message_notification_to_backend(
@@ -5482,23 +5986,62 @@ async fn forward_message_notification_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let backend_response = match send_to_backend_url(
-        state,
-        state.backend_notifications_message_url(),
-        incoming_headers,
-        body,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
-
-    if backend_response.status().is_success() {
-        return empty_response(StatusCode::ACCEPTED);
+    let request_payload = parse_jsonrpc_request_payload(&body);
+    let request_params = extract_jsonrpc_params(request_payload.as_ref());
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) = start_runtime_operation_span(
+        "notification.message",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    set_span_attribute(&span, "mcp.method", "notifications/message");
+    if is_root_span {
+        set_langfuse_trace_name(&span, "notification.message");
+    }
+    if is_input_capture_enabled("notification.message") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&request_params),
+        );
     }
 
-    response_from_backend(backend_response)
+    let span_for_body = span.clone();
+    async move {
+        let backend_response = match send_to_backend_url(
+            state,
+            state.backend_notifications_message_url(),
+            incoming_headers,
+            body,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(response) => {
+                set_span_error(
+                    &span_for_body,
+                    "Backend MCP notifications/message dispatch failed",
+                    Some("RuntimeError"),
+                );
+                return response;
+            }
+        };
+
+        let status = backend_response.status();
+        set_span_attribute(&span_for_body, "success", status.is_success());
+        if status.is_success() {
+            return empty_response(StatusCode::ACCEPTED);
+        }
+        set_span_error(
+            &span_for_body,
+            format!("Backend MCP notifications/message returned status {status}"),
+            Some("RuntimeError"),
+        );
+
+        response_from_backend(backend_response)
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_resources_list_to_backend(
@@ -5507,52 +6050,102 @@ async fn forward_resources_list_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response = match send_resources_list_to_backend(state, incoming_headers, body).await
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) =
+        start_runtime_operation_span("resource.list", &incoming_headers, auth_context.as_ref());
+    if is_root_span {
+        set_langfuse_trace_name(&span, derive_langfuse_trace_name("resource.list", &[]));
+    }
+    if let Some(server_id) = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
     {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
+        set_span_attribute(&span, "server_id", server_id.to_string());
+    }
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP resources/list response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/list decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_resources_list_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP resources/list response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP resources/list decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP resources/list decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
+        };
+
+        if status.is_success() {
+            let resource_count = payload
+                .get("resources")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            set_span_attribute(&span_for_body, "success", true);
+            set_span_attribute(&span_for_body, "resource.count", resource_count);
+            if is_output_capture_enabled("resource.list") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            let error_type = match status {
+                StatusCode::FORBIDDEN => "PermissionDenied",
+                _ => "RuntimeError",
+            };
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some(error_type));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_resources_read_to_backend(
@@ -5561,52 +6154,130 @@ async fn forward_resources_read_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response = match send_resources_read_to_backend(state, incoming_headers, body).await
-    {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
-
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP resources/read response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/read decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
+    let request_payload = serde_json::from_slice::<Value>(&body).ok();
+    let resource_uri = request_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("params"))
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("uri"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) =
+        start_runtime_operation_span("resource.read", &incoming_headers, auth_context.as_ref());
+    if let Some(uri) = resource_uri.clone() {
+        set_span_attribute(&span, "resource.uri", uri.clone());
+        if is_root_span {
+            set_langfuse_trace_name(
+                &span,
+                derive_langfuse_trace_name("resource.read", &[("resource.uri", uri)]),
             );
         }
-    };
+    } else if is_root_span {
+        set_langfuse_trace_name(&span, derive_langfuse_trace_name("resource.read", &[]));
+    }
+    if let Some(server_id) = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+    {
+        set_span_attribute(&span, "server_id", server_id.to_string());
+    }
+    if is_input_capture_enabled("resource.read")
+        && let Some(resource_uri) = resource_uri.clone()
+    {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&json!({"uri": resource_uri})),
+        );
+    }
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_resources_read_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP resources/read response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP resources/read decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP resources/read decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
+        };
+
+        if status.is_success() {
+            let content_count = payload
+                .get("contents")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            set_span_attribute(&span_for_body, "success", true);
+            set_span_attribute(&span_for_body, "content.count", content_count);
+            if is_output_capture_enabled("resource.read") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            let error_type = match status {
+                StatusCode::NOT_FOUND => "ResourceNotFoundError",
+                StatusCode::UNPROCESSABLE_ENTITY => "ResourceReadError",
+                StatusCode::FORBIDDEN => "PermissionDenied",
+                _ => "RuntimeError",
+            };
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some(error_type));
+        }
+
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
+
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_resources_subscribe_to_backend(
@@ -5615,52 +6286,112 @@ async fn forward_resources_subscribe_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response =
-        match send_resources_subscribe_to_backend(state, incoming_headers, body).await {
-            Ok(response) => response,
-            Err(response) => return response,
+    let request_payload = serde_json::from_slice::<Value>(&body).ok();
+    let resource_uri = request_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("params"))
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("uri"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, _) = start_runtime_operation_span(
+        "resource.subscribe",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    if let Some(uri) = resource_uri.clone() {
+        set_span_attribute(&span, "resource.uri", uri.clone());
+    }
+    if is_input_capture_enabled("resource.subscribe")
+        && let Some(resource_uri) = resource_uri.clone()
+    {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&json!({"uri": resource_uri})),
+        );
+    }
+
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_resources_subscribe_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP resources/subscribe response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP resources/subscribe decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP resources/subscribe decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
         };
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP resources/subscribe response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/subscribe decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+        if status.is_success() {
+            set_span_attribute(&span_for_body, "success", true);
+            if is_output_capture_enabled("resource.subscribe") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            let error_type = match status {
+                StatusCode::FORBIDDEN => "PermissionDenied",
+                _ => "RuntimeError",
+            };
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some(error_type));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_resources_unsubscribe_to_backend(
@@ -5669,52 +6400,112 @@ async fn forward_resources_unsubscribe_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response =
-        match send_resources_unsubscribe_to_backend(state, incoming_headers, body).await {
-            Ok(response) => response,
-            Err(response) => return response,
+    let request_payload = serde_json::from_slice::<Value>(&body).ok();
+    let resource_uri = request_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("params"))
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("uri"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, _) = start_runtime_operation_span(
+        "resource.unsubscribe",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    if let Some(uri) = resource_uri.clone() {
+        set_span_attribute(&span, "resource.uri", uri.clone());
+    }
+    if is_input_capture_enabled("resource.unsubscribe")
+        && let Some(resource_uri) = resource_uri.clone()
+    {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&json!({"uri": resource_uri})),
+        );
+    }
+
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_resources_unsubscribe_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP resources/unsubscribe response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP resources/unsubscribe decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP resources/unsubscribe decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
         };
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP resources/unsubscribe response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/unsubscribe decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+        if status.is_success() {
+            set_span_attribute(&span_for_body, "success", true);
+            if is_output_capture_enabled("resource.unsubscribe") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            let error_type = match status {
+                StatusCode::FORBIDDEN => "PermissionDenied",
+                _ => "RuntimeError",
+            };
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some(error_type));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_resource_templates_list_to_backend(
@@ -5723,52 +6514,108 @@ async fn forward_resource_templates_list_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response =
-        match send_resource_templates_list_to_backend(state, incoming_headers, body).await {
-            Ok(response) => response,
-            Err(response) => return response,
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) = start_runtime_operation_span(
+        "resource_template.list",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    if is_root_span {
+        set_langfuse_trace_name(
+            &span,
+            derive_langfuse_trace_name("resource_template.list", &[]),
+        );
+    }
+    if let Some(server_id) = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+    {
+        set_span_attribute(&span, "server_id", server_id.to_string());
+    }
+
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_resource_templates_list_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP resources/templates/list response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP resources/templates/list decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP resources/templates/list decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
         };
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP resources/templates/list response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/templates/list decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+        if status.is_success() {
+            let template_count = payload
+                .get("resourceTemplates")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            set_span_attribute(&span_for_body, "success", true);
+            set_span_attribute(&span_for_body, "resource_template.count", template_count);
+            if is_output_capture_enabled("resource_template.list") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            let error_type = match status {
+                StatusCode::FORBIDDEN => "PermissionDenied",
+                _ => "RuntimeError",
+            };
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some(error_type));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_roots_list_to_backend(
@@ -5777,51 +6624,90 @@ async fn forward_roots_list_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response = match send_roots_list_to_backend(state, incoming_headers, body).await {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let trace_context = trace_request_context(&incoming_headers, auth_context.as_ref());
+    let span = start_root_span("root.list", &trace_context);
+    set_langfuse_trace_name(&span, derive_langfuse_trace_name("root.list", &[]));
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP roots/list response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP roots/list decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+    let span_for_body = span.clone();
+    async move {
+        let backend_response = match send_roots_list_to_backend(state, incoming_headers, body).await
+        {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP roots/list response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP roots/list decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP roots/list decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
+        };
+
+        if status.is_success() {
+            let root_count = payload
+                .get("roots")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            set_span_attribute(&span_for_body, "success", true);
+            set_span_attribute(&span_for_body, "root.count", root_count);
+            if is_output_capture_enabled("root.list") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some("RuntimeError"));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_prompts_list_to_backend(
@@ -5830,51 +6716,102 @@ async fn forward_prompts_list_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response = match send_prompts_list_to_backend(state, incoming_headers, body).await {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) =
+        start_runtime_operation_span("prompt.list", &incoming_headers, auth_context.as_ref());
+    if is_root_span {
+        set_langfuse_trace_name(&span, derive_langfuse_trace_name("prompt.list", &[]));
+    }
+    if let Some(server_id) = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+    {
+        set_span_attribute(&span, "server_id", server_id.to_string());
+    }
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP prompts/list response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP prompts/list decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_prompts_list_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP prompts/list response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP prompts/list decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP prompts/list decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
+        };
+
+        if status.is_success() {
+            let prompt_count = payload
+                .get("prompts")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            set_span_attribute(&span_for_body, "success", true);
+            set_span_attribute(&span_for_body, "prompt.count", prompt_count);
+            if is_output_capture_enabled("prompt.list") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            let error_type = match status {
+                StatusCode::FORBIDDEN => "PermissionDenied",
+                _ => "RuntimeError",
+            };
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some(error_type));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_prompts_get_to_backend(
@@ -5883,51 +6820,163 @@ async fn forward_prompts_get_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response = match send_prompts_get_to_backend(state, incoming_headers, body).await {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
-
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP prompts/get response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP prompts/get decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
-        }
-    };
-
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
+    let request_payload = serde_json::from_slice::<Value>(&body).ok();
+    let prompt_name = request_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("params"))
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let prompt_arguments = request_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("params"))
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("arguments"))
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let server_id = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let trace_context = trace_request_context(&incoming_headers, auth_context.as_ref());
+    let span = start_root_span("prompt.render", &trace_context);
+    if let Some(prompt_name) = prompt_name.clone() {
+        set_span_attribute(&span, "prompt.id", prompt_name.clone());
+        set_langfuse_trace_name(
+            &span,
+            derive_langfuse_trace_name("prompt.render", &[("prompt.id", prompt_name)]),
+        );
     } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        set_langfuse_trace_name(&span, derive_langfuse_trace_name("prompt.render", &[]));
+    }
+    if let Some(server_id) = &server_id {
+        set_span_attribute(&span, "server_id", server_id.clone());
+    }
+    set_span_attribute(
+        &span,
+        "arguments_count",
+        prompt_arguments.as_object().map_or(0, serde_json::Map::len),
+    );
+    if is_input_capture_enabled("prompt.render") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&prompt_arguments),
+        );
+    }
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+    let span_for_body = span.clone();
+    async move {
+        if let (Some(server_id), Some(auth_context), Some(prompt_name)) = (
+            server_id.as_deref(),
+            auth_context.as_ref(),
+            prompt_name.as_deref(),
+        ) && let Ok(Some((canonical_name, prompt_version))) =
+            query_server_prompt_observability_metadata(state, server_id, auth_context, prompt_name)
+                .await
+        {
+            set_span_attribute(
+                &span_for_body,
+                "langfuse.observation.prompt.name",
+                canonical_name,
+            );
+            if let Some(prompt_version) = prompt_version {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.prompt.version",
+                    prompt_version,
+                );
+            }
+        }
+
+        let backend_response =
+            match send_prompts_get_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP prompts/get response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP prompts/get decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP prompts/get decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
+        };
+
+        if status.is_success() {
+            set_span_attribute(&span_for_body, "success", true);
+            let messages_count = payload
+                .get("messages")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            set_span_attribute(&span_for_body, "messages.count", messages_count);
+            if is_output_capture_enabled("prompt.render") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            let error_type = match status {
+                StatusCode::NOT_FOUND => "PromptNotFoundError",
+                StatusCode::UNPROCESSABLE_ENTITY => "PromptError",
+                StatusCode::FORBIDDEN => "PermissionDenied",
+                _ => "RuntimeError",
+            };
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some(error_type));
+        }
+
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
+
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_completion_complete_to_backend(
@@ -5936,52 +6985,101 @@ async fn forward_completion_complete_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response =
-        match send_completion_complete_to_backend(state, incoming_headers, body).await {
-            Ok(response) => response,
-            Err(response) => return response,
+    let request_payload = serde_json::from_slice::<Value>(&body).ok();
+    let completion_params = request_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("params"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, _) = start_runtime_operation_span(
+        "completion.complete",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    if is_input_capture_enabled("completion.complete") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&completion_params),
+        );
+    }
+
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_completion_complete_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP completion/complete response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP completion/complete decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP completion/complete decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
         };
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP completion/complete response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP completion/complete decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+        if status.is_success() {
+            set_span_attribute(&span_for_body, "success", true);
+            if is_output_capture_enabled("completion.complete") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some("RuntimeError"));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_sampling_create_message_to_backend(
@@ -5990,52 +7088,101 @@ async fn forward_sampling_create_message_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response =
-        match send_sampling_create_message_to_backend(state, incoming_headers, body).await {
-            Ok(response) => response,
-            Err(response) => return response,
+    let request_payload = serde_json::from_slice::<Value>(&body).ok();
+    let sampling_params = request_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("params"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, _) = start_runtime_operation_span(
+        "sampling.create_message",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    if is_input_capture_enabled("sampling.create_message") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&sampling_params),
+        );
+    }
+
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_sampling_create_message_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP sampling/createMessage response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP sampling/createMessage decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP sampling/createMessage decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
         };
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP sampling/createMessage response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP sampling/createMessage decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+        if status.is_success() {
+            set_span_attribute(&span_for_body, "success", true);
+            if is_output_capture_enabled("sampling.create_message") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some("RuntimeError"));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_logging_set_level_to_backend(
@@ -6044,52 +7191,112 @@ async fn forward_logging_set_level_to_backend(
     body: Bytes,
     request_id: Option<Value>,
 ) -> Response {
-    let backend_response =
-        match send_logging_set_level_to_backend(state, incoming_headers, body).await {
-            Ok(response) => response,
-            Err(response) => return response,
+    let request_payload = serde_json::from_slice::<Value>(&body).ok();
+    let requested_level = request_payload
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|payload| payload.get("params"))
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("level"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, _) = start_runtime_operation_span(
+        "logging.set_level",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    if let Some(level) = requested_level.clone() {
+        set_span_attribute(&span, "logging.level", level);
+    }
+    if is_input_capture_enabled("logging.set_level")
+        && let Some(request_payload) = request_payload
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|payload| payload.get("params"))
+            .cloned()
+    {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&request_payload),
+        );
+    }
+
+    let span_for_body = span.clone();
+    async move {
+        let backend_response =
+            match send_logging_set_level_to_backend(state, incoming_headers, body).await {
+                Ok(response) => response,
+                Err(response) => return response,
+            };
+
+        let status = backend_response.status();
+        let backend_headers = backend_response.headers().clone();
+        let payload: Value = match backend_response.json().await {
+            Ok(payload) => payload,
+            Err(err) => {
+                error!("backend MCP logging/setLevel response decode failed: {err}");
+                set_span_error(
+                    &span_for_body,
+                    format!("Backend MCP logging/setLevel decode failed: {err}"),
+                    Some("RuntimeError"),
+                );
+                return json_response(
+                    StatusCode::BAD_GATEWAY,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32000,
+                            "message": "Backend MCP logging/setLevel decode failed",
+                            "data": CLIENT_ERROR_DETAIL,
+                        }
+                    }),
+                );
+            }
         };
 
-    let status = backend_response.status();
-    let backend_headers = backend_response.headers().clone();
-    let payload: Value = match backend_response.json().await {
-        Ok(payload) => payload,
-        Err(err) => {
-            error!("backend MCP logging/setLevel response decode failed: {err}");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": request_id,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP logging/setLevel decode failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            );
+        if status.is_success() {
+            set_span_attribute(&span_for_body, "success", true);
+            if is_output_capture_enabled("logging.set_level") {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&payload),
+                );
+            }
+        } else {
+            let error_message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .map_or_else(|| payload.to_string(), str::to_string);
+            set_span_attribute(&span_for_body, "success", false);
+            set_span_error(&span_for_body, error_message, Some("RuntimeError"));
         }
-    };
 
-    let response_payload = if status.is_success() {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "result": payload,
-        })
-    } else {
-        json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": request_id,
-            "error": payload,
-        })
-    };
+        let response_payload = if status.is_success() {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "result": payload,
+            })
+        } else {
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": request_id,
+                "error": payload,
+            })
+        };
 
-    response_from_json_with_headers(
-        jsonrpc_response_status(status),
-        response_payload,
-        &backend_headers,
-    )
+        response_from_json_with_headers(
+            jsonrpc_response_status(status),
+            response_payload,
+            &backend_headers,
+        )
+    }
+    .instrument(span)
+    .await
 }
 
 async fn forward_cancelled_notification_to_backend(
@@ -6097,23 +7304,62 @@ async fn forward_cancelled_notification_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let backend_response = match send_to_backend_url(
-        state,
-        state.backend_notifications_cancelled_url(),
-        incoming_headers,
-        body,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(response) => return response,
-    };
-
-    if backend_response.status().is_success() {
-        return empty_response(StatusCode::ACCEPTED);
+    let request_payload = parse_jsonrpc_request_payload(&body);
+    let request_params = extract_jsonrpc_params(request_payload.as_ref());
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let (span, is_root_span) = start_runtime_operation_span(
+        "notification.cancelled",
+        &incoming_headers,
+        auth_context.as_ref(),
+    );
+    set_span_attribute(&span, "mcp.method", "notifications/cancelled");
+    if is_root_span {
+        set_langfuse_trace_name(&span, "notification.cancelled");
+    }
+    if is_input_capture_enabled("notification.cancelled") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&request_params),
+        );
     }
 
-    response_from_backend(backend_response)
+    let span_for_body = span.clone();
+    async move {
+        let backend_response = match send_to_backend_url(
+            state,
+            state.backend_notifications_cancelled_url(),
+            incoming_headers,
+            body,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(response) => {
+                set_span_error(
+                    &span_for_body,
+                    "Backend MCP notifications/cancelled dispatch failed",
+                    Some("RuntimeError"),
+                );
+                return response;
+            }
+        };
+
+        let status = backend_response.status();
+        set_span_attribute(&span_for_body, "success", status.is_success());
+        if status.is_success() {
+            return empty_response(StatusCode::ACCEPTED);
+        }
+        set_span_error(
+            &span_for_body,
+            format!("Backend MCP notifications/cancelled returned status {status}"),
+            Some("RuntimeError"),
+        );
+
+        response_from_backend(backend_response)
+    }
+    .instrument(span)
+    .await
 }
 
 async fn send_transport_to_backend(
@@ -6532,40 +7778,150 @@ async fn handle_tools_call(
     // resolve whether the call is eligible for direct execution. Only eligible
     // streamable-http targets stay in Rust; everything else falls back to the
     // existing Python implementation.
-    let plan = match resolve_tools_call(state, &incoming_headers, &request, body.clone()).await {
-        Ok(plan) => plan,
-        Err(ResolveToolsCallError::JsonRpcError { payload, headers }) => {
-            return response_from_json_with_headers(StatusCode::OK, payload, &headers);
-        }
-        Err(ResolveToolsCallError::Fallback(err)) => {
-            warn!("Rust MCP direct tools/call resolve fallback: {err}");
-            return forward_tools_call_to_backend(state, incoming_headers, body).await;
-        }
-    };
+    let auth_context = decode_internal_auth_context_from_headers_optional(&incoming_headers);
+    let trace_context = trace_request_context(&incoming_headers, auth_context.as_ref());
+    let root_span = start_root_span("tool.invoke", &trace_context);
+    let requested_tool_name = request
+        .params
+        .as_object()
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let requested_arguments = request
+        .params
+        .as_object()
+        .and_then(|params| params.get("arguments"))
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
 
-    if !plan.eligible || plan.transport.as_deref() != Some("streamablehttp") {
-        if let Some(reason) = plan.fallback_reason.as_deref() {
-            info!("Rust MCP direct tools/call falling back to Python: {reason}");
-        }
-        return forward_tools_call_to_backend(state, incoming_headers, body).await;
+    if let Some(tool_name) = requested_tool_name.clone() {
+        set_span_attribute(&root_span, "tool.name", tool_name.clone());
+        set_langfuse_trace_name(
+            &root_span,
+            derive_langfuse_trace_name("tool.invoke", &[("tool.name", tool_name)]),
+        );
+    }
+    set_span_attribute(
+        &root_span,
+        "arguments_count",
+        requested_arguments
+            .as_object()
+            .map_or(0, serde_json::Map::len),
+    );
+    set_span_attribute(&root_span, "has_headers", !incoming_headers.is_empty());
+    if let Some(server_id) = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+    {
+        set_span_attribute(&root_span, "server_id", server_id.to_string());
+    }
+    if is_input_capture_enabled("tool.invoke") {
+        set_span_attribute(
+            &root_span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&requested_arguments),
+        );
     }
 
-    match execute_tools_call_direct(state, &incoming_headers, &request, &plan).await {
-        Ok(response) => response,
-        Err(err) => {
-            warn!("Rust MCP direct tools/call execution fallback: {err}");
-            let mut fallback_headers = incoming_headers;
-            // Tell Python that pre-invoke hooks already ran during /resolve so
-            // invoke_tool() can skip re-executing them on the fallback path.
-            if plan.has_pre_invoke_hooks {
-                fallback_headers.insert(
-                    HeaderName::from_static("x-contextforge-pre-invoke-ran"),
-                    HeaderValue::from_static("true"),
+    let root_span_for_body = root_span.clone();
+    let trace_context_for_body = trace_context.clone();
+    async move {
+        let lookup_span = start_child_span("tool.lookup", &trace_context_for_body);
+        if let Some(tool_name) = requested_tool_name.clone() {
+            set_span_attribute(&lookup_span, "tool.name", tool_name);
+        }
+        let plan = match resolve_tools_call(state, &incoming_headers, &request, body.clone())
+            .instrument(lookup_span)
+            .await
+        {
+            Ok(plan) => plan,
+            Err(ResolveToolsCallError::JsonRpcError { payload, headers }) => {
+                let error_message = payload
+                    .get("error")
+                    .and_then(Value::as_object)
+                    .and_then(|error| error.get("message"))
+                    .and_then(Value::as_str)
+                    .map_or_else(|| payload.to_string(), str::to_string);
+                set_span_attribute(&root_span_for_body, "success", false);
+                set_span_error(
+                    &root_span_for_body,
+                    error_message,
+                    Some(tools_call_error_type_from_payload(&payload)),
+                );
+                return response_from_json_with_headers(StatusCode::OK, payload, &headers);
+            }
+            Err(ResolveToolsCallError::Fallback(err)) => {
+                warn!("Rust MCP direct tools/call resolve fallback: {err}");
+                return forward_tools_call_to_backend(
+                    state,
+                    incoming_headers.clone(),
+                    body.clone(),
+                )
+                .await;
+            }
+        };
+
+        if let Some(tool_id) = plan.tool_id.clone() {
+            set_span_attribute(&root_span_for_body, "tool.id", tool_id);
+        }
+        if let Some(gateway_id) = plan.gateway_id.clone() {
+            set_span_attribute(&root_span_for_body, "tool.gateway_id", gateway_id);
+        }
+        if let Some(server_id) = plan.server_id.clone() {
+            set_span_attribute(&root_span_for_body, "server_id", server_id);
+        }
+
+        if !plan.eligible
+            || !matches!(
+                plan.transport.as_deref(),
+                Some("streamablehttp" | "sse")
+            )
+        {
+            if let Some(reason) = plan.fallback_reason.as_deref() {
+                info!("Rust MCP direct tools/call falling back to Python: {reason}");
+                set_span_attribute(
+                    &root_span_for_body,
+                    "contextforge.rust.fallback_reason",
+                    reason.to_string(),
                 );
             }
-            forward_tools_call_to_backend(state, fallback_headers, body).await
+            return forward_tools_call_to_backend(state, incoming_headers.clone(), body.clone())
+                .await;
+        }
+
+        match execute_tools_call_direct(
+            state,
+            &incoming_headers,
+            &request,
+            &plan,
+            &trace_context_for_body,
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                warn!("Rust MCP direct tools/call execution fallback: {err}");
+                set_span_attribute(
+                    &root_span_for_body,
+                    "contextforge.rust.execution_fallback",
+                    err.clone(),
+                );
+                let mut fallback_headers = incoming_headers.clone();
+                // Tell Python that pre-invoke hooks already ran during /resolve so
+                // invoke_tool() can skip re-executing them on the fallback path.
+                if plan.has_pre_invoke_hooks {
+                    fallback_headers.insert(
+                        HeaderName::from_static("x-contextforge-pre-invoke-ran"),
+                        HeaderValue::from_static("true"),
+                    );
+                }
+                forward_tools_call_to_backend(state, fallback_headers, body.clone()).await
+            }
         }
     }
+    .instrument(root_span)
+    .await
 }
 
 async fn forward_tools_call_to_backend(
@@ -6654,7 +8010,10 @@ async fn resolve_tools_call(
     // Do not cache plans that ran pre-invoke hooks — hook results depend on
     // per-call arguments (e.g. wxo_connection_id) and must be resolved fresh.
     if plan.eligible
-        && plan.transport.as_deref() == Some("streamablehttp")
+        && matches!(
+            plan.transport.as_deref(),
+            Some("streamablehttp" | "sse")
+        )
         && !plan.has_pre_invoke_hooks
     {
         state.resolved_tool_call_plans().lock().await.insert(
@@ -6741,6 +8100,21 @@ fn classify_tools_call_metric_outcome(
     (true, None)
 }
 
+fn tools_call_error_type_from_payload(payload: &Value) -> &'static str {
+    let code = payload
+        .get("error")
+        .and_then(Value::as_object)
+        .and_then(|error| error.get("code"))
+        .and_then(Value::as_i64);
+
+    match code {
+        Some(-32003) => "PermissionDenied",
+        Some(-32602 | -32600) => "InvalidRequest",
+        Some(-32700) => "ParseError",
+        _ => "ToolInvocationError",
+    }
+}
+
 async fn record_tools_call_metric(
     state: &AppState,
     incoming_headers: &HeaderMap,
@@ -6771,78 +8145,138 @@ async fn execute_tools_call_direct(
     incoming_headers: &HeaderMap,
     request: &JsonRpcRequest,
     plan: &ResolvedMcpToolCallPlan,
+    trace_context: &TraceRequestContext,
 ) -> Result<Response, String> {
     let request_started = Instant::now();
-    // Direct execution mirrors the MCP client lifecycle explicitly:
-    // initialize once, reuse the upstream session while it is healthy, and
-    // retry once with a fresh upstream session if the cached session fails.
-    if state.use_rmcp_upstream_client() {
-        #[cfg(feature = "rmcp-upstream-client")]
-        match execute_tools_call_via_rmcp(state, incoming_headers, request, plan).await {
-            Ok((response, success, error_message)) => {
-                record_tools_call_metric(
-                    state,
-                    incoming_headers,
-                    plan,
-                    request_started.elapsed().as_secs_f64() * 1000.0,
-                    success,
-                    error_message,
-                )
-                .await;
-                return Ok(response);
-            }
-            Err(err) => warn!("Rust MCP rmcp tools/call fallback: {err}"),
-        }
+    let root_span = tracing::Span::current();
+    if let Some(tool_name) = plan.tool_name.clone().or_else(|| {
+        request
+            .params
+            .as_object()
+            .and_then(|params| params.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }) {
+        set_span_attribute(&root_span, "tool.name", tool_name.clone());
+        set_langfuse_trace_name(
+            &root_span,
+            derive_langfuse_trace_name("tool.invoke", &[("tool.name", tool_name)]),
+        );
     }
+    if let Some(tool_id) = plan.tool_id.clone() {
+        set_span_attribute(&root_span, "tool.id", tool_id);
+    }
+    if let Some(gateway_id) = plan.gateway_id.clone() {
+        set_span_attribute(&root_span, "tool.gateway_id", gateway_id);
+    }
+    if let Some(server_id) = plan.server_id.clone() {
+        set_span_attribute(&root_span, "server_id", server_id);
+    }
+    set_span_attribute(&root_span, "tool.integration_type", "MCP");
 
-    let server_url = plan
-        .server_url
-        .as_deref()
-        .ok_or_else(|| "resolved tools/call plan missing server_url".to_string())?;
-    let remote_tool_name = plan
-        .remote_tool_name
-        .as_deref()
-        .ok_or_else(|| "resolved tools/call plan missing remote_tool_name".to_string())?;
-    let protocol_version = incoming_headers
-        .get(MCP_PROTOCOL_VERSION_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or(state.protocol_version())
-        .to_string();
-    let timeout_ms = plan.timeout_ms.unwrap_or(30_000);
-    let downstream_session_id = incoming_headers
-        .get("mcp-session-id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_string);
+    // Direct execution mirrors the MCP client lifecycle explicitly:
+    // streamable HTTP reuses cached upstream sessions when they stay healthy,
+    // while SSE establishes a native one-shot client exchange without falling
+    // back through Python.
+    let gateway_call_span = start_child_span("tool.gateway_call", trace_context);
+    if let Some(tool_name) = plan.tool_name.clone() {
+        set_span_attribute(&gateway_call_span, "tool.name", tool_name);
+    }
+    if let Some(tool_id) = plan.tool_id.clone() {
+        set_span_attribute(&gateway_call_span, "tool.id", tool_id);
+    }
+    set_span_attribute(&gateway_call_span, "tool.integration_type", "MCP");
 
-    let upstream_session_id = ensure_upstream_session(
-        state,
-        plan,
-        downstream_session_id.as_deref(),
-        &protocol_version,
-        timeout_ms,
-    )
-    .await?;
+    let gateway_result = async {
+        let transport = plan.transport.as_deref().unwrap_or("streamablehttp");
+        if transport == "streamablehttp" && state.use_rmcp_upstream_client() {
+            #[cfg(feature = "rmcp-upstream-client")]
+            match execute_tools_call_via_rmcp(state, incoming_headers, request, plan).await {
+                Ok((response, success, error_message, output_payload)) => {
+                    record_tools_call_metric(
+                        state,
+                        incoming_headers,
+                        plan,
+                        request_started.elapsed().as_secs_f64() * 1000.0,
+                        success,
+                        error_message.clone(),
+                    )
+                    .await;
+                    return Ok::<_, String>(EitherToolsCallResponse::Finished((
+                        response,
+                        success,
+                        error_message,
+                        output_payload,
+                    )));
+                }
+                Err(err) => warn!("Rust MCP rmcp tools/call fallback: {err}"),
+            }
+        }
 
-    let mut tool_response = send_direct_tools_call(
-        state,
-        server_url,
-        plan,
-        request,
-        remote_tool_name,
-        &protocol_version,
-        upstream_session_id.as_deref(),
-        timeout_ms,
-    )
-    .await?;
+        let protocol_version = incoming_headers
+            .get(MCP_PROTOCOL_VERSION_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or(state.protocol_version())
+            .to_string();
+        let timeout_ms = plan.timeout_ms.unwrap_or(30_000);
+        let downstream_session_id = incoming_headers
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
 
-    if !tool_response.status().is_success() {
-        let session_key = build_upstream_session_key(downstream_session_id.as_deref(), plan)?;
-        state
-            .upstream_tool_sessions()
-            .lock()
-            .await
-            .remove(&session_key);
-        let refreshed_session_id = ensure_upstream_session(
+        if transport == "sse" {
+            let (payload, success, error_message) =
+                execute_tools_call_via_sse(state, plan, request, &protocol_version, timeout_ms)
+                    .await?;
+            record_tools_call_metric(
+                state,
+                incoming_headers,
+                plan,
+                request_started.elapsed().as_secs_f64() * 1000.0,
+                success,
+                error_message.clone(),
+            )
+            .await;
+            let output_payload = if success {
+                Some(
+                    payload
+                        .get("result")
+                        .cloned()
+                        .unwrap_or_else(|| payload.clone()),
+                )
+            } else {
+                None
+            };
+            let mut response = json_response(StatusCode::OK, payload);
+            if let Some(session_id) = downstream_session_id
+                && let Ok(value) = HeaderValue::from_str(&session_id)
+            {
+                response
+                    .headers_mut()
+                    .insert(HeaderName::from_static("mcp-session-id"), value);
+            }
+            response.headers_mut().insert(
+                HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
+                HeaderValue::from_static("native"),
+            );
+            return Ok::<_, String>(EitherToolsCallResponse::Finished((
+                response,
+                success,
+                error_message,
+                output_payload,
+            )));
+        }
+
+        let server_url = plan
+            .server_url
+            .as_deref()
+            .ok_or_else(|| "resolved tools/call plan missing server_url".to_string())?;
+        let remote_tool_name = plan
+            .remote_tool_name
+            .as_deref()
+            .ok_or_else(|| "resolved tools/call plan missing remote_tool_name".to_string())?;
+
+        let upstream_session_id = ensure_upstream_session(
             state,
             plan,
             downstream_session_id.as_deref(),
@@ -6850,47 +8284,151 @@ async fn execute_tools_call_direct(
             timeout_ms,
         )
         .await?;
-        tool_response = send_direct_tools_call(
+
+        let mut tool_response = send_direct_tools_call(
             state,
             server_url,
             plan,
             request,
             remote_tool_name,
             &protocol_version,
-            refreshed_session_id.as_deref(),
+            upstream_session_id.as_deref(),
             timeout_ms,
         )
         .await?;
-    }
 
-    let status = tool_response.status();
-    let payload = decode_upstream_json_payload(tool_response)
-        .await
-        .map_err(|err| format!("direct tools/call decode failed: {err}"))?;
-    let (success, error_message) = classify_tools_call_metric_outcome(status, &payload);
-    record_tools_call_metric(
-        state,
-        incoming_headers,
-        plan,
-        request_started.elapsed().as_secs_f64() * 1000.0,
-        success,
-        error_message,
-    )
-    .await;
+        if !tool_response.status().is_success() {
+            let session_key = build_upstream_session_key(downstream_session_id.as_deref(), plan)?;
+            state
+                .upstream_tool_sessions()
+                .lock()
+                .await
+                .remove(&session_key);
+            let refreshed_session_id = ensure_upstream_session(
+                state,
+                plan,
+                downstream_session_id.as_deref(),
+                &protocol_version,
+                timeout_ms,
+            )
+            .await?;
+            tool_response = send_direct_tools_call(
+                state,
+                server_url,
+                plan,
+                request,
+                remote_tool_name,
+                &protocol_version,
+                refreshed_session_id.as_deref(),
+                timeout_ms,
+            )
+            .await?;
+        }
 
-    let mut response = json_response(status, payload);
-    if let Some(session_id) = downstream_session_id
-        && let Ok(value) = HeaderValue::from_str(&session_id)
-    {
-        response
-            .headers_mut()
-            .insert(HeaderName::from_static("mcp-session-id"), value);
+        Ok::<_, String>(EitherToolsCallResponse::NeedsPostProcess((
+            tool_response,
+            downstream_session_id,
+        )))
     }
-    response.headers_mut().insert(
-        HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
-        HeaderValue::from_static("native"),
-    );
-    Ok(response)
+    .instrument(gateway_call_span)
+    .await?;
+
+    match gateway_result {
+        EitherToolsCallResponse::Finished((response, success, error_message, output_payload)) => {
+            set_span_attribute(&root_span, "success", success);
+            set_span_attribute(
+                &root_span,
+                "duration.ms",
+                request_started.elapsed().as_secs_f64() * 1000.0,
+            );
+            if let Some(error_message) = error_message.as_deref()
+                && !success
+            {
+                set_span_error(&root_span, error_message, Some("ToolInvocationError"));
+            }
+            if success
+                && is_output_capture_enabled("tool.invoke")
+                && let Some(output_payload) = output_payload
+            {
+                set_span_attribute(
+                    &root_span,
+                    "langfuse.observation.output",
+                    serialize_trace_payload(&output_payload),
+                );
+            }
+            Ok(response)
+        }
+        EitherToolsCallResponse::NeedsPostProcess((tool_response, downstream_session_id)) => {
+            let post_process_span = start_child_span("tool.post_process", trace_context);
+            if let Some(tool_name) = plan.tool_name.clone() {
+                set_span_attribute(&post_process_span, "tool.name", tool_name);
+            }
+            if let Some(tool_id) = plan.tool_id.clone() {
+                set_span_attribute(&post_process_span, "tool.id", tool_id);
+            }
+
+            async move {
+                let status = tool_response.status();
+                let payload = decode_upstream_json_payload(tool_response)
+                    .await
+                    .map_err(|err| format!("direct tools/call decode failed: {err}"))?;
+                let (success, error_message) = classify_tools_call_metric_outcome(status, &payload);
+                record_tools_call_metric(
+                    state,
+                    incoming_headers,
+                    plan,
+                    request_started.elapsed().as_secs_f64() * 1000.0,
+                    success,
+                    error_message.clone(),
+                )
+                .await;
+
+                set_span_attribute(&root_span, "success", success);
+                set_span_attribute(
+                    &root_span,
+                    "duration.ms",
+                    request_started.elapsed().as_secs_f64() * 1000.0,
+                );
+                if let Some(error_message) = error_message.as_deref()
+                    && !success
+                {
+                    set_span_error(&root_span, error_message, Some("ToolInvocationError"));
+                }
+                if success && is_output_capture_enabled("tool.invoke") {
+                    let output_payload = payload
+                        .get("result")
+                        .cloned()
+                        .unwrap_or_else(|| payload.clone());
+                    set_span_attribute(
+                        &root_span,
+                        "langfuse.observation.output",
+                        serialize_trace_payload(&output_payload),
+                    );
+                }
+
+                let mut response = json_response(status, payload);
+                if let Some(session_id) = downstream_session_id
+                    && let Ok(value) = HeaderValue::from_str(&session_id)
+                {
+                    response
+                        .headers_mut()
+                        .insert(HeaderName::from_static("mcp-session-id"), value);
+                }
+                response.headers_mut().insert(
+                    HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
+                    HeaderValue::from_static("native"),
+                );
+                Ok(response)
+            }
+            .instrument(post_process_span)
+            .await
+        }
+    }
+}
+
+enum EitherToolsCallResponse {
+    Finished((Response, bool, Option<String>, Option<Value>)),
+    NeedsPostProcess((reqwest::Response, Option<String>)),
 }
 
 #[cfg(feature = "rmcp-upstream-client")]
@@ -6899,7 +8437,7 @@ async fn execute_tools_call_via_rmcp(
     incoming_headers: &HeaderMap,
     request: &JsonRpcRequest,
     plan: &ResolvedMcpToolCallPlan,
-) -> Result<(Response, bool, Option<String>), String> {
+) -> Result<(Response, bool, Option<String>, Option<Value>), String> {
     let remote_tool_name = plan
         .remote_tool_name
         .as_deref()
@@ -6918,7 +8456,7 @@ async fn execute_tools_call_via_rmcp(
     let rmcp_client =
         get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version).await?;
 
-    let (response, success, error_message) = match invoke_tools_call_via_rmcp(
+    let (response, success, error_message, output_payload) = match invoke_tools_call_via_rmcp(
         rmcp_client.as_ref(),
         request,
         remote_tool_name,
@@ -6959,7 +8497,7 @@ async fn execute_tools_call_via_rmcp(
         HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
         HeaderValue::from_static("rmcp"),
     );
-    Ok((response, success, error_message))
+    Ok((response, success, error_message, output_payload))
 }
 
 async fn ensure_upstream_session(
@@ -7176,6 +8714,300 @@ fn build_upstream_headers(
     Ok(headers)
 }
 
+fn build_upstream_sse_connect_headers(
+    plan: &ResolvedMcpToolCallPlan,
+    protocol_version: &str,
+) -> Result<reqwest::header::HeaderMap, String> {
+    let mut headers = build_upstream_headers(plan, protocol_version, None)?;
+    headers.remove(CONTENT_TYPE);
+    headers.insert(
+        reqwest::header::ACCEPT,
+        HeaderValue::from_static("text/event-stream"),
+    );
+    Ok(headers)
+}
+
+fn normalize_upstream_sse_endpoint_url(
+    server_url: &str,
+    endpoint_value: &str,
+) -> Result<String, String> {
+    let base_url = Url::parse(server_url)
+        .map_err(|err| format!("invalid upstream SSE URL '{server_url}': {err}"))?;
+    let endpoint_url = base_url
+        .join(endpoint_value)
+        .map_err(|err| format!("invalid upstream SSE endpoint '{endpoint_value}': {err}"))?;
+
+    if base_url.scheme() != endpoint_url.scheme()
+        || base_url.host_str() != endpoint_url.host_str()
+        || base_url.port_or_known_default() != endpoint_url.port_or_known_default()
+    {
+        return Err(format!(
+            "upstream SSE endpoint origin does not match connection origin: {endpoint_url}"
+        ));
+    }
+
+    Ok(endpoint_url.to_string())
+}
+
+async fn post_sse_jsonrpc_message(
+    state: &AppState,
+    endpoint_url: &str,
+    plan: &ResolvedMcpToolCallPlan,
+    protocol_version: &str,
+    timeout_ms: u64,
+    payload: &Value,
+) -> Result<(), String> {
+    let response = state
+        .client
+        .post(endpoint_url)
+        .headers(build_upstream_headers(plan, protocol_version, None)?)
+        .timeout(Duration::from_millis(timeout_ms))
+        .json(payload)
+        .send()
+        .await
+        .map_err(|err| format!("upstream SSE message POST failed: {err}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "upstream SSE message POST returned status {}",
+            response.status()
+        ));
+    }
+
+    Ok(())
+}
+
+async fn read_next_sse_frame<S>(
+    stream: &mut S,
+    buffer: &mut Vec<u8>,
+    frame: &mut PendingSseFrame,
+    timeout_ms: u64,
+) -> Result<Option<FinalizedSseFrame>, String>
+where
+    S: futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>> + Unpin,
+{
+    loop {
+        while let Some(newline_index) = buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line_bytes: Vec<u8> = buffer.drain(..=newline_index).collect();
+            if matches!(line_bytes.last(), Some(b'\n')) {
+                line_bytes.pop();
+            }
+            if matches!(line_bytes.last(), Some(b'\r')) {
+                line_bytes.pop();
+            }
+
+            let line = String::from_utf8_lossy(&line_bytes);
+            if line.is_empty() {
+                if let Some(finalized) = finalize_sse_frame(frame) {
+                    return Ok(Some(finalized));
+                }
+                continue;
+            }
+
+            parse_sse_line(frame, &line);
+        }
+
+        match tokio::time::timeout(Duration::from_millis(timeout_ms), stream.next()).await {
+            Ok(Some(Ok(chunk))) => buffer.extend_from_slice(&chunk),
+            Ok(Some(Err(err))) => return Err(format!("upstream SSE read failed: {err}")),
+            Ok(None) => {
+                if !buffer.is_empty() {
+                    let line = String::from_utf8_lossy(buffer.as_slice());
+                    parse_sse_line(frame, line.trim_end_matches(['\r', '\n']));
+                    buffer.clear();
+                }
+                return Ok(finalize_sse_frame(frame));
+            }
+            Err(_) => {
+                return Err(format!("upstream SSE read timed out after {timeout_ms}ms"));
+            }
+        }
+    }
+}
+
+async fn wait_for_sse_endpoint<S>(
+    stream: &mut S,
+    buffer: &mut Vec<u8>,
+    frame: &mut PendingSseFrame,
+    server_url: &str,
+    timeout_ms: u64,
+) -> Result<String, String>
+where
+    S: futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>> + Unpin,
+{
+    loop {
+        let Some(next_frame) = read_next_sse_frame(stream, buffer, frame, timeout_ms).await? else {
+            return Err("upstream SSE stream ended before endpoint bootstrap".to_string());
+        };
+
+        if next_frame.event.as_deref() == Some("endpoint") {
+            return normalize_upstream_sse_endpoint_url(server_url, next_frame.data.trim());
+        }
+    }
+}
+
+async fn wait_for_sse_jsonrpc_message<S>(
+    stream: &mut S,
+    buffer: &mut Vec<u8>,
+    frame: &mut PendingSseFrame,
+    expected_id: &Value,
+    timeout_ms: u64,
+) -> Result<Value, String>
+where
+    S: futures_util::stream::Stream<Item = Result<Bytes, reqwest::Error>> + Unpin,
+{
+    loop {
+        let Some(next_frame) = read_next_sse_frame(stream, buffer, frame, timeout_ms).await? else {
+            return Err(format!(
+                "upstream SSE stream ended before JSON-RPC response for id {expected_id}"
+            ));
+        };
+
+        if !matches!(next_frame.event.as_deref(), None | Some("message"))
+            || next_frame.data.trim().is_empty()
+        {
+            continue;
+        }
+
+        let payload: Value = serde_json::from_str(&next_frame.data)
+            .map_err(|err| format!("invalid upstream SSE JSON payload: {err}"))?;
+        if payload.get("id") == Some(expected_id) {
+            return Ok(payload);
+        }
+    }
+}
+
+async fn execute_tools_call_via_sse(
+    state: &AppState,
+    plan: &ResolvedMcpToolCallPlan,
+    request: &JsonRpcRequest,
+    protocol_version: &str,
+    timeout_ms: u64,
+) -> Result<(Value, bool, Option<String>), String> {
+    let server_url = plan
+        .server_url
+        .as_deref()
+        .ok_or_else(|| "resolved tools/call plan missing server_url".to_string())?;
+    let remote_tool_name = plan
+        .remote_tool_name
+        .as_deref()
+        .ok_or_else(|| "resolved tools/call plan missing remote_tool_name".to_string())?;
+
+    let sse_response = state
+        .client
+        .get(server_url)
+        .headers(build_upstream_sse_connect_headers(plan, protocol_version)?)
+        .timeout(Duration::from_millis(timeout_ms))
+        .send()
+        .await
+        .map_err(|err| format!("upstream SSE connect failed: {err}"))?;
+
+    if !sse_response.status().is_success() {
+        return Err(format!(
+            "upstream SSE connect returned status {}",
+            sse_response.status()
+        ));
+    }
+
+    let mut stream = sse_response.bytes_stream();
+    let mut buffer = Vec::new();
+    let mut frame = PendingSseFrame::default();
+    let message_endpoint_url =
+        wait_for_sse_endpoint(&mut stream, &mut buffer, &mut frame, server_url, timeout_ms).await?;
+
+    let initialize_request = json!({
+        "jsonrpc": JSONRPC_VERSION,
+        "id": "__contextforge_init__",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": protocol_version,
+            "capabilities": {},
+            "clientInfo": {
+                "name": "contextforge-rust-runtime",
+                "version": state.server_version(),
+            }
+        }
+    });
+    post_sse_jsonrpc_message(
+        state,
+        &message_endpoint_url,
+        plan,
+        protocol_version,
+        timeout_ms,
+        &initialize_request,
+    )
+    .await?;
+    let initialize_payload = wait_for_sse_jsonrpc_message(
+        &mut stream,
+        &mut buffer,
+        &mut frame,
+        &Value::String("__contextforge_init__".to_string()),
+        timeout_ms,
+    )
+    .await?;
+    if initialize_payload.get("error").is_some() {
+        return Err(format!(
+            "upstream SSE initialize returned error: {initialize_payload}"
+        ));
+    }
+
+    post_sse_jsonrpc_message(
+        state,
+        &message_endpoint_url,
+        plan,
+        protocol_version,
+        timeout_ms,
+        &json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "method": "notifications/initialized",
+            "params": {}
+        }),
+    )
+    .await?;
+
+    let mut params = request.params.clone();
+    let params_object = params
+        .as_object_mut()
+        .ok_or_else(|| "tools/call params must be an object".to_string())?;
+    params_object.insert(
+        "name".to_string(),
+        Value::String(remote_tool_name.to_string()),
+    );
+    if let Some(ref modified_args) = plan.modified_args {
+        params_object.insert("arguments".to_string(), modified_args.clone());
+    }
+
+    let request_id = request
+        .id
+        .clone()
+        .unwrap_or(Value::String("__contextforge_tools_call__".to_string()));
+    let tool_request = json!({
+        "jsonrpc": JSONRPC_VERSION,
+        "id": request_id.clone(),
+        "method": "tools/call",
+        "params": params,
+    });
+    post_sse_jsonrpc_message(
+        state,
+        &message_endpoint_url,
+        plan,
+        protocol_version,
+        timeout_ms,
+        &tool_request,
+    )
+    .await?;
+    let payload = wait_for_sse_jsonrpc_message(
+        &mut stream,
+        &mut buffer,
+        &mut frame,
+        &request_id,
+        timeout_ms,
+    )
+    .await?;
+    let (success, error_message) = classify_tools_call_metric_outcome(StatusCode::OK, &payload);
+    Ok((payload, success, error_message))
+}
+
 #[cfg(feature = "rmcp-upstream-client")]
 async fn get_or_create_rmcp_upstream_client(
     state: &AppState,
@@ -7278,7 +9110,7 @@ async fn invoke_tools_call_via_rmcp(
     request: &JsonRpcRequest,
     remote_tool_name: &str,
     modified_args: Option<&Value>,
-) -> Result<(Response, bool, Option<String>), String> {
+) -> Result<(Response, bool, Option<String>, Option<Value>), String> {
     let mut params = request.params.clone();
     let params_object = params
         .as_object_mut()
@@ -7299,19 +9131,23 @@ async fn invoke_tools_call_via_rmcp(
         .unwrap_or(Value::String("__contextforge_tools_call__".to_string()));
 
     match client.peer().call_tool(params).await {
-        Ok(result) => Ok((
-            json_response(
-                StatusCode::OK,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": response_id,
-                    "result": serde_json::to_value(result)
-                        .map_err(|err| format!("rmcp tools/call result encode failed: {err}"))?,
-                }),
-            ),
-            true,
-            None,
-        )),
+        Ok(result) => {
+            let encoded_result = serde_json::to_value(result)
+                .map_err(|err| format!("rmcp tools/call result encode failed: {err}"))?;
+            Ok((
+                json_response(
+                    StatusCode::OK,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": response_id,
+                        "result": encoded_result.clone(),
+                    }),
+                ),
+                true,
+                None,
+                Some(encoded_result),
+            ))
+        }
         Err(RmcpServiceError::McpError(error)) => {
             let error_message = error.message.to_string();
             Ok((
@@ -7326,6 +9162,7 @@ async fn invoke_tools_call_via_rmcp(
                 ),
                 false,
                 Some(error_message),
+                None,
             ))
         }
         Err(err) => Err(format!("rmcp direct tools/call failed: {err}")),
@@ -7512,6 +9349,7 @@ fn build_forwarded_headers_with_session_validation(
             HeaderValue::from_static(RUNTIME_NAME),
         );
     }
+    inject_current_trace_context(&mut forwarded_headers);
     forwarded_headers
 }
 
@@ -7735,8 +9573,9 @@ mod unit_tests {
         response_from_affinity_forward_response, run, runtime_session_access_outcome,
         runtime_session_id_from_request, runtime_session_key, send_tools_list_to_backend,
         send_transport_to_backend, serve_http, serve_uds, store_event_endpoint,
-        transport_delete_server_scoped, transport_get_server_scoped, upsert_runtime_session,
-        validate_initialize_params, validate_protocol_version, validate_runtime_session_request,
+        tools_call_error_type_from_payload, transport_delete_server_scoped,
+        transport_get_server_scoped, upsert_runtime_session, validate_initialize_params,
+        validate_protocol_version, validate_runtime_session_request,
     };
     use axum::{
         Json, Router,
@@ -9376,6 +11215,9 @@ mod unit_tests {
         let auth_context = InternalAuthContext {
             email: Some("owner@example.com".to_string()),
             teams: Some(vec!["team-1".to_string()]),
+            team_name: Some("Team 1".to_string()),
+            auth_method: Some("jwt".to_string()),
+            permission_is_admin: Some(false),
             is_admin: false,
             is_authenticated: true,
         };
@@ -9788,6 +11630,9 @@ mod unit_tests {
         let authenticated_context = InternalAuthContext {
             email: Some("owner@example.com".to_string()),
             teams: Some(vec!["team-1".to_string()]),
+            team_name: Some("Team 1".to_string()),
+            auth_method: Some("jwt".to_string()),
+            permission_is_admin: Some(false),
             is_admin: false,
             is_authenticated: true,
         };
@@ -10646,6 +12491,34 @@ mod unit_tests {
         assert_eq!(payload["id"], 41);
         assert_eq!(payload["error"]["code"], -32002);
         assert_eq!(payload["error"]["message"], "Prompt not found");
+    }
+
+    #[test]
+    fn tools_call_error_type_from_payload_maps_common_jsonrpc_codes() {
+        assert_eq!(
+            tools_call_error_type_from_payload(
+                &json!({"error": {"code": -32003, "message": "forbidden"}}),
+            ),
+            "PermissionDenied"
+        );
+        assert_eq!(
+            tools_call_error_type_from_payload(
+                &json!({"error": {"code": -32602, "message": "bad params"}}),
+            ),
+            "InvalidRequest"
+        );
+        assert_eq!(
+            tools_call_error_type_from_payload(
+                &json!({"error": {"code": -32700, "message": "parse"}}),
+            ),
+            "ParseError"
+        );
+        assert_eq!(
+            tools_call_error_type_from_payload(
+                &json!({"error": {"code": -32001, "message": "other"}}),
+            ),
+            "ToolInvocationError"
+        );
     }
 
     #[tokio::test]

@@ -6940,27 +6940,39 @@ class TestRustMcpExecutionPlan:
         assert plan == {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
 
     @pytest.mark.asyncio
-    async def test_prepare_rust_mcp_tool_execution_trace_id_forces_fallback(self, tool_service):
-        """Active observability trace should bypass Rust direct execution."""
+    async def test_prepare_rust_mcp_tool_execution_trace_id_keeps_eligible_plan(self, tool_service):
+        """Active observability trace should no longer force Python fallback."""
         tool_service._plugin_manager = None
-
-        with patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-1"))):
-            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
-
-        assert plan == {"eligible": False, "fallbackReason": "observability-trace-active"}
-
-    @pytest.mark.asyncio
-    async def test_prepare_rust_mcp_tool_execution_otel_enabled_forces_fallback(self, tool_service):
-        """Enabled OTEL observability should keep tools/call on the Python path."""
-        tool_service._plugin_manager = None
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
 
         with (
-            patch("mcpgateway.services.tool_service.settings.otel_enable_observability", True),
-            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-1"))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
         ):
             plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
 
-        assert plan == {"eligible": False, "fallbackReason": "observability-trace-active"}
+        assert plan["eligible"] is True
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_otel_enabled_keeps_eligible_plan(self, tool_service):
+        """Enabled OTEL observability should no longer force Python fallback."""
+        tool_service._plugin_manager = None
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.settings.otel_enable_observability", True),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan["eligible"] is True
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -7484,7 +7496,6 @@ class TestRustMcpExecutionPlan:
         ("tool_overrides", "expected_reason"),
         [
             ({"integration_type": "REST"}, "unsupported-integration:REST"),
-            ({"request_type": "sse"}, "unsupported-transport:sse"),
             ({"jsonpath_filter": "$.items[*]"}, "jsonpath-filter-configured"),
             ({"gateway": {"ca_certificate": "cert"}}, "custom-ca-certificate"),
             ({"gateway": {"url": None}}, "missing-gateway-url"),
@@ -7503,6 +7514,23 @@ class TestRustMcpExecutionPlan:
             plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
 
         assert plan == {"eligible": False, "fallbackReason": expected_reason}
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_allows_sse_transport(self, tool_service):
+        """SSE-backed MCP tools should remain eligible for native Rust execution."""
+        cache = self._cache_mock(self._cache_payload(request_type="sse"))
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan["eligible"] is True
+        assert plan["transport"] == "sse"
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_tool_execution_checks_server_membership(self, tool_service):

@@ -138,6 +138,18 @@ def _trace_attributes(trace: dict[str, Any]) -> dict[str, Any]:
     return ((trace.get("metadata") or {}).get("attributes") or {})
 
 
+def _is_admin_jwt_trace(trace: dict[str, Any]) -> bool:
+    """Return whether a Langfuse trace belongs to the admin JWT test flow."""
+    trace_attrs = _trace_attributes(trace)
+    tags = trace.get("tags") or []
+    return (
+        trace.get("userId") == ADMIN_EMAIL
+        and trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
+        and isinstance(tags, list)
+        and "auth:jwt" in tags
+    )
+
+
 @pytest.fixture(scope="module")
 def jwt_token() -> str:
     """Create an admin JWT for live MCP CLI smoke traffic."""
@@ -187,6 +199,37 @@ def test_langfuse_public_traces_endpoint_returns_trace_list():
 @skip_no_gateway
 @skip_no_langfuse
 @skip_no_langfuse_auth
+@pytest.mark.e2e
+def test_langfuse_trace_export_eventually_contains_initialize_trace(jwt_token: str):
+    """A raw MCP initialize should export a Langfuse trace for the session-core path."""
+    triggered_after = time.time() - 1
+    responses = _send_jsonrpc_via_wrapper(
+        _build_wrapper_env(jwt_token),
+        [_build_initialize(1)],
+        settle_seconds=2.0,
+    )
+    init_response = _get_response_by_id(responses, 1)
+    assert init_response is not None, f"No initialize response: {responses}"
+    assert "error" not in init_response, f"initialize returned error: {init_response}"
+
+    trace = _wait_for_fresh_trace(
+        triggered_after,
+        lambda candidate: _is_admin_jwt_trace(candidate)
+        and (candidate.get("name") == "mcp.initialize" or _trace_attributes(candidate).get("langfuse.trace.name") == "mcp.initialize"),
+    )
+    trace_attrs = _trace_attributes(trace)
+
+    assert trace.get("userId") == ADMIN_EMAIL
+    assert isinstance(trace.get("tags"), list)
+    assert "auth:jwt" in trace.get("tags", [])
+    assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
+    assert trace_attrs.get("langfuse.trace.name") == "mcp.initialize"
+    assert trace_attrs.get("langfuse.session.id")
+
+
+@skip_no_gateway
+@skip_no_langfuse
+@skip_no_langfuse_auth
 @skip_no_mcp_cli
 @pytest.mark.e2e
 def test_langfuse_trace_export_eventually_contains_fresh_mcp_cli_tool_list_trace(config_file: Path):
@@ -195,7 +238,10 @@ def test_langfuse_trace_export_eventually_contains_fresh_mcp_cli_tool_list_trace
     result = _run_mcp_cli(config_file, "tools", "--raw")
     assert result.returncode == 0, f"mcp-cli tools --raw failed: {result.stderr}"
 
-    trace = _wait_for_fresh_trace(triggered_after, lambda candidate: candidate.get("name") in {"tool.list", "Tools"})
+    trace = _wait_for_fresh_trace(
+        triggered_after,
+        lambda candidate: _is_admin_jwt_trace(candidate) and candidate.get("name") in {"tool.list", "Tools"},
+    )
     metadata = trace.get("metadata") or {}
     resource_attrs = metadata.get("resourceAttributes") or {}
     trace_attrs = metadata.get("attributes") or {}
@@ -229,7 +275,12 @@ def test_langfuse_trace_export_eventually_contains_tool_call_input(jwt_token: st
     assert call_response is not None, f"No tools/call response: {responses}"
     assert "error" not in call_response, f"tools/call returned error: {call_response}"
 
-    trace = _wait_for_fresh_trace(triggered_after, lambda candidate: _trace_attributes(candidate).get("tool.name") == "fast-time-get-system-time" and candidate.get("input") == {"timezone": "UTC"})
+    trace = _wait_for_fresh_trace(
+        triggered_after,
+        lambda candidate: _is_admin_jwt_trace(candidate)
+        and _trace_attributes(candidate).get("tool.name") == "fast-time-get-system-time"
+        and candidate.get("input") == {"timezone": "UTC"},
+    )
     trace_attrs = _trace_attributes(trace)
 
     assert trace.get("userId") == ADMIN_EMAIL
@@ -266,7 +317,11 @@ def test_langfuse_trace_export_eventually_contains_prompt_render_linkage(jwt_tok
     assert prompt_response is not None, f"No prompts/get response: {responses}"
     assert "error" not in prompt_response, f"prompts/get returned error: {prompt_response}"
 
-    trace = _wait_for_fresh_trace(triggered_after, lambda candidate: _trace_attributes(candidate).get("langfuse.observation.prompt.name") == "fast-time-convert-time-detailed")
+    trace = _wait_for_fresh_trace(
+        triggered_after,
+        lambda candidate: _is_admin_jwt_trace(candidate)
+        and _trace_attributes(candidate).get("langfuse.observation.prompt.name") == "fast-time-convert-time-detailed",
+    )
     trace_attrs = _trace_attributes(trace)
 
     assert trace.get("userId") == ADMIN_EMAIL
@@ -304,7 +359,8 @@ def test_langfuse_trace_export_eventually_contains_sanitized_prompt_error(jwt_to
 
     trace = _wait_for_fresh_trace(
         triggered_after,
-        lambda candidate: _trace_attributes(candidate).get("langfuse.trace.name") == "Prompt: https://prompt.example.com/item?api_key=REDACTED",
+        lambda candidate: _is_admin_jwt_trace(candidate)
+        and _trace_attributes(candidate).get("langfuse.trace.name") == "Prompt: https://prompt.example.com/item?api_key=REDACTED",
     )
     trace_attrs = _trace_attributes(trace)
     status_message = str(trace_attrs.get("langfuse.observation.status_message") or "")

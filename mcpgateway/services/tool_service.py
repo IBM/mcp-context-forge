@@ -2944,12 +2944,6 @@ class ToolService(BaseService):
         if has_post_invoke:
             return {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
 
-        # Rust direct `tools/call` does not emit native OTEL spans yet. When
-        # observability is enabled, keep the existing Python invoke path so
-        # Langfuse/OTEL tool traces retain parity with the Python runtime.
-        if settings.otel_enable_observability or current_trace_id.get():
-            return {"eligible": False, "fallbackReason": "observability-trace-active"}
-
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
         is_direct_proxy = False
         tool = None
@@ -3075,7 +3069,7 @@ class ToolService(BaseService):
 
         tool_request_type = tool_payload.get("request_type")
         transport = tool_request_type.lower() if tool_request_type else "sse"
-        if transport != "streamablehttp":
+        if transport not in {"streamablehttp", "sse"}:
             return {"eligible": False, "fallbackReason": f"unsupported-transport:{transport}"}
 
         tool_jsonpath_filter = tool_payload.get("jsonpath_filter")
