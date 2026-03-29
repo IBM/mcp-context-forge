@@ -148,6 +148,18 @@ def test_serialize_trace_payload_sanitizes_generic_string_content(monkeypatch):
     assert "Basic ***" in parsed["content"]
 
 
+def test_serialize_trace_payload_sanitizes_top_level_string_content(monkeypatch):
+    monkeypatch.setenv("OTEL_REDACT_FIELDS", "token")
+    reload_trace_redaction_config()
+
+    rendered = serialize_trace_payload("Bearer abc123 https://example.com/path?token=secret456")
+
+    assert "abc123" not in rendered
+    assert "secret456" not in rendered
+    assert "Bearer ***" in rendered
+    assert "token=REDACTED" in rendered
+
+
 def test_redact_sensitive_fields_sanitizes_string_list_and_tuple_items(monkeypatch):
     monkeypatch.setenv("OTEL_REDACT_FIELDS", "token,authorization")
     reload_trace_redaction_config()

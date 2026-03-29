@@ -5262,11 +5262,23 @@ async fn direct_server_prompts_get(
     request: &JsonRpcRequest,
     body: Bytes,
 ) -> Response {
-    // Prompt execution depends on Python-owned rendering and plugin hooks for
-    // gateway-backed prompts. The Rust runtime still short-circuits authz to
-    // avoid unnecessary backend work on obvious deny paths, but all successful
-    // `prompts/get` requests are delegated to Python for authoritative
-    // rendering/normalization.
+    // Rust serves the direct prompt/get path for the same conservative subset
+    // as prompt eligibility detection: trusted server scope, authz approved by
+    // Python, and a DB-backed prompt that can be returned without invoking an
+    // upstream gateway or plugin hook chain.
+    let server_id = incoming_headers
+        .get("x-contextforge-server-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let auth_context = decode_internal_auth_context_from_headers(&incoming_headers);
+
+    let (Some(server_id), Ok(auth_context)) = (server_id, auth_context) else {
+        warn!(
+            "Rust MCP direct prompts/get missing trusted context; falling back to Python dispatcher"
+        );
+        return forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await;
+    };
+
     let Some(params) = request.params.as_object() else {
         return forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await;
     };
@@ -5295,8 +5307,119 @@ async fn direct_server_prompts_get(
         return response;
     }
 
-    debug!("Rust MCP direct prompts/get delegated to Python dispatcher for prompt '{name}'");
-    forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
+    let prompt_name = name.to_string();
+    let prompt_arguments = params
+        .get("arguments")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
+    let span = start_root_span("prompt.render", &trace_context);
+    set_span_attribute(&span, "server_id", server_id.as_str());
+    set_span_attribute(&span, "prompt.id", prompt_name.clone());
+    set_span_attribute(
+        &span,
+        "arguments_count",
+        prompt_arguments.as_object().map_or(0, serde_json::Map::len),
+    );
+    set_langfuse_trace_name(
+        &span,
+        derive_langfuse_trace_name("prompt.render", &[("prompt.id", prompt_name.clone())]),
+    );
+    if is_input_capture_enabled("prompt.render") {
+        set_span_attribute(
+            &span,
+            "langfuse.observation.input",
+            serialize_trace_payload(&prompt_arguments),
+        );
+    }
+
+    let span_for_body = span.clone();
+    async move {
+        if let Ok(Some((canonical_name, prompt_version))) =
+            query_server_prompt_observability_metadata(
+                state,
+                &server_id,
+                &auth_context,
+                &prompt_name,
+            )
+                .await
+        {
+            set_span_attribute(
+                &span_for_body,
+                "langfuse.observation.prompt.name",
+                canonical_name,
+            );
+            if let Some(prompt_version) = prompt_version {
+                set_span_attribute(
+                    &span_for_body,
+                    "langfuse.observation.prompt.version",
+                    prompt_version,
+                );
+            }
+        }
+
+        match query_server_prompt_get_from_db(state, &server_id, &auth_context, &prompt_name).await {
+            Ok(Some(payload)) => {
+                set_span_attribute(&span_for_body, "success", true);
+                let messages_count = payload
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                set_span_attribute(&span_for_body, "messages.count", messages_count);
+                if is_output_capture_enabled("prompt.render") {
+                    set_span_attribute(
+                        &span_for_body,
+                        "langfuse.observation.output",
+                        serialize_trace_payload(&payload),
+                    );
+                }
+                json_response(
+                    StatusCode::OK,
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "result": payload,
+                    }),
+                )
+            }
+            Ok(None) => {
+                set_span_attribute(&span_for_body, "success", false);
+                set_span_error(
+                    &span_for_body,
+                    format!("Prompt not found: {prompt_name}"),
+                    Some("PromptNotFoundError"),
+                );
+                json_response(
+                    jsonrpc_response_status(StatusCode::NOT_FOUND),
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": request_id,
+                        "error": {
+                            "code": -32002,
+                            "message": "Prompt not found",
+                            "data": {"name": prompt_name.clone()},
+                        },
+                    }),
+                )
+            }
+            Err(RuntimeError::Config(reason)) if reason == "fallback-python" => {
+                debug!(
+                    "Rust MCP direct prompts/get falling back to Python dispatcher for prompt '{prompt_name}'"
+                );
+                forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
+            }
+            Err(err) => {
+                set_span_error(&span_for_body, err.to_string(), Some("RuntimeError"));
+                error!(
+                    "Rust MCP direct prompts/get DB query failed: {err}; falling back to Python dispatcher"
+                );
+                forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await
+            }
+        }
+    }
+    .instrument(span)
+    .await
 }
 
 async fn query_server_resources_list_from_db(
@@ -5564,7 +5687,9 @@ async fn query_server_prompt_get_from_db(
 ) -> Result<Option<Value>, RuntimeError> {
     // Prompt reads are intentionally normalized into the MCP prompt result
     // shape expected by clients so the direct Rust path can substitute for the
-    // Python dispatcher without changing the wire contract.
+    // Python dispatcher without changing the wire contract. Gateway-backed
+    // prompts without a local template still fall back to Python so upstream
+    // execution semantics remain authoritative.
     let pool = state
         .db_pool()
         .ok_or_else(|| RuntimeError::Config("Rust MCP DB pool is not configured".to_string()))?;
@@ -5576,7 +5701,7 @@ async fn query_server_prompt_get_from_db(
     let row = if is_unrestricted_admin {
         client
             .query_opt(
-                "SELECT p.template, p.description \
+                "SELECT p.template, p.description, p.gateway_id \
                  FROM prompts p \
                  JOIN server_prompt_association spa ON p.id = spa.prompt_id \
                  WHERE spa.server_id = $1 AND p.name = $2 AND p.enabled = TRUE",
@@ -5591,7 +5716,7 @@ async fn query_server_prompt_get_from_db(
 
         client
             .query_opt(
-                "SELECT p.template, p.description \
+                "SELECT p.template, p.description, p.gateway_id \
                  FROM prompts p \
                  JOIN server_prompt_association spa ON p.id = spa.prompt_id \
                  WHERE spa.server_id = $1 \
@@ -5611,13 +5736,19 @@ async fn query_server_prompt_get_from_db(
         return Ok(None);
     };
 
+    let gateway_id = row.get::<_, Option<String>>("gateway_id");
+    let template = row.get::<_, String>("template");
+    if gateway_id.is_some() && template.is_empty() {
+        return Err(RuntimeError::Config("fallback-python".to_string()));
+    }
+
     Ok(Some(json!({
         "description": row.get::<_, Option<String>>("description"),
         "messages": [{
             "role": "user",
             "content": {
                 "type": "text",
-                "text": row.get::<_, String>("template"),
+                "text": template,
             }
         }],
     })))

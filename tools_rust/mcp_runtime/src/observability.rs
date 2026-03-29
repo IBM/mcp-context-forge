@@ -16,6 +16,7 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    io,
     sync::OnceLock,
 };
 
@@ -230,7 +231,7 @@ pub fn set_span_error(span: &Span, error: impl AsRef<str>, exc_type: Option<&str
         return;
     }
 
-    let message = sanitize_exception_message(error.as_ref());
+    let message = sanitize_trace_text(error.as_ref());
     let bounded = if message.len() <= MAX_EXCEPTION_MESSAGE_LENGTH {
         message
     } else {
@@ -624,6 +625,7 @@ fn redact_sensitive_fields(value: &Value) -> Value {
                 .map(|item| sanitize_trace_value("item", item))
                 .collect(),
         ),
+        Value::String(text) => Value::String(sanitize_trace_text(text)),
         _ => value.clone(),
     }
 }
@@ -643,22 +645,26 @@ fn sanitize_trace_value(field_name: &str, value: &Value) -> Value {
 }
 
 fn safe_serialize(value: &Value, max_size: usize) -> String {
-    let Ok(serialized) = serde_json::to_string(value) else {
+    let mut writer = BoundedPreviewWriter::new(max_size);
+    if serde_json::to_writer(&mut writer, value).is_err() {
         return r#"{"_error":"serialization_failed"}"#.to_string();
-    };
-
-    if serialized.len() <= max_size {
-        return serialized;
     }
 
-    let mut preview = serialized.chars().take(max_size).collect::<String>();
+    let total_size = writer.total_size();
+    let preview = writer.preview();
+
+    if total_size <= max_size {
+        return preview;
+    }
+
     let mut wrapped = json!({
         "_truncated": true,
-        "_original_size": serialized.len(),
+        "_original_size": total_size,
         "_preview": preview,
     })
     .to_string();
 
+    let mut preview = preview;
     while wrapped.len() > max_size && !preview.is_empty() {
         let overflow = wrapped.len().saturating_sub(max_size);
         let trim_amount = overflow.max(1);
@@ -666,7 +672,7 @@ fn safe_serialize(value: &Value, max_size: usize) -> String {
         preview.truncate(new_len);
         wrapped = json!({
             "_truncated": true,
-            "_original_size": serialized.len(),
+            "_original_size": total_size,
             "_preview": preview,
         })
         .to_string();
@@ -678,6 +684,47 @@ fn safe_serialize(value: &Value, max_size: usize) -> String {
 
     let minimal = r#"{"_truncated":true}"#;
     minimal.chars().take(max_size).collect()
+}
+
+#[derive(Debug, Default)]
+struct BoundedPreviewWriter {
+    preview: Vec<u8>,
+    total_size: usize,
+    max_size: usize,
+}
+
+impl BoundedPreviewWriter {
+    fn new(max_size: usize) -> Self {
+        Self {
+            preview: Vec::with_capacity(max_size),
+            total_size: 0,
+            max_size,
+        }
+    }
+
+    fn total_size(&self) -> usize {
+        self.total_size
+    }
+
+    fn preview(&self) -> String {
+        String::from_utf8_lossy(&self.preview).into_owned()
+    }
+}
+
+impl io::Write for BoundedPreviewWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.total_size += buf.len();
+        if self.preview.len() < self.max_size {
+            let remaining = self.max_size - self.preview.len();
+            self.preview
+                .extend_from_slice(&buf[..buf.len().min(remaining)]);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn normalize_field_name(value: &str) -> String {
@@ -1168,7 +1215,7 @@ mod tests {
     };
     use axum::http::{HeaderMap, HeaderValue};
     use crate::InternalAuthContext;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::collections::HashMap;
 
     #[test]
@@ -1211,6 +1258,19 @@ mod tests {
         });
         let serialized = serialize_trace_payload(&payload);
         assert!(!serialized.is_empty());
+        assert!(serialized.len() <= super::DEFAULT_MAX_PAYLOAD_SIZE);
+    }
+
+    #[test]
+    fn serialize_trace_payload_sanitizes_top_level_string_content() {
+        let serialized =
+            serialize_trace_payload(&Value::String(
+                "Bearer abc123 https://x.test/path?token=secret456".to_string(),
+            ));
+        assert!(!serialized.contains("abc123"));
+        assert!(!serialized.contains("secret456"));
+        assert!(serialized.contains("Bearer ***"));
+        assert!(serialized.contains("token=REDACTED"));
     }
 
     #[test]

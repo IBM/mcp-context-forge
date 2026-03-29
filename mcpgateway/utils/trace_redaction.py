@@ -10,7 +10,24 @@ from typing import Any
 from mcpgateway.config import get_settings
 from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging
 
-_DEFAULT_REDACT_FIELDS = "password,secret,token,api_key,authorization,credential,auth_value," "access_token,refresh_token,auth_token,client_secret,cookie,set-cookie," "private_key"
+_DEFAULT_REDACT_FIELDS = ",".join(
+    [
+        "password",
+        "secret",
+        "token",
+        "api_key",
+        "authorization",
+        "credential",
+        "auth_value",
+        "access_token",
+        "refresh_token",
+        "auth_token",
+        "client_secret",
+        "cookie",
+        "set-cookie",
+        "private_key",
+    ]
+)
 _DEFAULT_MAX_PAYLOAD_SIZE = 32768
 
 _CONFIG_LOADED = False
@@ -79,7 +96,7 @@ def _ensure_loaded() -> None:
 
 
 def redact_sensitive_fields(data: Any) -> Any:
-    """Recursively redact sensitive values in dictionaries and lists.
+    """Recursively redact sensitive values in structured or scalar payloads.
 
     Args:
         data: Arbitrary payload to redact.
@@ -105,6 +122,9 @@ def redact_sensitive_fields(data: Any) -> Any:
 
     if isinstance(data, tuple):
         return tuple(_sanitize_trace_value("item", item) for item in data)
+
+    if isinstance(data, str):
+        return sanitize_trace_text(data)
 
     return data
 

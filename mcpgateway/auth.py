@@ -268,7 +268,10 @@ async def resolve_trace_team_name(
     """Resolve the primary team display name for tracing.
 
     The primary team name is additive trace metadata only. It does not affect
-    scope enforcement, which continues to rely on canonical team IDs.
+    scope enforcement, which continues to rely on canonical team IDs. For
+    session tokens, DB-resolved membership is authoritative and raw JWT team
+    display names are only used as a best-effort fallback for non-session
+    tokens when no canonical name can be resolved.
 
     Args:
         payload: Decoded JWT payload.
@@ -284,20 +287,26 @@ async def resolve_trace_team_name(
         return None
 
     primary_team_id = token_teams[0]
-    claim_team_name = _extract_claim_team_name(payload, primary_team_id)
-    if claim_team_name:
-        return claim_team_name
-
     if preresolved_team_names:
         resolved_name = preresolved_team_names.get(primary_team_id)
         if resolved_name:
             return resolved_name
 
     try:
-        return await asyncio.to_thread(_get_team_name_by_id_sync, primary_team_id)
+        resolved_name = await asyncio.to_thread(_get_team_name_by_id_sync, primary_team_id)
+        if resolved_name:
+            return resolved_name
     except Exception as exc:
         logging.getLogger(__name__).debug("Failed to resolve trace team name for team_id=%s: %s", primary_team_id, exc)
+
+    if payload.get("token_use") == "session":
         return None
+
+    claim_team_name = _extract_claim_team_name(payload, primary_team_id)
+    if claim_team_name:
+        return claim_team_name
+
+    return None
 
 
 def get_user_team_roles(db, user_email: str) -> Dict[str, str]:

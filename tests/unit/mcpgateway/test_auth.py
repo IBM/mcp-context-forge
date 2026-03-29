@@ -3740,3 +3740,53 @@ def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email()
 
     assert auth_module._resolve_plugin_authenticated_user_sync({}) is None
     assert auth_module._resolve_plugin_authenticated_user_sync({"email": "   "}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_trace_team_name_prefers_db_name_for_session_tokens(monkeypatch):
+    """Session-token trace team names should prefer DB-authoritative values.
+
+    Args:
+        monkeypatch: Pytest fixture for patching team lookup behavior.
+    """
+    # First-Party
+    from mcpgateway.auth import resolve_trace_team_name
+
+    payload = {
+        "token_use": "session",
+        "teams": [{"id": "team-1", "name": "Claim Team"}],
+    }
+
+    monkeypatch.setattr("mcpgateway.auth._get_team_name_by_id_sync", lambda _team_id: "DB Team")
+
+    resolved = await resolve_trace_team_name(payload, ["team-1"])
+
+    assert resolved == "DB Team"
+
+
+@pytest.mark.asyncio
+async def test_resolve_trace_team_name_uses_preresolved_name_before_claims(monkeypatch):
+    """Batched DB names should win over JWT team display names.
+
+    Args:
+        monkeypatch: Pytest fixture for patching unexpected DB fallback calls.
+    """
+    # First-Party
+    from mcpgateway.auth import resolve_trace_team_name
+
+    payload = {
+        "teams": [{"id": "team-1", "name": "Claim Team"}],
+    }
+
+    def _unexpected_lookup(_team_id):
+        raise AssertionError("DB fallback should not run when batched team names are present")
+
+    monkeypatch.setattr("mcpgateway.auth._get_team_name_by_id_sync", _unexpected_lookup)
+
+    resolved = await resolve_trace_team_name(
+        payload,
+        ["team-1"],
+        preresolved_team_names={"team-1": "Batched Team"},
+    )
+
+    assert resolved == "Batched Team"
