@@ -1,3 +1,4 @@
+// fast-test-server - Ultra-fast MCP server for performance testing
 //
 // Copyright 2025
 // SPDX-License-Identifier: Apache-2.0
@@ -9,26 +10,27 @@
 // Transport: Streamable HTTP (no auth)
 // Default: http://127.0.0.1:9080/mcp
 
-use socket2;
-use std::sync::Arc;
 use std::{env, net};
+use std::sync::Arc;
 
 use axum::Router;
 use chrono::{DateTime, FixedOffset, Utc};
-use rand::Rng;
-use rand_distr::Normal;
 use rmcp::{
+    ErrorData as McpError, RoleServer, ServerHandler,
     handler::server::router::tool::ToolRouter,
     model::*,
     schemars,
     service::RequestContext,
     tool, tool_handler, tool_router,
     transport::streamable_http_server::{
-        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+        StreamableHttpServerConfig, StreamableHttpService,
+        session::local::LocalSessionManager,
     },
-    ErrorData as McpError, RoleServer, ServerHandler,
 };
+use rand::Rng;
+use rand_distr::Normal;
 use serde_json::json;
+use socket2;
 use tokio::sync::Mutex;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -80,17 +82,13 @@ impl FastTestServer {
     }
 
     /// Echo back whatever message is sent
-    #[tool(
-        description = "Echo back the provided message. Useful for testing connectivity and
+    #[tool(description = "Echo back the provided message. Useful for testing connectivity and
         latency. Optionally delay the response by a specified number of milliseconds. If
         delay_stddev is provided (and gt 0), the actual delay is sampled from a normal distribution
-        with mean=delay and the given standard deviation, clamped to  0."
-    )]
+        with mean=delay and the given standard deviation, clamped to  0.")]
     async fn echo(
         &self,
-        rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<
-            EchoRequest,
-        >,
+        rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<EchoRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut count = self.request_count.lock().await;
         *count += 1;
@@ -106,14 +104,10 @@ impl FastTestServer {
     }
 
     /// Get current system time in specified timezone
-    #[tool(
-        description = "Get current system time in the specified IANA timezone. Defaults to UTC if no timezone provided."
-    )]
+    #[tool(description = "Get current system time in the specified IANA timezone. Defaults to UTC if no timezone provided.")]
     async fn get_system_time(
         &self,
-        rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<
-            GetTimeRequest,
-        >,
+        rmcp::handler::server::wrapper::Parameters(req): rmcp::handler::server::wrapper::Parameters<GetTimeRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut count = self.request_count.lock().await;
         *count += 1;
@@ -191,8 +185,7 @@ impl ServerHandler for FastTestServer {
 fn compute_delay(mean_ms: u64, stddev: Option<f64>) -> u64 {
     match stddev {
         Some(sd) if sd > 0.0 => {
-            let dist = Normal::new(mean_ms as f64, sd)
-                .unwrap_or_else(|_| Normal::new(mean_ms as f64, 0.0).unwrap());
+            let dist = Normal::new(mean_ms as f64, sd).unwrap_or_else(|_| Normal::new(mean_ms as f64, 0.0).unwrap());
             let sample = rand::thread_rng().sample(dist);
             // Clamp to >= 0 (negative delays make no sense)
             sample.round().max(0.0) as u64
@@ -285,12 +278,17 @@ fn parse_offset(s: &str) -> Result<FixedOffset, String> {
         return Err("Offset must be in format +HH:MM or -HH:MM".to_string());
     }
 
-    let hours: i32 = parts[0].parse().map_err(|_| "Invalid hours in offset")?;
-    let minutes: i32 = parts[1].parse().map_err(|_| "Invalid minutes in offset")?;
+    let hours: i32 = parts[0]
+        .parse()
+        .map_err(|_| "Invalid hours in offset")?;
+    let minutes: i32 = parts[1]
+        .parse()
+        .map_err(|_| "Invalid minutes in offset")?;
 
     let total_seconds = sign * (hours * 3600 + minutes * 60);
 
-    FixedOffset::east_opt(total_seconds).ok_or_else(|| format!("Offset out of range: {}", s))
+    FixedOffset::east_opt(total_seconds)
+        .ok_or_else(|| format!("Offset out of range: {}", s))
 }
 
 // ============================================================================
@@ -309,8 +307,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Get bind address from environment or use default
-    let bind_address =
-        env::var("BIND_ADDRESS").unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.to_string());
+    let bind_address = env::var("BIND_ADDRESS").unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.to_string());
 
     info!("{} v{} starting...", APP_NAME, APP_VERSION);
     info!("Binding to: {}", bind_address);
@@ -347,19 +344,13 @@ async fn main() -> anyhow::Result<()> {
     let tcp_listener = tokio::net::TcpListener::from_std(socket.into())?;
 
     info!("MCP endpoint:   http://{}/mcp", bind_address);
-    info!(
-        "REST API:       http://{}/api/echo (POST), /api/time (GET)",
-        bind_address
-    );
+    info!("REST API:       http://{}/api/echo (POST), /api/time (GET)", bind_address);
     info!("Health check:   http://{}/health", bind_address);
     info!("Version info:   http://{}/version", bind_address);
     info!("");
     info!("Benchmark with:");
     info!("  hey -n 1000000 -c 200 -m POST -T 'application/json' \\");
-    info!(
-        "      -d '{{\"message\":\"hello\"}}' http://{}/api/echo",
-        bind_address
-    );
+    info!("      -d '{{\"message\":\"hello\"}}' http://{}/api/echo", bind_address);
 
     axum::serve(tcp_listener, router)
         .with_graceful_shutdown(async move {
