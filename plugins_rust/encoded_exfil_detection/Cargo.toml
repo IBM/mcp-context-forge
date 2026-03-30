@@ -20,6 +20,7 @@ pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
 pyo3-stub-gen = "0.19"
 regex = "1.12"
 base64 = "0.22"
+serde_json = "1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

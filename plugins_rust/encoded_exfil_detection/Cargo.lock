@@ -248,6 +248,7 @@ dependencies = [
  "pyo3",
  "pyo3-stub-gen",
  "regex",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,10 +1,11 @@
-description: "Detects suspicious encoded payload exfiltration patterns (base64/base64url/hex/percent) in prompts and tool outputs"
+description: "Detects suspicious encoded payload exfiltration patterns (base64/base64url/hex/percent/escaped hex) in prompts, tool outputs, and resources"
 author: "Mihai Criveti"
-version: "0.1.0"
+version: "0.2.0"
 tags: ["security", "exfiltration", "dlp", "encoding"]
 available_hooks:
   - "prompt_pre_fetch"
   - "tool_post_invoke"
+  - "resource_post_fetch"
 default_config:
   enabled:
     base64: true
@@ -24,3 +25,9 @@ default_config:
   block_on_detection: true
   min_findings_to_block: 1
   include_detection_details: true
+  allowlist_patterns: []
+  extra_sensitive_keywords: []
+  extra_egress_hints: []
+  max_decode_depth: 2
+  max_recursion_depth: 32
+  log_detections: true
