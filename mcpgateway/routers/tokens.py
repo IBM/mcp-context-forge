@@ -93,6 +93,7 @@ async def _get_caller_permissions(
     permissions = await permission_service.get_user_permissions(
         user_email=current_user["email"],
         team_id=team_id,
+        token_teams=current_user.get("token_teams"),  # SECURITY: Respect token narrowing
     )
     return list(permissions) if permissions else None
 
