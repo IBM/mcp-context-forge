@@ -1166,11 +1166,17 @@ async def call_tool(name: str, arguments: dict) -> Union[
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
     meta_data = None
-    # Extract _meta from request context if available
+    plugin_context_table = None
+    plugin_global_context = None
+    # Extract _meta and plugin contexts from request context if available
     try:
         ctx = mcp_app.request_context
         if ctx and ctx.meta is not None:
             meta_data = ctx.meta.model_dump()
+        # Get plugin contexts from request.state for cross-hook sharing
+        if ctx and ctx.request:
+            plugin_context_table = getattr(ctx.request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(ctx.request.state, "plugin_global_context", None)
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -1351,6 +1357,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
                 user_email=user_email,
                 token_teams=token_teams,
                 server_id=server_id,
+                plugin_context_table=plugin_context_table,
+                plugin_global_context=plugin_global_context,
                 meta_data=meta_data,
             )
             if not result or not result.content:
