@@ -1,0 +1,71 @@
+########################################################################
+# OCP Deployment Values — gp-context-forge namespace
+# Cluster: contextforge-p02-rocp01.cp.fyre.ibm.com
+#
+# Override values for deploying ContextForge on OpenShift (Fyre).
+# Only settings that differ from the chart defaults are listed here.
+#
+# Key decisions:
+#   - Single gateway replica to avoid migration advisory lock contention
+#   - HPA disabled to keep replica count stable during initial setup
+#   - PgBouncer disabled pending OpenShift SCC configuration
+#   - NGINX proxy disabled pending image availability
+#   - Ephemeral Postgres storage (NFS PV provisioning pending)
+#   - SSRF private networks allowed for in-cluster MCP server registration
+#   - Explicit Docker Hub image references to avoid pull rate-limit ambiguity
+########################################################################
+
+# --- Gateway ---
+mcpContextForge:
+  replicaCount: 1                          # single replica to avoid migration deadlock
+
+  hpa:
+    enabled: false                         # disable autoscaler until stable
+
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest
+    pullPolicy: Always                     # Always pull to get latest image
+
+  config:
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"    # needed for in-cluster MCP server registration
+    LOG_LEVEL: INFO
+
+  secret:
+    JWT_SECRET_KEY: "gp-context-forge-jwt-secret-key-longer-than-32-bytes"
+    AUTH_ENCRYPTION_SECRET: "gp-context-forge-encryption-secret-key-32b"
+    BASIC_AUTH_PASSWORD: "GpAdmin2026Secure!"
+    PLATFORM_ADMIN_PASSWORD: "GpAdmin2026Secure!"
+    REQUIRE_STRONG_SECRETS: "true"
+
+# --- Postgres ---
+postgres:
+  enabled: true
+  image:
+    repository: docker.io/library/postgres
+    tag: "17"
+  persistence:
+    enabled: false                         # ephemeral storage for now — NFS PV pending setup
+  credentials:
+    database: postgresdb
+    user: admin
+    password: "GpPostgres2026Secure!"
+
+# --- PgBouncer ---
+pgbouncer:
+  enabled: false                           # known CrashLoopBackOff — tackle later
+
+# --- Redis ---
+redis:
+  enabled: true
+  image:
+    repository: docker.io/library/redis
+    tag: 7-alpine
+
+# --- NGINX Proxy ---
+nginxProxy:
+  enabled: false                           # not needed for baseline
+
+# --- Fast Time Server ---
+mcpFastTimeServer:
+  enabled: true
