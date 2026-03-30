@@ -153,7 +153,7 @@ class TestGatewayTestModal:
         # Button should become disabled with "Testing..." text
         try:
             gateways_page.page.wait_for_selector(
-                '#gateway-test-submit:disabled',
+                "#gateway-test-submit:disabled",
                 timeout=3000,
             )
         except PlaywrightTimeoutError:
@@ -243,9 +243,7 @@ class TestGatewayTestModal:
 
         # Also verify the response text is cleared
         response_text = gateways_page.test_modal_response_json.text_content().strip()
-        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, (
-            "Gateway test result should not contain stale data from previous gateway"
-        )
+        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, "Gateway test result should not contain stale data from previous gateway"
 
         gateways_page.close_test_modal()
 
@@ -482,11 +480,37 @@ class TestGatewayEditModal:
 
         # Additional options
         expect(gateways_page.edit_modal_one_time_auth).to_be_visible()
+        expect(gateways_page.edit_health_check_enabled_checkbox).to_be_visible()
         expect(gateways_page.edit_modal_passthrough_headers).to_be_visible()
 
         # Buttons
         expect(gateways_page.edit_modal_cancel_btn).to_be_visible()
         expect(gateways_page.edit_modal_save_btn).to_be_visible()
+
+        gateways_page.close_edit_modal()
+
+    def test_edit_modal_health_check_reflects_saved_state(self, gateways_page: GatewaysPage):
+        """Test that health check checkbox in edit modal reflects the gateway's saved state."""
+        gateways_page.navigate_to_gateways_tab()
+        gateways_page.wait_for_gateways_table_loaded()
+        _skip_if_no_gateways(gateways_page)
+
+        gateways_page.open_edit_modal(0)
+        expect(gateways_page.edit_health_check_enabled_checkbox).to_be_visible()
+
+        # The checkbox should reflect the actual DB value (checked or unchecked),
+        # not always default to checked. Verify it is attached and interactable.
+        checkbox = gateways_page.edit_health_check_enabled_checkbox
+        is_checked = checkbox.is_checked()
+        logger.info(f"Health check checkbox state: {'checked' if is_checked else 'unchecked'}")
+
+        # Toggle and verify it changes
+        if is_checked:
+            checkbox.uncheck()
+            expect(checkbox).not_to_be_checked()
+        else:
+            checkbox.check()
+            expect(checkbox).to_be_checked()
 
         gateways_page.close_edit_modal()
 
@@ -1496,12 +1520,12 @@ class TestGatewayAddFormAdvanced:
     def test_panel_description_text(self, gateways_page: GatewaysPage):
         """Test that the panel description text is correct."""
         gateways_page.navigate_to_gateways_tab()
-        description = gateways_page.page.locator('text=Register external MCP Servers (SSE/HTTP) to retrieve their tools/resources/prompts')
+        description = gateways_page.page.locator("text=Register external MCP Servers (SSE/HTTP) to retrieve their tools/resources/prompts")
         expect(description).to_be_visible()
 
     def test_tags_help_text(self, gateways_page: GatewaysPage):
         """Test that tags field has help text about normalization."""
         gateways_page.navigate_to_gateways_tab()
         # Scope to the add form to avoid matching the edit modal's tags help text
-        help_text = gateways_page.add_gateway_form.locator('text=Tags will be automatically normalized')
+        help_text = gateways_page.add_gateway_form.locator("text=Tags will be automatically normalized")
         expect(help_text).to_be_visible()

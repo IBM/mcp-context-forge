@@ -6003,6 +6003,25 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 </p>
               </div>
 
+              <!-- Health Check Toggle -->
+              <div class="mt-4">
+                <label class="flex items-center">
+                  <input
+                    type="checkbox"
+                    name="health_check_enabled"
+                    id="health-check-enabled-gw"
+                    class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
+                    checked
+                  />
+                  <span class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Enable Health Checks
+                  </span>
+                </label>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Disable for OAuth gateways where the platform admin has no valid credentials on the external provider.
+                </p>
+              </div>
+
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -10274,6 +10293,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         ⚠️ NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
                       </p>
                     </div>
+
+                    <!-- Health Check Toggle -->
+                    <div class="mt-4">
+                      <label class="flex items-center">
+                        <input
+                          type="checkbox"
+                          name="health_check_enabled"
+                          id="health-check-enabled-gw-edit"
+                          class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                          Enable Health Checks
+                        </span>
+                      </label>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Disable for OAuth gateways where the platform admin has no valid credentials on the external provider.
+                      </p>
+                    </div>
+
                     <div>
                       <label
                         class="block text-sm font-medium text-gray-700 dark:text-gray-400"

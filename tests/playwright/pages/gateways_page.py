@@ -291,6 +291,16 @@ class GatewaysPage(BasePage):
         return self.page.locator("#single-use-auth-gw")
 
     @property
+    def health_check_enabled_checkbox(self) -> Locator:
+        """Health check enabled checkbox (add form)."""
+        return self.page.locator("#health-check-enabled-gw")
+
+    @property
+    def edit_health_check_enabled_checkbox(self) -> Locator:
+        """Health check enabled checkbox (edit form)."""
+        return self.page.locator("#health-check-enabled-gw-edit")
+
+    @property
     def passthrough_headers_input(self) -> Locator:
         """Passthrough headers input."""
         return self.add_gateway_form.locator('[name="passthrough_headers"]')

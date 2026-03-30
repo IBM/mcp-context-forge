@@ -58,7 +58,13 @@ class TestGatewaysPage:
         expect(gateways_page.gateway_tags_input).to_be_visible()
         expect(gateways_page.transport_select).to_be_visible()
         expect(gateways_page.auth_type_select).to_be_visible()
+        expect(gateways_page.health_check_enabled_checkbox).to_be_visible()
         expect(gateways_page.add_gateway_btn).to_be_visible()
+
+    def test_add_gateway_health_check_enabled_by_default(self, gateways_page: GatewaysPage):
+        """Test that health check checkbox is checked by default in the add form."""
+        gateways_page.navigate_to_gateways_tab()
+        expect(gateways_page.health_check_enabled_checkbox).to_be_checked()
 
     def test_search_functionality(self, gateways_page: GatewaysPage):
         """Test gateway search functionality."""

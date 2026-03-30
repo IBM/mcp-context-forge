@@ -99,6 +99,7 @@ def _make_gateway(**overrides):
         "auth_query_params": None,
         "oauth_config": None,
         "one_time_auth": False,
+        "health_check_enabled": True,
         "ca_certificate": None,
         "ca_certificate_sig": None,
         "signing_algorithm": None,
@@ -722,9 +723,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"subscribe": True}}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(
@@ -759,9 +758,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"subscribe": True}}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(client_key=settings.masked_auth_value)
@@ -5357,7 +5354,6 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
 
-
     @pytest.mark.asyncio
     async def test_health_check_with_mtls_ca_certificate(self, gateway_service, monkeypatch):
         """Health check creates SSL context with mTLS client_cert/client_key (lines 3348-3349)."""
@@ -5396,8 +5392,11 @@ class TestCheckSingleGatewayHealth:
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
         monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
         mock_settings = MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5, auto_refresh_servers=False,
-            httpx_admin_read_timeout=5, mcp_session_pool_enabled=False,
+            enable_ed25519_signing=False,
+            health_check_timeout=5,
+            auto_refresh_servers=False,
+            httpx_admin_read_timeout=5,
+            mcp_session_pool_enabled=False,
             auth_encryption_secret=settings.auth_encryption_secret,
         )
         monkeypatch.setattr("mcpgateway.services.gateway_service.settings", mock_settings)
@@ -5463,6 +5462,129 @@ class TestCheckSingleGatewayHealth:
         mock_ssl.assert_called_once()
         call_kw = mock_ssl.call_args
         assert call_kw[1]["client_key"] == "raw-unencrypted-key"
+
+
+# ---------------------------------------------------------------------------
+# health_check_enabled toggle tests
+# ---------------------------------------------------------------------------
+
+
+class TestHealthCheckEnabledToggle:
+    """Tests for per-gateway health_check_enabled feature."""
+
+    @pytest.mark.asyncio
+    async def test_get_gateways_excludes_health_check_disabled(self, gateway_service, monkeypatch):
+        """Gateways with health_check_enabled=False should be excluded from health check loop."""
+        gw_enabled = _make_gateway(id="gw-1", name="enabled-gw", enabled=True, health_check_enabled=True)
+        gw_disabled = _make_gateway(id="gw-2", name="disabled-gw", enabled=True, health_check_enabled=False)
+        gw_inactive = _make_gateway(id="gw-3", name="inactive-gw", enabled=False, health_check_enabled=True)
+
+        mock_db = MagicMock()
+        all_gateways = [gw_enabled, gw_disabled, gw_inactive]
+        active_hc_gateways = [gw_enabled]  # Only enabled + health_check_enabled
+
+        def mock_execute(stmt):
+            result = MagicMock()
+            scalars = MagicMock()
+            # Check if the query has WHERE clauses (include_inactive=False path)
+            stmt_str = str(stmt)
+            if "health_check_enabled" in stmt_str or "enabled" in stmt_str:
+                scalars.all.return_value = active_hc_gateways
+            else:
+                scalars.all.return_value = all_gateways
+            result.scalars.return_value = scalars
+            return result
+
+        mock_db.execute = mock_execute
+        mock_session_cls = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", mock_session_cls)
+
+        # include_inactive=False should filter by enabled AND health_check_enabled
+        result = gateway_service._get_gateways(include_inactive=False)
+        assert len(result) == 1
+        assert result[0].id == "gw-1"
+
+    @pytest.mark.asyncio
+    async def test_get_gateways_include_inactive_returns_all(self, gateway_service, monkeypatch):
+        """include_inactive=True should return all gateways regardless of health_check_enabled."""
+        gw_enabled = _make_gateway(id="gw-1", name="enabled-gw", enabled=True, health_check_enabled=True)
+        gw_disabled = _make_gateway(id="gw-2", name="disabled-gw", enabled=True, health_check_enabled=False)
+
+        mock_db = MagicMock()
+        all_gateways = [gw_enabled, gw_disabled]
+
+        def mock_execute(stmt):
+            result = MagicMock()
+            scalars = MagicMock()
+            scalars.all.return_value = all_gateways
+            result.scalars.return_value = scalars
+            return result
+
+        mock_db.execute = mock_execute
+        mock_session_cls = MagicMock()
+        mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_db)
+        mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", mock_session_cls)
+
+        result = gateway_service._get_gateways(include_inactive=True)
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_disable_health_check_sets_reachable(self, gateway_service, mock_gateway, test_db):
+        """Disabling health_check_enabled should set gateway and tools to reachable=True."""
+        mock_gateway.team_id = 1
+        mock_gateway.health_check_enabled = True
+        mock_gateway.reachable = False
+
+        execute_results = [
+            _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+            _make_execute_result(scalar=None),  # uniqueness check
+            _make_execute_result(rowcount=5),  # UPDATE tools reachable
+        ]
+        test_db.execute = Mock(side_effect=execute_results)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(health_check_enabled=False))
+
+        assert mock_gateway.reachable is True
+        assert mock_gateway.health_check_enabled is False
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_enable_health_check_does_not_force_reachable(self, gateway_service, mock_gateway, test_db):
+        """Enabling health_check_enabled should not change reachable status."""
+        mock_gateway.team_id = 1
+        mock_gateway.health_check_enabled = False
+        mock_gateway.reachable = False
+
+        execute_results = [
+            _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+            _make_execute_result(scalar=None),  # uniqueness check
+        ]
+        test_db.execute = Mock(side_effect=execute_results)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}, "resources": {}, "tools": {}}, []))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, GatewayUpdate(health_check_enabled=True))
+
+        assert mock_gateway.health_check_enabled is True
+        assert mock_gateway.reachable is False
 
 
 # ---------------------------------------------------------------------------

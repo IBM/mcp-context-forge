@@ -2677,6 +2677,9 @@ class GatewayCreate(BaseModelWithConfigDict):
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
+    # Health check toggle
+    health_check_enabled: bool = Field(default=True, description="Enable periodic health checks for this gateway")
+
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
@@ -3022,6 +3025,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
+    # Health check toggle
+    health_check_enabled: Optional[bool] = Field(None, description="Enable or disable periodic health checks for this gateway")
+
     tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
@@ -3334,6 +3340,7 @@ class GatewayRead(BaseModelWithConfigDict):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last update timestamp")
     enabled: bool = Field(default=True, description="Is the gateway enabled?")
     reachable: bool = Field(default=True, description="Is the gateway reachable/online?")
+    health_check_enabled: bool = Field(default=True, description="Are periodic health checks enabled for this gateway?")
 
     last_seen: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc), description="Last seen timestamp")
 
