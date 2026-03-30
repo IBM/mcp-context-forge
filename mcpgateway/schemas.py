@@ -522,7 +522,7 @@ class ToolCreate(BaseModel):
         if v is None:
             return v
 
-        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
         # for inline code examples in tool descriptions.
         # When VALIDATION_STRICT=false these patterns produce a warning only so
         # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
