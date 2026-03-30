@@ -498,13 +498,14 @@ fn process_container<'py>(
 
     // ── String leaf ──
     //
-    // Fast path: check Python string length via O(1) PyAny::len() BEFORE
-    // extracting to a Rust String (which copies all bytes). If the string
-    // is under both the char and token limits, and there's no min constraint,
-    // we can skip the extraction entirely.
-    if container.is_instance_of::<PyString>() {
-        // Python str.__len__() returns the number of code points — equivalent
-        // to Rust chars().count() for BMP, and close enough for our limits.
+    // Optimization layers (cheapest first):
+    //   1. O(1) Python len() pre-check — skip entirely for under-limit strings
+    //   2. PyString::to_str() zero-copy borrow — no String allocation
+    //   3. count_chars_capped() — O(limit) char counting
+    //   4. Skip is_numeric_string for strings > 50 bytes
+    //   5. byte_offset_of_char() for direct &str slicing
+    if let Ok(py_str) = container.cast::<PyString>() {
+        // ── Layer 1: O(1) pre-check via Python str.__len__() ──
         let py_len = container.len().unwrap_or(0);
 
         let needs_processing = match cfg.limit_mode {
@@ -521,22 +522,20 @@ fn process_container<'py>(
             }
         };
 
-        // If the string doesn't need processing AND strategy is truncate
-        // (so no violation to report), skip the expensive extraction.
-        if !needs_processing && cfg.strategy == Strategy::Truncate {
-            return Ok(ProcessResult::Unchanged);
-        }
-    }
-
-    if let Ok(text) = container.extract::<String>() {
-        // Skip numeric strings
-        if is_numeric_string(&text) {
+        // Under-limit strings need no further work regardless of strategy
+        if !needs_processing {
             return Ok(ProcessResult::Unchanged);
         }
 
-        // Use capped char counting — O(limit) instead of O(n).
-        // For token mode, count (max_tokens+1)*cpt chars so the over-limit
-        // check `token_count > max_tokens` works correctly.
+        // ── Layer 2: zero-copy borrow ──
+        let text: &str = py_str.to_str()?;
+
+        // Skip numeric check for long strings (no number is > 50 chars)
+        if text.len() <= 50 && is_numeric_string(text) {
+            return Ok(ProcessResult::Unchanged);
+        }
+
+        // ── Layer 3: capped char counting ──
         let limit_for_counting = match cfg.limit_mode {
             LimitMode::Character => cfg.max_chars.unwrap_or(usize::MAX),
             LimitMode::Token => cfg
@@ -545,10 +544,9 @@ fn process_container<'py>(
                 .saturating_add(1)
                 .saturating_mul(cfg.chars_per_token),
         };
-        let (char_count, _) = count_chars_capped(&text, limit_for_counting);
+        let (char_count, _) = count_chars_capped(text, limit_for_counting);
         let token_count = estimate_tokens(char_count, cfg.chars_per_token);
 
-        // Determine if out of bounds based on limit_mode
         let (below_min, above_max) = match cfg.limit_mode {
             LimitMode::Character => {
                 let below = cfg.min_chars > 0 && char_count < cfg.min_chars;
@@ -566,7 +564,7 @@ fn process_container<'py>(
             return Ok(ProcessResult::Unchanged);
         }
 
-        // Block strategy
+        // ── Block strategy ──
         if cfg.strategy == Strategy::Block {
             let location = if path.is_empty() {
                 String::new()
@@ -574,11 +572,22 @@ fn process_container<'py>(
                 format!(" at {path}")
             };
 
-            let preview = if text.chars().count() > 50 {
-                let p: String = text.chars().take(50).collect();
-                p + "..."
+            let preview = if text.len() > 53 {
+                let end = text
+                    .char_indices()
+                    .nth(50)
+                    .map_or(text.len(), |(off, _)| off);
+                format!("{}...", &text[..end])
             } else {
-                text.clone()
+                text.to_string()
+            };
+
+            let loc_str = || {
+                if path.is_empty() {
+                    "root".to_string()
+                } else {
+                    path.to_string()
+                }
             };
 
             let (reason, description, code, details) = if cfg.limit_mode == LimitMode::Token
@@ -599,14 +608,7 @@ fn process_container<'py>(
                     "strategy".to_string(),
                     ViolationValue::Str("block".to_string()),
                 );
-                d.insert(
-                    "location".to_string(),
-                    ViolationValue::Str(if path.is_empty() {
-                        "root".to_string()
-                    } else {
-                        path.to_string()
-                    }),
-                );
+                d.insert("location".to_string(), ViolationValue::Str(loc_str()));
                 d.insert("value_preview".to_string(), ViolationValue::Str(preview));
                 (
                     format!("Output length out of bounds{location}"),
@@ -623,14 +625,7 @@ fn process_container<'py>(
                     "strategy".to_string(),
                     ViolationValue::Str("block".to_string()),
                 );
-                d.insert(
-                    "location".to_string(),
-                    ViolationValue::Str(if path.is_empty() {
-                        "root".to_string()
-                    } else {
-                        path.to_string()
-                    }),
-                );
+                d.insert("location".to_string(), ViolationValue::Str(loc_str()));
                 d.insert("value_preview".to_string(), ViolationValue::Str(preview));
                 (
                     format!("Output length out of bounds{location}"),
@@ -639,7 +634,6 @@ fn process_container<'py>(
                     d,
                 )
             } else {
-                // Min violation
                 let mut d = HashMap::new();
                 d.insert("length".to_string(), ViolationValue::Int(char_count as i64));
                 d.insert(
@@ -654,14 +648,7 @@ fn process_container<'py>(
                     "min_tokens".to_string(),
                     ViolationValue::Int(cfg.min_tokens as i64),
                 );
-                d.insert(
-                    "location".to_string(),
-                    ViolationValue::Str(if path.is_empty() {
-                        "root".to_string()
-                    } else {
-                        path.to_string()
-                    }),
-                );
+                d.insert("location".to_string(), ViolationValue::Str(loc_str()));
                 (
                     format!("Output length out of bounds{location}"),
                     format!(
@@ -682,12 +669,12 @@ fn process_container<'py>(
             }));
         }
 
-        // Truncate strategy — only truncate if above max
+        // ── Truncate: only if above max ──
         if above_max {
-            let truncated = truncate(&text, cfg);
+            let truncated = truncate(text, cfg);
             if truncated != text {
-                let py_str = PyString::new(py, &truncated);
-                return Ok(ProcessResult::Modified(py_str.into_any()));
+                let new_py_str = PyString::new(py, &truncated);
+                return Ok(ProcessResult::Modified(new_py_str.into_any()));
             }
         }
 
