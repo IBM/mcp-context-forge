@@ -131,6 +131,35 @@ class SecretsDetectionConfig(BaseModel):
         return merged
 
 
+def _active_trace_context_headers() -> dict[str, str]:
+    """Return the active W3C trace context for parenting Rust spans."""
+    try:
+        from opentelemetry import trace
+        from opentelemetry.trace import format_span_id, format_trace_id
+    except ImportError:
+        return {}
+
+    try:
+        current_span = trace.get_current_span()
+        if current_span is None:
+            return {}
+
+        span_context = current_span.get_span_context()
+        if span_context is None or not getattr(span_context, "is_valid", False):
+            return {}
+
+        headers = {"traceparent": f"00-{format_trace_id(span_context.trace_id)}-{format_span_id(span_context.span_id)}-{int(span_context.trace_flags):02x}"}
+        trace_state = getattr(span_context, "trace_state", None)
+        if trace_state is not None:
+            tracestate = trace_state.to_header() if hasattr(trace_state, "to_header") else str(trace_state)
+            if tracestate:
+                headers["tracestate"] = tracestate
+        return headers
+    except Exception as exc:
+        logger.debug("Failed to capture active OTEL trace context for Rust scan: %s", exc)
+        return {}
+
+
 def _detect(text: str, cfg: SecretsDetectionConfig) -> list[dict[str, Any]]:
     """Detect secrets in text using configured patterns.
 
@@ -166,7 +195,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool 
         try:
             logger.debug("Using Rust implementation")
             # Pass Pydantic model directly - Rust extracts attributes
-            return secrets_detection(container, cfg)
+            return secrets_detection(container, cfg, _active_trace_context_headers())
         except Exception as e:
             logger.warning("Rust scan failed, falling back to Python: %s", e, exc_info=True)
             # Fall through to Python implementation

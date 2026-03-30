@@ -465,7 +465,8 @@ def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):
 
     secret = "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"
 
-    def boom(container, cfg):
+    def boom(container, cfg, trace_context):
+        assert isinstance(trace_context, dict)
         raise RuntimeError("simulated rust failure")
 
     monkeypatch.setattr(module, "_RUST_AVAILABLE", True)
@@ -481,6 +482,42 @@ def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):
     assert failure_logs
     assert failure_logs[0].exc_info is not None
     assert "simulated rust failure" in caplog.text
+
+
+def test_rust_scan_passes_active_trace_context(monkeypatch):
+    """Rust scan should receive the active W3C trace context from Python."""
+    from plugins.secrets_detection import secrets_detection as module
+
+    captured = {}
+
+    def fake_rust_scan(container, cfg, trace_context):
+        captured["container"] = container
+        captured["cfg"] = cfg
+        captured["trace_context"] = trace_context
+        return (0, container, [])
+
+    monkeypatch.setattr(module, "_RUST_AVAILABLE", True)
+    monkeypatch.setattr(module, "secrets_detection", fake_rust_scan)
+    monkeypatch.setattr(
+        module,
+        "_active_trace_context_headers",
+        lambda: {
+            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "tracestate": "vendor=value",
+        },
+    )
+
+    secret = {"message": "hello"}
+    count, redacted, findings = module._scan_container(secret, module.SecretsDetectionConfig(), use_rust=True)
+
+    assert count == 0
+    assert redacted == secret
+    assert findings == []
+    assert captured["container"] == secret
+    assert captured["trace_context"] == {
+        "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "tracestate": "vendor=value",
+    }
 
 
 @pytest.mark.parametrize(
