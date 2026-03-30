@@ -111,7 +111,7 @@ from mcpgateway.main import (
     update_tool,
     validate_security_configuration,
 )
-from mcpgateway.plugins.framework import PluginError
+from mcpgateway.plugins.framework import PluginError, PromptHookType, ResourceHookType
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
@@ -7076,10 +7076,66 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.plugin_manager", None),
         ):
             response = await handler(request)
 
         assert response.status_code == 204
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("handler", "hook_types", "expected_reason"),
+        [
+            (
+                handle_internal_mcp_resources_read_authz,
+                {
+                    ResourceHookType.RESOURCE_PRE_FETCH,
+                    ResourceHookType.RESOURCE_POST_FETCH,
+                },
+                "resource-hooks-configured",
+            ),
+            (
+                handle_internal_mcp_prompts_get_authz,
+                {
+                    PromptHookType.PROMPT_PRE_FETCH,
+                    PromptHookType.PROMPT_POST_FETCH,
+                },
+                "prompt-hooks-configured",
+            ),
+        ],
+    )
+    async def test_server_scoped_internal_mcp_authz_wrappers_return_forwarding_hint_when_hooks_active(
+        self,
+        handler,
+        hook_types,
+        expected_reason,
+    ):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "noop", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        mock_plugin_manager = MagicMock()
+        mock_plugin_manager.has_hooks_for.side_effect = lambda hook_type: hook_type in hook_types
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.plugin_manager", mock_plugin_manager),
+        ):
+            response = await handler(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "directExecutionEligible": False,
+            "fallbackReason": expected_reason,
+        }
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called_once()
 

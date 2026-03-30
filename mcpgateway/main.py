@@ -95,7 +95,7 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError
+from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError, PromptHookType, ResourceHookType
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
@@ -8544,7 +8544,10 @@ async def _authorize_internal_mcp_server_scoped_method(
         method: MCP method name being authorized.
 
     Returns:
-        Empty success response when the method is authorized, otherwise a JSON error response.
+        Empty success response when the method is authorized and remains eligible
+        for Rust direct execution, or a JSON success payload instructing Rust to
+        forward the request to Python when plugin hooks require Python
+        execution. Returns a JSON error response when authorization fails.
 
     Raises:
         HTTPException: If the trusted server scope header is missing.
@@ -8565,6 +8568,15 @@ async def _authorize_internal_mcp_server_scoped_method(
         )
         if db.is_active and db.in_transaction() is not None:
             db.commit()
+        fallback_reason = _server_scoped_direct_execution_fallback_reason(method)
+        if fallback_reason:
+            return ORJSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "directExecutionEligible": False,
+                    "fallbackReason": fallback_reason,
+                },
+            )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
@@ -8579,6 +8591,32 @@ async def _authorize_internal_mcp_server_scoped_method(
         raise
     finally:
         db.close()
+
+
+def _server_scoped_direct_execution_fallback_reason(method: str) -> Optional[str]:
+    """Return a direct-execution fallback reason for server-scoped Rust MCP calls.
+
+    This fail-closed helper lets Python remain the source of truth for plugin
+    semantics. Rust can safely execute DB-direct reads only when no relevant
+    prompt/resource hooks are configured.
+
+    Args:
+        method: MCP method name being considered for Rust direct execution.
+
+    Returns:
+        A stable fallback reason when Python must handle the request to preserve
+        plugin semantics, otherwise ``None``.
+    """
+    if not plugin_manager:
+        return None
+
+    if method == "resources/read":
+        if plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH) or plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH):
+            return "resource-hooks-configured"
+    if method == "prompts/get":
+        if plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH) or plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH):
+            return "prompt-hooks-configured"
+    return None
 
 
 @utility_router.post("/_internal/mcp/resources/list/authz/")

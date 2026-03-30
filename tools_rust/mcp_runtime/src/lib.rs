@@ -5170,7 +5170,7 @@ async fn direct_server_resources_read(
         return forward_resources_read_to_backend(state, incoming_headers, body, request_id).await;
     };
 
-    if let Err(response) = authorize_server_method_via_backend(
+    let authz_decision = match authorize_server_method_via_backend(
         state,
         &incoming_headers,
         request_id.clone(),
@@ -5179,7 +5179,18 @@ async fn direct_server_resources_read(
     )
     .await
     {
-        return response;
+        Ok(decision) => decision,
+        Err(response) => return response,
+    };
+    if !authz_decision.direct_execution_eligible {
+        debug!(
+            "Rust MCP direct resources/read falling back to Python: {}",
+            authz_decision
+                .fallback_reason
+                .as_deref()
+                .unwrap_or("direct-execution-disabled")
+        );
+        return forward_resources_read_to_backend(state, incoming_headers, body, request_id).await;
     }
 
     let trace_context = trace_request_context(&incoming_headers, Some(&auth_context));
@@ -5295,7 +5306,7 @@ async fn direct_server_prompts_get(
         return response;
     }
 
-    if let Err(response) = authorize_server_method_via_backend(
+    let authz_decision = match authorize_server_method_via_backend(
         state,
         &incoming_headers,
         request_id.clone(),
@@ -5304,7 +5315,18 @@ async fn direct_server_prompts_get(
     )
     .await
     {
-        return response;
+        Ok(decision) => decision,
+        Err(response) => return response,
+    };
+    if !authz_decision.direct_execution_eligible {
+        debug!(
+            "Rust MCP direct prompts/get falling back to Python: {}",
+            authz_decision
+                .fallback_reason
+                .as_deref()
+                .unwrap_or("direct-execution-disabled")
+        );
+        return forward_prompts_get_to_backend(state, incoming_headers, body, request_id).await;
     }
 
     let prompt_name = name.to_string();
@@ -5900,13 +5922,34 @@ fn prompt_arguments_from_schema(argument_schema: Option<Value>) -> Vec<Value> {
     arguments
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct DirectExecutionAuthorization {
+    #[serde(default = "default_direct_execution_eligible", alias = "directExecutionEligible")]
+    direct_execution_eligible: bool,
+    #[serde(default, alias = "fallbackReason")]
+    fallback_reason: Option<String>,
+}
+
+impl Default for DirectExecutionAuthorization {
+    fn default() -> Self {
+        Self {
+            direct_execution_eligible: true,
+            fallback_reason: None,
+        }
+    }
+}
+
+const fn default_direct_execution_eligible() -> bool {
+    true
+}
+
 async fn authorize_server_method_via_backend(
     state: &AppState,
     incoming_headers: &HeaderMap,
     request_id: Option<Value>,
     url: &str,
     method_label: &str,
-) -> Result<(), Response> {
+) -> Result<DirectExecutionAuthorization, Response> {
     let backend_response = state
         .client
         .post(url)
@@ -5930,7 +5973,45 @@ async fn authorize_server_method_via_backend(
         })?;
 
     if backend_response.status().is_success() {
-        return Ok(());
+        if backend_response.status() == StatusCode::NO_CONTENT {
+            return Ok(DirectExecutionAuthorization::default());
+        }
+
+        let payload = backend_response.bytes().await.map_err(|err| {
+            error!("backend MCP {method_label} authz response read failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": format!("Backend MCP {method_label} authz read failed"),
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        })?;
+
+        if payload.is_empty() {
+            return Ok(DirectExecutionAuthorization::default());
+        }
+
+        return serde_json::from_slice::<DirectExecutionAuthorization>(&payload).map_err(|err| {
+            error!("backend MCP {method_label} authz success decode failed: {err}");
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": request_id,
+                    "error": {
+                        "code": -32000,
+                        "message": format!("Backend MCP {method_label} authz success decode failed"),
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
+        });
     }
 
     let status = backend_response.status();
@@ -9664,8 +9745,9 @@ mod unit_tests {
     use base64::Engine;
 
     use super::{
-        AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL, EventStoreReplayRequest,
-        EventStoreStoreRequest, INTERNAL_RUNTIME_AUTH_HEADER, InternalAuthContext,
+        AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL,
+        DirectExecutionAuthorization, EventStoreReplayRequest, EventStoreStoreRequest,
+        INTERNAL_RUNTIME_AUTH_HEADER, InternalAuthContext,
         InternalAuthenticateRequest, JsonRpcRequest, RUNTIME_HEADER, RUNTIME_NAME, RuntimeConfig,
         RuntimeError, RuntimeSessionRecord, SessionAuthReuseMissReason, TrustedPeerAddr,
         URL_SAFE_NO_PAD, accepts_sse, active_runtime_session_count,
@@ -12466,6 +12548,18 @@ mod unit_tests {
         let backend = Router::new()
             .route("/authz-ok", post(|| async { StatusCode::OK }))
             .route(
+                "/authz-fallback",
+                post(|| async {
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "directExecutionEligible": false,
+                            "fallbackReason": "resource-hooks-configured",
+                        })),
+                    )
+                }),
+            )
+            .route(
                 "/authz-deny",
                 post(|| async {
                     (
@@ -12486,7 +12580,7 @@ mod unit_tests {
         })
         .expect("state");
 
-        authorize_server_method_via_backend(
+        let authz_ok = authorize_server_method_via_backend(
             &state,
             &trusted_server_headers("server-1"),
             Some(json!(31)),
@@ -12495,6 +12589,24 @@ mod unit_tests {
         )
         .await
         .expect("success should pass through");
+        assert_eq!(authz_ok, DirectExecutionAuthorization::default());
+
+        let authz_fallback = authorize_server_method_via_backend(
+            &state,
+            &trusted_server_headers("server-1"),
+            Some(json!(31)),
+            &format!("{backend_url}/authz-fallback"),
+            "resources/read",
+        )
+        .await
+        .expect("success payload should decode");
+        assert_eq!(
+            authz_fallback,
+            DirectExecutionAuthorization {
+                direct_execution_eligible: false,
+                fallback_reason: Some("resource-hooks-configured".to_string()),
+            }
+        );
 
         let denied = authorize_server_method_via_backend(
             &state,
