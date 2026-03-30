@@ -159,6 +159,7 @@ prune node_modules
 prune plugins/external/opa/.venv
 prune plugins/external/llmguard/.venv
 prune plugins/external/cedar/.venv
+prune plugins_rust/url_reputation/.venv
 global-exclude **/.venv/*
 
 # Environment files (security sensitive!)
