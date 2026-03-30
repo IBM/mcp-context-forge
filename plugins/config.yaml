@@ -666,13 +666,13 @@ plugins:
       block_on_detection: true
       min_findings_to_block: 1
 
-  # Encoded Exfil Detector - detect suspicious encoded payloads in prompts/tool outputs
+  # Encoded Exfil Detector - detect suspicious encoded payloads in prompts, tool outputs, and resources
   - name: "EncodedExfilDetector"
     kind: "plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin"
-    description: "Detects suspicious encoded exfiltration patterns in prompt args and tool outputs"
-    version: "0.1.0"
+    description: "Detects suspicious encoded exfiltration patterns in prompts, tool outputs, and resources"
+    version: "0.2.0"
     author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch", "tool_post_invoke"]
+    hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "exfiltration", "dlp", "encoding"]
     # mode: "enforce"
     mode: "disabled"
@@ -697,6 +697,12 @@ plugins:
       block_on_detection: true
       min_findings_to_block: 1
       include_detection_details: true
+      allowlist_patterns: []
+      extra_sensitive_keywords: []
+      extra_egress_hints: []
+      max_decode_depth: 2
+      max_recursion_depth: 32
+      log_detections: true
 
   # Header Injector - add custom headers for resource fetch
   - name: "HeaderInjector"

