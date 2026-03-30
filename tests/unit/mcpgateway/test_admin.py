@@ -3230,6 +3230,28 @@ class TestAdminGatewayRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
 
+    @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_health_check_enabled_default(self, mock_register_gateway, mock_request, mock_db):
+        """Test that health_check_enabled defaults to True when checkbox is checked (present in form)."""
+        form_data = FakeForm({"name": "HC_Gateway", "url": "http://example.com", "health_check_enabled": "on"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_register_gateway.return_value = MagicMock()
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        gateway_create = mock_register_gateway.call_args[0][1]
+        assert gateway_create.health_check_enabled is True
+
+    @patch.object(GatewayService, "register_gateway")
+    async def test_admin_add_gateway_health_check_disabled_when_unchecked(self, mock_register_gateway, mock_request, mock_db):
+        """Test that health_check_enabled is False when checkbox is not in form (unchecked)."""
+        form_data = FakeForm({"name": "HC_Disabled_Gateway", "url": "http://example.com"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_register_gateway.return_value = MagicMock()
+        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+        gateway_create = mock_register_gateway.call_args[0][1]
+        assert gateway_create.health_check_enabled is False
+
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_url_validation(self, mock_update_gateway, mock_request, mock_db):
         """Test editing gateway with URL validation."""

@@ -4570,6 +4570,7 @@ class Gateway(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
+    health_check_enabled: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[List[Dict[str, str]]] = mapped_column(JSON, default=list, nullable=False)
 

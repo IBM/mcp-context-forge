@@ -6255,6 +6255,12 @@ async function editGateway(gatewayId) {
             transportField.value = gateway.transport || "SSE"; // falls back to SSE(default)
         }
 
+        // Populate health check toggle
+        const healthCheckField = safeGetElement("health-check-enabled-gw-edit");
+        if (healthCheckField) {
+            healthCheckField.checked = gateway.healthCheckEnabled !== false;
+        }
+
         const authTypeField = safeGetElement("auth-type-gw-edit");
 
         if (authTypeField) {

@@ -2325,6 +2325,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 else:
                     gateway.version = 1
 
+                # When health checks are disabled, mark gateway and tools as reachable
+                # to prevent false-negative offline status for OAuth auth_code gateways
+                # where platform_admin_email has no valid token.
+                if gateway_update.health_check_enabled is not None:
+                    gateway.health_check_enabled = gateway_update.health_check_enabled
+                    if not gateway_update.health_check_enabled:
+                        gateway.reachable = True
+                        now = datetime.now(timezone.utc)
+                        db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).values(reachable=True, updated_at=now))
+
                 db.commit()
                 db.refresh(gateway)
 
@@ -3868,8 +3878,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         with cast(Any, SessionLocal)() as db:
             if include_inactive:
                 return db.execute(select(DbGateway)).scalars().all()
-            # Only return active gateways
-            return db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
+            # Only return active gateways with health checks enabled
+            return db.execute(select(DbGateway).where(DbGateway.enabled, DbGateway.health_check_enabled)).scalars().all()
 
     def get_first_gateway_by_url(self, db: Session, url: str, team_id: Optional[str] = None, include_inactive: bool = False) -> Optional[GatewayRead]:
         """Return the first DbGateway matching the given URL and optional team_id.
