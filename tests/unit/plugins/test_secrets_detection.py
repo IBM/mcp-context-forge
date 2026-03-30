@@ -3,9 +3,11 @@
 
 import logging
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 
 from mcpgateway.common.models import ResourceContent
 from mcpgateway.plugins.framework import PluginConfig, PluginManager, PluginMode, PromptHookType, PromptPrehookPayload, ResourceHookType, ResourcePostFetchPayload, ToolHookType, ToolPostInvokePayload
@@ -142,32 +144,50 @@ class TestSecretsDetectionHookDispatch:
     def _global_context() -> GlobalContext:
         return GlobalContext(request_id="req-secrets", server_id="srv-secrets")
 
-    def _manager(self, monkeypatch: pytest.MonkeyPatch, use_rust: bool, config: dict) -> PluginManager:
+    async def _manager(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, use_rust: bool, config: dict) -> PluginManager:
         from plugins.secrets_detection import secrets_detection as module
 
         if not use_rust:
             monkeypatch.setattr(module, "_RUST_AVAILABLE", False)
             monkeypatch.setattr(module, "secrets_detection", None)
 
-        manager = PluginManager()
-        plugin = SecretsDetectionPlugin(
-            PluginConfig(
-                name="SecretsDetection",
-                kind="plugins.secrets_detection.secrets_detection.SecretsDetectionPlugin",
-                hooks=[
-                    PromptHookType.PROMPT_PRE_FETCH,
-                    ToolHookType.TOOL_POST_INVOKE,
-                    ResourceHookType.RESOURCE_POST_FETCH,
-                ],
-                mode=PluginMode.ENFORCE,
-                config=config,
-            )
+        config_path = tmp_path / f"secrets_detection_{'rust' if use_rust else 'python'}.yaml"
+        config_path.write_text(
+            yaml.safe_dump(
+                {
+                    "plugins": [
+                        {
+                            "name": "SecretsDetection",
+                            "kind": "plugins.secrets_detection.secrets_detection.SecretsDetectionPlugin",
+                            "hooks": [
+                                PromptHookType.PROMPT_PRE_FETCH.value,
+                                ToolHookType.TOOL_POST_INVOKE.value,
+                                ResourceHookType.RESOURCE_POST_FETCH.value,
+                            ],
+                            "mode": PluginMode.ENFORCE.value,
+                            "priority": 100,
+                            "config": config,
+                        }
+                    ],
+                    "plugin_dirs": [],
+                    "plugin_settings": {
+                        "parallel_execution_within_band": False,
+                        "plugin_timeout": 30,
+                        "fail_on_plugin_error": False,
+                        "enable_plugin_api": True,
+                        "plugin_health_check_interval": 60,
+                    },
+                }
+            ),
+            encoding="utf-8",
         )
-        manager._registry.register(plugin)
+
+        manager = PluginManager(str(config_path))
+        await manager.initialize()
         return manager
 
-    async def test_prompt_pre_fetch_redacts_without_blocking(self, monkeypatch: pytest.MonkeyPatch, use_rust: bool):
-        manager = self._manager(monkeypatch, use_rust, {"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
+    async def test_prompt_pre_fetch_redacts_without_blocking(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, use_rust: bool):
+        manager = await self._manager(monkeypatch, tmp_path, use_rust, {"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
         try:
             payload = PromptPrehookPayload(prompt_id="prompt-1", args={"input": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"})
             result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, global_context=self._global_context())
@@ -181,8 +201,8 @@ class TestSecretsDetectionHookDispatch:
         finally:
             await manager.shutdown()
 
-    async def test_prompt_pre_fetch_blocks_without_redaction(self, monkeypatch: pytest.MonkeyPatch, use_rust: bool):
-        manager = self._manager(monkeypatch, use_rust, {"block_on_detection": True, "redact": False})
+    async def test_prompt_pre_fetch_blocks_without_redaction(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, use_rust: bool):
+        manager = await self._manager(monkeypatch, tmp_path, use_rust, {"block_on_detection": True, "redact": False})
         try:
             payload = PromptPrehookPayload(prompt_id="prompt-1", args={"input": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"})
             result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, global_context=self._global_context())
@@ -194,8 +214,8 @@ class TestSecretsDetectionHookDispatch:
         finally:
             await manager.shutdown()
 
-    async def test_tool_post_invoke_redacts_mcp_content_payload(self, monkeypatch: pytest.MonkeyPatch, use_rust: bool):
-        manager = self._manager(monkeypatch, use_rust, {"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
+    async def test_tool_post_invoke_redacts_mcp_content_payload(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, use_rust: bool):
+        manager = await self._manager(monkeypatch, tmp_path, use_rust, {"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
         try:
             payload = ToolPostInvokePayload(
                 name="writer",
@@ -213,8 +233,8 @@ class TestSecretsDetectionHookDispatch:
         finally:
             await manager.shutdown()
 
-    async def test_tool_post_invoke_blocks_without_redaction(self, monkeypatch: pytest.MonkeyPatch, use_rust: bool):
-        manager = self._manager(monkeypatch, use_rust, {"block_on_detection": True, "redact": False})
+    async def test_tool_post_invoke_blocks_without_redaction(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, use_rust: bool):
+        manager = await self._manager(monkeypatch, tmp_path, use_rust, {"block_on_detection": True, "redact": False})
         try:
             payload = ToolPostInvokePayload(
                 name="writer",
@@ -229,8 +249,8 @@ class TestSecretsDetectionHookDispatch:
         finally:
             await manager.shutdown()
 
-    async def test_resource_post_fetch_redacts_without_blocking(self, monkeypatch: pytest.MonkeyPatch, use_rust: bool):
-        manager = self._manager(monkeypatch, use_rust, {"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
+    async def test_resource_post_fetch_redacts_without_blocking(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, use_rust: bool):
+        manager = await self._manager(monkeypatch, tmp_path, use_rust, {"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
         try:
             payload = ResourcePostFetchPayload(
                 uri="file:///secret.txt",
@@ -247,8 +267,8 @@ class TestSecretsDetectionHookDispatch:
         finally:
             await manager.shutdown()
 
-    async def test_resource_post_fetch_blocks_without_redaction(self, monkeypatch: pytest.MonkeyPatch, use_rust: bool):
-        manager = self._manager(monkeypatch, use_rust, {"block_on_detection": True, "redact": False})
+    async def test_resource_post_fetch_blocks_without_redaction(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, use_rust: bool):
+        manager = await self._manager(monkeypatch, tmp_path, use_rust, {"block_on_detection": True, "redact": False})
         try:
             payload = ResourcePostFetchPayload(
                 uri="file:///secret.txt",
