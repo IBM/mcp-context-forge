@@ -507,10 +507,7 @@ class PermissionService:
             if token_teams is not None and len(token_teams) > 0:
                 base_condition = and_(
                     base_condition,
-                    or_(
-                        UserRole.scope_id.is_(None),  # Keep global team roles
-                        UserRole.scope_id.in_(token_teams)  # Only roles from narrowed teams
-                    ),
+                    or_(UserRole.scope_id.is_(None), UserRole.scope_id.in_(token_teams)),  # Keep global team roles; narrow to specified teams
                 )
 
             scope_conditions.append(base_condition)
