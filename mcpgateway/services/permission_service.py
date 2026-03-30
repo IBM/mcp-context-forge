@@ -126,10 +126,7 @@ class PermissionService:
             if token_teams is not None and len(token_teams) == 0:
                 # Public-only tokens: admin bypass is suppressed entirely
                 if allow_admin_bypass and await self._is_user_admin(user_email):
-                    logger.warning(
-                        f"[RBAC] Admin bypass suppressed for public-only token: "
-                        f"user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}"
-                    )
+                    logger.warning(f"[RBAC] Admin bypass suppressed for public-only token: " f"user={SecurityValidator.sanitize_log_message(user_email)}, permission={permission}")
                 # Continue to permission check without admin bypass
             elif allow_admin_bypass and await self._is_user_admin(user_email):
                 # Check if user is admin (bypass all permission checks if allowed)
@@ -168,7 +165,7 @@ class PermissionService:
             # Default to deny on error
             return False
 
-    async def has_admin_permission(self, user_email: str, team_id: Optional[str] = None) -> bool:
+    async def has_admin_permission(self, user_email: str, team_id: Optional[str] = None, token_teams: Optional[List[str]] = None) -> bool:
         """Check if user has any admin-level permission.
 
         This is used by AdminAuthMiddleware to allow access to /admin/* routes
@@ -184,11 +181,19 @@ class PermissionService:
             team_id: Optional team ID for team-scoped permission checks.
                 Must be pre-validated against the user's DB-resolved teams
                 before passing here.
+            token_teams: Optional list of team IDs to scope the permission check (Layer 1 narrowing)
 
         Returns:
             bool: True if user is an admin OR has any admin.* permission
         """
         try:
+            # SECURITY: Public-only tokens (token_teams=[]) suppress admin bypass
+            if token_teams is not None and len(token_teams) == 0:
+                user_permissions = await self.get_user_permissions(user_email, team_id=team_id, token_teams=token_teams)
+                if Permissions.ALL_PERMISSIONS in user_permissions:
+                    return True
+                return any(perm.startswith("admin.") for perm in user_permissions)
+
             # First check if user is a database admin
             if await self._is_user_admin(user_email):
                 return True
@@ -197,7 +202,7 @@ class PermissionService:
             # When team_id is provided, this includes team-scoped roles for
             # that team, allowing team members with admin.dashboard to access
             # the admin UI in their team context.
-            user_permissions = await self.get_user_permissions(user_email, team_id=team_id)
+            user_permissions = await self.get_user_permissions(user_email, team_id=team_id, token_teams=token_teams)
 
             # Check for wildcard or any admin permission
             if Permissions.ALL_PERMISSIONS in user_permissions:
@@ -500,7 +505,8 @@ class PermissionService:
 
         if team_id:
             # Security: Verify team_id is within token scope when narrowed.
-            if token_teams is not None and len(token_teams) > 0 and team_id not in token_teams:
+            # Public-only tokens (token_teams=[]) must never access team-specific roles.
+            if token_teams is not None and (len(token_teams) == 0 or team_id not in token_teams):
                 logger.warning(
                     f"[RBAC] Team {SecurityValidator.sanitize_log_message(team_id)} not in token scope "
                     f"{SecurityValidator.sanitize_log_message(token_teams)} for {SecurityValidator.sanitize_log_message(user_email)}"
@@ -539,10 +545,7 @@ class PermissionService:
                     # Narrowed token: include only specified teams
                     base_condition = and_(
                         base_condition,
-                        or_(
-                            UserRole.scope_id.is_(None),  # Keep global team roles
-                            UserRole.scope_id.in_(token_teams)  # Only roles from narrowed teams
-                        ),
+                        or_(UserRole.scope_id.is_(None), UserRole.scope_id.in_(token_teams)),  # Keep global team roles  # Only roles from narrowed teams
                     )
                     scope_conditions.append(base_condition)
             else:

@@ -1013,14 +1013,15 @@ class PermissionChecker:
         Returns:
             bool: True if user has admin permissions
         """
+        token_teams = self.user_context.get("token_teams")
         if self.db_session:
             # Use existing session
             permission_service = PermissionService(self.db_session)
-            return await permission_service.check_admin_permission(self.user_context["email"])
+            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
         # Create fresh db session
         with fresh_db_session() as db:
             permission_service = PermissionService(db)
-            return await permission_service.check_admin_permission(self.user_context["email"])
+            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
 
     async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has any of the specified permissions.
