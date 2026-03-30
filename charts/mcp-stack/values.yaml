@@ -260,6 +260,7 @@ mcpContextForge:
     REDIS_RETRY_ON_TIMEOUT: "true"   # Retry commands on timeout
     REDIS_HEALTH_CHECK_INTERVAL: "30"  # Health check interval (seconds, 0=disabled)
     REDIS_DECODE_RESPONSES: "true"   # Return strings instead of bytes
+    REDIS_CLUSTER_MODE: "false"      # Use RedisCluster client for cluster deployments (handles MOVED/ASK redirects)
 
     # ─ Redis leader election (multi-node) ─
     REDIS_LEADER_TTL: "15"           # Leader TTL (seconds)

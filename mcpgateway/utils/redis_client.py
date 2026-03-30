@@ -131,6 +131,34 @@ def _strip_db_from_url(url: str) -> str:
     return url
 
 
+def _mask_redis_url(url: str) -> str:
+    """Mask credentials in a Redis URL for safe logging.
+
+    Replaces the password portion of the URL with ``***`` so that
+    connection details can be logged without leaking secrets.
+
+    Args:
+        url: Redis connection URL, e.g. ``redis://:secret@host:6379``
+
+    Returns:
+        Masked URL, e.g. ``redis://:***@host:6379``
+
+    Examples:
+        >>> _mask_redis_url("redis://:secret@host:6379")
+        'redis://:***@host:6379'
+        >>> _mask_redis_url("redis://host:6379")
+        'redis://host:6379'
+        >>> _mask_redis_url("redis://user:pass@host:6379")
+        'redis://user:***@host:6379'
+    """
+    parsed = urlparse(url)
+    if parsed.password:
+        # Replace password in netloc
+        masked_netloc = parsed.netloc.replace(f":{parsed.password}@", ":***@", 1)
+        return parsed._replace(netloc=masked_netloc).geturl()
+    return url
+
+
 async def _create_cluster_client(settings: Any, aioredis: Any, parser_class: Any) -> Any:
     """Create a ``redis.asyncio.RedisCluster`` client.
 
@@ -255,7 +283,7 @@ async def get_redis_client() -> Optional[Any]:
             logger.info(
                 f"Redis Cluster client initialized: parser={_parser_info}, "
                 f"timeout={settings.redis_socket_timeout}s, "
-                f"url={_strip_db_from_url(settings.redis_url)}"
+                f"url={_mask_redis_url(_strip_db_from_url(settings.redis_url))}"
             )
         else:
             _client = await _create_standalone_client(settings, aioredis, parser_class)
