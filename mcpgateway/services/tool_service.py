@@ -2940,10 +2940,6 @@ class ToolService(BaseService):
         has_pre_invoke = self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
         has_post_invoke = self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)
 
-        # Post-invoke hooks cannot run after Rust upstream execution; force fallback
-        if has_post_invoke:
-            return {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
-
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
         is_direct_proxy = False
         tool = None
@@ -3188,33 +3184,27 @@ class ToolService(BaseService):
 
         runtime_headers = {str(header_name): str(header_value) for header_name, header_value in headers.items() if header_name and header_value}
 
+        hook_global_context = None
+        if has_pre_invoke or has_post_invoke:
+            hook_global_context = self._build_rust_tool_hook_global_context(
+                app_user_email=app_user_email,
+                server_id=server_id,
+                tool_gateway_id=tool_gateway_id,
+                plugin_global_context=plugin_global_context,
+                tool_payload=tool_payload,
+                gateway_payload=gateway_payload,
+            )
+
+        native_post_invoke_retry_policy = None
+        if has_post_invoke:
+            native_post_invoke_retry_policy, requires_python_fallback = self._build_rust_native_tool_post_invoke_retry_policy(name, hook_global_context)
+            if requires_python_fallback:
+                return {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}
+
         # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
         # inject credentials and clean arguments before the Rust direct call.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
-            # Reuse middleware-provided global context (carries JWT claims state,
-            # correlation ID, etc.) or create a new one as fallback — matching
-            # the pattern used by invoke_tool().
-            if plugin_global_context:
-                hook_global_context = plugin_global_context
-                if tool_gateway_id and isinstance(tool_gateway_id, str):
-                    hook_global_context.server_id = tool_gateway_id
-                if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
-                    hook_global_context.user = app_user_email
-            else:
-                request_id = get_correlation_id() or uuid.uuid4().hex
-                context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
-                hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email)
-
-            # Inject tool/gateway metadata so pre-invoke plugins (OPA, Vault,
-            # Cedar, telemetry) see the same context as the Python invoke path.
-            tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
-            gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if has_gateway and gateway_payload else None
-            if tool_metadata:
-                hook_global_context.metadata[TOOL_METADATA] = tool_metadata
-            if gateway_metadata:
-                hook_global_context.metadata[GATEWAY_METADATA] = gateway_metadata
-
             pre_result, _ = await self._plugin_manager.invoke_hook(
                 ToolHookType.TOOL_PRE_INVOKE,
                 payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=dict(runtime_headers))),
@@ -3244,11 +3234,131 @@ class ToolService(BaseService):
             "toolId": tool_id or None,
             "serverId": server_id,
         }
+        if native_post_invoke_retry_policy is not None:
+            plan["postInvokeRetryPolicy"] = native_post_invoke_retry_policy
         if has_pre_invoke:
             plan["hasPreInvokeHooks"] = True
             if modified_args is not None:
                 plan["modifiedArgs"] = modified_args
         return plan
+
+    def _build_rust_tool_hook_global_context(
+        self,
+        *,
+        app_user_email: Optional[str],
+        server_id: Optional[str],
+        tool_gateway_id: Optional[str],
+        plugin_global_context: Optional[GlobalContext],
+        tool_payload: Optional[Dict[str, Any]],
+        gateway_payload: Optional[Dict[str, Any]],
+    ) -> GlobalContext:
+        """Build plugin global context for Rust-direct tool plan resolution.
+
+        Args:
+            app_user_email: Effective authenticated user for plugin context.
+            server_id: Explicit virtual server scope from the request.
+            tool_gateway_id: Resolved tool gateway id.
+            plugin_global_context: Existing middleware context if available.
+            tool_payload: Resolved tool payload.
+            gateway_payload: Resolved gateway payload.
+
+        Returns:
+            GlobalContext primed with the same metadata the Python invoke path exposes.
+        """
+        if plugin_global_context:
+            hook_global_context = plugin_global_context
+            if tool_gateway_id and isinstance(tool_gateway_id, str):
+                hook_global_context.server_id = tool_gateway_id
+            if not hook_global_context.user and app_user_email and isinstance(app_user_email, str):
+                hook_global_context.user = app_user_email
+        else:
+            request_id = get_correlation_id() or uuid.uuid4().hex
+            context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
+            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email)
+
+        tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
+        gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if gateway_payload else None
+        if tool_metadata:
+            hook_global_context.metadata[TOOL_METADATA] = tool_metadata
+        if gateway_metadata:
+            hook_global_context.metadata[GATEWAY_METADATA] = gateway_metadata
+        return hook_global_context
+
+    def _build_rust_native_tool_post_invoke_retry_policy(
+        self,
+        tool_name: str,
+        hook_global_context: Optional[GlobalContext],
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
+        """Return a native Rust retry policy when the active post-invoke hooks allow it.
+
+        The Rust runtime only supports native post-invoke execution for the
+        default retry-with-backoff plugin. Any other active `tool_post_invoke`
+        hook must still force the call back to Python to preserve plugin semantics.
+
+        Args:
+            tool_name: Requested tool name.
+            hook_global_context: Resolved plugin context for condition matching.
+
+        Returns:
+            Tuple of `(policy, requires_python_fallback)`.
+        """
+        if not self._plugin_manager or not self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+            return (None, False)
+
+        # First-Party
+        from mcpgateway.plugins.framework import PluginMode  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
+
+        # Third-Party/Local
+        from plugins.retry_with_backoff.retry_with_backoff import RetryConfig  # pylint: disable=import-outside-toplevel
+
+        global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
+        payload = ToolPostInvokePayload(name=tool_name, result={})
+        hook_refs = self._plugin_manager._registry.get_hook_refs_for_hook(hook_type=ToolHookType.TOOL_POST_INVOKE)  # pylint: disable=protected-access
+
+        active_hook_refs = []
+        for hook_ref in hook_refs:
+            if hook_ref.plugin_ref.mode == PluginMode.DISABLED:
+                continue
+            if hook_ref.plugin_ref.conditions and not payload_matches(payload, ToolHookType.TOOL_POST_INVOKE, hook_ref.plugin_ref.conditions, global_context):
+                continue
+            active_hook_refs.append(hook_ref)
+
+        if not active_hook_refs:
+            return (None, False)
+
+        if len(active_hook_refs) != 1 or active_hook_refs[0].plugin_ref.name != "RetryWithBackoffPlugin":
+            return (None, True)
+
+        retry_hook = active_hook_refs[0]
+        effective_cfg = RetryConfig(**(retry_hook.plugin_ref.plugin.config.config or {}))
+        ceiling = settings.max_tool_retries
+        if effective_cfg.max_retries > ceiling:
+            effective_cfg = effective_cfg.model_copy(update={"max_retries": ceiling})
+
+        overrides = effective_cfg.tool_overrides.get(tool_name)
+        if overrides:
+            merged_cfg = effective_cfg.model_dump()
+            merged_cfg.update(overrides)
+            merged_cfg.pop("tool_overrides", None)
+            effective_cfg = RetryConfig(**merged_cfg)
+            if effective_cfg.max_retries > ceiling:
+                effective_cfg = effective_cfg.model_copy(update={"max_retries": ceiling})
+
+        if effective_cfg.check_text_content:
+            return (None, True)
+
+        return (
+            {
+                "kind": "retry_with_backoff",
+                "maxRetries": int(effective_cfg.max_retries),
+                "backoffBaseMs": int(effective_cfg.backoff_base_ms),
+                "maxBackoffMs": int(effective_cfg.max_backoff_ms),
+                "retryOnStatus": list(effective_cfg.retry_on_status),
+                "jitter": bool(effective_cfg.jitter),
+            },
+            False,
+        )
 
     def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
         """Load candidate tools for invocation, narrowing to a virtual server when possible.

@@ -30,13 +30,22 @@ use opentelemetry::{
 use opentelemetry_otlp::{
     Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig,
 };
-use opentelemetry_sdk::{Resource, propagation::TraceContextPropagator, trace::SdkTracerProvider};
+use opentelemetry_sdk::{
+    Resource, propagation::TraceContextPropagator, runtime,
+    trace::{
+        BatchConfigBuilder, SdkTracerProvider,
+        span_processor_with_async_runtime::BatchSpanProcessor as AsyncBatchSpanProcessor,
+    },
+};
 use regex::Regex;
 use serde_json::{Map, Value, json};
 use tonic::metadata::{MetadataMap, MetadataValue};
 use tracing::{Span, span};
 use tracing_opentelemetry::{OpenTelemetrySpanExt, layer as otel_layer};
-use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{
+    EnvFilter, Layer, Registry, filter, layer::SubscriberExt,
+    util::SubscriberInitExt,
+};
 
 use crate::InternalAuthContext;
 
@@ -47,9 +56,14 @@ const LANGFUSE_OTEL_PATH_FRAGMENT: &str = "/api/public/otel";
 const ELLIPSIS_MARKER: &str = "...";
 const TEAM_SCOPE_SEPARATOR: &str = ",";
 const URL_REDACTED: &str = "REDACTED";
+const OTEL_SPAN_TARGET: &str = "contextforge.mcp.otel";
 
 static OBSERVABILITY_CONFIG: OnceLock<ObservabilityConfig> = OnceLock::new();
 static TRACER_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
+static URL_REGEX: OnceLock<Regex> = OnceLock::new();
+static BEARER_REGEX: OnceLock<Regex> = OnceLock::new();
+static REPEATED_REDACTION_REGEX: OnceLock<Regex> = OnceLock::new();
+static STATIC_SENSITIVE_PARAMS: OnceLock<HashSet<String>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct ObservabilityHandle {
@@ -82,9 +96,16 @@ struct ObservabilityConfig {
     capture_identity_attributes: bool,
     redact_fields: HashSet<String>,
     raw_redact_fields: Vec<String>,
+    text_redaction_patterns: Vec<TextRedactionPattern>,
     max_trace_payload_size: usize,
     capture_input_spans: HashSet<String>,
     capture_output_spans: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TextRedactionPattern {
+    quoted: Regex,
+    bare: Regex,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -112,12 +133,11 @@ pub fn init_tracing(log_filter: &str) -> Result<ObservabilityHandle, String> {
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
-        .compact();
-    let env_filter = EnvFilter::new(log_filter);
+        .compact()
+        .with_filter(EnvFilter::new(log_filter));
 
     if !config.enabled {
         Registry::default()
-            .with(env_filter)
             .with(fmt_layer)
             .try_init()
             .map_err(|err| format!("failed to initialize tracing subscriber: {err}"))?;
@@ -126,10 +146,12 @@ pub fn init_tracing(log_filter: &str) -> Result<ObservabilityHandle, String> {
 
     let provider = build_tracer_provider(&config)?;
     let tracer = provider.tracer("contextforge-rust-runtime");
+    let otel_filter = filter::filter_fn(|metadata| {
+        metadata.is_span() && metadata.target() == OTEL_SPAN_TARGET
+    });
     let subscriber = Registry::default()
-        .with(env_filter)
         .with(fmt_layer)
-        .with(otel_layer().with_tracer(tracer));
+        .with(otel_layer().with_tracer(tracer).with_filter(otel_filter));
     subscriber
         .try_init()
         .map_err(|err| format!("failed to initialize tracing subscriber: {err}"))?;
@@ -189,12 +211,12 @@ pub(crate) fn trace_request_context(
 
 #[must_use]
 pub fn start_root_span(name: &'static str, context: &TraceRequestContext) -> Span {
-    start_span(name, context)
+    start_span(name, context, true)
 }
 
 #[must_use]
 pub fn start_child_span(name: &'static str, context: &TraceRequestContext) -> Span {
-    start_span(name, context)
+    start_span(name, context, false)
 }
 
 pub fn set_langfuse_trace_name(span: &Span, value: impl Into<String>) {
@@ -410,9 +432,12 @@ fn build_tracer_provider(config: &ObservabilityConfig) -> Result<SdkTracerProvid
         .build();
 
     let exporter = build_otlp_exporter(config)?;
+    let batch_processor = AsyncBatchSpanProcessor::builder(exporter, runtime::Tokio)
+        .with_batch_config(BatchConfigBuilder::default().build())
+        .build();
     Ok(SdkTracerProvider::builder()
         .with_resource(resource)
-        .with_batch_exporter(exporter)
+        .with_span_processor(batch_processor)
         .build())
 }
 
@@ -446,13 +471,20 @@ fn build_otlp_exporter(config: &ObservabilityConfig) -> Result<SpanExporter, Str
                 .build()
                 .map_err(|err| format!("failed to build OTLP gRPC exporter: {err}"))
         }
-        _ => SpanExporter::builder()
-            .with_http()
-            .with_endpoint(normalize_http_otlp_endpoint(&endpoint))
-            .with_protocol(Protocol::HttpBinary)
-            .with_headers(config.otlp_headers.clone())
-            .build()
-            .map_err(|err| format!("failed to build OTLP HTTP exporter: {err}")),
+        _ => {
+            let http_client = reqwest::Client::builder()
+                .build()
+                .map_err(|err| format!("failed to build OTLP HTTP client: {err}"))?;
+
+            SpanExporter::builder()
+                .with_http()
+                .with_http_client(http_client)
+                .with_endpoint(normalize_http_otlp_endpoint(&endpoint))
+                .with_protocol(Protocol::HttpBinary)
+                .with_headers(config.otlp_headers.clone())
+                .build()
+                .map_err(|err| format!("failed to build OTLP HTTP exporter: {err}"))
+        }
     }
 }
 
@@ -482,12 +514,17 @@ impl Injector for HeaderInjector<'_> {
     }
 }
 
-fn start_span(name: &'static str, context: &TraceRequestContext) -> Span {
+fn start_span(
+    name: &'static str,
+    context: &TraceRequestContext,
+    include_trace_metadata: bool,
+) -> Span {
     if !observability_enabled() {
         return Span::none();
     }
 
     let span = span!(
+        target: OTEL_SPAN_TARGET,
         tracing::Level::INFO,
         "contextforge.mcp",
         "mcp.operation" = name
@@ -499,6 +536,10 @@ fn start_span(name: &'static str, context: &TraceRequestContext) -> Span {
     }
     if let Some(request_id) = &context.request_id {
         set_span_attribute(&span, "request_id", request_id.clone());
+    }
+
+    if !include_trace_metadata {
+        return span;
     }
 
     if config().capture_identity_attributes {
@@ -742,41 +783,43 @@ fn field_looks_like_url(field_name: &str) -> bool {
 
 fn sanitize_trace_text(text: &str) -> String {
     let mut sanitized = sanitize_exception_message(text);
-    let bearer_regex =
-        Regex::new(r"(?i)\b(Bearer|Basic)\s+([A-Za-z0-9._~+/=-]+)([\s,;]|$)").unwrap();
-    sanitized = bearer_regex
-        .replace_all(&sanitized, |captures: &regex::Captures<'_>| {
-            format!("{} ***{}", &captures[1], &captures[3])
-        })
-        .to_string();
-
-    for field_name in &config().raw_redact_fields {
-        let key_pattern = field_name_text_pattern(field_name);
-        let quoted_pattern = Regex::new(&format!(
-            r#"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*['"])([^'"]*)(['"])"#
-        ))
-        .unwrap();
-        let bare_pattern =
-            Regex::new(&format!(r"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*)([^\s,;]+)")).unwrap();
-        sanitized = quoted_pattern
-            .replace_all(&sanitized, "$1***$3")
-            .to_string();
-        sanitized = bare_pattern
+    let may_have_credentials = contains_ascii_case_insensitive(&sanitized, "bearer")
+        || contains_ascii_case_insensitive(&sanitized, "basic");
+    if may_have_credentials {
+        sanitized = bearer_regex()
             .replace_all(&sanitized, |captures: &regex::Captures<'_>| {
-                let value = &captures[2];
-                if value.eq_ignore_ascii_case("REDACTED") || value == "***" {
-                    format!("{}{}", &captures[1], value)
-                } else {
-                    format!("{}***", &captures[1])
-                }
+                format!("{} ***{}", &captures[1], &captures[3])
             })
             .to_string();
     }
 
-    let repeated_redaction = Regex::new(r"\*\*\*(?:\s+\*\*\*)+").unwrap();
-    repeated_redaction
-        .replace_all(&sanitized, "***")
-        .to_string()
+    if sanitized.contains('=') || sanitized.contains(':') {
+        for pattern in &config().text_redaction_patterns {
+            sanitized = pattern
+                .quoted
+                .replace_all(&sanitized, "$1***$3")
+                .to_string();
+            sanitized = pattern
+                .bare
+                .replace_all(&sanitized, |captures: &regex::Captures<'_>| {
+                    let value = &captures[2];
+                    if value.eq_ignore_ascii_case("REDACTED") || value == "***" {
+                        format!("{}{}", &captures[1], value)
+                    } else {
+                        format!("{}***", &captures[1])
+                    }
+                })
+                .to_string();
+        }
+    }
+
+    if sanitized.contains("*** ") {
+        repeated_redaction_regex()
+            .replace_all(&sanitized, "***")
+            .to_string()
+    } else {
+        sanitized
+    }
 }
 
 fn field_name_text_pattern(field_name: &str) -> String {
@@ -796,9 +839,11 @@ fn sanitize_exception_message(message: &str) -> String {
     if message.is_empty() {
         return message.to_string();
     }
+    if !message.contains("http://") && !message.contains("https://") {
+        return message.to_string();
+    }
 
-    let url_regex = Regex::new(r#"https?://[^\s<>"']+"#).unwrap();
-    url_regex
+    url_regex()
         .replace_all(message, |captures: &regex::Captures<'_>| {
             sanitize_url_for_logging(&captures[0])
         })
@@ -820,13 +865,9 @@ fn sanitize_url_for_logging(url: &str) -> String {
     }
 
     let sensitive_names = static_sensitive_params()
-        .into_iter()
-        .chain(
-            config()
-                .raw_redact_fields
-                .iter()
-                .map(|value| value.to_lowercase()),
-        )
+        .iter()
+        .cloned()
+        .chain(config().raw_redact_fields.iter().map(|value| value.to_lowercase()))
         .collect::<HashSet<_>>();
 
     let sanitized_query = parsed
@@ -848,27 +889,75 @@ fn sanitize_url_for_logging(url: &str) -> String {
     parsed.to_string()
 }
 
-fn static_sensitive_params() -> HashSet<String> {
-    [
-        "api_key",
-        "apikey",
-        "api-key",
-        "key",
-        "token",
-        "access_token",
-        "auth",
-        "auth_token",
-        "secret",
-        "password",
-        "pwd",
-        "credential",
-        "credentials",
-        "tavilyapikey",
-        "tavilyApiKey",
-    ]
-    .into_iter()
-    .map(str::to_lowercase)
-    .collect()
+fn static_sensitive_params() -> &'static HashSet<String> {
+    STATIC_SENSITIVE_PARAMS.get_or_init(|| {
+        [
+            "api_key",
+            "apikey",
+            "api-key",
+            "key",
+            "token",
+            "access_token",
+            "auth",
+            "auth_token",
+            "secret",
+            "password",
+            "pwd",
+            "credential",
+            "credentials",
+            "tavilyapikey",
+            "tavilyApiKey",
+        ]
+        .into_iter()
+        .map(str::to_lowercase)
+        .collect()
+    })
+}
+
+fn url_regex() -> &'static Regex {
+    URL_REGEX.get_or_init(|| Regex::new(r#"https?://[^\s<>"']+"#).expect("valid url regex"))
+}
+
+fn bearer_regex() -> &'static Regex {
+    BEARER_REGEX.get_or_init(|| {
+        Regex::new(r"(?i)\b(Bearer|Basic)\s+([A-Za-z0-9._~+/=-]+)([\s,;]|$)")
+            .expect("valid bearer regex")
+    })
+}
+
+fn repeated_redaction_regex() -> &'static Regex {
+    REPEATED_REDACTION_REGEX
+        .get_or_init(|| Regex::new(r"\*\*\*(?:\s+\*\*\*)+").expect("valid repeated redaction regex"))
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return false;
+    }
+
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+fn build_text_redaction_patterns(raw_redact_fields: &[String]) -> Vec<TextRedactionPattern> {
+    raw_redact_fields
+        .iter()
+        .map(|field_name| {
+            let key_pattern = field_name_text_pattern(field_name);
+            TextRedactionPattern {
+                quoted: Regex::new(&format!(
+                    r#"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*['"])([^'"]*)(['"])"#
+                ))
+                .expect("valid quoted field redaction regex"),
+                bare: Regex::new(&format!(
+                    r"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*)([^\s,;]+)"
+                ))
+                .expect("valid bare field redaction regex"),
+            }
+        })
+        .collect()
 }
 
 fn session_id_from_headers(headers: &HeaderMap) -> Option<String> {
@@ -1127,6 +1216,14 @@ fn config() -> &'static ObservabilityConfig {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
                 .collect(),
+            text_redaction_patterns: build_text_redaction_patterns(
+                &DEFAULT_REDACT_FIELDS
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>(),
+            ),
             max_trace_payload_size: DEFAULT_MAX_PAYLOAD_SIZE,
             capture_input_spans: HashSet::new(),
             capture_output_spans: HashSet::new(),
@@ -1188,6 +1285,7 @@ impl ObservabilityConfig {
                 .iter()
                 .map(|value| normalize_field_name(value))
                 .collect(),
+            text_redaction_patterns: build_text_redaction_patterns(&raw_redact_fields),
             raw_redact_fields,
             max_trace_payload_size: std::env::var("OTEL_MAX_TRACE_PAYLOAD_SIZE")
                 .ok()

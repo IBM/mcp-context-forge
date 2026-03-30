@@ -26,6 +26,7 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use futures_util::{StreamExt, TryStreamExt};
+use rand::Rng;
 use redis::{AsyncCommands, Script, aio::ConnectionManager as RedisConnectionManager};
 use reqwest::{Client, Url};
 #[cfg(feature = "rmcp-upstream-client")]
@@ -430,6 +431,19 @@ struct ResolvedMcpToolCallPlan {
     has_pre_invoke_hooks: bool,
     #[serde(default)]
     modified_args: Option<Value>,
+    #[serde(default)]
+    post_invoke_retry_policy: Option<NativePostInvokeRetryPolicy>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePostInvokeRetryPolicy {
+    kind: String,
+    max_retries: u32,
+    backoff_base_ms: u64,
+    max_backoff_ms: u64,
+    retry_on_status: Vec<i32>,
+    jitter: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -8312,6 +8326,110 @@ fn classify_tools_call_metric_outcome(
     (true, None)
 }
 
+fn retry_policy_supports_native_execution(policy: &NativePostInvokeRetryPolicy) -> bool {
+    policy.kind == "retry_with_backoff"
+}
+
+fn compute_retry_delay_ms(policy: &NativePostInvokeRetryPolicy, retry_attempt: u32) -> u64 {
+    let ceiling = policy
+        .backoff_base_ms
+        .saturating_mul(2u64.saturating_pow(retry_attempt))
+        .min(policy.max_backoff_ms);
+    if policy.jitter {
+        rand::thread_rng().gen_range(0..=ceiling)
+    } else {
+        ceiling
+    }
+}
+
+fn retry_status_matches(policy: &NativePostInvokeRetryPolicy, status_code: Option<i32>) -> bool {
+    status_code
+        .map(|code| policy.retry_on_status.contains(&code))
+        .unwrap_or(false)
+}
+
+fn should_retry_jsonrpc_payload(policy: &NativePostInvokeRetryPolicy, payload: &Value) -> bool {
+    if payload.get("error").is_some() {
+        return true;
+    }
+
+    let result = payload.get("result").unwrap_or(payload);
+    let Some(result_object) = result.as_object() else {
+        return false;
+    };
+
+    let structured = result_object
+        .get("structuredContent")
+        .or_else(|| result_object.get("structured_content"))
+        .and_then(Value::as_object);
+    let structured_status = structured
+        .and_then(|value| value.get("status_code"))
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok());
+
+    if result_object
+        .get("isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return match structured_status {
+            Some(code) => retry_status_matches(policy, Some(code)),
+            None => true,
+        };
+    }
+
+    if structured
+        .and_then(|value| value.get("isError"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    retry_status_matches(policy, structured_status)
+}
+
+fn retry_delay_for_payload(
+    policy: &NativePostInvokeRetryPolicy,
+    payload: &Value,
+    retry_attempt: u32,
+) -> Option<u64> {
+    if !retry_policy_supports_native_execution(policy) || retry_attempt >= policy.max_retries {
+        return None;
+    }
+    if should_retry_jsonrpc_payload(policy, payload) {
+        return Some(compute_retry_delay_ms(policy, retry_attempt));
+    }
+    None
+}
+
+fn retry_delay_for_transport_error(
+    policy: &NativePostInvokeRetryPolicy,
+    retry_attempt: u32,
+) -> Option<u64> {
+    if !retry_policy_supports_native_execution(policy) || retry_attempt >= policy.max_retries {
+        return None;
+    }
+    Some(compute_retry_delay_ms(policy, retry_attempt))
+}
+
+fn jsonrpc_tool_invocation_error_response(
+    request_id: Option<Value>,
+    error_message: &str,
+) -> Response {
+    json_response(
+        StatusCode::OK,
+        json!({
+            "jsonrpc": JSONRPC_VERSION,
+            "id": request_id.unwrap_or(Value::Null),
+            "error": {
+                "code": -32000,
+                "message": format!("Tool invocation failed: {error_message}"),
+            }
+        }),
+    )
+}
+
 fn tools_call_error_type_from_payload(payload: &Value) -> &'static str {
     let code = payload
         .get("error")
@@ -8327,7 +8445,7 @@ fn tools_call_error_type_from_payload(payload: &Value) -> &'static str {
     }
 }
 
-async fn record_tools_call_metric(
+fn record_tools_call_metric(
     state: &AppState,
     incoming_headers: &HeaderMap,
     plan: &ResolvedMcpToolCallPlan,
@@ -8347,9 +8465,13 @@ async fn record_tools_call_metric(
         error_message,
     };
 
-    if let Err(err) = send_tools_call_metric_to_backend(state, incoming_headers, &payload).await {
-        warn!("{err}");
-    }
+    let state = state.clone();
+    let incoming_headers = incoming_headers.clone();
+    tokio::spawn(async move {
+        if let Err(err) = send_tools_call_metric_to_backend(&state, &incoming_headers, &payload).await {
+            warn!("{err}");
+        }
+    });
 }
 
 async fn execute_tools_call_direct(
@@ -8385,240 +8507,66 @@ async fn execute_tools_call_direct(
         set_span_attribute(&root_span, "server_id", server_id);
     }
     set_span_attribute(&root_span, "tool.integration_type", "MCP");
+    let mut retry_attempt = 0u32;
+    loop {
+        // Direct execution mirrors the MCP client lifecycle explicitly:
+        // streamable HTTP reuses cached upstream sessions when they stay healthy,
+        // while SSE establishes a native one-shot client exchange without falling
+        // back through Python.
+        let gateway_call_span = start_child_span("tool.gateway_call", trace_context);
+        if let Some(tool_name) = plan.tool_name.clone() {
+            set_span_attribute(&gateway_call_span, "tool.name", tool_name);
+        }
+        if let Some(tool_id) = plan.tool_id.clone() {
+            set_span_attribute(&gateway_call_span, "tool.id", tool_id);
+        }
+        set_span_attribute(&gateway_call_span, "tool.integration_type", "MCP");
+        set_span_attribute(&gateway_call_span, "retry_attempt", retry_attempt as i64);
 
-    // Direct execution mirrors the MCP client lifecycle explicitly:
-    // streamable HTTP reuses cached upstream sessions when they stay healthy,
-    // while SSE establishes a native one-shot client exchange without falling
-    // back through Python.
-    let gateway_call_span = start_child_span("tool.gateway_call", trace_context);
-    if let Some(tool_name) = plan.tool_name.clone() {
-        set_span_attribute(&gateway_call_span, "tool.name", tool_name);
-    }
-    if let Some(tool_id) = plan.tool_id.clone() {
-        set_span_attribute(&gateway_call_span, "tool.id", tool_id);
-    }
-    set_span_attribute(&gateway_call_span, "tool.integration_type", "MCP");
+        let gateway_result = async {
+            let transport = plan.transport.as_deref().unwrap_or("streamablehttp");
+            if transport == "streamablehttp" && state.use_rmcp_upstream_client() {
+                #[cfg(feature = "rmcp-upstream-client")]
+                match execute_tools_call_via_rmcp(state, incoming_headers, request, plan).await {
+                    Ok((response, success, error_message, output_payload, retry_payload)) => {
+                        return Ok::<_, String>(EitherToolsCallResponse::Finished((
+                            response,
+                            success,
+                            error_message,
+                            output_payload,
+                            retry_payload,
+                        )));
+                    }
+                    Err(err) => warn!("Rust MCP rmcp tools/call fallback: {err}"),
+                }
+            }
 
-    let gateway_result = async {
-        let transport = plan.transport.as_deref().unwrap_or("streamablehttp");
-        if transport == "streamablehttp" && state.use_rmcp_upstream_client() {
-            #[cfg(feature = "rmcp-upstream-client")]
-            match execute_tools_call_via_rmcp(state, incoming_headers, request, plan).await {
-                Ok((response, success, error_message, output_payload)) => {
-                    record_tools_call_metric(
-                        state,
-                        incoming_headers,
-                        plan,
-                        request_started.elapsed().as_secs_f64() * 1000.0,
-                        success,
-                        error_message.clone(),
+            let protocol_version = incoming_headers
+                .get(MCP_PROTOCOL_VERSION_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or(state.protocol_version())
+                .to_string();
+            let timeout_ms = plan.timeout_ms.unwrap_or(30_000);
+            let downstream_session_id = incoming_headers
+                .get("mcp-session-id")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string);
+
+            if transport == "sse" {
+                let (payload, success, error_message) =
+                    execute_tools_call_via_sse(state, plan, request, &protocol_version, timeout_ms)
+                        .await?;
+                let output_payload = if success {
+                    Some(
+                        payload
+                            .get("result")
+                            .cloned()
+                            .unwrap_or_else(|| payload.clone()),
                     )
-                    .await;
-                    return Ok::<_, String>(EitherToolsCallResponse::Finished((
-                        response,
-                        success,
-                        error_message,
-                        output_payload,
-                    )));
-                }
-                Err(err) => warn!("Rust MCP rmcp tools/call fallback: {err}"),
-            }
-        }
-
-        let protocol_version = incoming_headers
-            .get(MCP_PROTOCOL_VERSION_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or(state.protocol_version())
-            .to_string();
-        let timeout_ms = plan.timeout_ms.unwrap_or(30_000);
-        let downstream_session_id = incoming_headers
-            .get("mcp-session-id")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-
-        if transport == "sse" {
-            let (payload, success, error_message) =
-                execute_tools_call_via_sse(state, plan, request, &protocol_version, timeout_ms)
-                    .await?;
-            record_tools_call_metric(
-                state,
-                incoming_headers,
-                plan,
-                request_started.elapsed().as_secs_f64() * 1000.0,
-                success,
-                error_message.clone(),
-            )
-            .await;
-            let output_payload = if success {
-                Some(
-                    payload
-                        .get("result")
-                        .cloned()
-                        .unwrap_or_else(|| payload.clone()),
-                )
-            } else {
-                None
-            };
-            let mut response = json_response(StatusCode::OK, payload);
-            if let Some(session_id) = downstream_session_id
-                && let Ok(value) = HeaderValue::from_str(&session_id)
-            {
-                response
-                    .headers_mut()
-                    .insert(HeaderName::from_static("mcp-session-id"), value);
-            }
-            response.headers_mut().insert(
-                HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
-                HeaderValue::from_static("native"),
-            );
-            return Ok::<_, String>(EitherToolsCallResponse::Finished((
-                response,
-                success,
-                error_message,
-                output_payload,
-            )));
-        }
-
-        let server_url = plan
-            .server_url
-            .as_deref()
-            .ok_or_else(|| "resolved tools/call plan missing server_url".to_string())?;
-        let remote_tool_name = plan
-            .remote_tool_name
-            .as_deref()
-            .ok_or_else(|| "resolved tools/call plan missing remote_tool_name".to_string())?;
-
-        let upstream_session_id = ensure_upstream_session(
-            state,
-            plan,
-            downstream_session_id.as_deref(),
-            &protocol_version,
-            timeout_ms,
-        )
-        .await?;
-
-        let mut tool_response = send_direct_tools_call(
-            state,
-            server_url,
-            plan,
-            request,
-            remote_tool_name,
-            &protocol_version,
-            upstream_session_id.as_deref(),
-            timeout_ms,
-        )
-        .await?;
-
-        if !tool_response.status().is_success() {
-            let session_key = build_upstream_session_key(downstream_session_id.as_deref(), plan)?;
-            state
-                .upstream_tool_sessions()
-                .lock()
-                .await
-                .remove(&session_key);
-            let refreshed_session_id = ensure_upstream_session(
-                state,
-                plan,
-                downstream_session_id.as_deref(),
-                &protocol_version,
-                timeout_ms,
-            )
-            .await?;
-            tool_response = send_direct_tools_call(
-                state,
-                server_url,
-                plan,
-                request,
-                remote_tool_name,
-                &protocol_version,
-                refreshed_session_id.as_deref(),
-                timeout_ms,
-            )
-            .await?;
-        }
-
-        Ok::<_, String>(EitherToolsCallResponse::NeedsPostProcess((
-            tool_response,
-            downstream_session_id,
-        )))
-    }
-    .instrument(gateway_call_span)
-    .await?;
-
-    match gateway_result {
-        EitherToolsCallResponse::Finished((response, success, error_message, output_payload)) => {
-            set_span_attribute(&root_span, "success", success);
-            set_span_attribute(
-                &root_span,
-                "duration.ms",
-                request_started.elapsed().as_secs_f64() * 1000.0,
-            );
-            if let Some(error_message) = error_message.as_deref()
-                && !success
-            {
-                set_span_error(&root_span, error_message, Some("ToolInvocationError"));
-            }
-            if success
-                && is_output_capture_enabled("tool.invoke")
-                && let Some(output_payload) = output_payload
-            {
-                set_span_attribute(
-                    &root_span,
-                    "langfuse.observation.output",
-                    serialize_trace_payload(&output_payload),
-                );
-            }
-            Ok(response)
-        }
-        EitherToolsCallResponse::NeedsPostProcess((tool_response, downstream_session_id)) => {
-            let post_process_span = start_child_span("tool.post_process", trace_context);
-            if let Some(tool_name) = plan.tool_name.clone() {
-                set_span_attribute(&post_process_span, "tool.name", tool_name);
-            }
-            if let Some(tool_id) = plan.tool_id.clone() {
-                set_span_attribute(&post_process_span, "tool.id", tool_id);
-            }
-
-            async move {
-                let status = tool_response.status();
-                let payload = decode_upstream_json_payload(tool_response)
-                    .await
-                    .map_err(|err| format!("direct tools/call decode failed: {err}"))?;
-                let (success, error_message) = classify_tools_call_metric_outcome(status, &payload);
-                record_tools_call_metric(
-                    state,
-                    incoming_headers,
-                    plan,
-                    request_started.elapsed().as_secs_f64() * 1000.0,
-                    success,
-                    error_message.clone(),
-                )
-                .await;
-
-                set_span_attribute(&root_span, "success", success);
-                set_span_attribute(
-                    &root_span,
-                    "duration.ms",
-                    request_started.elapsed().as_secs_f64() * 1000.0,
-                );
-                if let Some(error_message) = error_message.as_deref()
-                    && !success
-                {
-                    set_span_error(&root_span, error_message, Some("ToolInvocationError"));
-                }
-                if success && is_output_capture_enabled("tool.invoke") {
-                    let output_payload = payload
-                        .get("result")
-                        .cloned()
-                        .unwrap_or_else(|| payload.clone());
-                    set_span_attribute(
-                        &root_span,
-                        "langfuse.observation.output",
-                        serialize_trace_payload(&output_payload),
-                    );
-                }
-
-                let mut response = json_response(status, payload);
+                } else {
+                    None
+                };
+                let mut response = json_response(StatusCode::OK, payload.clone());
                 if let Some(session_id) = downstream_session_id
                     && let Ok(value) = HeaderValue::from_str(&session_id)
                 {
@@ -8630,17 +8578,259 @@ async fn execute_tools_call_direct(
                     HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
                     HeaderValue::from_static("native"),
                 );
-                Ok(response)
+                return Ok::<_, String>(EitherToolsCallResponse::Finished((
+                    response,
+                    success,
+                    error_message,
+                    output_payload,
+                    Some(payload),
+                )));
             }
-            .instrument(post_process_span)
-            .await
+
+            let server_url = plan
+                .server_url
+                .as_deref()
+                .ok_or_else(|| "resolved tools/call plan missing server_url".to_string())?;
+            let remote_tool_name = plan
+                .remote_tool_name
+                .as_deref()
+                .ok_or_else(|| "resolved tools/call plan missing remote_tool_name".to_string())?;
+
+            let upstream_session_id = ensure_upstream_session(
+                state,
+                plan,
+                downstream_session_id.as_deref(),
+                &protocol_version,
+                timeout_ms,
+            )
+            .await?;
+
+            let mut tool_response = send_direct_tools_call(
+                state,
+                server_url,
+                plan,
+                request,
+                remote_tool_name,
+                &protocol_version,
+                upstream_session_id.as_deref(),
+                timeout_ms,
+            )
+            .await?;
+
+            if !tool_response.status().is_success() {
+                let session_key = build_upstream_session_key(downstream_session_id.as_deref(), plan)?;
+                state
+                    .upstream_tool_sessions()
+                    .lock()
+                    .await
+                    .remove(&session_key);
+                let refreshed_session_id = ensure_upstream_session(
+                    state,
+                    plan,
+                    downstream_session_id.as_deref(),
+                    &protocol_version,
+                    timeout_ms,
+                )
+                .await?;
+                tool_response = send_direct_tools_call(
+                    state,
+                    server_url,
+                    plan,
+                    request,
+                    remote_tool_name,
+                    &protocol_version,
+                    refreshed_session_id.as_deref(),
+                    timeout_ms,
+                )
+                .await?;
+            }
+
+            Ok::<_, String>(EitherToolsCallResponse::NeedsPostProcess((
+                tool_response,
+                downstream_session_id,
+            )))
+        }
+        .instrument(gateway_call_span)
+        .await;
+
+        let gateway_result = match gateway_result {
+            Ok(result) => result,
+            Err(err) => {
+                if let Some(policy) = plan.post_invoke_retry_policy.as_ref()
+                    && let Some(delay_ms) = retry_delay_for_transport_error(policy, retry_attempt)
+                {
+                    set_span_attribute(&root_span, "contextforge.rust.retry.delay_ms", delay_ms as i64);
+                    retry_attempt += 1;
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+                if plan.post_invoke_retry_policy.is_some() {
+                    record_tools_call_metric(
+                        state,
+                        incoming_headers,
+                        plan,
+                        request_started.elapsed().as_secs_f64() * 1000.0,
+                        false,
+                        Some(err.clone()),
+                    );
+                    set_span_attribute(&root_span, "success", false);
+                    set_span_attribute(
+                        &root_span,
+                        "duration.ms",
+                        request_started.elapsed().as_secs_f64() * 1000.0,
+                    );
+                    set_span_error(&root_span, &err, Some("ToolInvocationError"));
+                    return Ok(jsonrpc_tool_invocation_error_response(request.id.clone(), &err));
+                }
+                return Err(err);
+            }
+        };
+
+        match gateway_result {
+            EitherToolsCallResponse::Finished((response, success, error_message, output_payload, retry_payload)) => {
+                if let Some(policy) = plan.post_invoke_retry_policy.as_ref()
+                    && let Some(payload) = retry_payload.as_ref()
+                    && let Some(delay_ms) = retry_delay_for_payload(policy, payload, retry_attempt)
+                {
+                    set_span_attribute(&root_span, "contextforge.rust.retry.delay_ms", delay_ms as i64);
+                    retry_attempt += 1;
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+
+                record_tools_call_metric(
+                    state,
+                    incoming_headers,
+                    plan,
+                    request_started.elapsed().as_secs_f64() * 1000.0,
+                    success,
+                    error_message.clone(),
+                );
+
+                if retry_attempt > 0 {
+                    set_span_attribute(&root_span, "contextforge.rust.retry.count", retry_attempt as i64);
+                }
+                set_span_attribute(&root_span, "success", success);
+                set_span_attribute(
+                    &root_span,
+                    "duration.ms",
+                    request_started.elapsed().as_secs_f64() * 1000.0,
+                );
+                if let Some(error_message) = error_message.as_deref()
+                    && !success
+                {
+                    set_span_error(&root_span, error_message, Some("ToolInvocationError"));
+                }
+                if success
+                    && is_output_capture_enabled("tool.invoke")
+                    && let Some(output_payload) = output_payload
+                {
+                    set_span_attribute(
+                        &root_span,
+                        "langfuse.observation.output",
+                        serialize_trace_payload(&output_payload),
+                    );
+                }
+                return Ok(response);
+            }
+            EitherToolsCallResponse::NeedsPostProcess((tool_response, downstream_session_id)) => {
+                let post_process_span = start_child_span("tool.post_process", trace_context);
+                if let Some(tool_name) = plan.tool_name.clone() {
+                    set_span_attribute(&post_process_span, "tool.name", tool_name);
+                }
+                if let Some(tool_id) = plan.tool_id.clone() {
+                    set_span_attribute(&post_process_span, "tool.id", tool_id);
+                }
+                set_span_attribute(&post_process_span, "retry_attempt", retry_attempt as i64);
+
+                let root_span_for_post_process = root_span.clone();
+                let post_process_outcome = async move {
+                    let status = tool_response.status();
+                    let payload = decode_upstream_json_payload(tool_response)
+                        .await
+                        .map_err(|err| format!("direct tools/call decode failed: {err}"))?;
+
+                    if let Some(policy) = plan.post_invoke_retry_policy.as_ref()
+                        && let Some(delay_ms) = retry_delay_for_payload(policy, &payload, retry_attempt)
+                    {
+                        return Ok::<_, String>(PostProcessOutcome::Retry(delay_ms));
+                    }
+
+                    let (success, error_message) = classify_tools_call_metric_outcome(status, &payload);
+                    record_tools_call_metric(
+                        state,
+                        incoming_headers,
+                        plan,
+                        request_started.elapsed().as_secs_f64() * 1000.0,
+                        success,
+                        error_message.clone(),
+                    );
+
+                    if retry_attempt > 0 {
+                        set_span_attribute(&root_span_for_post_process, "contextforge.rust.retry.count", retry_attempt as i64);
+                    }
+                    set_span_attribute(&root_span_for_post_process, "success", success);
+                    set_span_attribute(
+                        &root_span_for_post_process,
+                        "duration.ms",
+                        request_started.elapsed().as_secs_f64() * 1000.0,
+                    );
+                    if let Some(error_message) = error_message.as_deref()
+                        && !success
+                    {
+                        set_span_error(&root_span_for_post_process, error_message, Some("ToolInvocationError"));
+                    }
+                    if success && is_output_capture_enabled("tool.invoke") {
+                        let output_payload = payload
+                            .get("result")
+                            .cloned()
+                            .unwrap_or_else(|| payload.clone());
+                        set_span_attribute(
+                            &root_span_for_post_process,
+                            "langfuse.observation.output",
+                            serialize_trace_payload(&output_payload),
+                        );
+                    }
+
+                    let mut response = json_response(status, payload);
+                    if let Some(session_id) = downstream_session_id
+                        && let Ok(value) = HeaderValue::from_str(&session_id)
+                    {
+                        response
+                            .headers_mut()
+                            .insert(HeaderName::from_static("mcp-session-id"), value);
+                    }
+                    response.headers_mut().insert(
+                        HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
+                        HeaderValue::from_static("native"),
+                    );
+                    Ok(PostProcessOutcome::Response(response))
+                }
+                .instrument(post_process_span)
+                .await?;
+
+                match post_process_outcome {
+                    PostProcessOutcome::Retry(delay_ms) => {
+                        set_span_attribute(&root_span, "contextforge.rust.retry.delay_ms", delay_ms as i64);
+                        retry_attempt += 1;
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        continue;
+                    }
+                    PostProcessOutcome::Response(response) => return Ok(response),
+                }
+            }
         }
     }
 }
 
 enum EitherToolsCallResponse {
-    Finished((Response, bool, Option<String>, Option<Value>)),
+    Finished((Response, bool, Option<String>, Option<Value>, Option<Value>)),
     NeedsPostProcess((reqwest::Response, Option<String>)),
+}
+
+enum PostProcessOutcome {
+    Retry(u64),
+    Response(Response),
 }
 
 #[cfg(feature = "rmcp-upstream-client")]
@@ -8649,7 +8839,7 @@ async fn execute_tools_call_via_rmcp(
     incoming_headers: &HeaderMap,
     request: &JsonRpcRequest,
     plan: &ResolvedMcpToolCallPlan,
-) -> Result<(Response, bool, Option<String>, Option<Value>), String> {
+) -> Result<(Response, bool, Option<String>, Option<Value>, Option<Value>), String> {
     let remote_tool_name = plan
         .remote_tool_name
         .as_deref()
@@ -8668,7 +8858,7 @@ async fn execute_tools_call_via_rmcp(
     let rmcp_client =
         get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version).await?;
 
-    let (response, success, error_message, output_payload) = match invoke_tools_call_via_rmcp(
+    let (response, success, error_message, output_payload, retry_payload) = match invoke_tools_call_via_rmcp(
         rmcp_client.as_ref(),
         request,
         remote_tool_name,
@@ -8709,7 +8899,7 @@ async fn execute_tools_call_via_rmcp(
         HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
         HeaderValue::from_static("rmcp"),
     );
-    Ok((response, success, error_message, output_payload))
+    Ok((response, success, error_message, output_payload, retry_payload))
 }
 
 async fn ensure_upstream_session(
@@ -9322,7 +9512,7 @@ async fn invoke_tools_call_via_rmcp(
     request: &JsonRpcRequest,
     remote_tool_name: &str,
     modified_args: Option<&Value>,
-) -> Result<(Response, bool, Option<String>, Option<Value>), String> {
+) -> Result<(Response, bool, Option<String>, Option<Value>, Option<Value>), String> {
     let mut params = request.params.clone();
     let params_object = params
         .as_object_mut()
@@ -9346,35 +9536,33 @@ async fn invoke_tools_call_via_rmcp(
         Ok(result) => {
             let encoded_result = serde_json::to_value(result)
                 .map_err(|err| format!("rmcp tools/call result encode failed: {err}"))?;
+            let payload = json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": response_id,
+                "result": encoded_result.clone(),
+            });
             Ok((
-                json_response(
-                    StatusCode::OK,
-                    json!({
-                        "jsonrpc": JSONRPC_VERSION,
-                        "id": response_id,
-                        "result": encoded_result.clone(),
-                    }),
-                ),
+                json_response(StatusCode::OK, payload.clone()),
                 true,
                 None,
                 Some(encoded_result),
+                Some(payload),
             ))
         }
         Err(RmcpServiceError::McpError(error)) => {
             let error_message = error.message.to_string();
+            let payload = json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": response_id,
+                "error": serde_json::to_value(error)
+                    .map_err(|err| format!("rmcp tools/call error encode failed: {err}"))?,
+            });
             Ok((
-                json_response(
-                    StatusCode::OK,
-                    json!({
-                        "jsonrpc": JSONRPC_VERSION,
-                        "id": response_id,
-                        "error": serde_json::to_value(error)
-                            .map_err(|err| format!("rmcp tools/call error encode failed: {err}"))?,
-                    }),
-                ),
+                json_response(StatusCode::OK, payload.clone()),
                 false,
                 Some(error_message),
                 None,
+                Some(payload),
             ))
         }
         Err(err) => Err(format!("rmcp direct tools/call failed: {err}")),

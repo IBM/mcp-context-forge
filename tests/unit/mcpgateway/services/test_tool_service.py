@@ -6929,12 +6929,65 @@ class TestRustMcpExecutionPlan:
         db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_prepare_rust_mcp_tool_execution_post_invoke_hooks_force_fallback(self, tool_service):
-        """Post-invoke hooks should force fallback even when pre-invoke hooks are also registered."""
-        tool_service._plugin_manager = MagicMock()
-        tool_service._plugin_manager.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type in (ToolHookType.TOOL_PRE_INVOKE, ToolHookType.TOOL_POST_INVOKE))
+    async def test_prepare_rust_mcp_tool_execution_retry_post_invoke_hook_keeps_eligible_plan(self, tool_service):
+        """The default retry post-invoke hook should stay eligible on the Rust fast path."""
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
+        plugin_manager = MagicMock()
+        retry_hook = MagicMock()
+        retry_hook.plugin_ref.mode = "permissive"
+        retry_hook.plugin_ref.name = "RetryWithBackoffPlugin"
+        retry_hook.plugin_ref.conditions = []
+        retry_hook.plugin_ref.plugin.config.config = {
+            "max_retries": 2,
+            "backoff_base_ms": 200,
+            "max_backoff_ms": 5000,
+            "retry_on_status": [429, 500, 502, 503, 504],
+            "jitter": True,
+            "check_text_content": False,
+            "tool_overrides": {},
+        }
+        plugin_manager.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_POST_INVOKE)
+        plugin_manager._registry.get_hook_refs_for_hook.return_value = [retry_hook]  # pylint: disable=protected-access
+        tool_service._plugin_manager = plugin_manager
 
-        with patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))):
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
+
+        assert plan["eligible"] is True
+        assert plan["postInvokeRetryPolicy"] == {
+            "kind": "retry_with_backoff",
+            "maxRetries": 2,
+            "backoffBaseMs": 200,
+            "maxBackoffMs": 5000,
+            "retryOnStatus": [429, 500, 502, 503, 504],
+            "jitter": True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_unsupported_post_invoke_hooks_force_fallback(self, tool_service):
+        """Unsupported post-invoke hooks should still force Python fallback."""
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
+        tool_service._plugin_manager = MagicMock()
+        unsupported_hook = MagicMock()
+        unsupported_hook.plugin_ref.mode = "permissive"
+        unsupported_hook.plugin_ref.name = "TestToolOutputSentinelPlugin"
+        unsupported_hook.plugin_ref.conditions = []
+        tool_service._plugin_manager.has_hooks_for = MagicMock(side_effect=lambda hook_type: hook_type == ToolHookType.TOOL_POST_INVOKE)
+        tool_service._plugin_manager._registry.get_hook_refs_for_hook.return_value = [unsupported_hook]  # pylint: disable=protected-access
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
             plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), "tool-one")
 
         assert plan == {"eligible": False, "fallbackReason": "post-invoke-hooks-configured"}

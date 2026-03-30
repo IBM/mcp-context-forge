@@ -19,8 +19,9 @@ clap = { version = "4.5.60", features = ["derive", "env"] }
 deadpool-postgres = "0.14.1"
 futures-util = "0.3.31"
 opentelemetry = "0.31.0"
-opentelemetry-otlp = { version = "0.31.1", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "trace"] }
-opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-client", "trace"] }
+opentelemetry_sdk = { version = "0.31.0", features = ["experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio"] }
+rand = "0.8"
 regex = "1.12.2"
 redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
