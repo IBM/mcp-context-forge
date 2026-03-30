@@ -827,7 +827,7 @@ def _build_public_base_url(scope: Scope) -> str:
             else:
                 return ""
 
-        root_path = scope.get("root_path", "").rstrip("/")
+        root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
         return f"{proto}://{host}{root_path}"
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         # Malformed ASGI scope (missing keys, wrong types, unparseable

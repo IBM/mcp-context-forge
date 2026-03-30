@@ -147,3 +147,88 @@ def test_scope_takes_priority_over_settings(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr("mcpgateway.utils.paths.settings", MagicMock(app_root_path="/settings-path"))
     req = _make_request("/scope-path")
     assert resolve_root_path(req) == "/scope-path"
+
+
+# ---------------------------------------------------------------------------
+# Edge case: bare slash
+# ---------------------------------------------------------------------------
+
+
+def test_bare_slash_returns_empty_string() -> None:
+    """A scope root_path of '/' normalises to empty string (no trailing slash)."""
+    req = _make_request("/")
+    assert resolve_root_path(req) == ""
+
+
+# ---------------------------------------------------------------------------
+# Security: reject unsafe characters (defense-in-depth)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        "https://evil.com",
+        "http://evil.com/path",
+        "/app\r\nX-Injected: true",
+        "/app\nSet-Cookie: pwned=true",
+        "/app\r\nmiddlecrlf",
+        "/app\x00null",
+        "/app?query=1",
+        "/app#fragment",
+    ],
+    ids=[
+        "url-https-scheme",
+        "url-http-scheme",
+        "crlf-header-injection",
+        "lf-header-injection",
+        "embedded-crlf",
+        "null-byte",
+        "query-delimiter",
+        "fragment-delimiter",
+    ],
+)
+def test_rejects_unsafe_scope_root_path(bad_value: str) -> None:
+    """resolve_root_path sanitises unsafe scope values to empty string."""
+    req = _make_request(bad_value)
+    assert resolve_root_path(req) == ""
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    [
+        "https://evil.com",
+        "/app\r\nX-Injected: true",
+        "/app\x00null",
+        "/app?query=1",
+    ],
+    ids=[
+        "url-scheme-in-settings",
+        "crlf-in-settings",
+        "null-byte-in-settings",
+        "query-in-settings",
+    ],
+)
+def test_rejects_unsafe_settings_fallback(bad_value: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """resolve_root_path sanitises unsafe settings fallback to empty string."""
+    monkeypatch.setattr("mcpgateway.utils.paths.settings", MagicMock(app_root_path=bad_value))
+    req = _make_request("")
+    assert resolve_root_path(req) == ""
+
+
+def test_rejects_unsafe_explicit_fallback() -> None:
+    """resolve_root_path sanitises unsafe explicit fallback to empty string."""
+    req = _make_request("")
+    assert resolve_root_path(req, fallback="https://evil.com") == ""
+
+
+def test_path_traversal_dots_preserved() -> None:
+    """Path traversal sequences are preserved (they are handled by ASGI/routing)."""
+    req = _make_request("/app/../admin")
+    assert resolve_root_path(req) == "/app/../admin"
+
+
+def test_encoded_chars_preserved() -> None:
+    """Percent-encoded characters are preserved as-is."""
+    req = _make_request("/app%2Fpath")
+    assert resolve_root_path(req) == "/app%2Fpath"

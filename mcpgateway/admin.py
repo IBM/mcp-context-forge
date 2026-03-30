@@ -1405,11 +1405,6 @@ ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 ADMIN_CSRF_FORM_FIELD = "csrf_token"
 
 
-# _resolve_root_path is imported from mcpgateway.utils.paths (see imports above).
-# The alias is kept so all existing call sites in this file continue to work
-# without modification.
-
-
 def _admin_cookie_path(request: Request) -> str:
     """Build admin cookie path honoring ASGI root_path.
 
@@ -4257,8 +4252,9 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         >>> asyncio.run(test_login_handler())
         True
     """
+    root_path = _resolve_root_path(request)
+
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
@@ -4269,7 +4265,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         password = password_val if isinstance(password_val, str) else None
 
         if not email or not password:
-            root_path = _resolve_root_path(request)
             params = "error=missing_fields"
             if email:
                 params += f"&email={urllib.parse.quote(email)}"
@@ -4286,12 +4281,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
-                root_path = _resolve_root_path(request)
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
                 LOGGER.info("Blocking local password login for non-admin user %s because SSO_PRESERVE_ADMIN_AUTH is enabled", email)
-                root_path = _resolve_root_path(request)
                 return RedirectResponse(url=f"{root_path}/admin/login?error=sso_required&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
@@ -4338,14 +4331,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 token, _ = await create_access_token(user)
 
                 # Create redirect response to password change page
-                root_path = _resolve_root_path(request)
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
                 try:
                     set_auth_cookie(response, token, remember_me=False)
                 except CookieTooLargeError:
-                    root_path = _resolve_root_path(request)
                     return RedirectResponse(
                         url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
                         status_code=303,
@@ -4358,7 +4349,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             token, _ = await create_access_token(user)  # expires_seconds not needed here
 
             # Create redirect response
-            root_path = _resolve_root_path(request)
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
@@ -4380,12 +4370,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if settings.secure_cookies and settings.environment == "development":
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
-        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
 
 
@@ -4867,8 +4855,9 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         >>> asyncio.run(test_password_change_handler())
         True
     """
+    root_path = _resolve_root_path(request)
+
     if not getattr(settings, "email_auth_enabled", False):
-        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
@@ -4882,11 +4871,9 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         confirm_password = confirm_password_val if isinstance(confirm_password_val, str) else None
 
         if not all([current_password, new_password, confirm_password]):
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
 
         if new_password != confirm_password:
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
 
         # Get user from JWT token in cookie
@@ -4901,7 +4888,6 @@ async def change_password_required_handler(request: Request, db: Session = Depen
             current_user = None
 
         if not current_user:
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
         # Authenticate using the email auth service
@@ -4931,19 +4917,16 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         current_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()
                         if current_user is None:
                             LOGGER.error(f"User {user_email} not found after successful password change - possible race condition")
-                            root_path = _resolve_root_path(request)
                             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
                 except Exception as e:
                     # Return early to avoid creating token with empty team claims
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
-                    root_path = _resolve_root_path(request)
                     return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
 
                 # Create redirect response to admin panel
-                root_path = _resolve_root_path(request)
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
                 # Update JWT token cookie
@@ -4958,24 +4941,19 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
 
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
 
         except AuthenticationError:
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
-            root_path = _resolve_root_path(request)
             return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Password change handler error: {e}")
-        root_path = _resolve_root_path(request)
         return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
 

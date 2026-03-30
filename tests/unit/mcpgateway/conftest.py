@@ -81,4 +81,4 @@ def reset_app_root_path(monkeypatch):
     Tests that specifically need to test root_path behavior should override this
     by setting the monkeypatch value explicitly in the test.
     """
-    monkeypatch.setattr("mcpgateway.utils.paths.settings.app_root_path", "", raising=False)
+    monkeypatch.setattr("mcpgateway.utils.paths.settings.app_root_path", "")
