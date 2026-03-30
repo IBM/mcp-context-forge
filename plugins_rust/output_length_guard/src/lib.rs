@@ -222,26 +222,84 @@ fn estimate_tokens(text_len: usize, chars_per_token: usize) -> usize {
     text_len / chars_per_token
 }
 
+/// Return the byte offset of the `n`-th char in `value`, or `value.len()` if
+/// `n >= char_count`. This is the key primitive for O(limit) truncation:
+/// we only walk as far as we need to, never the whole string.
+fn byte_offset_of_char(value: &str, n: usize) -> usize {
+    value
+        .char_indices()
+        .nth(n)
+        .map_or(value.len(), |(off, _)| off)
+}
+
+/// Count chars up to `limit + 1`, returning the true count if the string is
+/// short enough, otherwise `limit + 1` (proving it exceeds the limit).
+/// Also returns the byte offset at the counted position.
+///
+/// **O(min(char_count, limit))** — never walks the full string for long inputs.
+fn count_chars_capped(value: &str, limit: usize) -> (usize, usize) {
+    // Fast path: if byte length ≤ limit, char count must be ≤ limit too
+    // (every char is at least 1 byte in UTF-8).
+    if value.len() <= limit {
+        // We still need the exact char count for downstream logic.
+        // For ASCII-only (very common), byte len == char len.
+        if value.is_ascii() {
+            return (value.len(), value.len());
+        }
+        let cc = value.chars().count();
+        return (cc, value.len());
+    }
+
+    // Walk at most limit+1 chars to determine if we exceed.
+    let mut count = 0;
+    let mut last_byte = 0;
+    for (offset, _) in value.char_indices() {
+        if count == limit + 1 {
+            // We've confirmed the string exceeds the limit.
+            return (count, last_byte);
+        }
+        count += 1;
+        last_byte = offset;
+    }
+    // Reached end of string before limit+1
+    (count, value.len())
+}
+
 /// Find word boundary position by scanning backward from `cut`.
 /// Returns position after the boundary character, or `cut` if none found.
+///
+/// Uses `char_indices()` to skip directly to the search region instead of
+/// collecting the entire string into a `Vec<char>`.
 fn find_word_boundary(value: &str, cut: usize, max_chars: usize) -> usize {
     if cut == 0 || value.is_empty() {
         return cut;
     }
 
-    // Clamp cut to string length (in chars)
-    let char_count = value.chars().count();
-    let cut = cut.min(char_count);
+    // Clamp cut to char count — but only walk up to `cut` chars.
+    let (actual_count, _) = count_chars_capped(value, cut);
+    let cut = cut.min(actual_count);
 
     // Search range: go back at most 20% of max_chars
     let min_search = cut.saturating_sub((max_chars as f64 * 0.2) as usize);
 
-    // Collect chars for indexed access
-    let chars: Vec<char> = value.chars().collect();
+    // Only collect the chars in [min_search, cut) — skip the prefix.
+    // Use char_indices to get chars with positions efficiently.
+    let chars_in_range: Vec<(usize, char)> = value
+        .char_indices()
+        .skip(min_search)
+        .take(cut - min_search)
+        .collect();
 
-    for i in (min_search..cut).rev() {
-        if is_boundary_char(chars[i]) {
-            return i + 1; // Position after boundary char
+    // Scan backward
+    for &(char_idx, ch) in chars_in_range.iter().rev() {
+        let _ = char_idx; // byte offset, not needed for position math
+        let char_pos = min_search
+            + chars_in_range
+                .iter()
+                .position(|&(bi, _)| bi == char_idx)
+                .unwrap_or(0);
+        if is_boundary_char(ch) {
+            return char_pos + 1;
         }
     }
 
@@ -288,7 +346,11 @@ fn find_token_cut_point(
 }
 
 /// Truncate a string to fit within limits.
-/// Operates on chars (not bytes) to handle Unicode correctly.
+///
+/// Performance optimizations:
+/// - `count_chars_capped()`: O(limit) early-exit char counting instead of O(n)
+/// - `byte_offset_of_char()`: direct byte slice instead of `.chars().take().collect()`
+/// - Byte-length fast path: O(1) check for strings shorter than the limit
 fn truncate(value: &str, cfg: &GuardConfig) -> String {
     let ell = &cfg.ellipsis;
 
@@ -298,7 +360,12 @@ fn truncate(value: &str, cfg: &GuardConfig) -> String {
             if max_tokens == 0 {
                 return value.to_string();
             }
-            let char_count = value.chars().count();
+            // For token mode we need enough char count to know whether tokens
+            // exceed the limit. Count up to (max_tokens+1)*chars_per_token so
+            // that estimate_tokens on the capped count is correct for the
+            // over-limit decision.
+            let token_char_limit = (max_tokens + 1) * cfg.chars_per_token;
+            let (char_count, _) = count_chars_capped(value, token_char_limit);
             let estimated_tokens = estimate_tokens(char_count, cfg.chars_per_token);
 
             if estimated_tokens > max_tokens {
@@ -313,8 +380,11 @@ fn truncate(value: &str, cfg: &GuardConfig) -> String {
                     cut = find_word_boundary(value, cut, cut);
                 }
 
-                let truncated: String = value.chars().take(cut).collect();
-                return truncated + ell;
+                // Byte-slice instead of .chars().take().collect()
+                let byte_off = byte_offset_of_char(value, cut);
+                let mut truncated = value[..byte_off].to_string();
+                truncated.push_str(ell);
+                return truncated;
             }
         }
         // Under limit or no max_tokens — pass through
@@ -331,14 +401,16 @@ fn truncate(value: &str, cfg: &GuardConfig) -> String {
         Some(m) => m,
     };
 
-    let char_count = value.chars().count();
+    // O(min(n, max_chars)) char count — never walks the full string for long inputs
+    let (char_count, _) = count_chars_capped(value, max_chars);
     if char_count <= max_chars {
         return value.to_string();
     }
 
     let ell_len = ell.chars().count();
     if ell_len >= max_chars {
-        return value.chars().take(max_chars).collect();
+        let byte_off = byte_offset_of_char(value, max_chars);
+        return value[..byte_off].to_string();
     }
 
     let mut cut = max_chars - ell_len;
@@ -347,8 +419,11 @@ fn truncate(value: &str, cfg: &GuardConfig) -> String {
         cut = find_word_boundary(value, cut, max_chars);
     }
 
-    let truncated: String = value.chars().take(cut).collect();
-    truncated + ell
+    // Byte-slice instead of .chars().take().collect()
+    let byte_off = byte_offset_of_char(value, cut);
+    let mut truncated = value[..byte_off].to_string();
+    truncated.push_str(ell);
+    truncated
 }
 
 // ─── Violation info (returned as Python dict) ────────────────────────────────
@@ -422,13 +497,55 @@ fn process_container<'py>(
     }
 
     // ── String leaf ──
+    //
+    // Fast path: check Python string length via O(1) PyAny::len() BEFORE
+    // extracting to a Rust String (which copies all bytes). If the string
+    // is under both the char and token limits, and there's no min constraint,
+    // we can skip the extraction entirely.
+    if container.is_instance_of::<PyString>() {
+        // Python str.__len__() returns the number of code points — equivalent
+        // to Rust chars().count() for BMP, and close enough for our limits.
+        let py_len = container.len().unwrap_or(0);
+
+        let needs_processing = match cfg.limit_mode {
+            LimitMode::Character => {
+                let above = cfg.max_chars.is_some_and(|m| py_len > m);
+                let below = cfg.min_chars > 0 && py_len < cfg.min_chars;
+                above || below
+            }
+            LimitMode::Token => {
+                let est_tokens = py_len / cfg.chars_per_token.max(1);
+                let above = cfg.max_tokens.is_some_and(|m| est_tokens > m);
+                let below = cfg.min_tokens > 0 && est_tokens < cfg.min_tokens;
+                above || below
+            }
+        };
+
+        // If the string doesn't need processing AND strategy is truncate
+        // (so no violation to report), skip the expensive extraction.
+        if !needs_processing && cfg.strategy == Strategy::Truncate {
+            return Ok(ProcessResult::Unchanged);
+        }
+    }
+
     if let Ok(text) = container.extract::<String>() {
         // Skip numeric strings
         if is_numeric_string(&text) {
             return Ok(ProcessResult::Unchanged);
         }
 
-        let char_count = text.chars().count();
+        // Use capped char counting — O(limit) instead of O(n).
+        // For token mode, count (max_tokens+1)*cpt chars so the over-limit
+        // check `token_count > max_tokens` works correctly.
+        let limit_for_counting = match cfg.limit_mode {
+            LimitMode::Character => cfg.max_chars.unwrap_or(usize::MAX),
+            LimitMode::Token => cfg
+                .max_tokens
+                .unwrap_or(usize::MAX)
+                .saturating_add(1)
+                .saturating_mul(cfg.chars_per_token),
+        };
+        let (char_count, _) = count_chars_capped(&text, limit_for_counting);
         let token_count = estimate_tokens(char_count, cfg.chars_per_token);
 
         // Determine if out of bounds based on limit_mode
