@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.plugins.framework import PluginConfig, ResourceHookType
+from mcpgateway.plugins.framework import PluginConfig, PluginContext, PromptPrehookPayload, ResourceHookType, ResourcePostFetchPayload, ToolPostInvokePayload
+from mcpgateway.plugins.framework.models import GlobalContext
 from mcpgateway.services.resource_service import ResourceService
 from plugins.secrets_detection.secrets_detection import SecretsDetectionPlugin
 
@@ -118,6 +119,108 @@ async def test_resource_post_fetch_receives_resolved_content(use_rust):
 
     # Returned ResourceContent must also be resolved
     assert result.text == "actual file content"
+
+
+@pytest.mark.asyncio
+class TestSecretsDetectionHookBehavior:
+    """Regression tests for the hook paths called out in issue #5."""
+
+    @staticmethod
+    def _context() -> PluginContext:
+        return PluginContext(global_context=GlobalContext(request_id="req-secrets"))
+
+    @staticmethod
+    def _plugin(config: dict) -> SecretsDetectionPlugin:
+        return SecretsDetectionPlugin(
+            PluginConfig(
+                name="SecretsDetection",
+                kind="plugins.secrets_detection.secrets_detection.SecretsDetectionPlugin",
+                hooks=["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"],
+                config=config,
+            )
+        )
+
+    async def test_prompt_pre_fetch_redacts_without_blocking(self):
+        plugin = self._plugin({"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
+        payload = PromptPrehookPayload(prompt_id="prompt-1", args={"input": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"})
+
+        result = await plugin.prompt_pre_fetch(payload, self._context())
+
+        assert result.continue_processing is not False
+        assert result.violation is None
+        assert result.modified_payload is not None
+        assert result.modified_payload.args["input"] == "AWS_ACCESS_KEY_ID=[REDACTED]"
+        assert result.metadata == {"secrets_redacted": True, "count": 1}
+
+    async def test_prompt_pre_fetch_blocks_without_redaction(self):
+        plugin = self._plugin({"block_on_detection": True, "redact": False})
+        payload = PromptPrehookPayload(prompt_id="prompt-1", args={"input": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"})
+
+        result = await plugin.prompt_pre_fetch(payload, self._context())
+
+        assert result.continue_processing is False
+        assert result.violation is not None
+        assert result.violation.code == "SECRETS_DETECTED"
+        assert result.modified_payload is None
+
+    async def test_tool_post_invoke_redacts_mcp_content_payload(self):
+        plugin = self._plugin({"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
+        payload = ToolPostInvokePayload(
+            name="writer",
+            result={"content": [{"type": "text", "text": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"}], "isError": False},
+        )
+
+        result = await plugin.tool_post_invoke(payload, self._context())
+
+        assert result.continue_processing is not False
+        assert result.violation is None
+        assert result.modified_payload is not None
+        assert result.modified_payload.result["content"][0]["text"] == "AWS_ACCESS_KEY_ID=[REDACTED]"
+        assert result.modified_payload.result["isError"] is False
+        assert result.metadata == {"secrets_redacted": True, "count": 1}
+
+    async def test_tool_post_invoke_blocks_without_redaction(self):
+        plugin = self._plugin({"block_on_detection": True, "redact": False})
+        payload = ToolPostInvokePayload(
+            name="writer",
+            result={"content": [{"type": "text", "text": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"}], "isError": False},
+        )
+
+        result = await plugin.tool_post_invoke(payload, self._context())
+
+        assert result.continue_processing is False
+        assert result.violation is not None
+        assert result.violation.code == "SECRETS_DETECTED"
+        assert result.modified_payload is None
+
+    async def test_resource_post_fetch_redacts_without_blocking(self):
+        plugin = self._plugin({"block_on_detection": False, "redact": True, "redaction_text": "[REDACTED]"})
+        payload = ResourcePostFetchPayload(
+            uri="file:///secret.txt",
+            content=ResourceContent(type="resource", id="res-1", uri="file:///secret.txt", text="AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"),
+        )
+
+        result = await plugin.resource_post_fetch(payload, self._context())
+
+        assert result.continue_processing is not False
+        assert result.violation is None
+        assert result.modified_payload is not None
+        assert result.modified_payload.content.text == "AWS_ACCESS_KEY_ID=[REDACTED]"
+        assert result.metadata == {"secrets_redacted": True, "count": 1}
+
+    async def test_resource_post_fetch_blocks_without_redaction(self):
+        plugin = self._plugin({"block_on_detection": True, "redact": False})
+        payload = ResourcePostFetchPayload(
+            uri="file:///secret.txt",
+            content=ResourceContent(type="resource", id="res-1", uri="file:///secret.txt", text="AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"),
+        )
+
+        result = await plugin.resource_post_fetch(payload, self._context())
+
+        assert result.continue_processing is False
+        assert result.violation is not None
+        assert result.violation.code == "SECRETS_DETECTED"
+        assert result.modified_payload is None
 
 
 @pytest.mark.parametrize(
