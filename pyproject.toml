@@ -653,7 +653,7 @@ markers = [
     "mcp_client_features: marks roots/sampling/elicitation checks",
     "mcp_utilities: marks ping/cancel/progress/pagination checks",
     "mcp_tasks: marks tasks capability checks",
-    "mcp_auth: marks authorization discovery checks",
+    "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
     "mcp_security: marks security compliance checks",
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
