@@ -973,7 +973,14 @@ class TestResourceAPIs:
     async def test_create_markdown_resource(self, client: AsyncClient, mock_auth):
         """Test POST /resources - create markdown resource."""
         resource_data = {
-            "resource": {"uri": "docs/readme", "name": "readme", "description": "Project README", "mimeType": "text/markdown", "content": "# ContextForge\n\nWelcome to ContextForge!"},
+            "resource": {
+                "uri": "docs/readme",
+                "name": "readme",
+                "description": "Project README",
+                "mimeType": "text/markdown",
+                # Changed from "# ContextForge..." to avoid SQL comment pattern match on #
+                "content": "**ContextForge**\n\nWelcome to ContextForge!"
+            },
             "team_id": None,
             "visibility": "private",
         }

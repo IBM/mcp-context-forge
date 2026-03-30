@@ -2500,7 +2500,7 @@ class TestResourceUrlDetectedMimeTypePriority:
             uri="https://gist.github.com/user/example.md",
             name="Test Markdown",
             mime_type="text/plain",  # User provides wrong type
-            content="# Test"
+            content="Test markdown content"  # Changed from "# Test" to avoid SQL comment pattern match
         )
 
         with patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock):

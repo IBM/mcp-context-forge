@@ -1410,6 +1410,28 @@ class TestPromptEndpoints:
         assert data["error"] == "Prompt size limit exceeded"
         assert data["actual_size"] == 15000
         assert data["max_size"] == 10240
+    @patch("mcpgateway.main.prompt_service.update_prompt")
+    def test_update_prompt_content_pattern_error(self, mock_update, test_client, auth_headers):
+        """Test update_prompt returns 400 for malicious pattern detected."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentPatternError
+
+        mock_update.side_effect = ContentPatternError(
+            pattern_matched=";",
+            content_snippet="ls; rm -rf /",
+            violation_type="command_injection",
+            content_type="prompt"
+        )
+        req = {"template": "Run command: ls; rm -rf /"}
+        response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
+        assert response.status_code == 400
+        data = response.json()["detail"]
+        assert data["error"] == "Malicious pattern detected"
+        assert data["violation_type"] == "command_injection"
+        assert data["pattern_matched"] == ";"
+        assert data["content_type"] == "prompt"
+        assert "message" in data
+
 
     @patch("mcpgateway.main.prompt_service.delete_prompt")
     def test_delete_prompt_endpoint_secondary(self, mock_delete, test_client, auth_headers):

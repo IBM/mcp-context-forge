@@ -1569,7 +1569,7 @@ class Settings(BaseSettings):
     content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
     content_max_prompt_size: int = Field(default=10240, ge=512, le=1048576, description="Maximum size in bytes for prompt templates (default: 10KB)")  # 10KB  # Minimum 512 bytes  # Maximum 1MB
 
-    # Content Security - MIME Type Restrictions (US-2)
+    # Content Security - MIME Type Restrictions
     content_allowed_resource_mimetypes: List[str] = Field(
         default_factory=lambda: [
             "text/plain",
@@ -1595,8 +1595,41 @@ class Settings(BaseSettings):
     )
     content_strict_mime_validation: bool = Field(
         default=False,
-        description="Enable strict MIME type validation for resources (US-2). Set to false to log violations without blocking.",
+        description="Enable strict MIME type validation for resources. Set to false to log violations without blocking.",
     )
+
+    # Content Security - Pattern Detection
+    content_pattern_detection_enabled: bool = Field(default=True, description="Enable malicious pattern detection in content. Scans for XSS, template injection, and command injection patterns.")
+
+    content_blocked_patterns: List[str] = Field(
+        default_factory=lambda: [
+            # XSS Patterns (3 patterns)
+            r"<script[^>]*>",  # Script tags
+            r"on\w+\s*=",  # Event handlers (onclick, onerror, etc.)
+            r"javascript:\s*",  # JavaScript protocol
+            # Template Injection Patterns (3 patterns)
+            r"\{\{.*?\}\}",  # Jinja2/Django templates
+            r"\{%.*?%\}",  # Django template tags
+            r"\$\{.*?\}",  # Expression evaluation
+            # Command Injection Patterns (3 patterns)
+            r"[;&|`$()]+",  # Shell metacharacters
+            r"&&|\|\||;",  # Command chaining
+            r"`[^`]*`",  # Backtick execution
+            # SQL Injection Patterns (3 patterns)
+            r"(union|select|insert|update|delete|drop|create|alter)\s+",  # SQL keywords
+            r"--|#|/\*|\*/",  # SQL comments
+            r"'\s*(or|and)\s*'",  # SQL string concatenation
+        ],
+        description="Regex patterns to block in content (case-insensitive by default). Covers XSS, template injection, command injection, and SQL injection (12 patterns total).",
+    )
+
+    content_pattern_validation_mode: Literal["strict", "moderate", "lenient"] = Field(
+        default="moderate", description="Pattern validation strictness: strict (block all matches), moderate (context-aware, allows patterns in code blocks), lenient (log only, don't block)"
+    )
+
+    content_pattern_max_snippet_length: int = Field(default=100, ge=20, le=500, description="Maximum length of content snippet shown in pattern violation error messages")
+
+    content_pattern_case_sensitive: bool = Field(default=False, description="Enable case-sensitive pattern matching. Default is case-insensitive to catch variations like <ScRiPt>")
 
     # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
     # Disabled by default for safety. Enable explicitly in production after testing.

@@ -125,7 +125,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
+from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -12510,6 +12510,18 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
                     "allowed_types": ex.allowed_types,
                 },
                 status_code=415,
+            )
+        if isinstance(ex, ContentPatternError):
+            LOGGER.error(f"ContentPatternError in admin_add_resource: {ex}")
+            return ORJSONResponse(
+                content={
+                    "message": str(ex),
+                    "success": False,
+                    "violation_type": ex.violation_type,
+                    "pattern_matched": ex.pattern_matched,
+                    "content_type": ex.content_type,
+                },
+                status_code=400,
             )
         LOGGER.error(f"Error in admin_add_resource: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)

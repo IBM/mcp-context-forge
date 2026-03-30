@@ -1145,6 +1145,51 @@ class TestPromptService:
 
             # Verify rollback was called
             test_db.rollback.assert_called_once()
+    @pytest.mark.asyncio
+    async def test_update_prompt_content_pattern_error(self, prompt_service, test_db):
+        """Test that ContentPatternError is caught and re-raised during prompt update.
+
+        This test covers:
+        - prompt_service.py lines 2380-2381 (db.rollback and logger.error in ContentPatternError handler)
+        """
+        from mcpgateway.services.content_security import ContentPatternError
+
+        existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises ContentPatternError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.return_value = None  # Size check passes
+        mock_security_service.validate_content_patterns.side_effect = ContentPatternError(
+            pattern_matched=";",
+            content_snippet="ls; rm -rf /",
+            violation_type="command_injection",
+            content_type="prompt"
+        )
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Use command injection pattern that passes Pydantic but fails pattern detection
+            upd = PromptUpdate(template="Run command: ls; rm -rf /")
+
+            with pytest.raises(ContentPatternError) as exc_info:
+                await prompt_service.update_prompt(test_db, 1, upd)
+
+            # Verify the error details
+            assert exc_info.value.violation_type == "command_injection"
+            assert exc_info.value.pattern_matched in [";", "rm -rf"]
+            assert exc_info.value.content_type == "prompt"
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
+
 
     # ──────────────────────────────────────────────────────────────────
     #   set state

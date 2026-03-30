@@ -135,7 +135,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
+from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -2383,6 +2383,46 @@ async def content_type_exception_handler(_request: Request, exc: ContentTypeErro
                 "message": str(exc),
                 "mime_type": exc.mime_type,
                 "allowed_types": exc.allowed_types[:5],  # Limit to first 5
+            }
+        },
+    )
+
+
+@app.exception_handler(ContentPatternError)
+async def content_pattern_exception_handler(_request: Request, exc: ContentPatternError):
+    """Handle malicious pattern detection failures globally.
+
+    This handler catches ContentPatternError exceptions raised by the
+    ContentSecurityService when malicious patterns are detected in
+    user-submitted content (resources or prompts).
+
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The ContentPatternError with pattern details and violation type.
+
+    Returns:
+        ORJSONResponse: A 400 Bad Request response with error details.
+
+    Example Response:
+        {
+            "detail": {
+                "error": "Malicious pattern detected",
+                "message": "Malicious pattern detected: XSS attack pattern '<script>' found in content",
+                "violation_type": "xss",
+                "pattern_matched": "<script[^>]*>",
+                "content_type": "resource"
+            }
+        }
+    """
+    return ORJSONResponse(
+        status_code=400,
+        content={
+            "detail": {
+                "error": "Malicious pattern detected",
+                "message": str(exc),
+                "violation_type": exc.violation_type,
+                "pattern_matched": exc.pattern_matched,
+                "content_type": exc.content_type,
             }
         },
     )
@@ -5989,6 +6029,12 @@ async def create_prompt(
         if isinstance(e, ContentSizeError):
             logger.error(f"Content size exceeded in creating prompt: {e}")
             raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+        if isinstance(e, ContentPatternError):
+            logger.error(f"Malicious pattern detected in creating prompt: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "Malicious pattern detected", "message": str(e), "violation_type": e.violation_type, "pattern_matched": e.pattern_matched, "content_type": e.content_type},
+            )
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while creating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
@@ -6186,6 +6232,12 @@ async def update_prompt(
         if isinstance(e, ContentSizeError):
             logger.error(f"Content size exceeded in updating prompt: {e}")
             raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+        if isinstance(e, ContentPatternError):
+            logger.error(f"Malicious pattern detected in updating prompt: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "Malicious pattern detected", "message": str(e), "violation_type": e.violation_type, "pattern_matched": e.pattern_matched, "content_type": e.content_type},
+            )
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while updating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")

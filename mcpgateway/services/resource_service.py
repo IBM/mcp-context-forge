@@ -61,7 +61,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, get_content_security_service
+from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -444,6 +444,7 @@ class ResourceService(BaseService):
             ResourceError: For other resource registration errors
             ContentSizeError: For content size exceed
             ContentTypeError: If the MIME type is not allowed
+            ContentPatternError: If malicious patterns are detected in content
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -508,6 +509,17 @@ class ResourceService(BaseService):
                 user_email=created_by,
                 ip_address=created_from_ip,
             )
+
+            # Validate content for malicious patterns
+            # Only validate text content (skip binary content like images)
+            if content_to_validate and isinstance(content_to_validate, str):
+                content_security.validate_content_patterns(
+                    content=content_to_validate,
+                    content_type="resource",
+                    name=resource.name,
+                    user_email=created_by,
+                    ip_address=created_from_ip,
+                )
 
             # Extract gateway_id from resource if present
             gateway_id = getattr(resource, "gateway_id", None)
@@ -676,6 +688,23 @@ class ResourceService(BaseService):
                 },
             )
             raise cte
+        except ContentPatternError as cpe:
+
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content contains malicious pattern: {cpe.violation_type}",
+                event_type="resource_pattern_violation",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "violation_type": cpe.violation_type,
+                    "pattern_matched": cpe.pattern_matched,
+                    "visibility": visibility,
+                },
+            )
+            raise cpe
         except Exception as e:
             db.rollback()
 
@@ -806,6 +835,17 @@ class ResourceService(BaseService):
                             user_email=created_by,
                             ip_address=created_from_ip,
                         )
+
+                        # Validate content for malicious patterns
+                        # Only validate text content (skip binary content like images)
+                        if hasattr(resource, "content") and resource.content and isinstance(resource.content, str):
+                            content_security.validate_content_patterns(
+                                content=resource.content,
+                                content_type="resource",
+                                name=resource.name,
+                                user_email=created_by,
+                                ip_address=created_from_ip,
+                            )
 
                         # Use provided parameters or schema values
                         resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
@@ -2948,6 +2988,17 @@ class ResourceService(BaseService):
                     content_security.validate_resource_mime_type(
                         mime_type=mime_type_to_validate,
                         uri=resource_update.uri or resource.uri,
+                        user_email=modified_by or user_email,
+                        ip_address=modified_from_ip,
+                    )
+
+                # Validate content for malicious patterns
+                # Only validate text content (skip binary content like images)
+                if isinstance(resource_update.content, str):
+                    content_security.validate_content_patterns(
+                        content=resource_update.content,
+                        content_type="resource",
+                        name=resource.name,
                         user_email=modified_by or user_email,
                         ip_address=modified_from_ip,
                     )

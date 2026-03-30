@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """Unit tests for content security service."""
 
+import re
+
 import pytest
 
 from mcpgateway.services.content_security import (
+    ContentPatternError,
     ContentSecurityService,
     ContentSizeError,
     ContentTypeError,
@@ -587,6 +590,479 @@ class TestNoOpCounterFallback:
                 sys.modules["mcpgateway.services.content_security"] = original_cs
             elif "mcpgateway.services.content_security" in sys.modules:
                 del sys.modules["mcpgateway.services.content_security"]
+
+
+class TestContentPatternError:
+    """Test the ContentPatternError exception."""
+
+    def test_content_pattern_error_attributes(self):
+        """Test ContentPatternError has correct attributes."""
+        error = ContentPatternError(
+            pattern_matched="<script>",
+            content_snippet="<script>alert('xss')</script>",
+            violation_type="xss",
+            content_type="resource"
+        )
+        assert error.pattern_matched == "<script>"
+        assert error.content_snippet == "<script>alert('xss')</script>"
+        assert error.violation_type == "xss"
+        assert error.content_type == "resource"
+
+    def test_content_pattern_error_message(self):
+        """Test ContentPatternError message formatting."""
+        error = ContentPatternError(
+            pattern_matched="{{.*}}",
+            content_snippet="{{config.items()}}",
+            violation_type="template_injection",
+            content_type="prompt"
+        )
+        message = str(error)
+        assert "Malicious pattern detected" in message
+        assert "template_injection" in message
+        assert "prompt" in message
+
+
+class TestPatternCompilation:
+    """Test pattern compilation functionality."""
+
+    def test_compile_patterns_on_init(self, monkeypatch):
+        """Test that patterns are compiled during service initialization."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [
+            r"<script",
+            r"javascript:",
+        ])
+
+        service = ContentSecurityService()
+        assert len(service._pattern_cache) == 2
+        assert all(isinstance(p, type(re.compile(""))) for p in service._pattern_cache.values())
+
+    def test_compile_patterns_disabled(self, monkeypatch):
+        """Test that patterns are not compiled when detection is disabled."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", False)
+
+        service = ContentSecurityService()
+        assert len(service._pattern_cache) == 0
+
+    def test_compile_patterns_handles_invalid_regex(self, monkeypatch, caplog):
+        """Test that invalid regex patterns are logged and skipped."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [
+            r"<script",  # Valid
+            r"(?P<invalid",  # Invalid regex
+            r"{{.*}}",  # Valid
+        ])
+
+        service = ContentSecurityService()
+        # Should compile 2 valid patterns, skip 1 invalid
+        assert len(service._pattern_cache) == 2
+        assert "Failed to compile pattern" in caplog.text
+
+
+class TestPatternClassification:
+    """Test pattern classification functionality."""
+
+    def test_classify_xss_patterns(self):
+        """Test classification of XSS patterns."""
+        service = ContentSecurityService()
+
+        assert service._classify_violation("<script>") == "xss"
+        assert service._classify_violation("javascript:") == "xss"
+        assert service._classify_violation("onerror=") == "xss"
+        assert service._classify_violation("onload=") == "xss"
+        assert service._classify_violation("<iframe") == "xss"
+        assert service._classify_violation("eval(") == "xss"
+
+    def test_classify_template_injection_patterns(self):
+        """Test classification of template injection patterns."""
+        service = ContentSecurityService()
+
+        assert service._classify_violation("{{") == "template_injection"
+        assert service._classify_violation("}}") == "template_injection"
+        assert service._classify_violation("{%") == "template_injection"
+        assert service._classify_violation("%}") == "template_injection"
+        assert service._classify_violation("${") == "template_injection"
+
+    def test_classify_template_injection_escaped_patterns(self):
+        """Test classification of escaped template injection patterns (Bug Fix #4).
+
+        This test verifies the fix for the bug where _classify_violation was
+        returning "unknown" for escaped regex patterns from config.py.
+        The method now checks for both literal and escaped versions.
+        """
+        service = ContentSecurityService()
+
+        # Test escaped Jinja2/Django patterns (from config.py)
+        assert service._classify_violation(r"\{\{.*?\}\}") == "template_injection"
+        assert service._classify_violation(r"\{%.*?%\}") == "template_injection"
+
+        # Test escaped expression evaluation
+        assert service._classify_violation(r"\$\{.*?\}") == "template_injection"
+
+        # Test escaped brackets
+        assert service._classify_violation(r"\[\[.*?\]\]") == "template_injection"
+
+        # Test mixed case with escaped characters
+        assert service._classify_violation(r"PATTERN_\{\{") == "template_injection"
+        assert service._classify_violation(r"test_\$\{_pattern") == "template_injection"
+
+    def test_classify_command_injection_patterns(self):
+        """Test classification of command injection patterns."""
+        service = ContentSecurityService()
+
+        assert service._classify_violation("$(") == "command_injection"
+        assert service._classify_violation("`") == "command_injection"
+        assert service._classify_violation("&&") == "command_injection"
+        assert service._classify_violation("||") == "command_injection"
+        assert service._classify_violation("exec") == "command_injection"
+        assert service._classify_violation("system") == "command_injection"
+
+    def test_classify_command_injection_escaped_patterns(self):
+        """Test classification of escaped command injection patterns (Bug Fix #4).
+
+        This test verifies the fix for escaped regex patterns in command injection.
+        """
+        service = ContentSecurityService()
+
+        # Test escaped command substitution
+        assert service._classify_violation(r"\$\(.*?\)") == "command_injection"
+
+        # Test escaped backticks
+        assert service._classify_violation(r"\`.*?\`") == "command_injection"
+
+        # Test escaped pipes
+        assert service._classify_violation(r"\|\|") == "command_injection"
+        assert service._classify_violation(r"\|") == "command_injection"
+
+        # Test patterns with escaped characters
+        assert service._classify_violation(r"pattern_\$\(") == "command_injection"
+
+    def test_classify_sql_injection_patterns(self):
+        """Test classification of SQL injection patterns."""
+        service = ContentSecurityService()
+
+        assert service._classify_violation("union select") == "sql_injection"
+        assert service._classify_violation("drop table") == "sql_injection"
+        assert service._classify_violation("--") == "sql_injection"
+        assert service._classify_violation("/*") == "sql_injection"
+
+    def test_classify_unknown_pattern(self):
+        """Test classification of unknown patterns."""
+        service = ContentSecurityService()
+
+        assert service._classify_violation("unknown_pattern_xyz") == "unknown"
+
+
+class TestValidateContentPatterns:
+    """Test the validate_content_patterns method."""
+
+    def test_validate_safe_content(self, monkeypatch):
+        """Test that safe content passes validation."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+
+        service = ContentSecurityService()
+        # Should not raise
+        service.validate_content_patterns(
+            content="Hello world, this is safe content",
+            content_type="resource"
+        )
+
+    def test_validate_detects_xss(self, monkeypatch):
+        """Test that XSS patterns are detected."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"<script"])
+
+        service = ContentSecurityService()
+        with pytest.raises(ContentPatternError) as exc_info:
+            service.validate_content_patterns(
+                content="<script>alert('xss')</script>",
+                content_type="resource"
+            )
+
+        error = exc_info.value
+        assert error.violation_type == "xss"
+        assert error.content_type == "resource"
+
+    def test_validate_detects_template_injection(self, monkeypatch):
+        """Test that template injection patterns are detected in resources."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"{{.*}}"])
+
+        service = ContentSecurityService()
+        with pytest.raises(ContentPatternError) as exc_info:
+            service.validate_content_patterns(
+                content="{{config.items()}}",
+                content_type="resource"
+            )
+
+        error = exc_info.value
+        assert error.violation_type == "template_injection"
+        assert error.content_type == "resource"
+
+    def test_validate_detects_command_injection(self, monkeypatch):
+        """Test that command injection patterns are detected."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"\$\("])
+
+        service = ContentSecurityService()
+        with pytest.raises(ContentPatternError) as exc_info:
+            service.validate_content_patterns(
+                content="$(rm -rf /)",
+                content_type="resource"
+            )
+
+        error = exc_info.value
+        assert error.violation_type == "command_injection"
+
+    def test_validate_disabled_detection(self, monkeypatch):
+        """Test that validation is skipped when detection is disabled."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", False)
+
+        service = ContentSecurityService()
+        # Should not raise even with malicious content
+        service.validate_content_patterns(
+            content="<script>alert('xss')</script>",
+            content_type="resource"
+        )
+
+    def test_validate_lenient_mode(self, monkeypatch, caplog):
+        """Test that lenient mode logs but doesn't block."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "lenient")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"<script"])
+
+        service = ContentSecurityService()
+        # Should not raise in lenient mode
+        service.validate_content_patterns(
+            content="<script>alert('xss')</script>",
+            content_type="resource"
+        )
+
+        # But should log the violation
+        assert "Malicious pattern detected" in caplog.text
+        assert "lenient mode" in caplog.text
+
+    def test_validate_moderate_mode(self, monkeypatch):
+        """Test that moderate mode blocks malicious patterns."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "moderate")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"<script"])
+
+        service = ContentSecurityService()
+        # Should raise in moderate mode (for now, same as strict)
+        with pytest.raises(ContentPatternError):
+            service.validate_content_patterns(
+                content="<script>alert('xss')</script>",
+                content_type="resource"
+            )
+
+    def test_validate_strict_mode_fail_fast(self, monkeypatch):
+        """Test that strict mode stops at first match (fail-fast)."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [
+            r"<script",
+            r"<iframe",
+        ])
+
+        service = ContentSecurityService()
+        # Content has both patterns, but should fail on first match
+        with pytest.raises(ContentPatternError) as exc_info:
+            service.validate_content_patterns(
+                content="<script>alert('xss')</script><iframe src='evil'></iframe>",
+                content_type="resource"
+            )
+
+        # Should match the first pattern
+        assert "<script" in exc_info.value.pattern_matched
+
+    def test_validate_with_logging_context(self, monkeypatch, caplog):
+        """Test validation with user email and IP for logging."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"<script"])
+
+        service = ContentSecurityService()
+        with pytest.raises(ContentPatternError):
+            service.validate_content_patterns(
+                content="<script>alert('xss')</script>",
+                content_type="resource",
+                name="test_resource",
+                user_email="user@example.com",
+                ip_address="192.168.1.1"
+            )
+
+        # Should log with sanitized PII in structured logging extra fields
+        # Check that log records contain the extra fields
+        assert len(caplog.records) > 0
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warning_records) > 0
+
+        # Check that the first warning record has the sanitized PII fields
+        record = warning_records[0]
+        assert hasattr(record, "user_hash")
+        assert hasattr(record, "ip_subnet")
+        assert record.user_hash is not None
+        assert record.ip_subnet == "192.168.1.xxx"
+
+    def test_validate_content_snippet_truncation(self, monkeypatch):
+        """Test that content snippets are truncated in error messages."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"<script"])
+
+        service = ContentSecurityService()
+        long_content = "x" * 200 + "<script>alert('xss')</script>" + "y" * 200
+
+        with pytest.raises(ContentPatternError) as exc_info:
+            service.validate_content_patterns(
+                content=long_content,
+                content_type="resource"
+            )
+
+        # Snippet should be truncated (max 100 chars around match)
+        assert len(exc_info.value.content_snippet) <= 120  # 100 + "..." suffix
+
+    def test_validate_case_insensitive_matching(self, monkeypatch):
+        """Test that pattern matching is case-insensitive."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"<script"])
+
+        service = ContentSecurityService()
+
+        # Should match regardless of case
+        with pytest.raises(ContentPatternError):
+            service.validate_content_patterns(
+                content="<SCRIPT>alert('xss')</SCRIPT>",
+                content_type="resource"
+            )
+
+        with pytest.raises(ContentPatternError):
+            service.validate_content_patterns(
+                content="<ScRiPt>alert('xss')</ScRiPt>",
+                content_type="resource"
+            )
+
+    def test_validate_multiline_patterns(self, monkeypatch):
+        """Test that patterns can match across multiple lines."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        # Use pattern that matches multiline content properly
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"<script[^>]*>"])
+
+        service = ContentSecurityService()
+
+        # Should match pattern spanning multiple lines
+        with pytest.raises(ContentPatternError):
+            service.validate_content_patterns(
+                content="<script\n  type='text/javascript'\n  src='evil.js'\n>",
+                content_type="resource"
+            )
+
+    def test_validate_no_patterns_configured(self, monkeypatch):
+        """Test that validation passes when no patterns are configured."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [])
+
+        service = ContentSecurityService()
+        # Should not raise even with potentially malicious content
+        service.validate_content_patterns(
+            content="<script>alert('xss')</script>",
+            content_type="resource"
+        )
+
+    def test_validate_unknown_mode_defaults_to_strict(self, monkeypatch):
+        """Test that unknown validation mode defaults to strict."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "unknown_mode")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [r"<script"])
+
+        service = ContentSecurityService()
+        # Should raise (default to strict)
+        with pytest.raises(ContentPatternError):
+            service.validate_content_patterns(
+                content="<script>alert('xss')</script>",
+                content_type="resource"
+            )
+
+
+class TestPatternDetectionIntegration:
+    """Integration tests for pattern detection."""
+
+    def test_all_default_patterns_compile(self, monkeypatch):
+        """Test that all 12 default patterns compile successfully."""
+        from mcpgateway import config
+        # Use the actual default patterns from config
+        default_patterns = [
+            r"<script[^>]*>.*?</script>",
+            r"javascript:",
+            r"on\w+\s*=",
+            r"<iframe[^>]*>",
+            r"eval\s*\(",
+            r"{{.*?}}",
+            r"{%.*?%}",
+            r"\$\{.*?\}",
+            r"\$\(.*?\)",
+            r"`.*?`",
+            r";\s*\w+",
+            r"&&|\|\|",
+        ]
+
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", default_patterns)
+
+        service = ContentSecurityService()
+        assert len(service._pattern_cache) == 12
+
+    def test_detect_multiple_attack_types(self, monkeypatch):
+        """Test detection of multiple attack types in sequence."""
+        from mcpgateway import config
+        monkeypatch.setattr(config.settings, "content_pattern_detection_enabled", True)
+        monkeypatch.setattr(config.settings, "content_pattern_validation_mode", "strict")
+        monkeypatch.setattr(config.settings, "content_blocked_patterns", [
+            r"<script",
+            r"{{.*}}",
+            r"\$\(",
+        ])
+
+        service = ContentSecurityService()
+
+        # XSS
+        with pytest.raises(ContentPatternError) as exc_info:
+            service.validate_content_patterns("<script>alert(1)</script>", "resource")
+        assert exc_info.value.violation_type == "xss"
+
+        # Template injection - use resource instead of prompt (context-aware allows templates in prompts)
+        with pytest.raises(ContentPatternError) as exc_info:
+            service.validate_content_patterns("{{config.items()}}", "resource")
+        assert exc_info.value.violation_type == "template_injection"
+
+        # Command injection
+        with pytest.raises(ContentPatternError) as exc_info:
+            service.validate_content_patterns("$(rm -rf /)", "resource")
+        assert exc_info.value.violation_type == "command_injection"
 
 
 # Made with Bob

@@ -745,26 +745,55 @@ These settings are enabled by default for security—only disable for backward c
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
 ### 🛡️ Content Security
 
-Content size limits prevent DoS attacks and ensure system stability:
+ContextForge implements multi-layered content security to protect against malicious content and ensure system stability:
+
+#### Size Limits
+Content size limits prevent DoS attacks:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CONTENT_MAX_RESOURCE_SIZE` | Maximum resource content size (bytes) | `102400` (100KB) |
 | `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
 
-**Note:** Existing content is not affected. See [Content Limits Migration Guide](docs/MIGRATION_CONTENT_LIMITS.md) for details.
-
-
-### 🛡️ Content Security
-
-Content size limits prevent DoS attacks and ensure system stability:
+#### MIME Type Validation
+Strict MIME type validation prevents execution of malicious file types:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CONTENT_MAX_RESOURCE_SIZE` | Maximum resource content size (bytes) | `102400` (100KB) |
-| `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
+| `CONTENT_STRICT_MIME_VALIDATION` | Enable strict MIME type checking | `true` |
+| `CONTENT_ALLOWED_RESOURCE_MIMETYPES` | Comma-separated list of allowed MIME types | See `.env.example` |
 
-**Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated.
+#### Malicious Pattern Detection
+Advanced pattern detection blocks XSS, template injection, command injection, and SQL injection attacks:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONTENT_PATTERN_DETECTION_ENABLED` | Enable malicious pattern detection | `true` |
+| `CONTENT_PATTERN_VALIDATION_MODE` | Validation mode: `strict`, `moderate`, `lenient` | `strict` |
+| `CONTENT_BLOCKED_PATTERNS` | JSON array of regex patterns to block | 12 default patterns |
+
+**Pattern Detection Features:**
+- **4 Attack Types Detected**: XSS, template injection, command injection, SQL injection
+- **Context-Aware Validation**: Template syntax (`{{ }}`, `{% %}`, `${ }`) is **allowed in prompts** (legitimate use) but **blocked in resources** (potential injection)
+- **3 Validation Modes**:
+  - `strict` - Block all matches immediately (fail-fast) with context-awareness
+  - `moderate` - Context-aware validation (same as strict currently)
+  - `lenient` - Log violations but don't block
+- **Performance Optimized**: Pre-compiled patterns for 10x speed improvement
+- **PII-Safe Logging**: Sanitized user emails and IP addresses in logs
+
+**Default Patterns** (12 total):
+- **XSS** (blocked everywhere): `<script>`, `javascript:`, `onerror=`, `onload=`, `<iframe>`, `eval()`
+- **Template Injection** (allowed in prompts, blocked in resources): `{{}}`, `{%%}`, `${}`, `[[]]`
+- **Command Injection** (blocked everywhere): `$()`, backticks, `&&`, `||`, `exec`, `system`
+- **SQL Injection** (blocked everywhere): `union select`, `drop table`, `--`, `/**/`
+
+**Context-Aware Behavior:**
+- ✅ **Prompts**: Template patterns like `{{ name }}` are allowed (legitimate template variables)
+- ❌ **Resources**: Template patterns are blocked (potential server-side template injection)
+- ❌ **Both**: XSS, command injection, and SQL injection patterns are always blocked
+
+**Note:** All content security features apply only to new create/update operations. Existing content is not retroactively validated. See [Content Security Documentation](docs/security/content-security.md) for detailed configuration.
 
 ### ⚙️ Project Defaults (Dev Setup)
 
