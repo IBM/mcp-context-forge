@@ -247,13 +247,20 @@ class PermissionService:
             >>> asyncio.iscoroutinefunction(service.get_user_permissions)
             True
         """
-        # Use distinct cache key for any-team lookups to avoid poisoning global cache
-        if include_all_teams:
-            # Include token_teams in cache key to avoid cross-contamination between narrowed sessions
-            teams_suffix = f":{','.join(sorted(set(token_teams)))}" if token_teams else ""
-            cache_key = f"{user_email}:__anyteam__{teams_suffix}"
+        # Use distinct cache key for any-team lookups to avoid poisoning global cache.
+        # token_teams must be encoded in the key: None (unrestricted), [] (public-only),
+        # and ["team-a"] (narrowed) all produce different permission sets.
+        if token_teams is None:
+            tt_suffix = ""
+        elif len(token_teams) == 0:
+            tt_suffix = ":__public__"
         else:
-            cache_key = f"{user_email}:{team_id or 'global'}"
+            tt_suffix = f":{','.join(sorted(set(token_teams)))}"
+
+        if include_all_teams:
+            cache_key = f"{user_email}:__anyteam__{tt_suffix}"
+        else:
+            cache_key = f"{user_email}:{team_id or 'global'}{tt_suffix}"
         if self._is_cache_valid(cache_key):
             cached_perms = self._permission_cache[cache_key]
             logger.debug(f"[RBAC] Cache hit for {SecurityValidator.sanitize_log_message(user_email)} (team_id={SecurityValidator.sanitize_log_message(team_id)}): {cached_perms}")
@@ -553,8 +560,10 @@ class PermissionService:
                 scope_conditions.append(base_condition)
         else:
             # When team_id is None and include_all_teams is False (e.g., during login),
-            # include team-scoped roles with scope_id=None (roles that apply to all teams)
-            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id.is_(None)))
+            # include team-scoped roles with scope_id=None (roles that apply to all teams).
+            # SECURITY: Public-only tokens must not access any team-scoped roles.
+            if token_teams is None or len(token_teams) > 0:
+                scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id.is_(None)))
 
         query = query.where(or_(*scope_conditions))
 

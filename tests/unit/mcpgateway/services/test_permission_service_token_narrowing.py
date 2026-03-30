@@ -597,3 +597,70 @@ async def test_has_admin_permission_forwards_token_teams(svc):
         with patch.object(svc, "get_user_permissions", return_value=admin_perms) as mock_get_perms:
             await svc.has_admin_permission("user@test.com", token_teams=["team-a"])
             mock_get_perms.assert_called_once_with("user@test.com", team_id=None, token_teams=["team-a"])
+
+
+# ---------- Codex Review Findings: Regression Tests ----------
+
+
+@pytest.mark.asyncio
+async def test_cache_key_isolation_none_vs_empty(svc):
+    """Cache keys must differ for token_teams=None vs token_teams=[] (Finding 4).
+
+    Without proper isolation, a cached result for an un-narrowed request
+    (token_teams=None) could be returned for a public-only request
+    (token_teams=[]), leaking broader permissions.
+    """
+    broad_perms = {"admin.dashboard", "tools.read", "teams.manage"}
+    public_perms = set()  # Public-only should get nothing from team roles
+
+    with patch.object(svc, "_is_user_admin", return_value=False):
+        with patch.object(svc, "_get_user_roles", return_value=[]) as mock_roles:
+            # First call: un-narrowed (token_teams=None)
+            mock_roles.return_value = [
+                SimpleNamespace(
+                    role=SimpleNamespace(name="admin", permissions=list(broad_perms), get_effective_permissions=lambda: list(broad_perms)),
+                    role_id="r1",
+                    scope="team",
+                    scope_id="team-a",
+                )
+            ]
+            result_none = await svc.get_user_permissions("user@test.com", include_all_teams=True, token_teams=None)
+
+            # Second call: public-only (token_teams=[]) — must NOT reuse first cache entry
+            mock_roles.return_value = []
+            result_empty = await svc.get_user_permissions("user@test.com", include_all_teams=True, token_teams=[])
+
+            assert result_none != result_empty or result_empty == set(), "Cache must isolate token_teams=None from token_teams=[]"
+            assert mock_roles.call_count == 2, "Both calls must query (not share cache)"
+
+
+@pytest.mark.asyncio
+async def test_cache_key_isolation_team_id_with_different_token_teams(svc):
+    """Cache keys for team_id lookups must differ across token_teams values (Finding 4)."""
+    with patch.object(svc, "_is_user_admin", return_value=False):
+        with patch.object(svc, "_get_user_roles", return_value=[]) as mock_roles:
+            await svc.get_user_permissions("user@test.com", team_id="team-a", token_teams=None)
+            await svc.get_user_permissions("user@test.com", team_id="team-a", token_teams=[])
+            await svc.get_user_permissions("user@test.com", team_id="team-a", token_teams=["team-a"])
+
+            assert mock_roles.call_count == 3, "Each token_teams variant must produce a distinct cache key"
+
+
+@pytest.mark.asyncio
+async def test_public_only_excludes_scope_id_null_team_roles(svc, mock_db):
+    """token_teams=[] must exclude team roles with scope_id=NULL (Finding 2).
+
+    Roles with scope='team', scope_id=NULL apply to all teams. Public-only
+    tokens must not access these under strict isolation.
+    """
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
+
+    await svc._get_user_roles("user@test.com", team_id=None, include_all_teams=False, token_teams=[])
+
+    query_arg = mock_db.execute.call_args[0][0]
+    compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+
+    # The compiled query must NOT include scope='team' conditions when token_teams=[]
+    assert 'scope = \'team\'' not in compiled.lower().replace('"', "'"), (
+        "Public-only token must exclude all team-scoped roles including scope_id=NULL"
+    )
