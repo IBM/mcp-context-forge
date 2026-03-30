@@ -1,0 +1,16 @@
+FROM nginx:1.26-alpine
+RUN apk add --no-cache curl ca-certificates
+RUN mkdir -p /var/cache/nginx/static \
+             /var/cache/nginx/api \
+             /var/cache/nginx/schema \
+             /var/log/nginx \
+             /run/nginx && \
+    chown -R nginx:nginx /var/cache/nginx /var/log/nginx /run/nginx && \
+    chmod -R 755 /var/cache/nginx
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+EXPOSE 80 443
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost/health || curl -fk https://localhost/health || exit 1
+ENTRYPOINT ["/docker-entrypoint.sh"]

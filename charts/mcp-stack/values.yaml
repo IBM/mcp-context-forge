@@ -1506,7 +1506,7 @@ nginxProxy:
   enabled: true
 
   image:
-    repository: mcpgateway/nginx-cache
+    repository: yosiefeyob1/nginx-cache
     tag: latest
     pullPolicy: IfNotPresent
 
