@@ -21,7 +21,7 @@ from typing import Any, Dict, List
 from plugins.container_scanner.config import ScannerConfig
 from plugins.container_scanner.scanners.base import ScannerRunner
 from plugins.container_scanner.types import Vulnerability
-from mcpgateway.utils.exec import run_command
+from plugins.container_scanner.exec import run_command
 
 # UNKNOWN is included: Trivy emits it when no CVSS score exists (common in
 # Alpine/Debian vendor advisories). Dropping UNKNOWN silently would hide real CVEs.

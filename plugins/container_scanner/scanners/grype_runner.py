@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 from plugins.container_scanner.config import ScannerConfig
 from plugins.container_scanner.scanners.base import ScannerRunner
 from plugins.container_scanner.types import Vulnerability
-from mcpgateway.utils.exec import run_command
+from plugins.container_scanner.exec import run_command
 
 _SEVERITY_MAP = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"}
 
