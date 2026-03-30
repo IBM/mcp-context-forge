@@ -1107,6 +1107,27 @@ class TestDocumentedLimitations:
         # additional findings from the parsed structure may appear
         assert count_on >= count_off, "JSON parsing should find at least as many findings"
 
+    def test_json_within_string_no_double_counting(self):
+        """A single secret inside a JSON string must not be counted twice.
+
+        Regression: the scanner was counting the same encoded value once from
+        the raw text scan and again from the JSON-parsed scan, inflating the
+        count and tripping min_findings_to_block incorrectly.
+        """
+        import json
+
+        inner_encoded = base64.b64encode(b"password=secret-credential-value").decode()
+        json_str = json.dumps({"secret": inner_encoded})
+        cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
+        payload = {"input": json_str}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=False)
+
+        # Should find exactly 1 finding — not 2 from double-counting
+        assert count == 1, f"Expected 1 finding but got {count}: single secret must not be double-counted"
+        # The finding should have the JSON-parsed path, not the raw text path
+        assert any("json" in f.get("path", "") for f in findings), f"Finding should have JSON path: {findings}"
+
     def test_malformed_json_string_no_crash(self):
         """Malformed JSON in a string value should not crash the scanner."""
         cfg = EncodedExfilDetectorConfig(parse_json_strings=True)

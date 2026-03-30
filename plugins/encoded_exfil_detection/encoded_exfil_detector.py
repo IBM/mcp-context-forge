@@ -420,18 +420,17 @@ def _scan_container(
             logger.warning(f"Rust encoded exfil scan failed, falling back to Python: {e}")
 
     if isinstance(container, str):
-        redacted, findings = _scan_text(container, cfg, path=path)
-        # Try parsing string as JSON and recurse into the parsed structure
+        # Try parsing string as JSON first — scan parsed structure only (more precise paths, no duplicates)
         if cfg.parse_json_strings and _depth < cfg.max_recursion_depth:
             try:
                 parsed = json.loads(container)
                 if isinstance(parsed, (dict, list)):
                     json_path = f"{path}(json)" if path else "(json)"
-                    _, _, json_findings = _scan_container(parsed, cfg, path=json_path, use_rust=False, _depth=_depth + 1)
-                    findings = findings + json_findings
-                    return len(findings), redacted, findings
+                    return _scan_container(parsed, cfg, path=json_path, use_rust=False, _depth=_depth + 1)
             except (json.JSONDecodeError, ValueError):
                 pass
+        # Not JSON or parsing disabled — scan as raw text
+        redacted, findings = _scan_text(container, cfg, path=path)
         return len(findings), redacted, findings
 
     if isinstance(container, dict):

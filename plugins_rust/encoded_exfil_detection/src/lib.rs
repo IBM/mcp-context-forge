@@ -708,14 +708,7 @@ fn scan_container<'py>(
     }
 
     if let Ok(text) = container.extract::<String>() {
-        let (redacted_text, findings) = scan_text(&text, path, cfg, 0);
-        let findings_list = PyList::empty(py);
-
-        for finding in &findings {
-            findings_list.append(finding_to_dict(py, finding)?)?;
-        }
-
-        // Try parsing string as JSON and recurse into the parsed structure
+        // Try parsing string as JSON first — scan parsed structure only (more precise paths, no duplicates)
         if cfg.parse_json_strings
             && depth < cfg.max_recursion_depth
             && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text)
@@ -727,15 +720,17 @@ fn scan_container<'py>(
                 format!("{}(json)", path)
             };
             let py_parsed = json_value_to_py(py, &parsed)?;
-            let (_, _, json_findings) = scan_container(py, &py_parsed, &json_path, cfg, depth + 1)?;
-            for item in json_findings.iter() {
-                findings_list.append(item)?;
-            }
+            return scan_container(py, &py_parsed, &json_path, cfg, depth + 1);
         }
 
-        let total_findings = findings_list.len();
+        // Not JSON or parsing disabled — scan as raw text
+        let (redacted_text, findings) = scan_text(&text, path, cfg, 0);
+        let findings_list = PyList::empty(py);
+        for finding in &findings {
+            findings_list.append(finding_to_dict(py, finding)?)?;
+        }
         return Ok((
-            total_findings,
+            findings.len(),
             PyString::new(py, &redacted_text).into_any(),
             findings_list,
         ));
