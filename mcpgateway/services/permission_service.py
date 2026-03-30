@@ -131,7 +131,7 @@ class PermissionService:
                 return True
 
             # Get user's effective permissions (uses cache when valid)
-            user_permissions = await self.get_user_permissions(user_email, team_id, include_all_teams=check_any_team)
+            user_permissions = await self.get_user_permissions(user_email, team_id, include_all_teams=check_any_team, token_teams=token_teams)
 
             # Check if user has the specific permission or wildcard
             granted = permission in user_permissions or Permissions.ALL_PERMISSIONS in user_permissions
@@ -209,7 +209,7 @@ class PermissionService:
             logger.error(f"Error checking admin permission for {SecurityValidator.sanitize_log_message(user_email)}: {e}")
             return False
 
-    async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False) -> Set[str]:
+    async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False, token_teams: Optional[List[str]] = None) -> Set[str]:
         """Get all effective permissions for a user.
 
         Collects permissions from all user's roles across applicable scopes.
@@ -219,6 +219,9 @@ class PermissionService:
             user_email: Email of the user
             team_id: Optional team context
             include_all_teams: If True, include ALL team-scoped roles (for list/read endpoints)
+            token_teams: Optional list of team IDs from token narrowing. When include_all_teams=True
+                        and token_teams is non-empty, filters team-scoped roles to only include
+                        roles from teams in this list (enforces Layer 1 narrowing at Layer 2)
 
         Returns:
             Set[str]: All effective permissions for the user
@@ -236,7 +239,9 @@ class PermissionService:
         """
         # Use distinct cache key for any-team lookups to avoid poisoning global cache
         if include_all_teams:
-            cache_key = f"{user_email}:__anyteam__"
+            # Include token_teams in cache key to avoid cross-contamination between narrowed sessions
+            teams_suffix = f":{','.join(sorted(set(token_teams)))}" if token_teams else ""
+            cache_key = f"{user_email}:__anyteam__{teams_suffix}"
         else:
             cache_key = f"{user_email}:{team_id or 'global'}"
         if self._is_cache_valid(cache_key):
@@ -247,7 +252,7 @@ class PermissionService:
         permissions = set()
 
         # Get all active roles for the user (with eager-loaded role relationship)
-        user_roles = await self._get_user_roles(user_email, team_id, include_all_teams=include_all_teams)
+        user_roles = await self._get_user_roles(user_email, team_id, include_all_teams=include_all_teams, token_teams=token_teams)
         logger.debug(f"[RBAC] Found {len(user_roles)} roles for {SecurityValidator.sanitize_log_message(user_email)} (team_id={SecurityValidator.sanitize_log_message(team_id)})")
 
         # Collect permissions from all roles
@@ -451,7 +456,7 @@ class PermissionService:
         self._cache_timestamps.clear()
         logger.debug("Cleared all permission cache")
 
-    async def _get_user_roles(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False) -> List[UserRole]:
+    async def _get_user_roles(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False, token_teams: Optional[List[str]] = None) -> List[UserRole]:
         """Get user roles for permission checking.
 
         Always includes global and personal roles. Team-scoped role inclusion
@@ -468,6 +473,9 @@ class PermissionService:
             user_email: Email address of the user
             team_id: Optional team ID to filter to a specific team's roles
             include_all_teams: If True, include ALL team-scoped roles (for list/read with session tokens)
+            token_teams: Optional list of team IDs from token narrowing. When include_all_teams=True
+                        and token_teams is non-empty, filters team-scoped roles to only include
+                        roles from teams in this list (enforces Layer 1 narrowing at Layer 2)
 
         Returns:
             List[UserRole]: List of active roles for the user
@@ -488,15 +496,21 @@ class PermissionService:
             # First-Party
             from mcpgateway.db import EmailTeam  # pylint: disable=import-outside-toplevel
 
-            scope_conditions.append(
-                and_(
-                    UserRole.scope == "team",
-                    or_(
-                        UserRole.scope_id.is_(None),
-                        ~UserRole.scope_id.in_(select(EmailTeam.id).where(EmailTeam.is_personal.is_(True))),
-                    ),
-                )
+            base_condition = and_(
+                UserRole.scope == "team",
+                or_(
+                    UserRole.scope_id.is_(None),
+                    ~UserRole.scope_id.in_(select(EmailTeam.id).where(EmailTeam.is_personal.is_(True))),
+                ),
             )
+
+            if token_teams is not None and len(token_teams) > 0:
+                base_condition = and_(
+                    base_condition,
+                    or_(UserRole.scope_id.is_(None), UserRole.scope_id.in_(token_teams)),  # Keep global team roles; narrow to specified teams
+                )
+
+            scope_conditions.append(base_condition)
         else:
             # When team_id is None and include_all_teams is False (e.g., during login),
             # include team-scoped roles with scope_id=None (roles that apply to all teams)
