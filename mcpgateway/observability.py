@@ -624,6 +624,13 @@ class OpenTelemetryRequestMiddleware:
     """Raw ASGI middleware that creates request-root spans for gateway transport flows."""
 
     def __init__(self, app: Any, should_trace_request_path: Optional[Callable[[str], bool]] = None):
+        """Initialize the middleware wrapper.
+
+        Args:
+            app: Wrapped ASGI application.
+            should_trace_request_path: Optional predicate that decides whether a request path
+                should be instrumented.
+        """
         self.app = app
         self.should_trace_request_path = should_trace_request_path or _should_trace_request_path
 
@@ -643,6 +650,13 @@ class OpenTelemetryRequestMiddleware:
         return getattr(self.app, name)
 
     async def __call__(self, scope: Mapping[str, Any], receive: Any, send: Any) -> None:
+        """Handle an ASGI request and create a request-root span when tracing applies.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
         if scope.get("type") != "http" or _TRACER is None:
             await self.app(scope, receive, send)
             return

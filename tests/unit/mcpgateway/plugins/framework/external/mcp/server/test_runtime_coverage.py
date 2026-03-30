@@ -26,6 +26,17 @@ class TestModuleLevelTools:
         with pytest.raises(RuntimeError, match="Plugin server not initialized"):
             await runtime.get_plugin_config("anything")
 
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("/health", False),
+            ("/metrics/prometheus/", False),
+            ("/mcp", True),
+        ],
+    )
+    def test_should_trace_plugin_server_path_filters_health_endpoints(self, path, expected):
+        assert runtime._should_trace_plugin_server_path(path) is expected
+
 
 # ===========================================================================
 # SSLCapableFastMCP __init__

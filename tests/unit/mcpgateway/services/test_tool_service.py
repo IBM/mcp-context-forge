@@ -2444,6 +2444,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.create_span", side_effect=record_span),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
             patch("mcpgateway.services.tool_service.otel_context_active", return_value=True),
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-123"),
         ):
             mock_settings.mcp_session_pool_enabled = False
             mock_settings.default_passthrough_headers = []
@@ -2453,6 +2454,7 @@ class TestToolService:
 
         assert result.content[0].text == "MCP response"
         assert captured_headers["traceparent"].startswith("00-")
+        assert captured_headers["X-Correlation-ID"] == "corr-123"
         assert span_names[:3] == ["tool.invoke", "mcp.client.call", "mcp.client.initialize"]
         assert "mcp.client.request" in span_names
         assert "mcp.client.response" in span_names

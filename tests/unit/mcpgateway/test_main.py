@@ -13,6 +13,7 @@ Comprehensive tests for the main API endpoints with full coverage.
 import asyncio
 from copy import deepcopy
 import datetime
+import importlib
 import json
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -258,6 +259,21 @@ def _make_request(path: str = "/", headers: dict | None = None) -> Request:
         "headers": header_list,
     }
     return Request(scope)
+
+
+def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
+    """Import-time app setup should register the OTEL request middleware when enabled."""
+    # First-Party
+    import mcpgateway.main as main_module
+
+    with patch("mcpgateway.observability.otel_tracing_enabled", return_value=True):
+        reloaded = importlib.reload(main_module)
+
+    try:
+        middleware_classes = [middleware.cls for middleware in reloaded.app.user_middleware]
+        assert reloaded.OpenTelemetryRequestMiddleware in middleware_classes
+    finally:
+        importlib.reload(reloaded)
 
 
 # --------------------------------------------------------------------------- #
