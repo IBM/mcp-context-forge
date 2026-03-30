@@ -906,6 +906,22 @@ class TestMcpSerialization:
         """Unknown objects should serialize to an empty MCP payload."""
         assert _serialize_mcp_tool_definition(object()) == {}
 
+    def test_serialize_mcp_tool_definition_normalizes_null_description(self):
+        """MCP tool payloads should always expose a string description."""
+        payload = _serialize_mcp_tool_definition(
+            {
+                "name": "test-json-tool",
+                "description": None,
+                "inputSchema": {"type": "object"},
+            }
+        )
+
+        assert payload == {
+            "name": "test-json-tool",
+            "description": "",
+            "inputSchema": {"type": "object"},
+        }
+
     def test_serialize_legacy_tool_payloads_preserves_dicts_and_unknowns(self):
         """Legacy payload serialization should preserve dicts and tolerate unknown objects."""
         payloads = _serialize_legacy_tool_payloads([{"id": "tool-1"}, object()])

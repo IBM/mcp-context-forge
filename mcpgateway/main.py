@@ -1030,11 +1030,17 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
     else:
         data = {}
 
-    payload: Dict[str, Any] = {
-        "name": data.get("name", getattr(tool, "name", None)),
-        "description": data.get("description", getattr(tool, "description", None)),
-        "inputSchema": data.get("inputSchema", getattr(tool, "input_schema", None)),
-    }
+    name = data.get("name", getattr(tool, "name", None))
+    description = data.get("description", getattr(tool, "description", None))
+    input_schema = data.get("inputSchema", getattr(tool, "input_schema", None))
+
+    payload: Dict[str, Any] = {}
+    if name is not None:
+        payload["name"] = name
+    if description is not None or name is not None or input_schema is not None:
+        payload["description"] = description or ""
+    if input_schema is not None:
+        payload["inputSchema"] = input_schema
 
     output_schema = data.get("outputSchema", getattr(tool, "output_schema", None))
     if output_schema is not None:

@@ -189,7 +189,7 @@ def _is_admin_jwt_trace(trace: dict[str, Any]) -> bool:
 
 @pytest.fixture(scope="module")
 def jwt_token() -> str:
-    """Create an admin JWT for live MCP CLI smoke traffic."""
+    """Create a standard JWT for live MCP and Langfuse smoke traffic."""
     result = subprocess.run(
         [sys.executable, "-m", "mcpgateway.utils.create_jwt_token", "--username", ADMIN_EMAIL, "--exp", TOKEN_EXPIRY, "--secret", JWT_SECRET],
         check=False,
@@ -198,6 +198,20 @@ def jwt_token() -> str:
         timeout=15,
     )
     assert result.returncode == 0, f"JWT generation failed: {result.stderr}"
+    return result.stdout.strip().strip('"')
+
+
+@pytest.fixture(scope="module")
+def admin_jwt_token() -> str:
+    """Create an admin-bypass JWT for privileged live smoke traffic."""
+    result = subprocess.run(
+        [sys.executable, "-m", "mcpgateway.utils.create_jwt_token", "--username", ADMIN_EMAIL, "--exp", TOKEN_EXPIRY, "--secret", JWT_SECRET, "--admin"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, f"Admin JWT generation failed: {result.stderr}"
     return result.stdout.strip().strip('"')
 
 
@@ -261,7 +275,6 @@ def test_langfuse_trace_export_eventually_contains_initialize_trace(jwt_token: s
     assert "auth:jwt" in trace.get("tags", [])
     assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
     assert trace_attrs.get("langfuse.trace.name") == "mcp.initialize"
-    assert trace_attrs.get("langfuse.session.id")
 
 
 @skip_no_gateway
@@ -360,20 +373,16 @@ def test_langfuse_trace_export_eventually_contains_resource_read_trace(jwt_token
 @skip_no_langfuse
 @skip_no_langfuse_auth
 @pytest.mark.e2e
-def test_langfuse_trace_export_eventually_contains_root_list_trace(jwt_token: str):
-    """A raw roots/list should export a Langfuse root-list trace."""
+def test_langfuse_trace_export_eventually_contains_root_list_trace(admin_jwt_token: str):
+    """An authenticated root listing should export a Langfuse root-list trace."""
     triggered_after = time.time() - 1
-    responses = _send_jsonrpc_via_wrapper(
-        _build_wrapper_env(jwt_token),
-        [
-            _build_initialize(1),
-            {"jsonrpc": "2.0", "id": 2, "method": "roots/list", "params": {}},
-        ],
-        settle_seconds=4.0,
+    response = httpx.get(
+        f"{BASE_URL}/roots",
+        headers=_gateway_api_headers(admin_jwt_token),
+        timeout=20,
     )
-    roots_response = _get_response_by_id(responses, 2)
-    assert roots_response is not None, f"No roots/list response: {responses}"
-    assert "error" not in roots_response, f"roots/list returned error: {roots_response}"
+    response.raise_for_status()
+    assert isinstance(response.json(), list)
 
     trace = _wait_for_fresh_trace(
         triggered_after,

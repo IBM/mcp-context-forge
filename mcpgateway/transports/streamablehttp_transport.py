@@ -37,7 +37,7 @@ from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Tuple, Union
+from typing import Any, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -65,6 +65,7 @@ from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
+from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -85,6 +86,41 @@ from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, requ
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
+    """Return an active span context manager for raw MCP initialize traffic.
+
+    Args:
+        body: Raw JSON-RPC request body bytes.
+        mcp_session_id: Session identifier from the request headers when present.
+        server_id: Effective virtual server identifier for the request, if any.
+
+    Returns:
+        Active span context manager for initialize requests, otherwise a no-op context.
+    """
+    try:
+        payload = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict) or str(payload.get("method") or "").strip() != "initialize":
+        return None
+
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        params = {}
+
+    session_id = params.get("sessionId") or params.get("session_id")
+    if not session_id and mcp_session_id and mcp_session_id != "not-provided":
+        session_id = mcp_session_id
+
+    span_attributes: Dict[str, Any] = {
+        "mcp.protocol_version": params.get("protocolVersion") or params.get("protocol_version"),
+        "mcp.session_id": session_id,
+        "server.id": server_id,
+    }
+    return create_span("mcp.initialize", span_attributes)
 
 
 def _normalize_mcp_prompt_arguments(arguments: Any) -> Optional[List[types.PromptArgument]]:
@@ -1786,7 +1822,7 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
+                return [types.Tool(name=tool.name, description=tool.description or "", inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -1794,7 +1830,7 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
+                return [types.Tool(name=tool.name, description=tool.description or "", inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
             return []
@@ -3015,8 +3051,36 @@ class SessionManagerWrapper:
             "user_context": user_context,
         }
 
+        buffered_request_body = bytearray()
+        initialize_span_cm: Optional[ContextManager[Any]] = None
+        initialize_span_active = False
+
+        async def receive_with_initialize_trace() -> Dict[str, Any]:
+            """Capture initialize requests so the public MCP handshake is traced.
+
+            Returns:
+                The next ASGI receive message, with initialize payloads recorded so
+                tracing can wrap the SDK-managed handshake path.
+            """
+            nonlocal initialize_span_cm, initialize_span_active
+            message = await receive()
+            if method == "POST" and not initialize_span_active and message.get("type") == "http.request":
+                buffered_request_body.extend(message.get("body", b""))
+                if not message.get("more_body", False):
+                    initialize_span_cm = _maybe_open_initialize_span(
+                        bytes(buffered_request_body),
+                        mcp_session_id=mcp_session_id,
+                        server_id=validated,
+                    )
+                    if initialize_span_cm is not None:
+                        initialize_span_cm.__enter__()
+                        initialize_span_active = True
+            return message
+
+        span_exit_exc: tuple[Any, Any, Any] = (None, None, None)
+
         try:
-            await self.session_manager.handle_request(scope, receive, send_with_capture)
+            await self.session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
             logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
 
             # Register ownership for the session we just handled
@@ -3071,9 +3135,13 @@ class SessionManagerWrapper:
             # Expected when client closes one side of the stream (normal lifecycle)
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
+            span_exit_exc = (type(e), e, e.__traceback__)
             logger.error("[STATEFUL] Streamable HTTP request failed | Session: %s | Error: %s", mcp_session_id, e)
             logger.exception("Error handling streamable HTTP request: %s", e)
             raise
+        finally:
+            if initialize_span_active and initialize_span_cm is not None:
+                initialize_span_cm.__exit__(*span_exit_exc)
 
 
 # ------------------------- Authentication for /mcp routes ------------------------------

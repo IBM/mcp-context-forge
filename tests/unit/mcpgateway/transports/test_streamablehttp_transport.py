@@ -708,6 +708,36 @@ async def test_list_tools_no_server_id(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_tools_normalizes_null_description(monkeypatch):
+    """Test list_tools normalizes null tool descriptions for MCP clients."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service
+
+    mock_db = MagicMock()
+    mock_tool = MagicMock()
+    mock_tool.name = "t"
+    mock_tool.description = None
+    mock_tool.input_schema = {"type": "object"}
+    mock_tool.output_schema = None
+    mock_tool.annotations = {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([mock_tool], None)))
+
+    token = server_id_var.set(None)
+    result = await list_tools()
+    server_id_var.reset(token)
+
+    assert isinstance(result, list)
+    assert result[0].name == "t"
+    assert result[0].description == ""
+
+
+@pytest.mark.asyncio
 async def test_list_tools_exception_no_server_id(monkeypatch, caplog):
     """Test list_tools returns [] and logs exception on error when no server_id."""
     # First-Party
@@ -13175,3 +13205,51 @@ async def test_auth_jwt_sets_trace_context_for_session_token(monkeypatch):
     assert get_trace_team_scope() == "team-stream"
     assert get_trace_team_name() == "Stream Team"
     clear_trace_context()
+
+
+def test_maybe_open_initialize_span_returns_none_for_non_initialize():
+    """Non-initialize JSON-RPC payloads should not create transport spans."""
+    body = tr.orjson.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+
+    span_cm = tr._maybe_open_initialize_span(body, mcp_session_id=None, server_id=None)
+
+    assert span_cm is None
+
+
+def test_maybe_open_initialize_span_builds_initialize_attributes(monkeypatch):
+    """Initialize payloads should create the public MCP handshake span."""
+    captured = {}
+
+    class _SpanContext:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_create_span(name, attributes):
+        captured["name"] = name
+        captured["attributes"] = attributes
+        return _SpanContext()
+
+    monkeypatch.setattr(tr, "create_span", _fake_create_span)
+    body = tr.orjson.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-03-26"},
+        }
+    )
+
+    span_cm = tr._maybe_open_initialize_span(body, mcp_session_id="session-123", server_id="server-456")
+
+    assert span_cm is not None
+    assert captured == {
+        "name": "mcp.initialize",
+        "attributes": {
+            "mcp.protocol_version": "2025-03-26",
+            "mcp.session_id": "session-123",
+            "server.id": "server-456",
+        },
+    }
