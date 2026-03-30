@@ -240,7 +240,7 @@ class PermissionService:
         # Use distinct cache key for any-team lookups to avoid poisoning global cache
         if include_all_teams:
             # Include token_teams in cache key to avoid cross-contamination between narrowed sessions
-            teams_suffix = f":{','.join(sorted(token_teams))}" if token_teams else ""
+            teams_suffix = f":{','.join(sorted(set(token_teams)))}" if token_teams else ""
             cache_key = f"{user_email}:__anyteam__{teams_suffix}"
         else:
             cache_key = f"{user_email}:{team_id or 'global'}"

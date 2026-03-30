@@ -91,6 +91,20 @@ async def test_cache_key_sorted_teams_for_consistency(svc):
 
 
 @pytest.mark.asyncio
+async def test_cache_key_deduplicates_token_teams(svc):
+    """Duplicate team IDs in token_teams produce the same cache key as deduplicated."""
+    role = SimpleNamespace(name="developer", permissions=["tools.read"], get_effective_permissions=lambda: ["tools.read"])
+    user_role = SimpleNamespace(role=role, role_id="r1", scope="team", scope_id="team-a")
+
+    with patch.object(svc, "_get_user_roles", return_value=[user_role]):
+        await svc.get_user_permissions("user@test.com", include_all_teams=True, token_teams=["team-a", "team-a"])
+
+        # Deduplicated: should be same key as single "team-a"
+        assert "user@test.com:__anyteam__:team-a" in svc._permission_cache
+        assert "user@test.com:__anyteam__:team-a,team-a" not in svc._permission_cache
+
+
+@pytest.mark.asyncio
 async def test_cache_key_no_suffix_when_token_teams_none(svc):
     """Un-narrowed sessions (token_teams=None) use base cache key."""
     role = SimpleNamespace(name="developer", permissions=["tools.read"], get_effective_permissions=lambda: ["tools.read"])
@@ -178,25 +192,33 @@ async def test_get_user_roles_preserves_global_team_roles_when_narrowed(svc, moc
 
 @pytest.mark.asyncio
 async def test_check_permission_narrowed_session_restricts_to_token_teams(svc):
-    """check_permission with narrowed session only uses permissions from token_teams."""
-    # User has developer role in team-a and team_admin role in team-b
+    """check_permission with narrowed session only uses permissions from token_teams.
+
+    Uses realistic explicit permissions (matching bootstrap_db.py built-in roles)
+    so the negative assertion actually detects a role leak — if team-B's role
+    leaked into the result, 'teams.create' would be present via exact match.
+    """
+    # team-a: developer with read/execute only
     role_a = SimpleNamespace(name="developer", permissions=["tools.read", "tools.execute"], get_effective_permissions=lambda: ["tools.read", "tools.execute"])
-    role_b = SimpleNamespace(name="team_admin", permissions=["teams.*", "tools.create"], get_effective_permissions=lambda: ["teams.*", "tools.create"])
+    # team-b: team_admin with explicit team management permissions (realistic, not wildcard)
+    role_b = SimpleNamespace(
+        name="team_admin",
+        permissions=["teams.create", "teams.read", "teams.update", "teams.delete", "tools.create"],
+        get_effective_permissions=lambda: ["teams.create", "teams.read", "teams.update", "teams.delete", "tools.create"],
+    )
 
     # Mock _get_user_roles to return only team-a role when narrowed
     def mock_get_roles(user_email, team_id, include_all_teams=False, token_teams=None):
         if token_teams == ["team-a"]:
-            # Narrowed to team-a: only return team-a role
             return [SimpleNamespace(role=role_a, role_id="r1", scope="team", scope_id="team-a")]
         else:
-            # Un-narrowed: return both roles
             return [SimpleNamespace(role=role_a, role_id="r1", scope="team", scope_id="team-a"), SimpleNamespace(role=role_b, role_id="r2", scope="team", scope_id="team-b")]
 
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "_get_user_roles", side_effect=mock_get_roles):
-            # Narrowed session: should NOT have teams.* from team-b
+            # Narrowed to team-a: must NOT have teams.create from team-b
             result_narrowed = await svc.check_permission("user@test.com", "teams.create", check_any_team=True, token_teams=["team-a"])
-            assert result_narrowed is False, "Narrowed session should not have teams.* from team-b"
+            assert result_narrowed is False, "Narrowed session must not have teams.create from team-b"
 
             # Should have tools.read from team-a
             result_allowed = await svc.check_permission("user@test.com", "tools.read", check_any_team=True, token_teams=["team-a"])
