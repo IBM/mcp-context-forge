@@ -380,11 +380,13 @@ fn truncate(value: &str, cfg: &GuardConfig) -> String {
                     cut = find_word_boundary(value, cut, cut);
                 }
 
-                // Byte-slice instead of .chars().take().collect()
+                // Pre-sized allocation: body + ellipsis in one shot
                 let byte_off = byte_offset_of_char(value, cut);
-                let mut truncated = value[..byte_off].to_string();
-                truncated.push_str(ell);
-                return truncated;
+                let body = &value[..byte_off];
+                let mut result = String::with_capacity(body.len() + ell.len());
+                result.push_str(body);
+                result.push_str(ell);
+                return result;
             }
         }
         // Under limit or no max_tokens — pass through
@@ -419,11 +421,13 @@ fn truncate(value: &str, cfg: &GuardConfig) -> String {
         cut = find_word_boundary(value, cut, max_chars);
     }
 
-    // Byte-slice instead of .chars().take().collect()
+    // Pre-sized allocation: body + ellipsis in one shot
     let byte_off = byte_offset_of_char(value, cut);
-    let mut truncated = value[..byte_off].to_string();
-    truncated.push_str(ell);
-    truncated
+    let body = &value[..byte_off];
+    let mut result = String::with_capacity(body.len() + ell.len());
+    result.push_str(body);
+    result.push_str(ell);
+    result
 }
 
 // ─── Violation info (returned as Python dict) ────────────────────────────────
@@ -683,10 +687,108 @@ fn process_container<'py>(
 
     // ── List ──
     if let Ok(list) = container.cast::<PyList>() {
-        if list.len() > cfg.max_structure_size {
+        let list_len = list.len();
+        if list_len > cfg.max_structure_size {
             return Ok(ProcessResult::Unchanged);
         }
 
+        // ── Batch fast path for all-string lists (truncate mode) ──
+        // Avoids per-item recursive process_container calls, path string
+        // formatting, and interleaved PyList::append. Instead:
+        //   Phase 1: borrow all &str from Python (tight loop, cache-friendly)
+        //   Phase 2: decide + truncate in pure Rust (no Python API calls)
+        //   Phase 3: build output PyList in one pass
+        if cfg.strategy == Strategy::Truncate {
+            // Phase 1: collect list items so they live long enough to borrow &str
+            let items: Vec<Bound<'py, PyAny>> = list.iter().collect();
+
+            // Try to borrow all items as &str via PyString::to_str()
+            let mut borrowed: Vec<&str> = Vec::with_capacity(list_len);
+            let mut all_strings = true;
+            for item in &items {
+                if let Ok(s) = item.cast::<PyString>() {
+                    match s.to_str() {
+                        Ok(text) => borrowed.push(text),
+                        Err(_) => {
+                            all_strings = false;
+                            break;
+                        }
+                    }
+                } else {
+                    all_strings = false;
+                    break;
+                }
+            }
+
+            if all_strings {
+                // Phase 2: process all strings, tracking which need truncation
+                let mut any_modified = false;
+                let mut results: Vec<Option<String>> = Vec::with_capacity(list_len);
+
+                let limit = match cfg.limit_mode {
+                    LimitMode::Character => cfg.max_chars.unwrap_or(usize::MAX),
+                    LimitMode::Token => cfg
+                        .max_tokens
+                        .unwrap_or(usize::MAX)
+                        .saturating_add(1)
+                        .saturating_mul(cfg.chars_per_token),
+                };
+
+                for &text in &borrowed {
+                    // Skip numerics (only check short strings)
+                    if text.len() <= 50 && is_numeric_string(text) {
+                        results.push(None); // unchanged
+                        continue;
+                    }
+
+                    // O(1) byte-length fast path
+                    if text.len() <= limit {
+                        // If ASCII, byte len == char len; definitely under limit
+                        if text.is_ascii() {
+                            results.push(None);
+                            continue;
+                        }
+                    }
+
+                    let (char_count, _) = count_chars_capped(text, limit);
+                    let above_max = match cfg.limit_mode {
+                        LimitMode::Character => cfg.max_chars.is_some_and(|m| char_count > m),
+                        LimitMode::Token => {
+                            let tokens = estimate_tokens(char_count, cfg.chars_per_token);
+                            cfg.max_tokens.is_some_and(|m| tokens > m)
+                        }
+                    };
+
+                    if above_max {
+                        let truncated = truncate(text, cfg);
+                        if truncated != text {
+                            any_modified = true;
+                            results.push(Some(truncated));
+                        } else {
+                            results.push(None);
+                        }
+                    } else {
+                        results.push(None);
+                    }
+                }
+
+                if !any_modified {
+                    return Ok(ProcessResult::Unchanged);
+                }
+
+                // Phase 3: build output list in one pass
+                let new_list = PyList::empty(py);
+                for (idx, opt) in results.iter().enumerate() {
+                    match opt {
+                        Some(truncated) => new_list.append(PyString::new(py, truncated))?,
+                        None => new_list.append(list.get_item(idx)?)?,
+                    }
+                }
+                return Ok(ProcessResult::Modified(new_list.into_any()));
+            }
+        }
+
+        // ── Generic fallback for mixed-type lists or block mode ──
         let mut any_modified = false;
         let new_list = PyList::empty(py);
 
