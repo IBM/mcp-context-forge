@@ -2676,7 +2676,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                             pass  # keep raw value for non-UUID token_teams
                     # Only trust team_id if it is in the user's DB-resolved teams
                     validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
-                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id)
+                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id, token_teams=token_teams)
                     if not has_admin_access:
                         logger.warning(f"Admin access denied for user without admin permissions: {SecurityValidator.sanitize_log_message(str(username))}")
                         return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")

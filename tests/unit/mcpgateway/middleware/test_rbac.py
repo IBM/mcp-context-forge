@@ -332,6 +332,62 @@ async def test_permission_checker_has_permission_forwards_check_any_team_fresh_d
     assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
 
 
+@pytest.mark.asyncio
+async def test_permission_checker_has_admin_permission_passes_token_teams(monkeypatch):
+    """has_admin_permission forwards token_teams to check_admin_permission (db_session path)."""
+    mock_db = MagicMock()
+    mock_user = {"email": "admin@example.com", "db": mock_db, "token_teams": []}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_admin_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    checker = rbac.PermissionChecker(mock_user)
+    result = await checker.has_admin_permission()
+
+    assert result is False
+    assert mock_perm_service.check_admin_permission.call_args.kwargs["token_teams"] == []
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_admin_permission_passes_token_teams_fresh_db(monkeypatch):
+    """has_admin_permission forwards token_teams to check_admin_permission (fresh_db_session path)."""
+    mock_user = {"email": "admin@example.com", "token_teams": ["team-a"]}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_admin_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        checker = rbac.PermissionChecker(mock_user)
+        result = await checker.has_admin_permission()
+
+    assert result is True
+    assert mock_perm_service.check_admin_permission.call_args.kwargs["token_teams"] == ["team-a"]
+
+
+@pytest.mark.asyncio
+async def test_require_admin_permission_forwards_token_teams(monkeypatch):
+    """require_admin_permission decorator forwards token_teams from user_context."""
+    mock_db = MagicMock()
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_admin_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    @rbac.require_admin_permission()
+    async def dummy_endpoint(user=None):
+        return "ok"
+
+    user_ctx = {"email": "user@example.com", "db": mock_db, "token_teams": []}
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dummy_endpoint(user=user_ctx)
+
+    assert exc_info.value.status_code == 403
+    mock_perm_service.check_admin_permission.assert_called_once_with(
+        "user@example.com", token_teams=[]
+    )
+
+
 # ============================================================================
 # Tests for has_hooks_for optimization (Issue #1778)
 # ============================================================================
