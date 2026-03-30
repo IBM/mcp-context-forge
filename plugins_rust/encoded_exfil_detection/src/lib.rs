@@ -420,25 +420,23 @@ fn has_egress_context(text: &str, start: usize, end: usize, extra_hints: &[Strin
 /// This prevents false positives and allows adjacent matches without consuming boundary chars
 fn has_valid_boundaries(text: &str, start: usize, end: usize, core_chars: &str) -> bool {
     let bytes = text.as_bytes();
+    // Exclude '=' from boundary check — it's only valid as padding at the end of base64,
+    // and the regex already captures trailing padding as part of the match.
+    let boundary_chars = core_chars.replace('=', "");
 
     // Check character before match (if exists)
-    // Note: '=' is only valid as padding at the END of base64, not before it
     if start > 0 {
         let prev_char = bytes[start - 1] as char;
-        // Exclude '=' from boundary check since it's only valid as padding at the end
-        let boundary_chars = core_chars.replace('=', "");
         if boundary_chars.contains(prev_char) {
-            return false; // Previous char is part of the core pattern alphabet
+            return false;
         }
     }
 
     // Check character after match (if exists)
     if end < bytes.len() {
         let next_char = bytes[end] as char;
-        // Exclude '=' from boundary check since it's only valid as padding at the end
-        let boundary_chars = core_chars.replace('=', "");
         if boundary_chars.contains(next_char) {
-            return false; // Next char is part of the core pattern alphabet
+            return false;
         }
     }
 
