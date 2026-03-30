@@ -47,6 +47,21 @@ from mcpgateway.plugins.framework import (
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
+# Try to import Rust-accelerated implementation
+try:
+    from output_length_guard_rust.output_length_guard_rust import OutputLengthGuardEngine as _RustEngine
+
+    _RUST_AVAILABLE = True
+    logging.getLogger(__name__).info("Rust output length guard available - using high-performance implementation")
+except ImportError as e:
+    _RUST_AVAILABLE = False
+    _RustEngine = None  # type: ignore
+    logging.getLogger(__name__).debug(f"Rust output length guard not available (will use Python): {e}")
+except Exception as e:  # pragma: no cover - defensive import guard
+    _RUST_AVAILABLE = False
+    _RustEngine = None  # type: ignore
+    logging.getLogger(__name__).warning(f"Unexpected error loading Rust output length guard module: {e}", exc_info=True)
+
 
 class OutputLengthGuardConfig(BaseModel):
     """Configuration for the Output Length Guard plugin."""
@@ -1010,9 +1025,20 @@ class OutputLengthGuardPlugin(Plugin):
         super().__init__(config)
         self._cfg = OutputLengthGuardConfig(**(config.config or {}))
 
+        # Initialize Rust engine if available
+        self._rust_engine = None
+        if _RUST_AVAILABLE and _RustEngine is not None:
+            try:
+                self._rust_engine = _RustEngine(self._cfg)
+                logger.info("OutputLengthGuard: Rust engine initialized")
+            except Exception as e:
+                logger.warning(f"OutputLengthGuard: Failed to initialize Rust engine, using Python: {e}")
+                self._rust_engine = None
+
         # Log plugin initialization with configuration summary
+        impl_label = "Rust" if self._rust_engine is not None else "Python"
         logger.info(
-            f"OutputLengthGuard initialized: mode={self._cfg.limit_mode}, "
+            f"OutputLengthGuard initialized ({impl_label}): mode={self._cfg.limit_mode}, "
             f"strategy={self._cfg.strategy}, "
             f"char_limits=[{self._cfg.min_chars}, {self._cfg.max_chars}], "
             f"token_limits=[{self._cfg.min_tokens}, {self._cfg.max_tokens}], "
@@ -1042,6 +1068,48 @@ class OutputLengthGuardPlugin(Plugin):
             result_type = type(payload.result).__name__
             logger.info(f"OutputLengthGuard processing tool '{payload.name}' with result type: {result_type}")
             logger.debug(f"Tool '{payload.name}' config: mode={cfg.limit_mode}, strategy={cfg.strategy}, char_limits=[{cfg.min_chars}, {cfg.max_chars}]")
+
+            # ── Rust fast path ──────────────────────────────────────────────
+            # Delegate container processing to Rust engine when available.
+            # The Rust engine handles str, list, dict, and nested structures
+            # in a single call with no Python-Rust boundary crossings per item.
+            #
+            # Skip for MCP content dicts (with 'content' key) — those need
+            # Python-side structuredContent priority logic and content regeneration.
+            _use_rust = (
+                self._rust_engine is not None
+                and not (isinstance(payload.result, dict) and 'content' in payload.result)
+            )
+            if _use_rust:
+                try:
+                    modified_container, was_modified, violation_info = self._rust_engine.process(payload.result)
+
+                    if violation_info is not None:
+                        violation = PluginViolation(
+                            reason=violation_info.get("reason", "Output length violation"),
+                            description=violation_info.get("description", ""),
+                            code=violation_info.get("code", "OUTPUT_LENGTH_VIOLATION"),
+                            details=violation_info.get("details", {}),
+                            http_status_code=violation_info.get("http_status_code", 422),
+                            mcp_error_code=violation_info.get("mcp_error_code", -32000),
+                        )
+                        return ToolPostInvokeResult(
+                            continue_processing=False,
+                            violation=violation,
+                            metadata={"rust_accelerated": True}
+                        )
+
+                    if was_modified:
+                        return ToolPostInvokeResult(
+                            modified_payload=ToolPostInvokePayload(name=payload.name, result=modified_container),
+                            metadata={"rust_accelerated": True}
+                        )
+
+                    return ToolPostInvokeResult(metadata={"rust_accelerated": True})
+                except Exception as e:
+                    logger.warning(f"OutputLengthGuard: Rust engine failed, falling back to Python: {e}")
+                    # Fall through to Python implementation
+            # ── End Rust fast path ──────────────────────────────────────────
 
             # Helper to evaluate and possibly modify a single string
             def handle_text(text: str) -> tuple[str, dict[str, Any], Optional[PluginViolation]]:
