@@ -3049,7 +3049,7 @@ async def test_get_db_cancelled_error():
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(asyncio.CancelledError):
-            async with get_db() as db:
+            async with get_db():
                 raise asyncio.CancelledError()
 
         mock_db.rollback.assert_called_once()
@@ -3071,7 +3071,7 @@ async def test_get_db_cancelled_error_rollback_fails():
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(asyncio.CancelledError):
-            async with get_db() as db:
+            async with get_db():
                 raise asyncio.CancelledError()
 
         mock_db.close.assert_called()
@@ -3094,7 +3094,7 @@ async def test_get_db_cancelled_error_close_fails():
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(asyncio.CancelledError):
-            async with get_db() as db:
+            async with get_db():
                 raise asyncio.CancelledError()
 
 
@@ -3110,7 +3110,7 @@ async def test_get_db_exception_rollback_fails_then_invalidate():
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(ValueError, match="test error"):
-            async with get_db() as db:
+            async with get_db():
                 raise ValueError("test error")
 
         mock_db.rollback.assert_called_once()
@@ -3131,7 +3131,7 @@ async def test_get_db_exception_rollback_and_invalidate_both_fail():
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(ValueError, match="test error"):
-            async with get_db() as db:
+            async with get_db():
                 raise ValueError("test error")
 
         mock_db.rollback.assert_called_once()
@@ -8906,7 +8906,7 @@ class TestProxyUpstreamAuthorizationRename:
                             with patch("mcpgateway.utils.passthrough_headers.settings") as mock_ph_settings:
                                 mock_ph_settings.enable_header_passthrough = True
                                 mock_ph_settings.enable_overwrite_base_headers = False
-                                result = await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
+                                await tr._proxy_list_tools_to_gateway(gw, request_headers, {}, None)
 
         # Should succeed because gateway has explicit passthrough_headers — no DB needed
         assert "X-Tenant-Id" in captured
@@ -13253,3 +13253,130 @@ def test_maybe_open_initialize_span_builds_initialize_attributes(monkeypatch):
             "server.id": "server-456",
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_initialize_span_closes_cleanly(monkeypatch):
+    """The public initialize span should exit cleanly after successful handling."""
+    # Standard
+    from contextlib import asynccontextmanager
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, _scope, receive, send_func):
+            await receive()
+            await send_func({"type": "http.response.start", "status": 200, "headers": []})
+            await send_func({"type": "http.response.body", "body": b"{}"})
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield MagicMock()
+
+    span_cm = MagicMock()
+    span_cm.__enter__ = MagicMock(return_value=MagicMock())
+    span_cm.__exit__ = MagicMock(return_value=False)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._maybe_open_initialize_span", lambda *_args, **_kwargs: span_cm)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+    try:
+        scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+        receive = _make_receive(
+            tr.orjson.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": "2025-03-26"},
+                }
+            )
+        )
+        send, _messages = _make_send_collector()
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+    finally:
+        user_context_var.reset(token)
+        await wrapper.shutdown()
+
+    span_cm.__enter__.assert_called_once()
+    span_cm.__exit__.assert_called_once()
+    assert span_cm.__exit__.call_args.args[-3:] == (None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_initialize_span_exits_with_exception(monkeypatch):
+    """The public initialize span should receive the raised exception on exit."""
+    # Standard
+    from contextlib import asynccontextmanager
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, user_context_var
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, _scope, receive, _send_func):
+            await receive()
+            raise ValueError("initialize failed")
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield MagicMock()
+
+    span_cm = MagicMock()
+    span_cm.__enter__ = MagicMock(return_value=MagicMock())
+    span_cm.__exit__ = MagicMock(return_value=False)
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._maybe_open_initialize_span", lambda *_args, **_kwargs: span_cm)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    token = user_context_var.set({"email": "dev@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True})
+    try:
+        scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+        receive = _make_receive(
+            tr.orjson.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": "2025-03-26"},
+                }
+            )
+        )
+        send, _messages = _make_send_collector()
+
+        with pytest.raises(ValueError, match="initialize failed"):
+            await wrapper.handle_streamable_http(scope, receive, send)
+    finally:
+        user_context_var.reset(token)
+        await wrapper.shutdown()
+
+    span_cm.__enter__.assert_called_once()
+    span_cm.__exit__.assert_called_once()
+    exc_type, exc_val, _exc_tb = span_cm.__exit__.call_args.args[-3:]
+    assert exc_type is ValueError
+    assert isinstance(exc_val, ValueError)
+    assert str(exc_val) == "initialize failed"

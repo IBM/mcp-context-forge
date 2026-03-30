@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway import observability
 from mcpgateway.config import get_settings
 from mcpgateway.observability import create_span, init_telemetry, trace_operation
 from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
@@ -311,6 +312,87 @@ class TestObservability:
         mock_grpc_exporter.assert_not_called()
         mock_http_exporter.assert_called_once()
 
+    def test_observability_helper_branches(self, monkeypatch):
+        """Exercise helper branches used by OTEL and Langfuse configuration."""
+        assert observability._sanitize_span_exception_message(None) == ""
+
+        monkeypatch.setattr(observability, "sanitize_trace_text", lambda _value: "   ")
+        monkeypatch.setattr(observability, "sanitize_for_log", lambda value: value)
+        assert observability._sanitize_span_exception_message(ValueError("secret")) == "ValueError"
+
+        monkeypatch.setattr(observability, "urlparse", MagicMock(side_effect=ValueError("boom")))
+        assert observability._is_langfuse_otlp_endpoint("https://langfuse.example.com/api/public/otel/v1/traces") is True
+
+        os.environ["LANGFUSE_OTEL_AUTH"] = "explicit-auth"
+        get_settings.cache_clear()
+        assert observability._resolve_langfuse_basic_auth() == "explicit-auth"
+
+        parsed = observability._parse_otlp_headers("Authorization=Basic abc, invalid-header, x-test =  value ")
+        assert parsed == {"Authorization": "Basic abc", "x-test": "value"}
+        assert observability._get_header_case_insensitive(parsed, "authorization") == "Basic abc"
+        assert observability._get_header_case_insensitive(parsed, "missing") is None
+
+        observability._set_header_case_insensitive(parsed, "AUTHORIZATION", "Basic def")
+        assert parsed["Authorization"] == "Basic def"
+        observability._set_header_case_insensitive(parsed, "x-new", "123")
+        assert parsed["x-new"] == "123"
+
+    def test_span_attribute_policy_and_exception_fallback_branches(self):
+        """Cover attribute-gating and sanitized exception-event fallback paths."""
+        clear_trace_context()
+        span = MagicMock()
+
+        assert observability._should_emit_span_attribute("user.email") is False
+        observability.set_span_attribute(span, "user.email", "user@example.com")
+        span.set_attribute.assert_not_called()
+
+        observability.set_span_attribute(None, "tool.name", "demo")
+        observability._set_pre_sanitized_span_attribute(None, "tool.name", "demo")
+        observability._record_sanitized_exception_event(None, ValueError, "boom")
+
+        class BrokenException(Exception):
+            def __init__(self, _message):
+                raise RuntimeError("cannot instantiate")
+
+        fallback_span = MagicMock()
+        del fallback_span.add_event
+        observability._record_sanitized_exception_event(fallback_span, BrokenException, "boom")
+        fallback_span.record_exception.assert_called_once()
+        recorded_exc = fallback_span.record_exception.call_args.args[0]
+        assert isinstance(recorded_exc, Exception)
+        assert str(recorded_exc) == "boom"
+
+    def test_derive_langfuse_trace_name_variants(self):
+        """Derive Langfuse-friendly names for the major traced operation families."""
+        assert observability._derive_langfuse_trace_name("tool.invoke", {"tool.name": "clock"}) == "Tool: clock"
+        assert observability._derive_langfuse_trace_name("tool.list", {}) == "Tools"
+        assert observability._derive_langfuse_trace_name("prompt.list", {}) == "Prompts"
+        assert observability._derive_langfuse_trace_name("resource.read", {"resource.uri": "time://formats"}) == "Resource: time://formats"
+        assert observability._derive_langfuse_trace_name("resource.list", {}) == "Resources"
+        assert observability._derive_langfuse_trace_name("resource_template.list", {}) == "Resource Templates"
+        assert observability._derive_langfuse_trace_name("root.list", {}) == "Roots"
+        assert observability._derive_langfuse_trace_name("llm.proxy", {"gen_ai.request.model": "gpt-5"}) == "LLM Proxy: gpt-5"
+        assert observability._derive_langfuse_trace_name("llm.chat", {"gen_ai.request.model": "gpt-5-mini"}) == "LLM Chat: gpt-5-mini"
+        assert observability._derive_langfuse_trace_name("a2a.invoke", {"a2a.agent.name": "echo-agent"}) == "A2A: echo-agent"
+
+    @patch("mcpgateway.observability._TRACER")
+    def test_create_span_swallow_trace_context_injection_errors(self, mock_tracer, monkeypatch):
+        """create_span should tolerate trace-context auto-injection failures."""
+        self._enable_langfuse_span_attrs()
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+        mock_tracer.start_as_current_span.return_value = mock_context
+
+        monkeypatch.setattr(observability, "_derive_langfuse_trace_name", MagicMock(side_effect=RuntimeError("inject-failed")))
+
+        with patch.object(observability.logger, "debug") as mock_debug:
+            with create_span("test.operation", {"tool.name": "clock"}) as span:
+                assert span is mock_span
+
+        mock_debug.assert_called()
+
     def test_create_span_no_tracer(self):
         """Test create_span when tracer is not initialized."""
         # First-Party
@@ -405,7 +487,7 @@ class TestObservability:
             assert span is mock_span
 
         mock_span.set_attribute.assert_any_call("auth.method", "jwt")
-        for disallowed_key in {
+        for disallowed_key in (
             "user.email",
             "langfuse.user.id",
             "team.scope",
@@ -415,7 +497,7 @@ class TestObservability:
             "langfuse.trace.tags",
             "langfuse.trace.name",
             "langfuse.observation.level",
-        }:
+        ):
             assert all(call.args[0] != disallowed_key for call in mock_span.set_attribute.call_args_list)
 
     @pytest.mark.skip(reason="Mock doesn't properly simulate SpanWithAttributes wrapper behavior")

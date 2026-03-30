@@ -33,7 +33,7 @@ Examples:
 
 # Standard
 import asyncio
-from contextlib import asynccontextmanager, AsyncExitStack
+from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 import re
@@ -3053,6 +3053,7 @@ class SessionManagerWrapper:
 
         buffered_request_body = bytearray()
         initialize_span_cm: Optional[ContextManager[Any]] = None
+        initialize_span_stack: Optional[ExitStack] = None
         initialize_span_active = False
 
         async def receive_with_initialize_trace() -> Dict[str, Any]:
@@ -3062,7 +3063,7 @@ class SessionManagerWrapper:
                 The next ASGI receive message, with initialize payloads recorded so
                 tracing can wrap the SDK-managed handshake path.
             """
-            nonlocal initialize_span_cm, initialize_span_active
+            nonlocal initialize_span_cm, initialize_span_stack, initialize_span_active
             message = await receive()
             if method == "POST" and not initialize_span_active and message.get("type") == "http.request":
                 buffered_request_body.extend(message.get("body", b""))
@@ -3073,7 +3074,8 @@ class SessionManagerWrapper:
                         server_id=validated,
                     )
                     if initialize_span_cm is not None:
-                        initialize_span_cm.__enter__()
+                        initialize_span_stack = ExitStack()
+                        initialize_span_stack.enter_context(initialize_span_cm)
                         initialize_span_active = True
             return message
 
@@ -3140,8 +3142,8 @@ class SessionManagerWrapper:
             logger.exception("Error handling streamable HTTP request: %s", e)
             raise
         finally:
-            if initialize_span_active and initialize_span_cm is not None:
-                initialize_span_cm.__exit__(*span_exit_exc)
+            if initialize_span_active and initialize_span_stack is not None:
+                initialize_span_stack.__exit__(*span_exit_exc)
 
 
 # ------------------------- Authentication for /mcp routes ------------------------------
