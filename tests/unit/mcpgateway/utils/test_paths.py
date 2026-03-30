@@ -147,5 +147,3 @@ def test_scope_takes_priority_over_settings(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr("mcpgateway.utils.paths.settings", MagicMock(app_root_path="/settings-path"))
     req = _make_request("/scope-path")
     assert resolve_root_path(req) == "/scope-path"
-
-
