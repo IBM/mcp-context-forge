@@ -590,7 +590,7 @@ async def get_my_permissions(team_id: Optional[str] = Query(None, description="T
     """
     try:
         permission_service = PermissionService(db)
-        permissions = await permission_service.get_user_permissions(user_email=user["email"], team_id=team_id)
+        permissions = await permission_service.get_user_permissions(user_email=user["email"], team_id=team_id, token_teams=user.get("token_teams"))
 
         result = sorted(list(permissions))
         db.commit()

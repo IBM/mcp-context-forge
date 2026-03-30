@@ -285,7 +285,7 @@ async def test_has_admin_permission_with_team_id(svc):
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value={"admin.dashboard", "tools.read"}) as mock_get_perms:
             assert await svc.has_admin_permission("user@test.com", team_id="team-123") is True
-            mock_get_perms.assert_awaited_once_with("user@test.com", team_id="team-123")
+            mock_get_perms.assert_awaited_once_with("user@test.com", team_id="team-123", token_teams=None)
 
 
 @pytest.mark.asyncio
@@ -294,7 +294,7 @@ async def test_has_admin_permission_no_team_id_no_admin_perm(svc):
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value={"tools.read"}) as mock_get_perms:
             assert await svc.has_admin_permission("user@test.com") is False
-            mock_get_perms.assert_awaited_once_with("user@test.com", team_id=None)
+            mock_get_perms.assert_awaited_once_with("user@test.com", team_id=None, token_teams=None)
 
 
 # ---------- get_user_permissions ----------

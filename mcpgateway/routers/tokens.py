@@ -86,13 +86,18 @@ async def _get_caller_permissions(
     Returns:
         List of permissions, or ["*"] for admins
     """
-    if current_user.get("is_admin"):
-        return ["*"]  # Admins can grant anything
+    # SECURITY: Only treat admin as unrestricted when token is un-narrowed.
+    # Narrowed or public-only admin sessions must derive permissions through
+    # the token-aware path to enforce Layer 1 scope containment.
+    token_teams = current_user.get("token_teams")
+    if current_user.get("is_admin") and token_teams is None:
+        return ["*"]  # Un-narrowed admins can grant anything
 
     permission_service = PermissionService(db)
     permissions = await permission_service.get_user_permissions(
         user_email=current_user["email"],
         team_id=team_id,
+        token_teams=token_teams,  # SECURITY: Respect token narrowing
     )
     return list(permissions) if permissions else None
 
@@ -130,8 +135,12 @@ async def create_token(
     # Multi-team users must specify team_id explicitly to avoid ambiguity.
     # Admins with teams=null are exempt and may still create global-scope tokens.
     effective_team_id = request.team_id
-    if effective_team_id is None and not current_user.get("is_admin"):
-        user_teams = current_user.get("token_teams") or []
+    caller_token_teams = current_user.get("token_teams")
+    # Only un-narrowed admins (token_teams=None) are exempt from auto-inheritance.
+    # Narrowed admin sessions use the same team-scoping logic as non-admins.
+    is_unrestricted_admin = current_user.get("is_admin") and caller_token_teams is None
+    if effective_team_id is None and not is_unrestricted_admin:
+        user_teams = caller_token_teams or []
         if len(user_teams) == 1:
             effective_team_id = user_teams[0]
             logger.debug("Auto-inherited team_id=%s for token creation by %s", effective_team_id, current_user["email"])
@@ -534,7 +543,10 @@ async def list_all_tokens(
     """
     _require_authenticated_session(current_user)
 
-    if not current_user["is_admin"]:
+    # SECURITY: Require un-narrowed admin. Narrowed/public-only admin sessions
+    # must not access the token oversight surface to prevent privilege escalation.
+    token_teams = current_user.get("token_teams")
+    if not current_user.get("is_admin") or token_teams is not None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     service = TokenCatalogService(db)
@@ -618,7 +630,10 @@ async def admin_revoke_token(
     """
     _require_authenticated_session(current_user)
 
-    if not current_user["is_admin"]:
+    # SECURITY: Require un-narrowed admin. Narrowed/public-only admin sessions
+    # must not revoke arbitrary tokens to prevent privilege escalation.
+    revoke_token_teams = current_user.get("token_teams")
+    if not current_user.get("is_admin") or revoke_token_teams is not None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     service = TokenCatalogService(db)

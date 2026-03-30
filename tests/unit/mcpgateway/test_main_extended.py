@@ -2230,7 +2230,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Verify has_admin_permission was called with the validated team_id
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_team_scoped_request_ignores_nonmember_team_id(self, monkeypatch):
@@ -2271,7 +2271,7 @@ class TestAdminAuthMiddleware:
 
         assert response.status_code == 403
         # team_id was not in token_teams, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_no_team_id_uses_global_check(self, monkeypatch):
@@ -2310,7 +2310,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # No team_id in request, so should pass None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_empty_string_team_id_ignored(self, monkeypatch):
@@ -2350,7 +2350,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Empty string is falsy, so team_id should be None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_admin_bypass_ignores_query_team_id(self, monkeypatch):
@@ -2391,7 +2391,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # token_teams is None (admin bypass), so validated_team_id should be None
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("admin@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("admin@example.com", team_id=None, token_teams=None)
 
     @pytest.mark.asyncio
     async def test_admin_auth_hyphenated_uuid_normalized_to_hex(self, monkeypatch):
@@ -2433,7 +2433,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Hyphenated UUID should be normalized to hex and match token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_garbage_team_id_treated_as_absent(self, monkeypatch):
@@ -2473,7 +2473,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Invalid UUID is discarded, falls back to global check
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None)
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id=None, token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_repeated_team_id_uses_last_value(self, monkeypatch):
@@ -2517,7 +2517,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # .get() returns last value (hex UUID), which IS in token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01"])
 
     @pytest.mark.asyncio
     async def test_admin_auth_non_uuid_team_id_matches_legacy_token_teams(self, monkeypatch):
@@ -2559,7 +2559,7 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Non-UUID kept as-is, matches token_teams
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-slug-123")
+        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="team-slug-123", token_teams=["team-slug-123"])
 
 
 class TestMCPPathRewriteMiddleware:
