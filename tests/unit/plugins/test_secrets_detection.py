@@ -210,6 +210,8 @@ class TestSecretsDetectionHookDispatch:
             assert result.continue_processing is False
             assert result.violation is not None
             assert result.violation.code == "SECRETS_DETECTED"
+            # Blocking plugins do not return a modified payload here; the manager
+            # backfills the current payload into the aggregate result on block.
             assert result.modified_payload == payload
         finally:
             await manager.shutdown()
@@ -245,6 +247,8 @@ class TestSecretsDetectionHookDispatch:
             assert result.continue_processing is False
             assert result.violation is not None
             assert result.violation.code == "SECRETS_DETECTED"
+            # Blocking plugins do not return a modified payload here; the manager
+            # backfills the current payload into the aggregate result on block.
             assert result.modified_payload == payload
         finally:
             await manager.shutdown()
@@ -279,6 +283,8 @@ class TestSecretsDetectionHookDispatch:
             assert result.continue_processing is False
             assert result.violation is not None
             assert result.violation.code == "SECRETS_DETECTED"
+            # Blocking plugins do not return a modified payload here; the manager
+            # backfills the current payload into the aggregate result on block.
             assert result.modified_payload == payload
         finally:
             await manager.shutdown()
