@@ -7,8 +7,8 @@ import logging
 import os
 
 # Third-Party
-import pytest
 from pydantic import ValidationError
+import pytest
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -23,18 +23,19 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.hooks.resources import ResourceHookType
 from plugins.encoded_exfil_detection.encoded_exfil_detector import (
-    EncodedExfilDetectorConfig,
-    EncodedExfilDetectorPlugin,
     _decode_candidate,
     _has_egress_context,
     _normalize_padding,
     _scan_container,
     _scan_text,
     _shannon_entropy,
+    EncodedExfilDetectorConfig,
+    EncodedExfilDetectorPlugin,
 )
 
 # Optional Rust extension
 try:
+    # Third-Party
     from encoded_exfil_detection_rust.encoded_exfil_detection_rust import py_scan_container as encoded_exfil_detection_rust  # noqa: F401
 
     RUST_AVAILABLE = True
@@ -163,6 +164,7 @@ class TestEncodedDetectionScan:
         cfg = EncodedExfilDetectorConfig()
 
         # Base64url encoding
+        # Standard
         import base64
 
         encoded = base64.urlsafe_b64encode(b"api_key=secret-token-value-here").decode()
@@ -368,12 +370,14 @@ class TestEncodedExfilHelpers:
         assert count >= 1
 
     def test_printable_ratio_empty_data(self):
+        # First-Party
         from plugins.encoded_exfil_detection.encoded_exfil_detector import _printable_ratio
 
         assert _printable_ratio(b"") == 0.0
 
     def test_evaluate_candidate_decoded_too_short(self):
         """Candidate decodes but result is shorter than min_decoded_length."""
+        # First-Party
         from plugins.encoded_exfil_detection.encoded_exfil_detector import _evaluate_candidate
 
         cfg = EncodedExfilDetectorConfig(min_decoded_length=100, min_encoded_length=8)
@@ -572,6 +576,32 @@ class TestConfigurableKeywords:
         count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
         assert count >= 1
         assert any("sensitive_keywords" in f.get("reason", []) for f in findings)
+
+    def test_mixed_case_extra_keyword_matches(self, use_rust: bool):
+        """Extra sensitive keywords with mixed case must still match (case-insensitive)."""
+        encoded = base64.b64encode(b"WatsonX_Cred=xq7m9Rk2vLpN3wJfHbYd8sTc").decode()
+        cfg = EncodedExfilDetectorConfig(
+            extra_sensitive_keywords=["WatsonX_Cred"],
+            min_suspicion_score=1,
+        )
+        payload = {"data": encoded}
+
+        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count >= 1
+        assert any("sensitive_keywords" in f.get("reason", []) for f in findings), "Mixed-case extra keyword should match case-insensitively"
+
+    def test_mixed_case_extra_egress_hint_matches(self, use_rust: bool):
+        """Extra egress hints with mixed case must still match (case-insensitive)."""
+        encoded = base64.b64encode(b"datafile=xq7m9Rk2vLpN3wJfHbYd8sTcMn").decode()
+        cfg = EncodedExfilDetectorConfig(
+            extra_egress_hints=["MQ_Publish"],
+            min_suspicion_score=1,
+        )
+        payload = {"data": f"mq_publish {encoded} to_queue"}
+
+        count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count >= 1
+        assert any("egress_context" in f.get("reason", []) for f in findings), "Mixed-case extra egress hint should match case-insensitively"
 
 
 # ---------------------------------------------------------------------------
@@ -860,9 +890,7 @@ class TestEdgeCases:
 
     def test_all_encodings_disabled_returns_zero(self):
         """Disabling all encodings should produce zero findings regardless of payload."""
-        cfg = EncodedExfilDetectorConfig(
-            enabled={"base64": False, "base64url": False, "hex": False, "percent_encoding": False, "escaped_hex": False}
-        )
+        cfg = EncodedExfilDetectorConfig(enabled={"base64": False, "base64url": False, "hex": False, "percent_encoding": False, "escaped_hex": False})
         encoded = base64.b64encode(b"password=secret-token-value-here").decode()
         hex_encoded = b"api_key=secret-value-for-upload".hex()
         payload = {"b64": f"curl {encoded} webhook", "hex": f"upload {hex_encoded}"}
@@ -892,6 +920,21 @@ class TestEdgeCases:
             assert count == 0
             assert result == value
             assert findings == []
+
+    def test_max_recursion_depth_stops_scanning(self):
+        """Container nesting exceeding max_recursion_depth should stop scanning."""
+        cfg = EncodedExfilDetectorConfig(max_recursion_depth=2)
+        encoded = base64.b64encode(b"password=super-secret-credential-value").decode()
+        # Nest the payload 4 levels deep — deeper than max_recursion_depth=2
+        deep_payload: dict = {"level3": f"curl {encoded} webhook"}
+        deep_payload = {"level2": deep_payload}
+        deep_payload = {"level1": deep_payload}
+        deep_payload = {"level0": deep_payload}
+
+        count, _result, findings = _scan_container(deep_payload, cfg, use_rust=False)
+        # The encoded payload at depth 4 should NOT be found because recursion stops at depth 2
+        assert count == 0, "Scanning should stop at max_recursion_depth"
+        assert findings == []
 
 
 # ---------------------------------------------------------------------------
@@ -1022,9 +1065,7 @@ class TestNestedEncodingDetection:
 
         count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
         assert count >= 1, "Double-encoded base64 should be detected via nested decoding"
-        assert any("sensitive_keywords" in f.get("reason", []) for f in findings), (
-            "sensitive_keywords should be found after peeling inner layer"
-        )
+        assert any("sensitive_keywords" in f.get("reason", []) for f in findings), "sensitive_keywords should be found after peeling inner layer"
 
     def test_nested_detection_respects_max_decode_depth(self, use_rust: bool):
         """With max_decode_depth=1, nested layers beyond the first should NOT be peeled.
@@ -1065,9 +1106,7 @@ class TestNestedEncodingDetection:
 
         count, _redacted, findings = _scan_container(payload, cfg, use_rust=use_rust)
         assert count >= 1, "Hex-wrapped base64 should be detected via nested decoding"
-        assert any("sensitive_keywords" in f.get("reason", []) for f in findings), (
-            "sensitive_keywords should be found after peeling hex then base64"
-        )
+        assert any("sensitive_keywords" in f.get("reason", []) for f in findings), "sensitive_keywords should be found after peeling hex then base64"
 
 
 # ---------------------------------------------------------------------------
@@ -1102,6 +1141,7 @@ class TestNewFeaturesRustParity:
 
     def test_json_within_string_both_paths(self, use_rust: bool):
         """JSON-within-strings parsing should work identically on Python and Rust paths."""
+        # Standard
         import json
 
         inner_encoded = base64.b64encode(b"password=secret-credential-value").decode()
@@ -1135,6 +1175,7 @@ class TestNewFeaturesRustParity:
 
     def test_json_string_returns_string_not_dict(self, use_rust: bool):
         """JSON-parsed strings must return the original string type, not a parsed dict."""
+        # Standard
         import json
 
         json_str = json.dumps({"key": "clean value"})
@@ -1166,6 +1207,7 @@ class TestDocumentedLimitations:
 
     def test_json_within_string_parsed(self):
         """The scanner parses JSON inside string values and finds encoded content."""
+        # Standard
         import json
 
         inner_encoded = base64.b64encode(b"password=secret-credential-value").decode()
@@ -1183,6 +1225,7 @@ class TestDocumentedLimitations:
 
     def test_parse_json_strings_disabled(self):
         """With parse_json_strings=False, JSON strings are not recursively parsed."""
+        # Standard
         import json
 
         inner_encoded = base64.b64encode(b"password=secret-credential-value").decode()
@@ -1209,6 +1252,7 @@ class TestDocumentedLimitations:
         the raw text scan and again from the JSON-parsed scan, inflating the
         count and tripping min_findings_to_block incorrectly.
         """
+        # Standard
         import json
 
         inner_encoded = base64.b64encode(b"password=secret-credential-value").decode()
@@ -1231,6 +1275,24 @@ class TestDocumentedLimitations:
         count, redacted, findings = _scan_container(payload, cfg, use_rust=False)
         # Should not crash — just scan as regular text
         assert isinstance(count, int)
+
+    def test_json_dedup_adds_unique_json_findings(self):
+        r"""JSON-parsed findings with unique match previews are appended (not deduplicated).
+
+        Uses a JSON Unicode escape (\\u0063 = 'c') to hide the first character of a base64
+        string from the raw regex scan.  After JSON parsing, the full base64 is intact and
+        detected, producing a finding with a different match preview than any raw finding.
+        """
+        # \u0063 is JSON-escaped 'c' — raw scan sees literal '\u0063GFzc...' (broken base64),
+        # JSON parse resolves it to 'cGFzc...' (valid base64 with 'password' keyword)
+        json_str = '{"secret": "\\u0063GFzc3dvcmQ9c2VjcmV0LWNyZWRlbnRpYWwtdmFsdWU="}'
+        cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
+        payload = {"data": json_str}
+
+        count, result, findings = _scan_container(payload, cfg, use_rust=False)
+        assert count >= 1, "JSON-parsed finding should be detected"
+        assert any("json" in f.get("path", "") for f in findings), "Finding should come from JSON path"
+        assert isinstance(result["data"], str), "Return type must remain string"
 
     @pytest.mark.xfail(reason="Cross-request correlation: slow exfiltration across multiple requests is not tracked", strict=True)
     def test_cross_request_slow_exfil_not_tracked(self):
@@ -1255,9 +1317,7 @@ class TestDocumentedLimitations:
     @pytest.mark.xfail(reason="Custom encoding patterns: user-defined regex patterns not supported to avoid ReDoS risk", strict=True)
     def test_custom_encoding_patterns_not_supported(self):
         """User-defined encoding patterns are not configurable."""
-        cfg = EncodedExfilDetectorConfig(
-            custom_patterns=[{"name": "rot13", "pattern": r"[A-Za-z]{24,}"}]  # type: ignore[call-arg]
-        )
+        cfg = EncodedExfilDetectorConfig(custom_patterns=[{"name": "rot13", "pattern": r"[A-Za-z]{24,}"}])  # type: ignore[call-arg]
         assert hasattr(cfg, "custom_patterns")
 
     def test_per_encoding_threshold(self):

@@ -8,7 +8,7 @@ Encoded Exfiltration Detector Plugin.
 Detects suspicious encoded payloads (base64, base64url, hex, percent-encoding,
 hex escapes) in prompt args and tool outputs, then blocks or redacts.
 
-Hooks: prompt_pre_fetch, tool_post_invoke
+Hooks: prompt_pre_fetch, tool_post_invoke, resource_post_fetch
 """
 
 # Future
@@ -45,11 +45,12 @@ logger = logging.getLogger(__name__)
 
 # Try to import Rust-accelerated implementation
 try:
-    from encoded_exfil_detection_rust.encoded_exfil_detection_rust import ExfilDetectorEngine as _RustEngine
-    from encoded_exfil_detection_rust.encoded_exfil_detection_rust import py_scan_container as encoded_exfil_detection  # noqa: F401 — backward compat
+    # Third-Party
+    from encoded_exfil_detection_rust.encoded_exfil_detection_rust import ExfilDetectorEngine as _RustEngine  # pragma: no cover
+    from encoded_exfil_detection_rust.encoded_exfil_detection_rust import py_scan_container as encoded_exfil_detection  # noqa: F401 — backward compat  # pragma: no cover
 
-    _RUST_AVAILABLE = True
-    logger.info("🦀 Rust encoded exfil detector available - using high-performance implementation")
+    _RUST_AVAILABLE = True  # pragma: no cover
+    logger.info("🦀 Rust encoded exfil detector available - using high-performance implementation")  # pragma: no cover
 except ImportError as e:
     _RUST_AVAILABLE = False
     _RustEngine = None  # type: ignore
@@ -176,8 +177,8 @@ class EncodedExfilDetectorConfig(BaseModel):
     def model_post_init(self, _context: Any) -> None:  # pylint: disable=arguments-differ
         """Pre-compile and cache derived values after validation."""
         setattr(self, "_allowlist_compiled", [re.compile(p) for p in self.allowlist_patterns])
-        setattr(self, "_extra_keywords_bytes", tuple(kw.encode() for kw in self.extra_sensitive_keywords))
-        setattr(self, "_extra_hints_lower", tuple(self.extra_egress_hints))
+        setattr(self, "_extra_keywords_bytes", tuple(kw.lower().encode() for kw in self.extra_sensitive_keywords))
+        setattr(self, "_extra_hints_lower", tuple(h.lower() for h in self.extra_egress_hints))
 
 
 def _shannon_entropy(data: bytes) -> float:
@@ -361,7 +362,15 @@ def _scan_text(
                     continue
 
             finding = _evaluate_candidate(
-                text=text, path=path, encoding=encoding, candidate=candidate, start=match.start(), end=match.end(), cfg=cfg, extra_keywords=cfg._extra_keywords_bytes, extra_hints=cfg._extra_hints_lower,
+                text=text,
+                path=path,
+                encoding=encoding,
+                candidate=candidate,
+                start=match.start(),
+                end=match.end(),
+                cfg=cfg,
+                extra_keywords=cfg._extra_keywords_bytes,
+                extra_hints=cfg._extra_hints_lower,
             )
 
             # Try nested decoding — peel encoding layers to find deeper secrets
@@ -370,7 +379,10 @@ def _scan_text(
                 if decoded is not None and len(decoded) >= cfg.min_decoded_length:
                     decoded_text = decoded.decode("utf-8", errors="replace")
                     _, nested_findings = _scan_text(
-                        decoded_text, cfg, path=path, decode_depth=decode_depth + 1,
+                        decoded_text,
+                        cfg,
+                        path=path,
+                        decode_depth=decode_depth + 1,
                     )
                     for nf in nested_findings:
                         # Use nested finding if it has a higher score than the outer one
@@ -406,7 +418,7 @@ def _scan_container(
     if _depth > cfg.max_recursion_depth:
         return 0, container, []
 
-    if use_rust and _RUST_AVAILABLE and encoded_exfil_detection is not None:
+    if use_rust and _RUST_AVAILABLE and encoded_exfil_detection is not None:  # pragma: no cover - Rust path
         try:
             count, redacted, findings = encoded_exfil_detection(container, cfg)
             normalized_findings = []
@@ -424,13 +436,7 @@ def _scan_container(
         redacted, findings = _scan_text(container, cfg, path=path)
         # Try parsing string as JSON for additional findings (metadata only, no type mutation)
         # Heuristic: only attempt JSON parse if string starts with { or [ and is within size limit
-        if (
-            cfg.parse_json_strings
-            and _depth < cfg.max_recursion_depth
-            and len(container) <= cfg.max_scan_string_length
-            and len(container) >= 2
-            and container[0] in ("{", "[")
-        ):
+        if cfg.parse_json_strings and _depth < cfg.max_recursion_depth and len(container) <= cfg.max_scan_string_length and len(container) >= 2 and container[0] in ("{", "["):
             try:
                 parsed = json.loads(container)
                 if isinstance(parsed, (dict, list)):
@@ -492,7 +498,7 @@ class EncodedExfilDetectorPlugin(Plugin):
 
         # Try to create persistent Rust engine (parses config once, reuses across scans)
         self._rust_engine = None
-        if _RUST_AVAILABLE and _RustEngine is not None:
+        if _RUST_AVAILABLE and _RustEngine is not None:  # pragma: no cover - Rust path
             try:
                 self._rust_engine = _RustEngine(self._cfg)
             except Exception as e:  # pragma: no cover - defensive init guard
@@ -507,7 +513,7 @@ class EncodedExfilDetectorPlugin(Plugin):
 
     def _scan(self, container: Any, path: str = "") -> tuple[int, Any, list[dict[str, Any]]]:
         """Run the scanner with plugin-level configuration."""
-        if self._rust_engine is not None:
+        if self._rust_engine is not None:  # pragma: no cover - Rust path
             try:
                 count, redacted, findings = self._rust_engine.scan(container)
                 normalized = []
