@@ -732,7 +732,8 @@ class ContentSecurityService:
                         violation_type=violation_type,
                         content_type=content_type,
                     )
-                elif validation_mode == "moderate":
+
+                if validation_mode == "moderate":
                     # Moderate mode: context-aware validation
                     # For now, block all matches (future: allow safe contexts)
                     logger.error(
@@ -749,7 +750,8 @@ class ContentSecurityService:
                         violation_type=violation_type,
                         content_type=content_type,
                     )
-                elif validation_mode == "lenient":
+
+                if validation_mode == "lenient":
                     # Lenient mode: log only, don't block
                     logger.warning(
                         "Malicious pattern detected but not blocking (lenient mode)",
@@ -761,8 +763,9 @@ class ContentSecurityService:
                     )
                     # Continue scanning to log all violations
                     continue
-                else:
-                    # Unknown mode - default to strict for security
+
+                # Unknown mode - default to strict for security
+                if validation_mode not in ("strict", "moderate", "lenient"):
                     logger.error(
                         f"Unknown validation mode '{validation_mode}' - defaulting to strict",
                         extra={
