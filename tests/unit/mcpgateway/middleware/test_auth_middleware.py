@@ -415,8 +415,9 @@ async def test_http_401_with_failure_logging_enabled():
 
     assert response.status_code == 401
     mock_security_logger.log_authentication_attempt.assert_called_once()
-    # Auth middleware no longer commits (transaction control delegated to get_db per PR #3813)
-    # But it should close the session since it created it (owned=True)
+    # Auth middleware must commit immediately because hard-deny paths (API requests)
+    # return JSONResponse without reaching get_db()
+    mock_db.commit.assert_called_once()
     mock_db.close.assert_called_once()
 
 
@@ -741,6 +742,53 @@ async def test_auth_middleware_reuses_session_on_failure():
     # Existing session should NOT be closed (not owned)
     existing_session.close.assert_not_called()
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_logs_committed_before_hard_deny_api_response():
+    """
+    REGRESSION TEST: Auth failure logs must be committed before returning hard-deny JSONResponse.
+
+    This test validates the fix for the bug where auth failure logs were lost when:
+    1. Auth fails with a hard-deny error (401/403 with specific details)
+    2. Request is an API request (not browser)
+    3. Middleware returns JSONResponse immediately without reaching route handler
+    4. get_db() never runs, so logs were never committed
+
+    The fix: Auth middleware commits immediately after logging to ensure persistence
+    even when the request doesn't reach get_db().
+    """
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "revoked_token"}
+    request.headers = {"accept": "application/json"}  # API request, not browser
+    request.state.db = None  # No existing session
+    request.client = MagicMock()
+    request.client.host = "10.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    # Verify hard-deny response
+    assert response.status_code == 401
+    # Verify call_next was NOT called (API hard-deny path returns immediately)
+    call_next.assert_not_awaited()
+
+    # CRITICAL: Verify logs were committed before returning JSONResponse
+    # This is the regression test - without commit, logs are lost
+    mock_db.commit.assert_called_once()
+    mock_db.close.assert_called_once()
 
 
 @pytest.mark.asyncio

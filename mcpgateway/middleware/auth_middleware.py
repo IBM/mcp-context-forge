@@ -181,8 +181,9 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         user_agent=request.headers.get("user-agent"),
                         db=db,
                     )
-                    # Note: Transaction commit is managed by get_db() in main.py (PR #3813)
-                    # Middleware only uses the session, doesn't control transactions
+                    # Commit immediately to persist logs even if exception occurs later in middleware chain
+                    # Route handler's get_db() may commit again (no-op if no new changes)
+                    db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log successful auth: {log_error}")
                 finally:
@@ -210,8 +211,10 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                             failure_reason=str(e.detail),
                             db=db,
                         )
-                        # Note: Transaction commit is managed by get_db() in main.py (PR #3813)
-                        # Middleware only uses the session, doesn't control transactions
+                        # Commit immediately to persist logs, especially for hard-deny paths (API requests)
+                        # that return JSONResponse without reaching get_db()
+                        # For browser requests that continue to route handler, get_db() commits again (no-op)
+                        db.commit()
                     except Exception as log_error:
                         logger.debug(f"Failed to log auth failure: {log_error}")
                     finally:
