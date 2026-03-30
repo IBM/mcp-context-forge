@@ -575,6 +575,124 @@ async def test_call_tool_requires_tools_execute_permission(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_call_tool_passes_plugin_contexts(monkeypatch):
+    """Test that call_tool extracts and passes plugin contexts from request.state to tool_service.invoke_tool().
+
+    This test verifies the fix for issue #3879 - plugin context sharing between
+    HTTP_PRE_REQUEST and TOOL_PRE_INVOKE hooks for /mcp endpoints.
+    """
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+    from unittest.mock import MagicMock, AsyncMock, PropertyMock
+
+    # Create mock plugin contexts
+    mock_context_table = {"plugin_1": {"state": "test_state"}}
+    mock_global_context = {"request_id": "test-123"}
+
+    # Create a mock request with state containing plugin contexts
+    mock_request = MagicMock()
+    mock_request.state.plugin_context_table = mock_context_table
+    mock_request.state.plugin_global_context = mock_global_context
+
+    # Create a mock request context
+    mock_request_context = MagicMock()
+    mock_request_context.request = mock_request
+    mock_request_context.meta = None
+
+    # Mock mcp_app.request_context property to return our mock
+    mock_mcp_app = MagicMock()
+    type(mock_mcp_app).request_context = PropertyMock(return_value=mock_request_context)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.mcp_app", mock_mcp_app)
+
+    # Mock the necessary functions
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, None))
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled",
+        False
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers",
+        lambda _headers: None
+    )
+
+    # Mock tool_service.invoke_tool to return a successful result
+    mock_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Success")]
+    )
+    mock_invoke_tool = AsyncMock(return_value=mock_result)
+    monkeypatch.setattr(tool_service, "invoke_tool", mock_invoke_tool)
+
+    # Call the function
+    await call_tool("test_tool", {"arg": "value"})
+
+    # Verify that invoke_tool was called with plugin contexts
+    mock_invoke_tool.assert_called_once()
+    call_args = mock_invoke_tool.call_args
+
+    # Check that plugin contexts were passed
+    assert call_args.kwargs["plugin_context_table"] == mock_context_table
+    assert call_args.kwargs["plugin_global_context"] == mock_global_context
+
+
+@pytest.mark.asyncio
+async def test_call_tool_handles_missing_request_context(monkeypatch):
+    """Test that call_tool handles cases where request context is not available.
+
+    This ensures the fix for issue #3879 doesn't break when no request context exists
+    (e.g., in certain test scenarios).
+    """
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+    from unittest.mock import MagicMock, AsyncMock, PropertyMock
+
+    # Mock mcp_app.request_context property to raise LookupError (no active context)
+    mock_mcp_app = MagicMock()
+    type(mock_mcp_app).request_context = PropertyMock(side_effect=LookupError("No active request context"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.mcp_app", mock_mcp_app)
+
+    # Mock the necessary functions
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, None))
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._check_streamable_permission",
+        AsyncMock(return_value=True)
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled",
+        False
+    )
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers",
+        lambda _headers: None
+    )
+
+    # Mock tool_service.invoke_tool to return a successful result
+    mock_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="Success")]
+    )
+    mock_invoke_tool = AsyncMock(return_value=mock_result)
+    monkeypatch.setattr(tool_service, "invoke_tool", mock_invoke_tool)
+
+    # Call the function - should not raise an error
+    await call_tool("test_tool", {"arg": "value"})
+
+    # Verify that invoke_tool was called with None contexts (graceful fallback)
+    mock_invoke_tool.assert_called_once()
+    call_args = mock_invoke_tool.call_args
+
+    # Plugin contexts should be None when no request context is available
+    assert call_args.kwargs["plugin_context_table"] is None
+    assert call_args.kwargs["plugin_global_context"] is None
+
+
+@pytest.mark.asyncio
 async def test_validate_streamable_session_access_denies_non_owner(monkeypatch):
     """Session access helper denies non-admin callers for another owner's session."""
     session_registry = MagicMock()

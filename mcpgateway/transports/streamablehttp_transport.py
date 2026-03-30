@@ -1328,6 +1328,18 @@ async def call_tool(name: str, arguments: dict) -> Union[
             # Pool not initialized - execute locally
             pass
 
+    # Get plugin contexts from request.state for cross-hook sharing
+    plugin_context_table = None
+    plugin_global_context = None
+    try:
+        ctx = mcp_app.request_context
+        if ctx and ctx.request:
+            plugin_context_table = getattr(ctx.request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(ctx.request.state, "plugin_global_context", None)
+    except LookupError:
+        # No active request context
+        pass
+
     try:
         async with get_db() as db:
             # Use tool service for all tool invocations (handles direct_proxy internally)
@@ -1341,6 +1353,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
                 token_teams=token_teams,
                 server_id=server_id,
                 meta_data=meta_data,
+                plugin_context_table=plugin_context_table,
+                plugin_global_context=plugin_global_context,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
