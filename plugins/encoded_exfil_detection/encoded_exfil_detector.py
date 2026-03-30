@@ -166,11 +166,11 @@ class EncodedExfilDetectorConfig(BaseModel):
     @classmethod
     def _validate_allowlist_patterns(cls, v: list[str]) -> list[str]:
         """Validate that allowlist patterns are valid regexes."""
-        for pattern in v:
+        for idx, pattern in enumerate(v):
             try:
                 re.compile(pattern)
             except re.error as exc:
-                raise ValueError(f"Invalid allowlist regex pattern '{pattern}': {exc}") from exc
+                raise ValueError(f"Invalid allowlist regex pattern at index {idx} ('{pattern}'): {exc}") from exc
         return v
 
     def model_post_init(self, _context: Any) -> None:  # pylint: disable=arguments-differ
@@ -421,7 +421,14 @@ def _scan_container(
 
     if isinstance(container, str):
         # Try parsing string as JSON first — scan parsed structure only (more precise paths, no duplicates)
-        if cfg.parse_json_strings and _depth < cfg.max_recursion_depth:
+        # Heuristic: only attempt JSON parse if string starts with { or [ and is within size limit
+        if (
+            cfg.parse_json_strings
+            and _depth < cfg.max_recursion_depth
+            and len(container) <= cfg.max_scan_string_length
+            and len(container) >= 2
+            and container[0] in ("{", "[")
+        ):
             try:
                 parsed = json.loads(container)
                 if isinstance(parsed, (dict, list)):

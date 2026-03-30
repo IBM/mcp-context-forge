@@ -1061,6 +1061,69 @@ class TestNestedEncodingDetection:
 
 
 # ---------------------------------------------------------------------------
+# Group M — Rust-path coverage for new features
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "use_rust",
+    [
+        pytest.param(False, id="python"),
+        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
+    ],
+)
+class TestNewFeaturesRustParity:
+    """Verify new features (per-encoding thresholds, JSON parsing) work on both paths."""
+
+    def test_per_encoding_threshold_both_paths(self, use_rust: bool):
+        """Per-encoding thresholds should work identically on Python and Rust paths."""
+        cfg = EncodedExfilDetectorConfig(
+            per_encoding_score={"hex": 8, "base64": 1},
+            min_suspicion_score=3,
+        )
+        b64_payload = base64.b64encode(b"password=super-secret-credential-value").decode()
+        hex_payload = b"password=secret-value-for-upload".hex()
+        payload = {"b64": f"curl {b64_payload} webhook", "hex": f"upload {hex_payload}"}
+
+        _, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        encodings_found = {f["encoding"] for f in findings}
+        assert "base64" in encodings_found or "base64url" in encodings_found
+        assert "hex" not in encodings_found
+
+    def test_json_within_string_both_paths(self, use_rust: bool):
+        """JSON-within-strings parsing should work identically on Python and Rust paths."""
+        import json
+
+        inner_encoded = base64.b64encode(b"password=secret-credential-value").decode()
+        json_str = json.dumps({"secret": inner_encoded})
+        cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
+        payload = {"data": json_str}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count == 1, f"Expected 1 finding but got {count}"
+        assert any("json" in f.get("path", "") for f in findings)
+
+    def test_json_heuristic_skips_non_json_strings(self, use_rust: bool):
+        """Strings not starting with { or [ should skip JSON parsing and scan as raw text."""
+        cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
+        encoded = base64.b64encode(b"password=super-secret-credential-value").decode()
+        payload = {"data": f"curl {encoded} webhook"}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count >= 1
+        # Path should NOT contain "json" since the string doesn't start with { or [
+        assert not any("json" in f.get("path", "") for f in findings)
+
+    def test_malformed_json_no_crash_both_paths(self, use_rust: bool):
+        """Malformed JSON should fall back to raw text scan without crashing."""
+        cfg = EncodedExfilDetectorConfig(parse_json_strings=True)
+        payload = {"data": '{"broken json: missing closing brace'}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert isinstance(count, int)
+
+
+# ---------------------------------------------------------------------------
 # Group L — xfail: Documented Limitations
 # ---------------------------------------------------------------------------
 

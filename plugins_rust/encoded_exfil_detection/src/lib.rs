@@ -709,8 +709,12 @@ fn scan_container<'py>(
 
     if let Ok(text) = container.extract::<String>() {
         // Try parsing string as JSON first — scan parsed structure only (more precise paths, no duplicates)
+        // Heuristic: only attempt JSON parse if string starts with { or [ and is within size limit
         if cfg.parse_json_strings
             && depth < cfg.max_recursion_depth
+            && text.len() <= cfg.max_scan_string_length
+            && text.len() >= 2
+            && (text.starts_with('{') || text.starts_with('['))
             && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text)
             && (parsed.is_object() || parsed.is_array())
         {

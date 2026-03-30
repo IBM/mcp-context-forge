@@ -215,7 +215,7 @@ Default **3.3** catches most real secrets while skipping trivial decoded content
 
 ## Rust Acceleration
 
-When the `encoded_exfil_detection_rust` wheel is installed, the plugin automatically uses the Rust implementation for scanning. The Rust path uses pre-compiled static regexes, fixed-size arrays for entropy calculation, and optimized boundary validation.
+When the `mcpgateway-encoded-exfil-detection` wheel is installed (`uv pip install -e plugins_rust/encoded_exfil_detection/`), the plugin automatically uses the Rust implementation for scanning. The Rust path uses a persistent `ExfilDetectorEngine` that parses config once at init, pre-compiled static regexes, fixed-size arrays for entropy calculation, and optimized boundary validation.
 
 If the Rust module fails to load (missing wheel, import error), the plugin silently falls back to the pure Python implementation. The `implementation` field in metadata indicates which path was used (`"Rust"` or `"Python"`).
 
@@ -238,9 +238,21 @@ Metadata emitted on detection:
 }
 ```
 
+## Performance
+
+When the Rust wheel is installed, the plugin is significantly faster. Benchmarks run via `plugins_rust/encoded_exfil_detection/compare_performance.py`:
+
+| Scenario | Python | Rust | Speedup |
+|----------|--------|------|---------|
+| 1 base64 finding | 0.035ms | 0.007ms | **4.7x** |
+| 5 mixed findings | 0.106ms | 0.018ms | **5.7x** |
+| 20+ mixed findings | 0.662ms | 0.086ms | **7.7x** |
+| ~50KB text, 2 findings | 1.432ms | 0.118ms | **12.1x** |
+| Clean payload (no findings) | 0.014ms | 0.003ms | **4.3x** |
+
+Rust speedup scales with payload size due to pre-compiled static regexes, fixed-size entropy arrays, and zero-copy string processing.
+
 ## Known Limitations
 
-- **JSON-within-strings**: Encoded payloads inside JSON string values are not recursively parsed as JSON. The scanner treats the entire string as text and may find encoded segments within it, but does not parse nested JSON structure.
 - **Cross-request correlation**: The plugin is stateless. Slow exfiltration split across multiple requests is not correlated.
 - **Custom encoding patterns**: Only the 5 built-in encoding types are supported. User-defined regex patterns are not accepted to avoid ReDoS risk.
-- **Per-encoding thresholds**: A single `min_suspicion_score` applies to all encoding types. Per-encoding tuning is not yet supported.
