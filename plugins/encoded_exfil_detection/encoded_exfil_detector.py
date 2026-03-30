@@ -420,7 +420,9 @@ def _scan_container(
             logger.warning(f"Rust encoded exfil scan failed, falling back to Python: {e}")
 
     if isinstance(container, str):
-        # Try parsing string as JSON first — scan parsed structure only (more precise paths, no duplicates)
+        # Scan as raw text first — always returns the original type (string)
+        redacted, findings = _scan_text(container, cfg, path=path)
+        # Try parsing string as JSON for additional findings (metadata only, no type mutation)
         # Heuristic: only attempt JSON parse if string starts with { or [ and is within size limit
         if (
             cfg.parse_json_strings
@@ -433,11 +435,14 @@ def _scan_container(
                 parsed = json.loads(container)
                 if isinstance(parsed, (dict, list)):
                     json_path = f"{path}(json)" if path else "(json)"
-                    return _scan_container(parsed, cfg, path=json_path, use_rust=False, _depth=_depth + 1)
+                    _, _, json_findings = _scan_container(parsed, cfg, path=json_path, use_rust=False, _depth=_depth + 1)
+                    # Deduplicate: only add JSON findings whose encoded match isn't already found in raw scan
+                    raw_matches = {f.get("match") for f in findings}
+                    for jf in json_findings:
+                        if jf.get("match") not in raw_matches:
+                            findings.append(jf)
             except (json.JSONDecodeError, ValueError):
                 pass
-        # Not JSON or parsing disabled — scan as raw text
-        redacted, findings = _scan_text(container, cfg, path=path)
         return len(findings), redacted, findings
 
     if isinstance(container, dict):
@@ -446,6 +451,12 @@ def _scan_container(
         updated: dict[str, Any] = {}
         for key, value in container.items():
             child_path = f"{path}.{key}" if path else str(key)
+            # Scan keys that are long enough to contain encoded content
+            if isinstance(key, str) and len(key) >= cfg.min_encoded_length:
+                key_path = f"{child_path}(key)"
+                _, key_findings = _scan_text(key, cfg, path=key_path)
+                findings.extend(key_findings)
+                total += len(key_findings)
             count, new_value, child_findings = _scan_container(value, cfg, path=child_path, use_rust=False, _depth=_depth + 1)
             total += count
             findings.extend(child_findings)

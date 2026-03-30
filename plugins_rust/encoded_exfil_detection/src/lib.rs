@@ -706,7 +706,14 @@ fn scan_container<'py>(
     }
 
     if let Ok(text) = container.extract::<String>() {
-        // Try parsing string as JSON first — scan parsed structure only (more precise paths, no duplicates)
+        // Scan as raw text first — always returns the original type (string)
+        let (redacted_text, findings) = scan_text(&text, path, cfg, 0);
+        let findings_list = PyList::empty(py);
+        for finding in &findings {
+            findings_list.append(finding_to_dict(py, finding)?)?;
+        }
+
+        // Try parsing string as JSON for additional findings (metadata only, no type mutation)
         // Heuristic: only attempt JSON parse if string starts with { or [ and is within size limit
         if cfg.parse_json_strings
             && depth < cfg.max_recursion_depth
@@ -722,17 +729,28 @@ fn scan_container<'py>(
                 format!("{}(json)", path)
             };
             let py_parsed = json_value_to_py(py, &parsed)?;
-            return scan_container(py, &py_parsed, &json_path, cfg, depth + 1);
+            let (_, _, json_findings) = scan_container(py, &py_parsed, &json_path, cfg, depth + 1)?;
+            // Deduplicate: only add JSON findings whose encoded match isn't already in raw scan
+            let raw_matches: std::collections::HashSet<String> =
+                findings.iter().map(|f| f.matched_preview.clone()).collect();
+            for item in json_findings.iter() {
+                if let Ok(dict) = item.cast::<PyDict>() {
+                    let preview = dict
+                        .get_item("match")
+                        .ok()
+                        .flatten()
+                        .and_then(|v| v.extract::<String>().ok())
+                        .unwrap_or_default();
+                    if !raw_matches.contains(&preview) {
+                        findings_list.append(item)?;
+                    }
+                }
+            }
         }
 
-        // Not JSON or parsing disabled — scan as raw text
-        let (redacted_text, findings) = scan_text(&text, path, cfg, 0);
-        let findings_list = PyList::empty(py);
-        for finding in &findings {
-            findings_list.append(finding_to_dict(py, finding)?)?;
-        }
+        let total_findings = findings_list.len();
         return Ok((
-            findings.len(),
+            total_findings,
             PyString::new(py, &redacted_text).into_any(),
             findings_list,
         ));
@@ -746,10 +764,20 @@ fn scan_container<'py>(
         for (key, value) in dict.iter() {
             let key_str = key.str()?.to_string_lossy().into_owned();
             let child_path = if path.is_empty() {
-                key_str
+                key_str.clone()
             } else {
                 format!("{}.{}", path, key_str)
             };
+
+            // Scan keys that are long enough to contain encoded content
+            if key_str.len() >= cfg.min_encoded_length {
+                let key_path = format!("{}(key)", child_path);
+                let (_, key_findings) = scan_text(&key_str, &key_path, cfg, 0);
+                for kf in &key_findings {
+                    all_findings.append(finding_to_dict(py, kf)?)?;
+                }
+                total += key_findings.len();
+            }
 
             let (count, redacted_value, child_findings) =
                 scan_container(py, &value, &child_path, cfg, depth + 1)?;

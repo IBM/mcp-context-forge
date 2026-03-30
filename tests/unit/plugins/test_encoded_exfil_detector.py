@@ -1109,9 +1109,10 @@ class TestNewFeaturesRustParity:
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"data": json_str}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        count, result, findings = _scan_container(payload, cfg, use_rust=use_rust)
         assert count == 1, f"Expected 1 finding but got {count}"
-        assert any("json" in f.get("path", "") for f in findings)
+        # Return type must be string (no type mutation)
+        assert isinstance(result["data"], str), f"Expected str but got {type(result['data'])}"
 
     def test_json_heuristic_skips_non_json_strings(self, use_rust: bool):
         """Strings not starting with { or [ should skip JSON parsing and scan as raw text."""
@@ -1132,6 +1133,28 @@ class TestNewFeaturesRustParity:
         count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
         assert isinstance(count, int)
 
+    def test_json_string_returns_string_not_dict(self, use_rust: bool):
+        """JSON-parsed strings must return the original string type, not a parsed dict."""
+        import json
+
+        json_str = json.dumps({"key": "clean value"})
+        cfg = EncodedExfilDetectorConfig(parse_json_strings=True)
+        payload = {"data": json_str}
+
+        _, result, _ = _scan_container(payload, cfg, use_rust=use_rust)
+        # The "data" value must still be a string, not a parsed dict
+        assert isinstance(result["data"], str), f"Expected str but got {type(result['data'])}"
+
+    def test_encoded_secret_in_dict_key_detected(self, use_rust: bool):
+        """Encoded secrets used as dict keys should be detected."""
+        encoded_key = base64.b64encode(b"password=super-secret-credential-value").decode()
+        cfg = EncodedExfilDetectorConfig(min_suspicion_score=1)
+        payload = {encoded_key: "some value"}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count >= 1, "Encoded secret in dict key should be detected"
+        assert any("key" in f.get("path", "") for f in findings), f"Finding path should contain 'key': {findings}"
+
 
 # ---------------------------------------------------------------------------
 # Group L — xfail: Documented Limitations
@@ -1142,7 +1165,7 @@ class TestDocumentedLimitations:
     """Tests documenting known limitations of the plugin. These are expected to fail."""
 
     def test_json_within_string_parsed(self):
-        """The scanner parses JSON inside string values and recurses into the structure."""
+        """The scanner parses JSON inside string values and finds encoded content."""
         import json
 
         inner_encoded = base64.b64encode(b"password=secret-credential-value").decode()
@@ -1152,12 +1175,11 @@ class TestDocumentedLimitations:
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"data": double_encoded_json}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=False)
+        count, result, findings = _scan_container(payload, cfg, use_rust=False)
 
         assert count >= 1, "Should find base64 inside nested JSON strings"
-        paths = [f.get("path", "") for f in findings]
-        # Should have JSON-aware paths showing the recursion
-        assert any("json" in p for p in paths), f"Paths should show JSON recursion: {paths}"
+        # Return type must remain string (no type mutation)
+        assert isinstance(result["data"], str), f"Expected str but got {type(result['data'])}"
 
     def test_parse_json_strings_disabled(self):
         """With parse_json_strings=False, JSON strings are not recursively parsed."""
@@ -1194,12 +1216,12 @@ class TestDocumentedLimitations:
         cfg = EncodedExfilDetectorConfig(min_suspicion_score=1, parse_json_strings=True)
         payload = {"input": json_str}
 
-        count, _, findings = _scan_container(payload, cfg, use_rust=False)
+        count, result, findings = _scan_container(payload, cfg, use_rust=False)
 
         # Should find exactly 1 finding — not 2 from double-counting
         assert count == 1, f"Expected 1 finding but got {count}: single secret must not be double-counted"
-        # The finding should have the JSON-parsed path, not the raw text path
-        assert any("json" in f.get("path", "") for f in findings), f"Finding should have JSON path: {findings}"
+        # Return type must remain string (no type mutation)
+        assert isinstance(result["input"], str), f"Expected str but got {type(result['input'])}"
 
     def test_malformed_json_string_no_crash(self):
         """Malformed JSON in a string value should not crash the scanner."""
