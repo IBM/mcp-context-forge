@@ -44,27 +44,21 @@ mcpContextForge:
     REQUIRE_STRONG_SECRETS: "true"
 
 # --- Postgres ---
+# Using CrunchyData PGO operator — internal Postgres and PgBouncer disabled
 postgres:
-  enabled: true
-  image:
-    repository: docker.io/library/postgres
-    tag: "17"
-  persistence:
+  enabled: false
+  external:
     enabled: true
-    size: 2Gi
-    useReadWriteOncePod: false
-    accessModes: [ReadWriteOnce]
-  credentials:
-    database: postgresdb
-    user: admin
-    password: "GpPostgres2026Secure!"
+    existingSecret: gp-postgres-pguser-admin
+    hostKey: pgbouncer-host                # connect via CrunchyData's PgBouncer
+    portKey: pgbouncer-port
+    databaseKey: dbname
+    userKey: user
+    passwordKey: password
 
 # --- PgBouncer ---
 pgbouncer:
-  enabled: true                            # connection pooler between gateway and Postgres
-  image:
-    repository: docker.io/gandhipratik203/pgbouncer-ocp
-    tag: v3-amd64
+  enabled: false                           # disabled — using CrunchyData PGO operator
 
 # --- Redis ---
 redis:
