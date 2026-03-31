@@ -121,7 +121,7 @@ class TestHeaderSecurity:
         # Standard
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Only valid header should pass through
@@ -166,7 +166,7 @@ class TestHeaderSecurity:
         # Standard
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
         # Header should be skipped
@@ -244,14 +244,14 @@ class TestHeaderSecurity:
         # Standard
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.passthrough_headers"):
             result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
 
         # Authorization should be blocked
         assert "Authorization" not in result
 
-        # Should log security warning
-        assert any("Skipping Authorization header passthrough" in record.message for record in caplog.records)
+        # Should log security warning with gateway name
+        assert any("Skipping Authorization header passthrough due to basic auth configuration on gateway secure-gateway" in record.message for record in caplog.records)
 
     def test_case_sensitivity_security(self):
         """Test that case sensitivity doesn't create security bypasses."""

@@ -1,0 +1,41 @@
+[package]
+name = "url_reputation"
+version = "0.1.1"
+edition = "2024"
+authors = ["ContextForge Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/IBM/mcp-context-forge"
+description = "High-performance URL reputation validation library"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "url_reputation_rust"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+idna = "1.1.0"
+log = "0.4"
+phf = { version = "0.13.1", features = ["macros"] }
+pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
+pyo3-log = "0.13.3"
+regex = "1.12.3"
+unicode-script = "0.5.8"
+unicode-security = "0.1.2"
+url = "2.5.8"
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "url_validation"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.bench]
+inherits = "release"
+debug = true

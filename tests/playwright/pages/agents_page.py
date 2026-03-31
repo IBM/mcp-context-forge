@@ -227,13 +227,13 @@ class AgentsPage(BasePage):
 
     @property
     def agents_table(self) -> Locator:
-        """Agents table (HTMX-loaded, excludes the hidden legacy table)."""
-        return self.agents_panel.locator("#agents-table")
+        """Agents table (HTMX-loaded)."""
+        return self.page.locator("#agents-table")
 
     @property
     def agents_table_body(self) -> Locator:
         """Agents table body."""
-        return self.agents_table.locator("tbody")
+        return self.page.locator("#agents-table-body")
 
     @property
     def agent_rows(self) -> Locator:
@@ -255,6 +255,8 @@ class AgentsPage(BasePage):
             timeout: Maximum time to wait in milliseconds
         """
         self.page.wait_for_selector("#a2a-agents-panel:not(.hidden)", timeout=timeout)
+        # Wait for HTMX table body to be attached (partial loaded, not the loading placeholder)
+        self.page.wait_for_selector("#agents-table-body", state="attached", timeout=timeout)
         # Wait for form to be attached
         self.wait_for_attached(self.add_agent_form, timeout=timeout)
 

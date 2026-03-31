@@ -8,6 +8,7 @@ Fuzzing test configuration.
 """
 
 # Standard
+from contextlib import contextmanager
 import os
 import tempfile
 
@@ -34,7 +35,7 @@ def mock_logging_services(monkeypatch):
     url = f"sqlite:///{path}"
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    test_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
     # First-Party
     import mcpgateway.db as db_mod
@@ -46,17 +47,29 @@ def mock_logging_services(monkeypatch):
 
     # Patch the core db module
     monkeypatch.setattr(db_mod, "engine", engine)
-    monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(db_mod, "SessionLocal", test_session_local)
 
     # Patch main module's SessionLocal (it imports SessionLocal from db)
-    monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(main_mod, "SessionLocal", test_session_local)
 
     # Patch auth_middleware's SessionLocal
-    monkeypatch.setattr(auth_middleware_mod, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(auth_middleware_mod, "SessionLocal", test_session_local)
 
-    # Patch security_logger and structured_logger SessionLocal
-    monkeypatch.setattr(sec_logger_mod, "SessionLocal", TestSessionLocal)
-    monkeypatch.setattr(struct_logger_mod, "SessionLocal", TestSessionLocal)
+    @contextmanager
+    def _fresh_test_db_session():
+        db = test_session_local()
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    # Patch security_logger and structured_logger database entry points
+    monkeypatch.setattr(sec_logger_mod, "SessionLocal", test_session_local)
+    monkeypatch.setattr(struct_logger_mod, "fresh_db_session", _fresh_test_db_session)
 
     # Create all tables
     Base.metadata.create_all(bind=engine)

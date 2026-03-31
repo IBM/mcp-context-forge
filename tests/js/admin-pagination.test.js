@@ -1133,3 +1133,567 @@ describe("_navigateAdmin pagination state preservation (#3389)", () => {
         expect(params.get("include_inactive")).toBe("false");
     });
 });
+
+// ---------------------------------------------------------------------------
+// Alpine.js reinit on OOB-swapped pagination controls (#3039)
+//
+// After HTMX settles an OOB swap of a pagination-controls div, Alpine.js
+// may not automatically detect and initialise the new x-data component
+// (race with MutationObserver). The htmx:afterSettle listener in
+// initializeTabState() calls Alpine.initTree() on any uninitialized
+// pagination controls.
+// ---------------------------------------------------------------------------
+describe("Alpine.js reinit on OOB-swapped pagination controls (#3039)", () => {
+    /** Dispatch a synthetic htmx:afterSettle event on document.body. */
+    function fireAfterSettle() {
+        const event = new win.Event("htmx:afterSettle", { bubbles: true });
+        doc.body.dispatchEvent(event);
+    }
+
+    /** Create a pagination-controls div with an x-data child, optionally pre-initialized. */
+    function createPaginationDiv(id, { initialized = false } = {}) {
+        const container = doc.createElement("div");
+        container.id = id;
+        const xDataEl = doc.createElement("div");
+        xDataEl.setAttribute("x-data", "{ currentPage: 1 }");
+        if (initialized) {
+            xDataEl._x_dataStack = [{ currentPage: 1 }];
+        }
+        container.appendChild(xDataEl);
+        doc.body.appendChild(container);
+        return container;
+    }
+
+    beforeEach(() => {
+        // Clear any previous Alpine mock
+        delete win.Alpine;
+    });
+
+    test("calls Alpine.initTree on uninitialized pagination controls", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        const div = createPaginationDiv("tools-pagination-controls");
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(1);
+        expect(initTreeCalls[0]).toBe(div);
+    });
+
+    test("skips already-initialized pagination controls", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        createPaginationDiv("tools-pagination-controls", {
+            initialized: true,
+        });
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(0);
+    });
+
+    test("handles multiple pagination controls, only inits uninitialized ones", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        createPaginationDiv("servers-pagination-controls", {
+            initialized: true,
+        });
+        const uninitDiv = createPaginationDiv("tools-pagination-controls");
+        createPaginationDiv("gateways-pagination-controls", {
+            initialized: true,
+        });
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(1);
+        expect(initTreeCalls[0]).toBe(uninitDiv);
+    });
+
+    test("does not error when Alpine is not loaded", () => {
+        // Alpine is undefined (deleted in beforeEach)
+        createPaginationDiv("tools-pagination-controls");
+
+        expect(() => fireAfterSettle()).not.toThrow();
+    });
+
+    test("does not error when Alpine.initTree is not a function", () => {
+        win.Alpine = { version: "3.x" }; // no initTree
+
+        createPaginationDiv("tools-pagination-controls");
+
+        expect(() => fireAfterSettle()).not.toThrow();
+    });
+
+    test("does not call initTree when pagination div has no x-data child", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        // Create a div with the right ID but no x-data child
+        const container = doc.createElement("div");
+        container.id = "tools-pagination-controls";
+        doc.body.appendChild(container);
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(0);
+    });
+
+    test("matches metrics top-performers pagination-controls-visible IDs", () => {
+        const initTreeCalls = [];
+        win.Alpine = {
+            initTree: (el) => initTreeCalls.push(el),
+        };
+
+        // Metrics partials use IDs like "top-tools-pagination-controls-visible"
+        // which contain "-pagination-controls" but don't end with it.
+        const metricsDiv = createPaginationDiv(
+            "top-tools-pagination-controls-visible",
+        );
+
+        fireAfterSettle();
+
+        expect(initTreeCalls).toHaveLength(1);
+        expect(initTreeCalls[0]).toBe(metricsDiv);
+    });
+
+    test("still enables disabled toggles alongside Alpine reinit", () => {
+        win.Alpine = { initTree: () => {} };
+
+        // Create a target element for the toggle
+        const target = doc.createElement("div");
+        target.id = "tools-table";
+        doc.body.appendChild(target);
+
+        // Create a disabled toggle
+        const toggle = doc.createElement("input");
+        toggle.type = "checkbox";
+        toggle.className = "show-inactive-toggle";
+        toggle.disabled = true;
+        toggle.setAttribute("hx-target", "#tools-table");
+        doc.body.appendChild(toggle);
+
+        createPaginationDiv("tools-pagination-controls");
+
+        fireAfterSettle();
+
+        expect(toggle.disabled).toBe(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// updateFilterStatus (#3647)
+//
+// Shows "Filters active" text in status spans when URL params indicate
+// active search/tag/inactive filters for a table.
+// ---------------------------------------------------------------------------
+describe("updateFilterStatus (#3647)", () => {
+    function createFilterStatusSpan(tableName) {
+        const span = doc.createElement("span");
+        span.id = tableName + "-filter-status";
+        doc.body.appendChild(span);
+        return span;
+    }
+
+    test("shows empty text when no filters are active", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("");
+    });
+
+    test("shows 'Filters active' when query filter is active", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("shows status when tags filter is active", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin?tools_tags=prod");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("shows status when inactive filter is active", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin?tools_inactive=true");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("does not show status when inactive is false", () => {
+        const span = createFilterStatusSpan("tools");
+        win.history.replaceState({}, "", "/admin?tools_inactive=false");
+
+        win.updateFilterStatus();
+
+        expect(span.textContent).toBe("");
+    });
+
+    test("updates multiple table statuses independently", () => {
+        const toolsSpan = createFilterStatusSpan("tools");
+        const serversSpan = createFilterStatusSpan("servers");
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+
+        win.updateFilterStatus();
+
+        expect(toolsSpan.textContent).toBe("Filters active");
+        expect(serversSpan.textContent).toBe("");
+    });
+
+    test("clears status when filters are removed", () => {
+        const span = createFilterStatusSpan("tools");
+
+        // First set active filters
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+        win.updateFilterStatus();
+        expect(span.textContent).toBe("Filters active");
+
+        // Then clear filters
+        win.history.replaceState({}, "", "/admin");
+        win.updateFilterStatus();
+        expect(span.textContent).toBe("");
+    });
+
+    test("no-ops when status span is missing from DOM", () => {
+        win.history.replaceState({}, "", "/admin?tools_q=search");
+
+        // Should not throw
+        expect(() => win.updateFilterStatus()).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// htmx:afterSettle rehydration listener (#3647)
+//
+// After HTMX content swaps targeting table containers, the listener
+// rehydrates search inputs from URL state and updates filter status text.
+// ---------------------------------------------------------------------------
+describe("htmx:afterSettle rehydration listener (#3647)", () => {
+    function fireAfterSettleWithTarget(targetId) {
+        const targetEl =
+            doc.getElementById(targetId) || doc.createElement("div");
+        if (!targetEl.id) targetEl.id = targetId;
+        const event = new win.CustomEvent("htmx:afterSettle", {
+            bubbles: true,
+            detail: { target: targetEl },
+        });
+        doc.body.dispatchEvent(event);
+    }
+
+    test("triggers rehydration for -table suffix target", () => {
+        const el = doc.createElement("div");
+        el.id = "tools-table";
+        doc.body.appendChild(el);
+
+        const span = doc.createElement("span");
+        span.id = "tools-filter-status";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?tools_q=hello");
+        fireAfterSettleWithTarget("tools-table");
+
+        // updateFilterStatus was called — status span should be updated
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("triggers rehydration for -table-body suffix target", () => {
+        const el = doc.createElement("div");
+        el.id = "tools-table-body";
+        doc.body.appendChild(el);
+
+        const span = doc.createElement("span");
+        span.id = "tools-filter-status";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?tools_tags=v1");
+        fireAfterSettleWithTarget("tools-table-body");
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("triggers rehydration for -list-container suffix target", () => {
+        const el = doc.createElement("div");
+        el.id = "servers-list-container";
+        doc.body.appendChild(el);
+
+        const span = doc.createElement("span");
+        span.id = "servers-filter-status";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?servers_q=test");
+        fireAfterSettleWithTarget("servers-list-container");
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("triggers rehydration for -pagination-controls suffix target", () => {
+        const el = doc.createElement("div");
+        el.id = "tools-pagination-controls";
+        doc.body.appendChild(el);
+
+        const span = doc.createElement("span");
+        span.id = "tools-filter-status";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?tools_q=test");
+        fireAfterSettleWithTarget("tools-pagination-controls");
+
+        expect(span.textContent).toBe("Filters active");
+    });
+
+    test("does not trigger for unrelated target IDs", () => {
+        const span = doc.createElement("span");
+        span.id = "tools-filter-status";
+        span.textContent = "initial";
+        doc.body.appendChild(span);
+
+        win.history.replaceState({}, "", "/admin?tools_q=test");
+        fireAfterSettleWithTarget("some-random-div");
+
+        // Status should not have changed
+        expect(span.textContent).toBe("initial");
+    });
+
+    test("does not throw when detail is undefined", () => {
+        const event = new win.Event("htmx:afterSettle", { bubbles: true });
+        expect(() => doc.body.dispatchEvent(event)).not.toThrow();
+    });
+
+    test("does not throw when target has no id", () => {
+        const event = new win.CustomEvent("htmx:afterSettle", {
+            bubbles: true,
+            detail: { target: doc.createElement("div") },
+        });
+        expect(() => doc.body.dispatchEvent(event)).not.toThrow();
+    });
+});
+
+// ---------------------------------------------------------------------------
+// pagination_controls: URL-param fallback for filter persistence (#3647)
+//
+// loadPage() trusts DOM inputs when the element exists (even if empty,
+// meaning the user cleared the filter).  It only falls back to namespaced
+// URL params when the element itself is absent (bookmarked URL, restricted
+// iframe, or ID mismatch like catalog/a2a-agents).
+// ---------------------------------------------------------------------------
+describe("pagination_controls URL-param filter fallback (#3647)", () => {
+    /**
+     * Simulates the merged loadPage() URL-building logic from
+     * pagination_controls.html.
+     *
+     * @param {object} opts
+     * @param {string} opts.baseUrl
+     * @param {string} [opts.extraParamsJson='{}']
+     * @param {string} opts.tableName
+     * @param {object|null} [opts.searchEl]  null = element not in DOM
+     * @param {object|null} [opts.tagEl]     null = element not in DOM
+     * @param {string} [opts.currentSearch='']
+     */
+    function buildUrlWithFallback(opts) {
+        const url = new URL(opts.baseUrl, "http://localhost");
+        url.searchParams.set("page", "1");
+        url.searchParams.set("per_page", "50");
+
+        const extraParams = JSON.parse(opts.extraParamsJson || "{}");
+        Object.entries(extraParams).forEach(([k, v]) => {
+            if (k !== "include_inactive" && v !== null && v !== undefined) {
+                url.searchParams.set(k, String(v));
+            }
+        });
+
+        const currentUrlParams = new URLSearchParams(opts.currentSearch || "");
+        if (opts.tableName) {
+            const searchInput = opts.searchEl ?? null;
+            const tagInput = opts.tagEl ?? null;
+            const livePrefix = opts.tableName + "_";
+
+            const finalQuery =
+                searchInput !== null
+                    ? (searchInput.value || "").trim()
+                    : currentUrlParams.get(livePrefix + "q") || "";
+            const finalTags =
+                tagInput !== null
+                    ? (tagInput.value || "").trim()
+                    : currentUrlParams.get(livePrefix + "tags") || "";
+
+            if (finalQuery) {
+                url.searchParams.set("q", finalQuery);
+            } else {
+                url.searchParams.delete("q");
+            }
+            if (finalTags) {
+                url.searchParams.set("tags", finalTags);
+            } else {
+                url.searchParams.delete("tags");
+            }
+        }
+
+        const teamIdFromUrl = currentUrlParams.get("team_id");
+        if (teamIdFromUrl && !extraParams.team_id) {
+            url.searchParams.set("team_id", teamIdFromUrl);
+        }
+        return url;
+    }
+
+    test("DOM input takes precedence over URL params", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "dom-value" },
+            currentSearch: "?tools_q=url-value",
+        });
+        expect(url.searchParams.get("q")).toBe("dom-value");
+    });
+
+    test("empty DOM input clears filter (does NOT fall back to stale URL)", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "" },
+            currentSearch: "?tools_q=stale-value",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("empty DOM tags input clears tags (does NOT fall back to stale URL)", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            tagEl: { value: "" },
+            currentSearch: "?tools_tags=stale-tags",
+        });
+        expect(url.searchParams.has("tags")).toBe(false);
+    });
+
+    test("falls back to URL param when DOM element is absent", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: null,
+            currentSearch: "?tools_q=url-value",
+        });
+        expect(url.searchParams.get("q")).toBe("url-value");
+    });
+
+    test("falls back to URL tags when DOM element is absent", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            tagEl: null,
+            currentSearch: "?tools_tags=prod,staging",
+        });
+        expect(url.searchParams.get("tags")).toBe("prod,staging");
+    });
+
+    test("uses correct namespaced prefix per table", () => {
+        const toolsUrl = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: null,
+            currentSearch: "?tools_q=alpha&servers_q=beta",
+        });
+        expect(toolsUrl.searchParams.get("q")).toBe("alpha");
+
+        const serversUrl = buildUrlWithFallback({
+            baseUrl: "/admin/servers/partial",
+            tableName: "servers",
+            searchEl: null,
+            currentSearch: "?tools_q=alpha&servers_q=beta",
+        });
+        expect(serversUrl.searchParams.get("q")).toBe("beta");
+    });
+
+    test("extraParams are preserved when DOM overrides q", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            extraParamsJson: JSON.stringify({ gateway_id: "7", q: "old" }),
+            tableName: "tools",
+            searchEl: { value: "new" },
+        });
+        expect(url.searchParams.get("q")).toBe("new");
+        expect(url.searchParams.get("gateway_id")).toBe("7");
+    });
+
+    test("team_id from URL preserved when not in extraParams", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            currentSearch: "?team_id=t1",
+        });
+        expect(url.searchParams.get("team_id")).toBe("t1");
+    });
+
+    test("extraParams team_id takes precedence over URL team_id", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            extraParamsJson: JSON.stringify({ team_id: "from-params" }),
+            tableName: "tools",
+            currentSearch: "?team_id=from-url",
+        });
+        expect(url.searchParams.get("team_id")).toBe("from-params");
+    });
+
+    test("no q/tags when DOM elements exist but are empty and URL has nothing", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "" },
+            tagEl: { value: "" },
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+        expect(url.searchParams.has("tags")).toBe(false);
+    });
+
+    test("namespaces are isolated: tools_q does not leak to servers", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/servers/partial",
+            tableName: "servers",
+            searchEl: null,
+            currentSearch: "?tools_q=should-not-leak",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("whitespace-only DOM input is treated as cleared (no fallback)", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "   " },
+            currentSearch: "?tools_q=from-url",
+        });
+        expect(url.searchParams.has("q")).toBe(false);
+    });
+
+    test("q from DOM and tags from URL fallback work simultaneously", () => {
+        const url = buildUrlWithFallback({
+            baseUrl: "/admin/tools/partial",
+            tableName: "tools",
+            searchEl: { value: "dom-search" },
+            tagEl: null,
+            currentSearch: "?tools_tags=url-tags",
+        });
+        expect(url.searchParams.get("q")).toBe("dom-search");
+        expect(url.searchParams.get("tags")).toBe("url-tags");
+    });
+});

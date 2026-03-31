@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -109,7 +109,7 @@ elif backend == "sqlite":
     # Allow pooled connections to hop across threads.
     connect_args["check_same_thread"] = False
 
-# 4. Other backends (MySQL, MSSQL, etc.) leave `connect_args` empty.
+# 4. Other backends leave `connect_args` empty.
 
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
@@ -132,6 +132,9 @@ def build_engine() -> Engine:
 
     Returns:
         SQLAlchemy Engine instance configured for the specified database.
+
+    Raises:
+        ValueError: If the database backend is not postgresql or sqlite.
     """
     if _sqlalchemy_echo:
         logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
@@ -160,22 +163,8 @@ def build_engine() -> Engine:
             echo=_sqlalchemy_echo,
         )
 
-    if backend in ("mysql", "mariadb"):
-        # MariaDB/MySQL specific configuration
-        logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
-
-        return create_engine(
-            settings.database_url,
-            pool_pre_ping=True,
-            pool_size=settings.db_pool_size,
-            max_overflow=settings.db_max_overflow,
-            pool_timeout=settings.db_pool_timeout,
-            pool_recycle=settings.db_pool_recycle,
-            connect_args=connect_args,
-            isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
-            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
-            echo=_sqlalchemy_echo,
-        )
+    if backend != "postgresql":
+        raise ValueError(f"Unsupported database backend: '{backend}'. Only 'postgresql' and 'sqlite' are supported.")
 
     # Determine if PgBouncer is in use (detected via URL or explicit config)
     is_pgbouncer = "pgbouncer" in settings.database_url.lower()
@@ -897,10 +886,227 @@ def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
         logger.warning("Failed to refresh slugs on startup (unexpected error): %s", e)
 
 
+def _compute_metrics_summary(
+    raw_metrics: List[Any],
+    hourly_metrics: List[Any],
+    session: Optional[Any] = None,
+    entity_id: Optional[str] = None,
+    raw_metric_class: Optional[Any] = None,
+    hourly_metric_class: Optional[Any] = None,
+) -> Dict[str, Any]:
+    """Compute aggregated metrics from both raw and hourly tables without double-counting.
+
+    This function prevents double-counting by including raw metrics only from hours
+    that have no corresponding hourly aggregate. This correctly handles:
+    - Normal operation (hourly rollup complete, raw data retained or deleted)
+    - Rollup lag (completed hour not yet rolled up)
+    - Rollup disabled or failed
+
+    The approach mirrors ``aggregate_metrics_combined()`` in metrics_query_service.py.
+
+    Args:
+        raw_metrics: List of raw metric objects loaded in memory (or None if using session)
+        hourly_metrics: List of hourly aggregate objects loaded in memory (or None if using session)
+        session: SQLAlchemy session for database queries (required if raw_metrics/hourly_metrics not loaded)
+        entity_id: ID of the entity (tool/resource/prompt/server/agent) for SQL query
+        raw_metric_class: ORM class for raw metrics (e.g., ToolMetric) for SQL query
+        hourly_metric_class: ORM class for hourly metrics (e.g., ToolMetricsHourly) for SQL query
+
+    Returns:
+        Dict with keys: total_executions, successful_executions, failed_executions,
+        failure_rate, min_response_time, max_response_time, avg_response_time,
+        last_execution_time
+
+    Raises:
+        ValueError: If both in-memory and SQL query parameters are incomplete
+    """
+    # Determine if we're using in-memory or SQL query path
+    use_memory = raw_metrics is not None and hourly_metrics is not None
+
+    if use_memory:
+        # ============================================================
+        # IN-MEMORY PATH: Iterate over loaded objects
+        # ============================================================
+
+        # Build set of hours already covered by hourly aggregates
+        covered_hours: set[datetime] = set()
+        for h in hourly_metrics:
+            hs = h.hour_start if h.hour_start.tzinfo is not None else h.hour_start.replace(tzinfo=timezone.utc)
+            covered_hours.add(hs)
+
+        total = 0
+        successful = 0
+        min_rt: Optional[float] = None
+        max_rt: Optional[float] = None
+        sum_rt = 0.0
+        last_time: Optional[datetime] = None
+
+        # Include raw metrics only from hours NOT covered by hourly aggregates
+        for m in raw_metrics:
+            metric_ts = m.timestamp if m.timestamp.tzinfo is not None else m.timestamp.replace(tzinfo=timezone.utc)
+            metric_hour = metric_ts.replace(minute=0, second=0, microsecond=0)
+            if metric_hour in covered_hours:
+                continue  # Already counted in hourly aggregates
+
+            total += 1
+            if m.is_success:
+                successful += 1
+            rt = m.response_time
+            if min_rt is None or rt < min_rt:
+                min_rt = rt
+            if max_rt is None or rt > max_rt:
+                max_rt = rt
+            sum_rt += rt
+            if last_time is None or metric_ts > last_time:
+                last_time = metric_ts
+
+        # Process hourly aggregated metrics (completed hours)
+        for h in hourly_metrics:
+            total += h.total_count
+            successful += h.success_count
+            if h.min_response_time is not None:
+                if min_rt is None or h.min_response_time < min_rt:
+                    min_rt = h.min_response_time
+            if h.max_response_time is not None:
+                if max_rt is None or h.max_response_time > max_rt:
+                    max_rt = h.max_response_time
+            if h.avg_response_time is not None and h.total_count > 0:
+                sum_rt += h.avg_response_time * h.total_count
+            hs = h.hour_start if h.hour_start.tzinfo is not None else h.hour_start.replace(tzinfo=timezone.utc)
+            if last_time is None or hs > last_time:
+                last_time = hs
+
+        failed = total - successful
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": min_rt,
+            "max_response_time": max_rt,
+            "avg_response_time": sum_rt / total if total > 0 else None,
+            "last_execution_time": last_time,
+        }
+
+    # ============================================================
+    # SQL QUERY PATH: hourly aggregates + uncovered raw metrics
+    # ============================================================
+    if session is None or entity_id is None or raw_metric_class is None or hourly_metric_class is None:
+        raise ValueError("For SQL query path, must provide: session, entity_id, raw_metric_class, hourly_metric_class")
+
+    # Third-Party
+    from sqlalchemy import case  # pylint: disable=import-outside-toplevel
+
+    # Determine the foreign key column name (tool_id, resource_id, etc.)
+    class_name = raw_metric_class.__name__
+    if class_name.endswith("Metric"):
+        entity_type = class_name[:-6].lower()  # ToolMetric -> tool
+        fk_column_name = f"{entity_type}_id"
+    else:
+        raise ValueError(f"Cannot determine foreign key column for {class_name}")
+
+    fk_column_raw = getattr(raw_metric_class, fk_column_name)
+    fk_column_hourly = getattr(hourly_metric_class, fk_column_name)
+
+    # Query 1: All hourly aggregates for this entity (includes max hour_start)
+    hourly_result = (
+        session.query(
+            func.sum(hourly_metric_class.total_count),  # pylint: disable=not-callable
+            func.sum(hourly_metric_class.success_count),  # pylint: disable=not-callable
+            func.min(hourly_metric_class.min_response_time),  # pylint: disable=not-callable
+            func.max(hourly_metric_class.max_response_time),  # pylint: disable=not-callable
+            func.sum(hourly_metric_class.avg_response_time * hourly_metric_class.total_count),  # weighted sum
+            func.max(hourly_metric_class.hour_start),  # pylint: disable=not-callable
+        )
+        .filter(fk_column_hourly == entity_id)
+        .one()
+    )
+
+    hourly_total = hourly_result[0] or 0
+    hourly_successful = hourly_result[1] or 0
+    hourly_min_rt = hourly_result[2]
+    hourly_max_rt = hourly_result[3]
+    hourly_weighted_sum_rt = hourly_result[4] or 0.0
+    hourly_last_bucket = hourly_result[5]
+
+    # Query 2: Raw metrics from hours NOT covered by hourly aggregates.
+    # Use max_hour_start to determine the boundary: hourly data covers
+    # up to max_hour_start + 1h, raw data covers everything after that.
+    # When no hourly data exists, all raw metrics are counted.
+    raw_query = session.query(
+        func.count(raw_metric_class.id),  # pylint: disable=not-callable
+        func.sum(case((raw_metric_class.is_success.is_(True), 1), else_=0)),
+        func.min(raw_metric_class.response_time),  # pylint: disable=not-callable
+        func.max(raw_metric_class.response_time),  # pylint: disable=not-callable
+        func.sum(raw_metric_class.response_time),  # pylint: disable=not-callable
+        func.max(raw_metric_class.timestamp),  # pylint: disable=not-callable
+    ).filter(fk_column_raw == entity_id)
+    if hourly_last_bucket is not None:
+        # Only include raw metrics from after the last rolled-up hour
+        hourly_coverage_end = hourly_last_bucket + timedelta(hours=1)
+        raw_query = raw_query.filter(raw_metric_class.timestamp >= hourly_coverage_end)
+
+    raw_result = raw_query.one()
+
+    raw_total = raw_result[0] or 0
+    raw_successful = raw_result[1] or 0
+    raw_min_rt = raw_result[2]
+    raw_max_rt = raw_result[3]
+    raw_sum_rt = raw_result[4] or 0.0
+    raw_last_time = raw_result[5]
+
+    # Aggregate totals
+    total = hourly_total + raw_total
+    successful = hourly_successful + raw_successful
+    failed = total - successful
+
+    # Min/max across both sources
+    min_rt = None
+    if raw_min_rt is not None and hourly_min_rt is not None:
+        min_rt = min(raw_min_rt, hourly_min_rt)
+    elif raw_min_rt is not None:
+        min_rt = raw_min_rt
+    elif hourly_min_rt is not None:
+        min_rt = hourly_min_rt
+
+    max_rt = None
+    if raw_max_rt is not None and hourly_max_rt is not None:
+        max_rt = max(raw_max_rt, hourly_max_rt)
+    elif raw_max_rt is not None:
+        max_rt = raw_max_rt
+    elif hourly_max_rt is not None:
+        max_rt = hourly_max_rt
+
+    # Weighted average response time
+    avg_rt = None
+    if total > 0:
+        avg_rt = (hourly_weighted_sum_rt + raw_sum_rt) / total
+
+    # Last execution time: most recent (use hour_start for hourly, consistent with aggregate_metrics_combined)
+    last_time = None
+    if raw_last_time is not None and hourly_last_bucket is not None:
+        last_time = max(raw_last_time, hourly_last_bucket)
+    elif raw_last_time is not None:
+        last_time = raw_last_time
+    elif hourly_last_bucket is not None:
+        last_time = hourly_last_bucket
+
+    return {
+        "total_executions": total,
+        "successful_executions": successful,
+        "failed_executions": failed,
+        "failure_rate": failed / total if total > 0 else 0.0,
+        "min_response_time": min_rt,
+        "max_response_time": max_rt,
+        "avg_response_time": avg_rt,
+        "last_execution_time": last_time,
+    }
+
+
 class Base(DeclarativeBase):
     """Base class for all models."""
 
-    # MariaDB-compatible naming convention for foreign keys
+    # Naming convention for foreign keys
     metadata = MetaData(
         naming_convention={
             "fk": "fk_%(table_name)s_%(column_0_name)s",
@@ -1777,6 +1983,7 @@ class EmailTeamMember(Base):
         joined_at (datetime): When the user joined the team
         invited_by (str): Email of the user who invited this member
         is_active (bool): Whether the membership is active
+        grant_source (str): Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = EmailTeamMember(
@@ -1803,6 +2010,7 @@ class EmailTeamMember(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     invited_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     team: Mapped["EmailTeam"] = relationship("EmailTeam", back_populates="members")
@@ -3040,6 +3248,11 @@ class Tool(Base):
 
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
+    metrics_hourly: Mapped[List["ToolMetricsHourly"]] = relationship(
+        "ToolMetricsHourly",
+        primaryjoin="Tool.id == foreign(ToolMetricsHourly.tool_id)",
+        viewonly=True,
+    )
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -3292,53 +3505,26 @@ class Tool(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """Aggregated metrics for the tool.
+        """Aggregated metrics for the tool combining raw and hourly data without double-counting.
 
-        When metrics are loaded: computes all values from memory in a single pass.
-        When not loaded: uses a single SQL query with aggregation for all fields.
+        When metrics are loaded: computes from memory (raw + hourly)
+        When not loaded: uses SQL queries with time partitioning
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        # If metrics are loaded, compute everything in a single pass
+        # Try in-memory path first
         if self._metrics_loaded():
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
+            try:
+                hourly_metrics = self.metrics_hourly
+            except AttributeError:
+                hourly_metrics = []  # Relationship not loaded
+            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
 
-            for m in self.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-
-        # Use single SQL query with full aggregation
+        # SQL query path
         # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
@@ -3354,33 +3540,14 @@ class Tool(Base):
                 "last_execution_time": None,
             }
 
-        result = (
-            session.query(
-                func.count(ToolMetric.id),  # pylint: disable=not-callable
-                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)),
-                func.min(ToolMetric.response_time),  # pylint: disable=not-callable
-                func.max(ToolMetric.response_time),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time),  # pylint: disable=not-callable
-                func.max(ToolMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(ToolMetric.tool_id == self.id)
-            .one()
+        return _compute_metrics_summary(
+            raw_metrics=None,
+            hourly_metrics=None,
+            session=session,
+            entity_id=self.id,
+            raw_metric_class=ToolMetric,
+            hourly_metric_class=ToolMetricsHourly,
         )
-
-        total = result[0] or 0
-        successful = result[1] or 0
-        failed = total - successful
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": result[2],
-            "max_response_time": result[3],
-            "avg_response_time": float(result[4]) if result[4] is not None else None,
-            "last_execution_time": result[5],
-        }
 
 
 class Resource(Base):
@@ -3424,6 +3591,11 @@ class Resource(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["ResourceMetric"]] = relationship("ResourceMetric", back_populates="resource", cascade="all, delete-orphan")
+    metrics_hourly: Mapped[List["ResourceMetricsHourly"]] = relationship(
+        "ResourceMetricsHourly",
+        primaryjoin="Resource.id == foreign(ResourceMetricsHourly.resource_id)",
+        viewonly=True,
+    )
 
     # Content storage - can be text or binary
     text_content: Mapped[Optional[str]] = mapped_column(Text)
@@ -3665,51 +3837,26 @@ class Resource(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """Aggregated metrics for the resource.
+        """Aggregated metrics for the resource combining raw and hourly data without double-counting.
 
-        When metrics are loaded: computes all values from memory in a single pass.
-        When not loaded: uses a single SQL query with aggregation for all fields.
+        When metrics are loaded: computes from memory (raw + hourly)
+        When not loaded: uses SQL queries with time partitioning
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
+        # Try in-memory path first
         if self._metrics_loaded():
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
+            try:
+                hourly_metrics = self.metrics_hourly
+            except AttributeError:
+                hourly_metrics = []
+            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
 
-            for m in self.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-
+        # SQL query path
         # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
@@ -3725,33 +3872,14 @@ class Resource(Base):
                 "last_execution_time": None,
             }
 
-        result = (
-            session.query(
-                func.count(ResourceMetric.id),  # pylint: disable=not-callable
-                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)),
-                func.min(ResourceMetric.response_time),  # pylint: disable=not-callable
-                func.max(ResourceMetric.response_time),  # pylint: disable=not-callable
-                func.avg(ResourceMetric.response_time),  # pylint: disable=not-callable
-                func.max(ResourceMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(ResourceMetric.resource_id == self.id)
-            .one()
+        return _compute_metrics_summary(
+            raw_metrics=None,
+            hourly_metrics=None,
+            session=session,
+            entity_id=self.id,
+            raw_metric_class=ResourceMetric,
+            hourly_metric_class=ResourceMetricsHourly,
         )
-
-        total = result[0] or 0
-        successful = result[1] or 0
-        failed = total - successful
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": result[2],
-            "max_response_time": result[3],
-            "avg_response_time": float(result[4]) if result[4] is not None else None,
-            "last_execution_time": result[5],
-        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -3842,6 +3970,11 @@ class Prompt(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
+    metrics_hourly: Mapped[List["PromptMetricsHourly"]] = relationship(
+        "PromptMetricsHourly",
+        primaryjoin="Prompt.id == foreign(PromptMetricsHourly.prompt_id)",
+        viewonly=True,
+    )
 
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="prompts")
@@ -4076,51 +4209,26 @@ class Prompt(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """Aggregated metrics for the prompt.
+        """Aggregated metrics for the prompt combining raw and hourly data without double-counting.
 
-        When metrics are loaded: computes all values from memory in a single pass.
-        When not loaded: uses a single SQL query with aggregation for all fields.
+        When metrics are loaded: computes from memory (raw + hourly)
+        When not loaded: uses SQL queries with time partitioning
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
+        # Try in-memory path first
         if self._metrics_loaded():
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
+            try:
+                hourly_metrics = self.metrics_hourly
+            except AttributeError:
+                hourly_metrics = []
+            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
 
-            for m in self.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-
+        # SQL query path
         # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
@@ -4136,33 +4244,14 @@ class Prompt(Base):
                 "last_execution_time": None,
             }
 
-        result = (
-            session.query(
-                func.count(PromptMetric.id),  # pylint: disable=not-callable
-                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)),
-                func.min(PromptMetric.response_time),  # pylint: disable=not-callable
-                func.max(PromptMetric.response_time),  # pylint: disable=not-callable
-                func.avg(PromptMetric.response_time),  # pylint: disable=not-callable
-                func.max(PromptMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(PromptMetric.prompt_id == self.id)
-            .one()
+        return _compute_metrics_summary(
+            raw_metrics=None,
+            hourly_metrics=None,
+            session=session,
+            entity_id=self.id,
+            raw_metric_class=PromptMetric,
+            hourly_metric_class=PromptMetricsHourly,
         )
-
-        total = result[0] or 0
-        successful = result[1] or 0
-        failed = total - successful
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": result[2],
-            "max_response_time": result[3],
-            "avg_response_time": float(result[4]) if result[4] is not None else None,
-            "last_execution_time": result[5],
-        }
 
 
 class Server(Base):
@@ -4210,6 +4299,11 @@ class Server(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
+    metrics_hourly: Mapped[List["ServerMetricsHourly"]] = relationship(
+        "ServerMetricsHourly",
+        primaryjoin="Server.id == foreign(ServerMetricsHourly.server_id)",
+        viewonly=True,
+    )
 
     # Many-to-many relationships for associated items
     tools: Mapped[List["Tool"]] = relationship("Tool", secondary=server_tool_association, back_populates="servers")
@@ -4381,51 +4475,26 @@ class Server(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """Aggregated metrics for the server.
+        """Aggregated metrics for the server combining raw and hourly data without double-counting.
 
-        When metrics are loaded: computes all values from memory in a single pass.
-        When not loaded: uses a single SQL query with aggregation for all fields.
+        When metrics are loaded: computes from memory (raw + hourly)
+        When not loaded: uses SQL queries with time partitioning
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
+        # Try in-memory path first
         if self._metrics_loaded():
-            total = 0
-            successful = 0
-            min_rt: Optional[float] = None
-            max_rt: Optional[float] = None
-            sum_rt = 0.0
-            last_time: Optional[datetime] = None
+            try:
+                hourly_metrics = self.metrics_hourly
+            except AttributeError:
+                hourly_metrics = []
+            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
 
-            for m in self.metrics:
-                total += 1
-                if m.is_success:
-                    successful += 1
-                rt = m.response_time
-                if min_rt is None or rt < min_rt:
-                    min_rt = rt
-                if max_rt is None or rt > max_rt:
-                    max_rt = rt
-                sum_rt += rt
-                if last_time is None or m.timestamp > last_time:
-                    last_time = m.timestamp
-
-            failed = total - successful
-            return {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failed / total if total > 0 else 0.0,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": sum_rt / total if total > 0 else None,
-                "last_execution_time": last_time,
-            }
-
+        # SQL query path
         # Third-Party
-        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
@@ -4441,33 +4510,14 @@ class Server(Base):
                 "last_execution_time": None,
             }
 
-        result = (
-            session.query(
-                func.count(ServerMetric.id),  # pylint: disable=not-callable
-                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)),
-                func.min(ServerMetric.response_time),  # pylint: disable=not-callable
-                func.max(ServerMetric.response_time),  # pylint: disable=not-callable
-                func.avg(ServerMetric.response_time),  # pylint: disable=not-callable
-                func.max(ServerMetric.timestamp),  # pylint: disable=not-callable
-            )
-            .filter(ServerMetric.server_id == self.id)
-            .one()
+        return _compute_metrics_summary(
+            raw_metrics=None,
+            hourly_metrics=None,
+            session=session,
+            entity_id=self.id,
+            raw_metric_class=ServerMetric,
+            hourly_metric_class=ServerMetricsHourly,
         )
-
-        total = result[0] or 0
-        successful = result[1] or 0
-        failed = total - successful
-
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": result[2],
-            "max_response_time": result[3],
-            "avg_response_time": float(result[4]) if result[4] is not None else None,
-            "last_execution_time": result[5],
-        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -4545,6 +4595,10 @@ class Gateway(Base):
     ca_certificate: Mapped[Optional[bytes]] = mapped_column(Text, nullable=True)
     ca_certificate_sig: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     signing_algorithm: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="ed25519")  # e.g., "sha256"
+
+    # mTLS client certificate/key for upstream gateway authentication
+    client_cert: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    client_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationship with local tools this gateway provides
     tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan", passive_deletes=True)
@@ -5711,25 +5765,6 @@ def get_for_update(
 fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
-def patch_string_columns_for_mariadb(base, engine_) -> None:
-    """
-    MariaDB requires VARCHAR to have an explicit length.
-    Auto-assign VARCHAR(255) to any String() columns without a length.
-
-    Args:
-        base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
-        engine_ (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
-    """
-    if engine_.dialect.name != "mariadb":
-        return
-
-    for table in base.metadata.tables.values():
-        for column in table.columns:
-            if isinstance(column.type, String) and column.type.length is None:
-                # Replace with VARCHAR(255)
-                column.type = VARCHAR(255)
-
-
 def extract_json_field(column, json_path: str, dialect_name: Optional[str] = None):
     """Extract a JSON field in a database-agnostic way.
 
@@ -5774,9 +5809,6 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
-        # Apply MariaDB compatibility fix
-        patch_string_columns_for_mariadb(Base, engine)
-
         # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:
@@ -6042,12 +6074,12 @@ class LLMProviderType:
                 "description": "Anthropic Claude models",
             },
             cls.OLLAMA: {
-                "api_base": "http://localhost:11434/v1",
+                "api_base": "http://localhost:11434",
                 "default_model": "llama3.2",
                 "supports_model_list": True,
-                "models_endpoint": "/models",
+                "models_endpoint": "/api/tags",
                 "requires_api_key": False,
-                "description": "Local Ollama server (OpenAI-compatible)",
+                "description": "Local Ollama server",
             },
             cls.OPENAI_COMPATIBLE: {
                 "api_base": "http://localhost:8080/v1",

@@ -76,7 +76,9 @@ logger = logging.getLogger(__name__)
 _HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
 _DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
 _EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
-_MIME_TYPE_RE: Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*$")
+_MIME_TYPE_RE: Pattern[str] = re.compile(  # noqa: DUO138 - no ReDoS: inner groups require literal ; and = delimiters preventing backtrack ambiguity
+    r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$'
+)
 _URI_SCHEME_RE: Pattern[str] = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://")
 _SHELL_DANGEROUS_CHARS_RE: Pattern[str] = re.compile(r"[;&|`$(){}\[\]<>]")
 _ANSI_ESCAPE_RE: Pattern[str] = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
@@ -833,19 +835,12 @@ class SecurityValidator:
                 ...
             ValueError: Template contains potentially dangerous expressions
 
-            Length limit testing:
-
-            >>> long_template = 'a' * 65537
-            >>> SecurityValidator.validate_template(long_template)
-            Traceback (most recent call last):
-                ...
-            ValueError: Template exceeds maximum length of 65536
+            Length limit note: size validation is performed at the service layer
+            using configurable limits (ContentSecurityService). This validator
+            only checks encoding, dangerous patterns, and SSTI prevention.
         """
         if not value:
             return value
-
-        if len(value) > cls.MAX_TEMPLATE_LENGTH:
-            raise ValueError(f"Template exceeds maximum length of {cls.MAX_TEMPLATE_LENGTH}")
 
         # Block dangerous tags but allow Jinja2 syntax {{ }} and {% %} (uses precompiled regex)
         if _DANGEROUS_TEMPLATE_TAGS_RE.search(value):
@@ -880,6 +875,75 @@ class SecurityValidator:
             raise ValueError("Template contains potentially dangerous expressions")
 
         return value
+
+    @classmethod
+    def sanitize_log_message(cls, message: Optional[Any], max_length: int = 10000) -> str:
+        """Sanitize log message to prevent log injection attacks.
+
+        Removes newlines, carriage returns, ANSI escapes, and control characters
+        to prevent log forging and injection attacks (CWE-117).
+
+        Args:
+            message: Log message to sanitize
+            max_length: Maximum length (default: 10000)
+
+        Returns:
+            Sanitized message safe for logging
+
+        Examples:
+            Basic newline removal:
+
+            >>> SecurityValidator.sanitize_log_message("User\\nFake: admin")
+            'User Fake: admin'
+            >>> SecurityValidator.sanitize_log_message("Test\\rInjection")
+            'Test Injection'
+
+            ANSI escape removal:
+
+            >>> SecurityValidator.sanitize_log_message("User: \\x1B[31madmin\\x1B[0m")
+            'User: admin'
+
+            Control character removal:
+
+            >>> result = SecurityValidator.sanitize_log_message("User\\x00\\x01\\x02")
+            >>> "\\x00" not in result and "\\x01" not in result
+            True
+
+            Length truncation:
+
+            >>> long_msg = "A" * 15000
+            >>> result = SecurityValidator.sanitize_log_message(long_msg, max_length=10000)
+            >>> len(result) <= 10020
+            True
+            >>> result.endswith("[truncated]")
+            True
+
+            Empty input handling:
+
+            >>> SecurityValidator.sanitize_log_message("")
+            ''
+            >>> SecurityValidator.sanitize_log_message(None)
+            ''
+        """
+        if not message:
+            return ""
+
+        text = str(message)
+
+        # Remove newlines and carriage returns (primary log injection vectors)
+        text = text.replace("\n", " ").replace("\r", " ")
+
+        # Remove ANSI escape sequences
+        text = _ANSI_ESCAPE_RE.sub("", text)
+
+        # Remove control characters
+        text = _CONTROL_CHARS_RE.sub("", text)
+
+        # Truncate to prevent log flooding
+        if len(text) > max_length:
+            text = text[:max_length] + "...[truncated]"
+
+        return text
 
     @classmethod
     def validate_url(cls, value: str, field_name: str = "URL") -> str:
@@ -1476,6 +1540,13 @@ class SecurityValidator:
             >>> SecurityValidator.validate_mime_type('image/svg+xml')
             'image/svg+xml'
 
+            Valid MIME types with parameters:
+
+            >>> SecurityValidator.validate_mime_type('application/json; charset=utf-8')
+            'application/json; charset=utf-8'
+            >>> SecurityValidator.validate_mime_type('text/plain; charset=utf-8')
+            'text/plain; charset=utf-8'
+
             Invalid MIME type formats:
 
             >>> SecurityValidator.validate_mime_type('invalid')
@@ -1520,12 +1591,12 @@ class SecurityValidator:
             ...     'not in the allowed list' in str(e)
             True
 
-            Test MIME type with parameters (line 618):
+            Test MIME type with parameters:
 
             >>> try:
             ...     SecurityValidator.validate_mime_type('application/evil; charset=utf-8')
             ... except ValueError as e:
-            ...     'Invalid MIME type format' in str(e)
+            ...     'not in the allowed list' in str(e)
             True
         """
         if not value:
@@ -1537,9 +1608,9 @@ class SecurityValidator:
 
         # Common safe MIME types
         safe_mime_types = settings.validation_allowed_mime_types
-        if value not in safe_mime_types:
+        base_type = value.split(";", 1)[0].strip()
+        if value not in safe_mime_types and base_type not in safe_mime_types:
             # Allow x- vendor types and + suffixes
-            base_type = value.split(";", maxsplit=1)[0].strip()
             if not (base_type.startswith("application/x-") or base_type.startswith("text/x-") or "+" in base_type):
                 raise ValueError(f"MIME type '{value}' is not in the allowed list")
 

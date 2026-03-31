@@ -7,11 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 import asyncio
+import contextlib
 import hashlib
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import anyio
 import pytest
 
 # First-Party
@@ -144,15 +146,18 @@ class TestValidateSession:
             last_used=time.time() - 1,  # Make it stale (> health_check_interval)
         )
 
-        # Patch asyncio.wait_for to capture the timeout argument
+        # Patch anyio.fail_after to capture the timeout argument
         captured_timeout = None
+        original_fail_after = anyio.fail_after
 
-        async def capture_wait_for(coro, timeout):
+        @contextlib.contextmanager
+        def capture_fail_after(delay, *args, **kwargs):
             nonlocal captured_timeout
-            captured_timeout = timeout
-            return await coro
+            captured_timeout = delay
+            with original_fail_after(delay, *args, **kwargs):
+                yield
 
-        with patch('mcpgateway.services.mcp_session_pool.asyncio.wait_for', side_effect=capture_wait_for):
+        with patch('mcpgateway.services.mcp_session_pool.anyio.fail_after', side_effect=capture_fail_after):
             result = await pool._validate_session(pooled)
 
         # Should have used the configurable health check timeout (3.0), not hardcoded 5.0
@@ -165,7 +170,7 @@ class TestValidateSession:
     async def test_validate_session_health_check_timeout_failure(self, pool):
         """Test that health check failures due to timeout are handled correctly."""
         mock_session = MagicMock()
-        mock_list_tools = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_list_tools = AsyncMock(side_effect=TimeoutError())
         mock_session.list_tools = mock_list_tools
 
         pooled = PooledSession(
@@ -1001,8 +1006,8 @@ class TestAcquireAndRelease:
         mock_failure.assert_called_once_with(url)
 
     @pytest.mark.asyncio
-    async def test_release_closed_session_warns(self, pool):
-        """Release should warn and return for closed sessions."""
+    async def test_release_closed_session_discards(self, pool):
+        """Release should treat already-closed sessions as discards and still clean up."""
         pooled = PooledSession(
             session=MagicMock(),
             transport_context=MagicMock(),
@@ -1013,10 +1018,9 @@ class TestAcquireAndRelease:
         )
         pooled.mark_closed()
 
-        with patch("mcpgateway.services.mcp_session_pool.logger") as mock_logger:
-            await pool.release(pooled)
-
-        mock_logger.warning.assert_called_once()
+        # Should not raise — closed sessions are treated as discards
+        await pool.release(pooled)
+        assert pool._evictions >= 1
 
     @pytest.mark.asyncio
     async def test_release_expired_session_closes(self, pool):
@@ -1241,7 +1245,7 @@ class TestCreateSession:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
@@ -1259,10 +1263,14 @@ class TestCreateSession:
         assert pooled.transport_type == TransportType.SSE
         assert pooled.headers["Authorization"] == "Bearer abc"
         assert pooled.gateway_id == "gw-1"
+        assert pooled._owner_task is not None
+        assert pooled._shutdown_event is not None
         pool._message_handler_factory.assert_called_once_with("http://test:8080", "gw-1")
         mock_sse.assert_called_once()
         assert mock_client.call_args[1]["message_handler"] == pool._message_handler_factory.return_value
         session_instance.initialize.assert_awaited_once()
+        # Clean up the background task
+        await pool._close_session(pooled)
 
     @pytest.mark.asyncio
     async def test_create_session_streamablehttp_with_factory(self):
@@ -1275,7 +1283,7 @@ class TestCreateSession:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
@@ -1291,7 +1299,9 @@ class TestCreateSession:
 
         assert pooled.transport_type == TransportType.STREAMABLE_HTTP
         assert pooled.headers["X-Test"] == "value"
+        assert pooled._owner_task is not None
         mock_streamable.assert_called_once()
+        await pool._close_session(pooled)
 
     @pytest.mark.asyncio
     async def test_create_session_message_handler_factory_failure_logs_warning(self):
@@ -1308,14 +1318,14 @@ class TestCreateSession:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(return_value=None)
 
         with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
             with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance) as mock_client:
                 with patch("mcpgateway.services.mcp_session_pool.logger") as mock_logger:
-                    await pool._create_session(
+                    pooled = await pool._create_session(
                         "http://test:8080",
                         None,
                         TransportType.SSE,
@@ -1324,10 +1334,11 @@ class TestCreateSession:
 
         mock_logger.warning.assert_called()
         assert mock_client.call_args[1]["message_handler"] is None
+        await pool._close_session(pooled)
 
     @pytest.mark.asyncio
     async def test_create_session_failure_cleanup(self):
-        """Failure during initialization should cleanup session and transport."""
+        """Failure during initialization should cleanup via background task unwinding."""
         pool = MCPSessionPool()
 
         transport_ctx = MagicMock()
@@ -1335,7 +1346,7 @@ class TestCreateSession:
         transport_ctx.__aexit__ = AsyncMock(return_value=None)
 
         session_instance = MagicMock()
-        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aenter__ = AsyncMock(return_value=session_instance)
         session_instance.__aexit__ = AsyncMock(return_value=None)
         session_instance.initialize = AsyncMock(side_effect=RuntimeError("boom"))
 
@@ -1344,6 +1355,8 @@ class TestCreateSession:
                 with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                     await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
+        # Background task handles cleanup via async with unwinding
+        await asyncio.sleep(0.1)  # Allow background task to finish cleanup
         session_instance.__aexit__.assert_awaited()
         transport_ctx.__aexit__.assert_awaited()
 
@@ -1437,3 +1450,29 @@ class TestContextManager:
             assert pool._pools[pool_key].qsize() == 1
 
         await pool.close_all()
+
+
+class TestStreamableHttpSessionOwnerCleanup:
+    """Tests for the public session-owner cleanup wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_streamable_http_session_owner_skips_invalid_ids(self):
+        """Invalid MCP session ids should be ignored."""
+        pool = MCPSessionPool()
+        pool.is_valid_mcp_session_id = MagicMock(return_value=False)
+        pool._cleanup_pool_session_owner = AsyncMock()
+
+        await pool.cleanup_streamable_http_session_owner("not-valid")
+
+        pool._cleanup_pool_session_owner.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_streamable_http_session_owner_cleans_valid_ids(self):
+        """Valid MCP session ids should delegate to the private cleanup helper."""
+        pool = MCPSessionPool()
+        pool.is_valid_mcp_session_id = MagicMock(return_value=True)
+        pool._cleanup_pool_session_owner = AsyncMock()
+
+        await pool.cleanup_streamable_http_session_owner("abc123def456")
+
+        pool._cleanup_pool_session_owner.assert_awaited_once_with("abc123def456")

@@ -125,7 +125,7 @@ function handleAddPassthrough() {
             queryDiv.className = "mb-4";
             queryDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Query Mapping (JSON)</label>
-                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-3 py-2 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
             `;
             passthroughContainer.appendChild(queryDiv);
         }
@@ -134,7 +134,7 @@ function handleAddPassthrough() {
             headerDiv.className = "mb-4";
             headerDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Header Mapping (JSON)</label>
-                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-3 py-2 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
             `;
             passthroughContainer.appendChild(headerDiv);
         }
@@ -143,7 +143,7 @@ function handleAddPassthrough() {
             timeoutDiv.className = "mb-4";
             timeoutDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">timeout_ms (number)</label>
-                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
+                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
             `;
             passthroughContainer.appendChild(timeoutDiv);
         }
@@ -152,7 +152,7 @@ function handleAddPassthrough() {
             exposeDiv.className = "mb-4";
             exposeDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Expose Passthrough</label>
-                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
                     <option value="true" selected>True</option>
                     <option value="false">False</option>
                 </select>
@@ -164,7 +164,7 @@ function handleAddPassthrough() {
             allowlistDiv.className = "mb-4";
             allowlistDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Allowlist (comma-separated hosts/schemes)</label>
-                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
+                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
             `;
             passthroughContainer.appendChild(allowlistDiv);
         }
@@ -173,7 +173,7 @@ function handleAddPassthrough() {
             pluginPreDiv.className = "mb-4";
             pluginPreDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Pre</label>
-                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
             `;
             passthroughContainer.appendChild(pluginPreDiv);
         }
@@ -182,7 +182,7 @@ function handleAddPassthrough() {
             pluginPostDiv.className = "mb-4";
             pluginPostDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Post (optional, override defaults)</label>
-                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
             `;
             passthroughContainer.appendChild(pluginPostDiv);
         }
@@ -493,31 +493,32 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    // Re-initialize search inputs when HTMX content loads
-    // Only re-initialize if the swap affects search-related content
-    document.body.addEventListener("htmx:afterSwap", function (event) {
-        const target = event.detail.target;
-        const relevantPanels = [
-            "catalog-panel",
-            "gateways-panel",
-            "tools-panel",
-            "resources-panel",
-            "prompts-panel",
-            "a2a-agents-panel",
-        ];
+    const tableToEntityType = {
+        "servers-table": "catalog",
+        "tools-table": "tools",
+        "resources-table": "resources",
+        "prompts-table": "prompts",
+        "gateways-table": "gateways",
+        "agents-table": "a2a-agents",
+    };
 
-        if (
-            target &&
-            relevantPanels.some(
-                (panelId) =>
-                    target.id === panelId || target.closest(`#${panelId}`),
-            )
-        ) {
-            console.log(
-                `📝 HTMX swap detected in ${target.id}, resetting search state`,
-            );
-            resetSearchInputsState();
-            initializeSearchInputsDebounced();
+    // Update available tags when HTMX content loads a table swap.
+    // Search inputs live outside the swapped table, so they do NOT need
+    // re-initialization here — doing so was causing an infinite loop
+    // (clone → set value → input event → reload → swap → repeat).
+    document.body.addEventListener("htmx:afterSwap", function (event) {
+        const targetId = event.detail.target && event.detail.target.id;
+        if (targetId && tableToEntityType[targetId]) {
+            console.log(`📝 HTMX swap detected in ${targetId}`);
+            updateFilterStatus();
+        }
+    });
+
+    document.body.addEventListener("htmx:afterSettle", function (event) {
+        const targetId = event.detail.target && event.detail.target.id;
+        const entityType = targetId && tableToEntityType[targetId];
+        if (entityType) {
+            updateAvailableTags(entityType);
         }
     });
 
@@ -1403,6 +1404,17 @@ function showErrorMessage(message, elementId = null) {
         }, 5000);
     }
 }
+
+// Handle HTMX after-request for user delete — extracts plain text from the
+// HTML error response and surfaces it via the toast notification system.
+// Exposed on window so inline hx-on::after-request handlers can call it.
+window.handleDeleteUserError = function (event) {
+    if (!event.detail.successful) {
+        const d = document.createElement("div");
+        d.innerHTML = event.detail.xhr.responseText;
+        showErrorMessage(d.textContent.trim() || "Error deleting user");
+    }
+};
 
 // Show success messages
 function showSuccessMessage(message) {
@@ -4394,6 +4406,7 @@ async function editA2AAgent(agentId) {
         const oauthRedirectUriField = safeGetElement(
             "oauth-redirect-uri-a2a-edit",
         );
+        const oauthIssuerField = safeGetElement("oauth-issuer-a2a-edit");
         const oauthScopesField = safeGetElement("oauth-scopes-a2a-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-a2a-edit",
@@ -4453,6 +4466,14 @@ async function editA2AAgent(agentId) {
                     if (authHeaderValueField) {
                         authHeaderValueField.value = "*****"; // mask header value
                     }
+                    // Load existing auth_headers if present
+                    if (agent.authHeaders && Array.isArray(agent.authHeaders)) {
+                        loadAuthHeaders(
+                            "auth-headers-container-a2a-edit",
+                            agent.authHeaders,
+                            { maskValues: true },
+                        );
+                    }
                 }
                 break;
             case "oauth":
@@ -4462,8 +4483,11 @@ async function editA2AAgent(agentId) {
                 // Populate OAuth fields if available
                 if (agent.oauthConfig) {
                     const config = agent.oauthConfig;
-                    if (oauthGrantTypeField && config.grant_type) {
-                        oauthGrantTypeField.value = config.grant_type;
+                    if (oauthIssuerField) {
+                        oauthIssuerField.value = config.issuer || "";
+                    }
+                    if (oauthGrantTypeField) {
+                        oauthGrantTypeField.value = config.grant_type || "";
                         // Show/hide authorization code fields based on grant type
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
@@ -4472,27 +4496,26 @@ async function editA2AAgent(agentId) {
                                     : "none";
                         }
                     }
-                    if (oauthClientIdField && config.client_id) {
-                        oauthClientIdField.value = config.client_id;
+                    if (oauthClientIdField) {
+                        oauthClientIdField.value = config.client_id || "";
                     }
                     if (oauthClientSecretField) {
                         oauthClientSecretField.value = ""; // Don't populate secret for security
                     }
-                    if (oauthTokenUrlField && config.token_url) {
-                        oauthTokenUrlField.value = config.token_url;
+                    if (oauthTokenUrlField) {
+                        oauthTokenUrlField.value = config.token_url || "";
                     }
-                    if (oauthAuthUrlField && config.authorization_url) {
-                        oauthAuthUrlField.value = config.authorization_url;
+                    if (oauthAuthUrlField) {
+                        oauthAuthUrlField.value =
+                            config.authorization_url || "";
                     }
-                    if (oauthRedirectUriField && config.redirect_uri) {
-                        oauthRedirectUriField.value = config.redirect_uri;
+                    if (oauthRedirectUriField) {
+                        oauthRedirectUriField.value = config.redirect_uri || "";
                     }
-                    if (
-                        oauthScopesField &&
-                        config.scopes &&
-                        Array.isArray(config.scopes)
-                    ) {
-                        oauthScopesField.value = config.scopes.join(" ");
+                    if (oauthScopesField) {
+                        oauthScopesField.value = Array.isArray(config.scopes)
+                            ? config.scopes.join(" ")
+                            : "";
                     }
                 }
                 break;
@@ -4749,6 +4772,7 @@ async function runResourceTest() {
 
     // Copy button
     const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
     copyBtn.textContent = "Copy";
     copyBtn.className =
         "text-xs px-2 py-1 rounded bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500";
@@ -4756,6 +4780,7 @@ async function runResourceTest() {
 
     // Fullscreen button
     const fullscreenBtn = document.createElement("button");
+    fullscreenBtn.type = "button";
     fullscreenBtn.textContent = "Fullscreen";
     fullscreenBtn.className =
         "text-xs px-2 py-1 rounded bg-blue-300 dark:bg-blue-600 hover:bg-blue-400 dark:hover:bg-blue-500";
@@ -4763,6 +4788,7 @@ async function runResourceTest() {
 
     // Download button
     const downloadBtn = document.createElement("button");
+    downloadBtn.type = "button";
     downloadBtn.textContent = "Download";
     downloadBtn.className =
         "text-xs px-2 py-1 rounded bg-green-300 dark:bg-green-600 hover:bg-green-400 dark:hover:bg-green-500";
@@ -4820,7 +4846,7 @@ async function runResourceTest() {
             e.stopPropagation();
         };
         overlay.className =
-            "fixed inset-0 bg-black bg-opacity-70 z-[9999] flex items-center justify-center p-4";
+            "fixed inset-0 bg-black bg-opacity-70 z-40 flex items-center justify-center p-4";
 
         const box = document.createElement("div");
         box.onclick = (e) => {
@@ -4831,6 +4857,7 @@ async function runResourceTest() {
             "bg-white dark:bg-gray-900 rounded-lg w-full h-full p-4 overflow-auto";
 
         const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
         closeBtn.textContent = "Close";
         closeBtn.className =
             "text-xs px-3 py-1 mb-2 rounded bg-red-400 hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600";
@@ -5604,11 +5631,12 @@ async function viewPrompt(promptName) {
 
             const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
             if (argsEl) {
-                argsEl.textContent = JSON.stringify(
-                    prompt.arguments || {},
-                    null,
-                    2,
-                );
+                const args = prompt.arguments;
+                if (!args || args.length === 0) {
+                    argsEl.textContent = "No arguments";
+                } else {
+                    argsEl.textContent = JSON.stringify(args, null, 2);
+                }
             }
 
             if (prompt.metrics) {
@@ -5845,7 +5873,7 @@ async function editPrompt(promptId) {
 
         // Validate arguments JSON
         const argsValidation = validateJson(
-            JSON.stringify(prompt.arguments || {}),
+            JSON.stringify(prompt.arguments || []),
             "Arguments",
         );
         if (argsField && argsValidation.valid) {
@@ -6276,6 +6304,7 @@ async function editGateway(gatewayId) {
         const oauthRedirectUriField = safeGetElement(
             "oauth-redirect-uri-gw-edit",
         );
+        const oauthIssuerField = safeGetElement("oauth-issuer-gw-edit");
         const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
         const oauthAuthCodeFields = safeGetElement(
             "oauth-auth-code-fields-gw-edit",
@@ -6373,8 +6402,11 @@ async function editGateway(gatewayId) {
                 // Populate OAuth fields if available
                 if (gateway.oauthConfig) {
                     const config = gateway.oauthConfig;
-                    if (oauthGrantTypeField && config.grant_type) {
-                        oauthGrantTypeField.value = config.grant_type;
+                    if (oauthIssuerField) {
+                        oauthIssuerField.value = config.issuer || "";
+                    }
+                    if (oauthGrantTypeField) {
+                        oauthGrantTypeField.value = config.grant_type || "";
                         // Show/hide authorization code fields based on grant type
                         if (oauthAuthCodeFields) {
                             oauthAuthCodeFields.style.display =
@@ -6383,27 +6415,26 @@ async function editGateway(gatewayId) {
                                     : "none";
                         }
                     }
-                    if (oauthClientIdField && config.client_id) {
-                        oauthClientIdField.value = config.client_id;
+                    if (oauthClientIdField) {
+                        oauthClientIdField.value = config.client_id || "";
                     }
                     if (oauthClientSecretField) {
                         oauthClientSecretField.value = ""; // Don't populate secret for security
                     }
-                    if (oauthTokenUrlField && config.token_url) {
-                        oauthTokenUrlField.value = config.token_url;
+                    if (oauthTokenUrlField) {
+                        oauthTokenUrlField.value = config.token_url || "";
                     }
-                    if (oauthAuthUrlField && config.authorization_url) {
-                        oauthAuthUrlField.value = config.authorization_url;
+                    if (oauthAuthUrlField) {
+                        oauthAuthUrlField.value =
+                            config.authorization_url || "";
                     }
-                    if (oauthRedirectUriField && config.redirect_uri) {
-                        oauthRedirectUriField.value = config.redirect_uri;
+                    if (oauthRedirectUriField) {
+                        oauthRedirectUriField.value = config.redirect_uri || "";
                     }
-                    if (
-                        oauthScopesField &&
-                        config.scopes &&
-                        Array.isArray(config.scopes)
-                    ) {
-                        oauthScopesField.value = config.scopes.join(" ");
+                    if (oauthScopesField) {
+                        oauthScopesField.value = Array.isArray(config.scopes)
+                            ? config.scopes.join(" ")
+                            : "";
                     }
                 }
                 break;
@@ -6973,6 +7004,111 @@ async function viewServer(serverId) {
             }
 
             container.appendChild(associatedDiv);
+
+            // OAuth Configuration section
+            if (server.oauthEnabled) {
+                const oauthDiv = document.createElement("div");
+                oauthDiv.className = "mt-6 border-t pt-4";
+
+                const oauthTitle = document.createElement("strong");
+                oauthTitle.textContent = "OAuth 2.0 Configuration:";
+                oauthTitle.className =
+                    "block text-gray-900 dark:text-gray-100 mb-3";
+                oauthDiv.appendChild(oauthTitle);
+
+                // OAuth Config details
+                const oauthConfig = server.oauthConfig || server.oauth_config;
+                if (oauthConfig) {
+                    const oauthConfigDiv = document.createElement("div");
+                    oauthConfigDiv.className =
+                        "mt-3 space-y-2 bg-gray-50 dark:bg-gray-800 p-3 rounded-md";
+
+                    // Authorization Servers
+                    if (
+                        oauthConfig.authorization_servers &&
+                        oauthConfig.authorization_servers.length > 0
+                    ) {
+                        const authServersP = document.createElement("p");
+                        authServersP.className = "text-sm";
+                        const authServersStrong =
+                            document.createElement("strong");
+                        authServersStrong.textContent =
+                            "Authorization Servers: ";
+                        authServersStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        authServersP.appendChild(authServersStrong);
+
+                        const serversList = document.createElement("ul");
+                        serversList.className =
+                            "mt-1 ml-4 list-disc list-inside";
+                        oauthConfig.authorization_servers.forEach(
+                            (serverUrl) => {
+                                const li = document.createElement("li");
+                                li.className =
+                                    "text-gray-600 dark:text-gray-400 text-sm";
+                                li.textContent = serverUrl;
+                                serversList.appendChild(li);
+                            },
+                        );
+                        authServersP.appendChild(serversList);
+                        oauthConfigDiv.appendChild(authServersP);
+                    }
+
+                    // Token Endpoint
+                    if (oauthConfig.token_endpoint) {
+                        const tokenEndpointP = document.createElement("p");
+                        tokenEndpointP.className = "text-sm";
+                        const tokenEndpointStrong =
+                            document.createElement("strong");
+                        tokenEndpointStrong.textContent = "Token Endpoint: ";
+                        tokenEndpointStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        tokenEndpointP.appendChild(tokenEndpointStrong);
+
+                        const tokenEndpointSpan =
+                            document.createElement("span");
+                        tokenEndpointSpan.className =
+                            "text-gray-600 dark:text-gray-400 break-all";
+                        tokenEndpointSpan.textContent =
+                            oauthConfig.token_endpoint;
+                        tokenEndpointP.appendChild(tokenEndpointSpan);
+                        oauthConfigDiv.appendChild(tokenEndpointP);
+                    }
+
+                    // Scopes Supported
+                    if (
+                        oauthConfig.scopes_supported &&
+                        oauthConfig.scopes_supported.length > 0
+                    ) {
+                        const scopesP = document.createElement("p");
+                        scopesP.className = "text-sm";
+                        const scopesStrong = document.createElement("strong");
+                        scopesStrong.textContent = "Supported Scopes: ";
+                        scopesStrong.className =
+                            "font-medium text-gray-700 dark:text-gray-300";
+                        scopesP.appendChild(scopesStrong);
+
+                        const scopesSpan = document.createElement("span");
+                        scopesSpan.className =
+                            "text-gray-600 dark:text-gray-400";
+                        scopesSpan.textContent =
+                            oauthConfig.scopes_supported.join(", ");
+                        scopesP.appendChild(scopesSpan);
+                        oauthConfigDiv.appendChild(scopesP);
+                    }
+
+                    oauthDiv.appendChild(oauthConfigDiv);
+                } else {
+                    const noConfigP = document.createElement("p");
+                    noConfigP.className =
+                        "mt-2 text-sm text-gray-500 dark:text-gray-400";
+                    noConfigP.textContent =
+                        "OAuth is enabled but no configuration details are available.";
+                    oauthDiv.appendChild(noConfigP);
+                }
+
+                container.appendChild(oauthDiv);
+            }
 
             // Add metadata section
             const metadataDiv = document.createElement("div");
@@ -8784,7 +8920,6 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "catalog") {
-                    // Load servers list if not already loaded
                     const serversList = safeGetElement("servers-table");
                     if (serversList) {
                         const hasLoadingMessage =
@@ -8792,9 +8927,31 @@ function showTab(tabName) {
                                 "Loading servers...",
                             );
                         if (hasLoadingMessage) {
-                            // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
                                 window.htmx.trigger(serversList, "load");
+                            }
+                        } else {
+                            const catalogConfig =
+                                getPanelSearchConfig("catalog");
+                            if (catalogConfig) {
+                                const searchState = getPanelSearchStateFromUrl(
+                                    catalogConfig.tableName,
+                                );
+                                const tagInput = document.getElementById(
+                                    catalogConfig.tagInputId,
+                                );
+                                const searchInput = document.getElementById(
+                                    catalogConfig.searchInputId,
+                                );
+                                if (tagInput && searchState.tags) {
+                                    tagInput.value = searchState.tags;
+                                }
+                                if (searchInput && searchState.query) {
+                                    searchInput.value = searchState.query;
+                                }
+                                if (searchState.tags || searchState.query) {
+                                    queueSearchablePanelReload("catalog", 0);
+                                }
                             }
                         }
                     }
@@ -9373,7 +9530,7 @@ function createParameterForm(parameterCount) {
     nameInput.name = `param_name_${parameterCount}`;
     nameInput.required = true;
     nameInput.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
 
     // Add validation to name input
     nameInput.addEventListener("blur", function () {
@@ -9400,7 +9557,7 @@ function createParameterForm(parameterCount) {
     const typeSelect = document.createElement("select");
     typeSelect.name = `param_type_${parameterCount}`;
     typeSelect.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
 
     const typeOptions = [
         { value: "string", text: "String" },
@@ -9436,7 +9593,7 @@ function createParameterForm(parameterCount) {
     const descTextarea = document.createElement("textarea");
     descTextarea.name = `param_description_${parameterCount}`;
     descTextarea.className =
-        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
     descTextarea.rows = 2;
 
     descGroup.appendChild(descLabel);
@@ -9722,6 +9879,19 @@ function initToolSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            // Re-query the button by ID to ensure we get the current button (not a stale reference)
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating tool select:", error);
         }
@@ -9769,7 +9939,6 @@ function initToolSelect(
 
         newSelectBtn.addEventListener("click", async () => {
             // Disable button and show loading state
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all tools...";
 
@@ -9852,16 +10021,11 @@ function initToolSelect(
                 allToolIds.forEach((id) => editSel.add(String(id)));
 
                 update();
-
-                newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
             } catch (error) {
                 console.error("Error in Select All:", error);
                 alert("Failed to select all tools. Please try again.");
                 newSelectBtn.disabled = false;
-                newSelectBtn.textContent = originalText;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
@@ -10151,6 +10315,18 @@ function initResourceSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating resource select:", error);
         }
@@ -10197,7 +10373,6 @@ function initResourceSelect(
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
 
         newSelectBtn.addEventListener("click", async () => {
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all resources...";
 
@@ -10280,14 +10455,11 @@ function initResourceSelect(
                 allIds.forEach((id) => editSel.add(String(id)));
 
                 update();
-
-                newSelectBtn.textContent = `✓ All ${allIds.length} resources selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
             } catch (error) {
                 console.error("Error selecting all resources:", error);
                 alert("Failed to select all resources. Please try again.");
+                newSelectBtn.disabled = false;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
@@ -10566,6 +10738,18 @@ function initPromptSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating prompt select:", error);
         }
@@ -10611,7 +10795,6 @@ function initPromptSelect(
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
         newSelectBtn.addEventListener("click", async () => {
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all prompts...";
 
@@ -10694,14 +10877,11 @@ function initPromptSelect(
                 allIds.forEach((id) => editSel.add(String(id)));
 
                 update();
-
-                newSelectBtn.textContent = `✓ All ${allIds.length} prompts selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
             } catch (error) {
                 console.error("Error selecting all prompts:", error);
                 alert("Failed to select all prompts. Please try again.");
+                newSelectBtn.disabled = false;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
@@ -10960,6 +11140,18 @@ function initGatewaySelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Update the Select All button text to show count
+            if (selectBtnId) {
+                const currentSelectBtn = document.getElementById(selectBtnId);
+                if (currentSelectBtn) {
+                    if (count > 0) {
+                        currentSelectBtn.textContent = `Select All (${count})`;
+                    } else {
+                        currentSelectBtn.textContent = "Select All";
+                    }
+                }
+            }
         } catch (error) {
             console.error("Error updating gateway select:", error);
         }
@@ -11007,7 +11199,6 @@ function initGatewaySelect(
 
         newSelectBtn.addEventListener("click", async () => {
             // Disable button and show loading state
-            const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all gateways...";
 
@@ -11100,18 +11291,13 @@ function initGatewaySelect(
 
                 update();
 
-                newSelectBtn.textContent = `✓ All ${allGatewayIds.length} gateways selected`;
-                setTimeout(() => {
-                    newSelectBtn.textContent = originalText;
-                }, 2000);
-
                 // Reload associated items after selecting all
                 reloadAssociatedItems();
             } catch (error) {
                 console.error("Error in Select All:", error);
                 alert("Failed to select all gateways. Please try again.");
                 newSelectBtn.disabled = false;
-                newSelectBtn.textContent = originalText;
+                update(); // Reset button text via update()
             } finally {
                 newSelectBtn.disabled = false;
             }
@@ -12077,7 +12263,7 @@ async function testTool(toolId) {
                         input.required =
                             schema.required && schema.required.includes(key);
                         input.className =
-                            "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                            "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                         const itemTypes = Array.isArray(prop.items?.anyOf)
                             ? prop.items.anyOf.map((t) => t.type)
@@ -12160,7 +12346,8 @@ async function testTool(toolId) {
                     // Input field with validation (with multiline support)
                     let fieldInput;
                     const isTextType = prop.type === "text";
-                    if (isTextType) {
+                    const isObjectType = prop.type === "object";
+                    if (isTextType || isObjectType) {
                         fieldInput = document.createElement("textarea");
                         fieldInput.rows = 4;
                     } else {
@@ -12182,7 +12369,7 @@ async function testTool(toolId) {
                     fieldInput.className =
                         prop.type === "boolean"
                             ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
-                            : "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                            : "mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                     // Set default values here
                     if (prop.default !== undefined) {
@@ -12190,6 +12377,12 @@ async function testTool(toolId) {
                             fieldInput.checked = prop.default === true;
                         } else if (isTextType) {
                             fieldInput.value = prop.default;
+                        } else if (isObjectType) {
+                            // For object types, stringify the default value
+                            fieldInput.value =
+                                typeof prop.default === "object"
+                                    ? JSON.stringify(prop.default, null, 2)
+                                    : prop.default;
                         } else {
                             fieldInput.value = prop.default;
                         }
@@ -12209,6 +12402,16 @@ async function testTool(toolId) {
 
                 container.appendChild(fieldDiv);
             }
+        }
+
+        // Clear previous result before opening
+        const resultContainer = safeGetElement("tool-test-result");
+        if (resultContainer) {
+            resultContainer.textContent = "";
+        }
+        const loadingEl = safeGetElement("tool-test-loading");
+        if (loadingEl) {
+            loadingEl.style.display = "none";
         }
 
         openModal("tool-test-modal");
@@ -14176,8 +14379,8 @@ async function runToolTest() {
                 } else {
                     value = formData.get(key);
                     if (value === null || value === undefined || value === "") {
-                        if (schema.required && schema.required.includes(key)) {
-                            params[keyValidation.value] = "";
+                        if (schema.required?.includes(key)) {
+                            throw new Error(`Field "${key}" is required`);
                         }
                         continue;
                     }
@@ -14189,6 +14392,23 @@ async function runToolTest() {
                     } else if (prop.enum) {
                         if (prop.enum.includes(value)) {
                             params[keyValidation.value] = value;
+                        }
+                    } else if (prop.type === "object") {
+                        try {
+                            const parsed = JSON.parse(value);
+                            if (
+                                parsed === null ||
+                                typeof parsed !== "object" ||
+                                Array.isArray(parsed)
+                            ) {
+                                throw new Error("Value must be an object");
+                            }
+                            params[keyValidation.value] = parsed;
+                        } catch (error) {
+                            showErrorMessage(
+                                `Invalid JSON object for ${key}: ${error.message}`,
+                            );
+                            throw error;
                         }
                     } else {
                         params[keyValidation.value] = value;
@@ -14497,6 +14717,22 @@ async function testPrompt(promptId) {
                 }
             }
 
+            // Clear previous result before opening
+            const resultContainer = safeGetElement("prompt-test-result");
+            if (resultContainer) {
+                resultContainer.textContent = "";
+                const placeholder = document.createElement("div");
+                placeholder.className =
+                    "text-gray-500 dark:text-gray-400 text-sm italic";
+                placeholder.textContent =
+                    'Click "Render Prompt" to see the rendered output';
+                resultContainer.appendChild(placeholder);
+            }
+            const promptLoading = safeGetElement("prompt-test-loading");
+            if (promptLoading) {
+                promptLoading.classList.add("hidden");
+            }
+
             // Build form fields based on prompt arguments
             buildPromptTestForm(prompt);
 
@@ -14571,7 +14807,7 @@ function buildPromptTestForm(prompt) {
         input.id = `prompt-arg-${index}`;
         input.name = `arg-${arg.name}`;
         input.className =
-            "mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
+            "mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
 
         if (arg.description) {
             input.placeholder = arg.description;
@@ -14828,6 +15064,16 @@ async function testGateway(gatewayURL) {
 
         // Clean up any existing event listeners first
         cleanupGatewayTestModal();
+
+        // Clear previous result before opening
+        const responseDiv = safeGetElement("gateway-test-response-json");
+        const resultDiv = safeGetElement("gateway-test-result");
+        if (responseDiv) {
+            responseDiv.textContent = "";
+        }
+        if (resultDiv) {
+            resultDiv.classList.add("hidden");
+        }
 
         // Open the modal
         openModal("gateway-test-modal");
@@ -16548,6 +16794,24 @@ async function handleEditA2AAgentFormSubmit(e) {
             JSON.stringify(passthroughHeaders),
         );
 
+        // Handle auth_headers JSON field
+        const authHeadersJson = formData.get("auth_headers");
+        if (authHeadersJson) {
+            try {
+                const authHeaders = JSON.parse(authHeadersJson);
+                if (Array.isArray(authHeaders) && authHeaders.length > 0) {
+                    // Remove the JSON string and add as parsed data for backend processing
+                    formData.delete("auth_headers");
+                    formData.append(
+                        "auth_headers",
+                        JSON.stringify(authHeaders),
+                    );
+                }
+            } catch (e) {
+                console.error("Invalid auth_headers JSON:", e);
+            }
+        }
+
         // Handle OAuth configuration
         // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
         // The backend assembles individual form fields into oauth_config with proper field names
@@ -16765,6 +17029,42 @@ async function handleEditResFormSubmit(e) {
         console.error("Error:", error);
         showErrorMessage(error.message);
     }
+}
+
+function isUiResourceUri(uri) {
+    return (
+        typeof uri === "string" && uri.trim().toLowerCase().startsWith("ui://")
+    );
+}
+
+function bindMcpAppMimeHelper(uriInputId, mimeInputId, helperId) {
+    const uriField = safeGetElement(uriInputId, true);
+    const mimeField = safeGetElement(mimeInputId, true);
+    const helperText = safeGetElement(helperId, true);
+
+    if (!uriField || !mimeField || !helperText) {
+        return;
+    }
+
+    if (mimeField.dataset.mcpAppMimeHelperBound === "true") {
+        return;
+    }
+    mimeField.dataset.mcpAppMimeHelperBound = "true";
+
+    const updateHelperVisibility = () => {
+        const shouldShow =
+            document.activeElement === mimeField &&
+            isUiResourceUri(uriField.value);
+        helperText.classList.toggle("hidden", !shouldShow);
+    };
+
+    uriField.addEventListener("input", updateHelperVisibility);
+    mimeField.addEventListener("focus", updateHelperVisibility);
+    mimeField.addEventListener("blur", () => {
+        helperText.classList.add("hidden");
+    });
+
+    updateHelperVisibility();
 }
 
 async function handleGrpcServiceFormSubmit(e) {
@@ -17167,7 +17467,7 @@ function setupTooltipsWithAlpine() {
                 tooltipEl.textContent = text;
                 tooltipEl.setAttribute("role", "tooltip");
                 tooltipEl.className =
-                    "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
+                    "fixed z-30 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
 
                 document.body.appendChild(tooltipEl);
 
@@ -17654,6 +17954,11 @@ function setupFormHandlers() {
     const resourceForm = safeGetElement("add-resource-form");
     if (resourceForm) {
         resourceForm.addEventListener("submit", handleResourceFormSubmit);
+        bindMcpAppMimeHelper(
+            "resource-uri",
+            "resource-mime-type",
+            "resource-mime-helper",
+        );
     }
 
     const promptForm = safeGetElement("add-prompt-form");
@@ -17731,6 +18036,11 @@ function setupFormHandlers() {
     const editResourceForm = safeGetElement("edit-resource-form");
     if (editResourceForm) {
         editResourceForm.addEventListener("submit", handleEditResFormSubmit);
+        bindMcpAppMimeHelper(
+            "edit-resource-uri",
+            "edit-resource-mime-type",
+            "edit-resource-mime-helper",
+        );
         editResourceForm.addEventListener("click", () => {
             if (getComputedStyle(editResourceForm).display !== "none") {
                 refreshEditors();
@@ -18427,8 +18737,8 @@ const PANEL_SEARCH_CONFIG = {
         partialPath: "servers/partial",
         targetSelector: "#servers-table",
         indicatorSelector: "#servers-loading",
-        searchInputId: "catalog-search-input",
-        tagInputId: "catalog-tag-filter",
+        searchInputId: "servers-search-input",
+        tagInputId: "servers-tag-filter",
         inactiveCheckboxId: "show-inactive-servers",
         defaultPerPage: 50,
     },
@@ -18626,8 +18936,8 @@ function clearSearch(entityType) {
 window.clearSearch = clearSearch;
 
 /**
- * Initialize search inputs for all entity types
- * This function also handles re-initialization after HTMX content loads
+ * Initialize search inputs for all entity types.
+ * Called once on page load; HTMX swap/settle handlers no longer re-invoke this.
  */
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
@@ -18650,22 +18960,26 @@ function initializeSearchInputs() {
         }
 
         const searchState = getPanelSearchStateFromUrl(panelConfig.tableName);
-        if (searchState.query) {
+
+        // Set values BEFORE attaching event listener so that the subsequent
+        // addEventListener("input", ...) doesn't exist yet during value restore.
+        // The real loop was: afterSwap reset+reinit → cloneNode → eager reload → swap → repeat.
+        if (searchState.query && searchInput.value !== searchState.query) {
             searchInput.value = searchState.query;
         }
-        if (tagInput && searchState.tags) {
+
+        if (
+            tagInput &&
+            searchState.tags &&
+            tagInput.value !== searchState.tags
+        ) {
             tagInput.value = searchState.tags;
         }
 
+        // Attach event listener AFTER setting value so initialization doesn't trigger reload
         searchInput.addEventListener("input", () => {
             queueSearchablePanelReload(entityType, 250);
         });
-
-        const panel = document.getElementById(`${entityType}-panel`);
-        const isVisible = Boolean(panel && !panel.classList.contains("hidden"));
-        if (isVisible && (searchState.query || searchState.tags)) {
-            queueSearchablePanelReload(entityType, 0);
-        }
     });
 
     // Tokens search (server-side, not part of PANEL_SEARCH_CONFIG)
@@ -18694,6 +19008,52 @@ const {
     debouncedInit: initializeSearchInputsDebounced,
     reset: resetSearchInputsState,
 } = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
+
+/**
+ * Update visible filter-status text for each table panel.
+ * Shows "Filters active" when any filter (search, tags, inactive) is active.
+ */
+function updateFilterStatus() {
+    Object.values(PANEL_SEARCH_CONFIG).forEach((config) => {
+        const statusEl = document.getElementById(
+            config.tableName + "-filter-status",
+        );
+        if (!statusEl) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const prefix = config.tableName + "_";
+        const hasQuery = Boolean(params.get(prefix + "q"));
+        const hasTags = Boolean(params.get(prefix + "tags"));
+        const hasInactive = params.get(prefix + "inactive") === "true";
+
+        statusEl.textContent =
+            hasQuery || hasTags || hasInactive ? "Filters active" : "";
+    });
+}
+window.updateFilterStatus = updateFilterStatus;
+
+/**
+ * Rehydrate search inputs and filter status after HTMX content swaps.
+ * This ensures that search/tag values from the URL are restored into the
+ * input elements after pagination or partial refresh replaces table content.
+ */
+document.addEventListener("htmx:afterSettle", function (evt) {
+    const target = evt.detail?.target;
+    if (!target || !target.id) return;
+
+    // Only rehydrate when a table partial or pagination was swapped
+    const isTableSwap =
+        target.id.endsWith("-table") ||
+        target.id.endsWith("-table-body") ||
+        target.id.endsWith("-list-container");
+    const isPaginationSwap = target.id.endsWith("-pagination-controls");
+
+    if (isTableSwap || isPaginationSwap) {
+        // Search inputs live outside the swapped table content, so they
+        // persist across partial refreshes. Only update filter status UI.
+        updateFilterStatus();
+    }
+});
 
 const GLOBAL_SEARCH_ENTITY_CONFIG = {
     servers: { label: "Servers", tab: "catalog", viewFunction: "viewServer" },
@@ -19352,11 +19712,12 @@ function initializeTabState() {
     Object.entries(checkboxTableMap).forEach(([id, tableName]) => {
         const checkbox = safeGetElement(id);
         if (checkbox) {
-            // Prefer namespaced param, fall back to legacy for backwards compatibility
+            // Prefer namespaced param, fall back to legacy if present,
+            // otherwise preserve the HTML default (checked attribute)
             const namespacedValue = urlParams.get(tableName + "_inactive");
             if (namespacedValue !== null) {
                 checkbox.checked = namespacedValue === "true";
-            } else {
+            } else if (urlParams.has("include_inactive")) {
                 checkbox.checked = legacyIncludeInactive;
             }
         }
@@ -19374,7 +19735,8 @@ function initializeTabState() {
         }
     });
 
-    // Enable toggles after HTMX swaps complete
+    // Enable toggles after HTMX swaps complete and re-initialize Alpine.js
+    // components on OOB-swapped pagination controls.
     document.body.addEventListener("htmx:afterSettle", (event) => {
         document
             .querySelectorAll(".show-inactive-toggle[disabled]")
@@ -19384,6 +19746,27 @@ function initializeTabState() {
                     checkbox.disabled = false;
                 }
             });
+
+        // Re-initialize Alpine.js components on pagination controls after
+        // HTMX OOB swaps.  When htmx.ajax() swaps a table partial that
+        // includes an out-of-band pagination-controls div, Alpine may not
+        // automatically detect the new x-data element (race with
+        // MutationObserver).  This ensures the page-info text, navigation
+        // buttons and per-page selector all render correctly after every
+        // settle.
+        if (window.Alpine && typeof window.Alpine.initTree === "function") {
+            document
+                .querySelectorAll('[id*="-pagination-controls"]')
+                .forEach(function (el) {
+                    // Only act on elements that contain an uninitialised
+                    // Alpine component (i.e. x-data present but no
+                    // _x_dataStack yet).
+                    const xDataEl = el.querySelector("[x-data]");
+                    if (xDataEl && !xDataEl._x_dataStack) {
+                        window.Alpine.initTree(el);
+                    }
+                });
+        }
     });
 }
 
@@ -19764,14 +20147,20 @@ window.goBackToSelection = goBackToSelection;
  */
 function extractAvailableTags(entityType) {
     const tags = new Set();
+
+    if (entityType === "catalog") {
+        document
+            .querySelectorAll("#servers-table-body [data-tag]")
+            .forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
+            });
+        return Array.from(tags).sort();
+    }
+
     const tableSelector = `#${entityType}-panel tbody tr:not(.inactive-row)`;
     const rows = document.querySelectorAll(tableSelector);
 
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Found ${rows.length} rows`,
-    );
-
-    // Find the Tags column index by examining the table header
     const tableHeaderSelector = `#${entityType}-panel thead tr th`;
     const headerCells = document.querySelectorAll(tableHeaderSelector);
     let tagsColumnIndex = -1;
@@ -19780,67 +20169,25 @@ function extractAvailableTags(entityType) {
         const headerText = header.textContent.trim().toLowerCase();
         if (headerText === "tags") {
             tagsColumnIndex = index;
-            console.log(
-                `[DEBUG] Found Tags column at index ${index} for ${entityType}`,
-            );
         }
     });
 
     if (tagsColumnIndex === -1) {
-        console.log(`[DEBUG] Could not find Tags column for ${entityType}`);
         return [];
     }
 
-    rows.forEach((row, index) => {
+    rows.forEach((row) => {
         const cells = row.querySelectorAll("td");
-
         if (tagsColumnIndex < cells.length) {
             const tagsCell = cells[tagsColumnIndex];
-
-            // Look for tag badges ONLY within the Tags column
-            const tagElements = tagsCell.querySelectorAll(`
-                span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-                span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
-            `);
-
-            console.log(
-                `[DEBUG] Row ${index}: Found ${tagElements.length} tag elements in Tags column`,
-            );
-
-            tagElements.forEach((tagEl) => {
-                const tagText = tagEl.textContent.trim();
-                console.log(
-                    `[DEBUG] Row ${index}: Tag element text: "${tagText}"`,
-                );
-
-                // Basic validation for tag content
-                if (
-                    tagText &&
-                    tagText !== "No tags" &&
-                    tagText !== "None" &&
-                    tagText !== "N/A" &&
-                    tagText.length >= 2 &&
-                    tagText.length <= 50
-                ) {
-                    tags.add(tagText);
-                    console.log(
-                        `[DEBUG] Row ${index}: Added tag: "${tagText}"`,
-                    );
-                } else {
-                    console.log(
-                        `[DEBUG] Row ${index}: Filtered out: "${tagText}"`,
-                    );
-                }
+            tagsCell.querySelectorAll("[data-tag]").forEach((el) => {
+                const t = el.getAttribute("data-tag").trim();
+                if (t && t.length >= 1 && t.length <= 50) tags.add(t);
             });
         }
     });
 
-    const result = Array.from(tags).sort();
-    console.log(
-        `[DEBUG] extractAvailableTags for ${entityType}: Final result:`,
-        result,
-    );
-    return result;
+    return Array.from(tags).sort();
 }
 
 /**
@@ -19882,7 +20229,11 @@ function updateAvailableTags(entityType) {
  * @param {string} tag - The tag to add
  */
 function addTagToFilter(entityType, tag) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (!filterInput) {
         return;
     }
@@ -19894,7 +20245,15 @@ function addTagToFilter(entityType, tag) {
     if (!currentTags.includes(tag)) {
         currentTags.push(tag);
         filterInput.value = currentTags.join(", ");
-        if (getPanelSearchConfig(entityType)) {
+        if (panelConfig) {
+            const searchInput = document.getElementById(
+                panelConfig.searchInputId,
+            );
+            updatePanelSearchStateInUrl(
+                panelConfig.tableName,
+                searchInput?.value || "",
+                filterInput.value,
+            );
             queueSearchablePanelReload(entityType, 0);
         } else {
             filterEntitiesByTags(entityType, filterInput.value);
@@ -19926,34 +20285,11 @@ function filterEntitiesByTags(entityType, tagsInput) {
             return;
         }
 
-        // Extract tags from this row using specific tag selectors (not status badges)
+        // Extract tags from this row using data-tag attributes
         const rowTags = new Set();
-
-        const tagElements = row.querySelectorAll(`
-            /* Gateways */
-            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full,
-            /* A2A Agents */
-            span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700,
-            /* Prompts & Resources */
-            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-            /* Gray tags for A2A agent metadata */
-            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700
-        `);
-
-        tagElements.forEach((tagEl) => {
-            const tagText = tagEl.textContent.trim().toLowerCase();
-            // Filter out any remaining non-tag content
-            if (
-                tagText &&
-                tagText !== "no tags" &&
-                tagText !== "none" &&
-                tagText !== "active" &&
-                tagText !== "inactive" &&
-                tagText !== "online" &&
-                tagText !== "offline"
-            ) {
-                rowTags.add(tagText);
-            }
+        row.querySelectorAll("[data-tag]").forEach((el) => {
+            const t = el.getAttribute("data-tag").trim().toLowerCase();
+            if (t) rowTags.add(t);
         });
 
         // Check if any of the filter tags match any of the row tags (OR logic)
@@ -20029,12 +20365,16 @@ function updateFilterEmptyState(entityType, visibleCount, isFiltering) {
  * @param {string} entityType - The entity type
  */
 function clearTagFilter(entityType) {
-    const filterInput = document.getElementById(`${entityType}-tag-filter`);
+    const panelConfig = getPanelSearchConfig(entityType);
+    const tagInputId = panelConfig
+        ? panelConfig.tagInputId
+        : `${entityType}-tag-filter`;
+    const filterInput = document.getElementById(tagInputId);
     if (filterInput) {
         filterInput.value = "";
         // Apply immediate local reset for responsive UX and test compatibility.
         filterEntitiesByTags(entityType, "");
-        if (getPanelSearchConfig(entityType)) {
+        if (panelConfig) {
             loadSearchablePanel(entityType);
         }
     }
@@ -20180,7 +20520,7 @@ function addAuthHeader(containerId, options = {}) {
             <input
                 type="text"
                 placeholder="Header Key (e.g., X-API-Key)"
-                class="auth-header-key block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+                class="auth-header-key block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
             />
         </div>
         <div class="flex-1">
@@ -20190,7 +20530,7 @@ function addAuthHeader(containerId, options = {}) {
                     id="${valueInputId}"
                     placeholder="Header Value"
                     data-sensitive-label="header value"
-                    class="auth-header-value block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
+                    class="auth-header-value block w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
                 />
                 <button
                     type="button"
@@ -21473,7 +21813,7 @@ function showCopyableModal(title, message, type = "info") {
     const overlay = document.createElement("div");
     overlay.id = "copyable-modal-overlay";
     overlay.className =
-        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+        "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40";
     overlay.onclick = (e) => {
         if (e.target === overlay) {
             overlay.remove();
@@ -21496,13 +21836,13 @@ function showCopyableModal(title, message, type = "info") {
                         <pre id="copyable-modal-content" class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-600 max-h-64 overflow-auto select-all cursor-text">${escapeHtml(message)}</pre>
                     </div>
                     <div class="mt-4 flex justify-end space-x-3">
-                        <button id="copyable-modal-copy" class="inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        <button id="copyable-modal-copy" class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                             <svg class="h-4 w-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
                             </svg>
                             Copy
                         </button>
-                        <button id="copyable-modal-close" class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                        <button id="copyable-modal-close" class="inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                             Close
                         </button>
                     </div>
@@ -21672,16 +22012,11 @@ async function handleA2ATestSubmit(e) {
             throw new Error("Agent ID is missing");
         }
 
-        // Get auth token
-        const token = await getAuthToken();
-        const headers = { "Content-Type": "application/json" };
-        if (token) {
-            headers.Authorization = `Bearer ${token}`;
-        } else {
-            // Fallback to basic auth if JWT not available
-            console.warn("JWT token not found, attempting basic auth fallback");
-            headers.Authorization = "Basic " + btoa("admin:changeme");
-        }
+        // Reuse the standard admin auth helper:
+        // - sends Bearer auth when a JS-readable token exists
+        // - otherwise relies on same-origin cookie auth
+        // Never synthesize default credentials client-side.
+        const headers = await getAuthHeaders(true);
 
         // Send test request with user query
         const response = await fetchWithTimeout(
@@ -21694,11 +22029,15 @@ async function handleA2ATestSubmit(e) {
             window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
         );
 
-        if (!response.ok) {
+        // Parse the JSON body for all responses — the backend returns
+        // structured {success, error, error_type} even for non-2xx status
+        // codes, and the display logic below already handles both cases.
+        let result;
+        try {
+            result = await response.json();
+        } catch {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
-        const result = await response.json();
 
         // Display result
         const isSuccess = result.success && !result.error;
@@ -22154,7 +22493,7 @@ function setupCreateTokenForm() {
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
 
-        // User can create public-only tokens in that context
+        // User can create all-teams tokens in that context
         await createToken(form);
     });
 
@@ -22287,7 +22626,7 @@ async function createToken(form) {
         submitButton.textContent = "Creating...";
         submitButton.disabled = true;
 
-        // Get current team ID (null means "All Teams" = public-only token)
+        // Get current team ID (null means "All Teams" — admin bypass for admins, public-only for non-admins)
         const currentTeamId = getCurrentTeamId();
 
         // Build request payload
@@ -22298,7 +22637,7 @@ async function createToken(form) {
                 ? parseInt(formData.get("expires_in_days"))
                 : null,
             tags: [],
-            team_id: currentTeamId || null, // null = public-only token
+            team_id: currentTeamId || null, // null = all teams (admin bypass for admins, public-only for non-admins)
         };
 
         // Add scoping if provided
@@ -22380,7 +22719,7 @@ async function createToken(form) {
             ) {
                 const scopeLabel = currentTeamId
                     ? "the selected team"
-                    : "All Teams (public-only)";
+                    : "All Teams";
                 errorMsg = `Token name already exists in ${scopeLabel}. Choose a different token name.`;
             }
             if (
@@ -22408,7 +22747,7 @@ async function createToken(form) {
         }
 
         // Show appropriate success message
-        const tokenType = currentTeamId ? "team-scoped" : "public-only";
+        const tokenType = currentTeamId ? "team-scoped" : "all-teams";
         showNotification(`${tokenType} token created successfully!`, "success");
     } catch (error) {
         console.error("Error creating token:", error);
@@ -22439,7 +22778,7 @@ async function createToken(form) {
 function showTokenCreatedModal(tokenData) {
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-lg shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="mt-3">
@@ -22681,7 +23020,7 @@ async function viewTokenUsage(tokenId) {
 function showUsageStatsModal(stats) {
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800">
             <div class="flex items-center justify-between mb-4">
@@ -22834,7 +23173,7 @@ function showTokenDetailsModal(token) {
 
     const modal = document.createElement("div");
     modal.className =
-        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
+        "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-40";
     modal.innerHTML = `
         <div class="relative top-10 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800 mb-10">
             <div class="flex items-center justify-between mb-4">
@@ -22872,7 +23211,7 @@ function showTokenDetailsModal(token) {
                     </div>
                     <div class="flex">
                         <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Team:</span>
-                        <span class="text-gray-900 dark:text-white">${teamName ? `${escapeHtml(teamName)} <code class="text-xs text-gray-500">(${escapeHtml(token.team_id.substring(0, 8))}...)</code>` : "None (Public-only)"}</span>
+                        <span class="text-gray-900 dark:text-white">${teamName ? `${escapeHtml(teamName)} <code class="text-xs text-gray-500">(${escapeHtml(token.team_id.substring(0, 8))}...)</code>` : "All Teams"}</span>
                     </div>
                     <div class="flex">
                         <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Created:</span>
@@ -23212,6 +23551,8 @@ async function showTeamEditModal(teamId) {
 
 function hideTeamEditModal() {
     document.getElementById("team-edit-modal").classList.add("hidden");
+    var content = document.getElementById("team-edit-modal-content");
+    if (content) content.innerHTML = "";
 }
 
 // Expose team modal functions to global scope
@@ -25621,7 +25962,8 @@ function initializePluginFunctions() {
                             <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
                             <p class="mt-1">
                                 <span class="px-2 py-1 text-xs rounded-full ${
-                                    plugin.mode === "enforce"
+                                    plugin.mode === "enforce" ||
+                                    plugin.mode === "enforce_ignore_error"
                                         ? "bg-red-100 text-red-800"
                                         : plugin.mode === "permissive"
                                           ? "bg-yellow-100 text-yellow-800"
@@ -26086,16 +26428,11 @@ async function loadVirtualServersForChat() {
                     ${
                         requiresToken
                             ? `
-                        <div class="tooltip"
-                        style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px;
-                                background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px;
-                                padding: 4px 20px; /* More horizontal width */
-                                opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in;
-                                z-index: 1000;"> <!-- Added higher z-index to ensure it's above other elements -->
+                        <div data-role="tooltip"
+                             class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 bg-gray-500 text-white text-[10px] rounded py-1 px-5 z-30 transition-opacity duration-200 ease-in pointer-events-none"
+                             style="opacity: 0; visibility: hidden;">
                         ${tooltipMessage}
-                        <div style="position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%);
-                                    width: 0; height: 0; border-left: 5px solid transparent;
-                                    border-right: 5px solid transparent; border-top: 5px solid #6B7280;"></div>
+                        <div class="absolute left-1/2 -translate-x-1/2 -bottom-[5px] w-0 h-0 border-l-[5px] border-r-[5px] border-t-[5px] border-l-transparent border-r-transparent border-t-gray-500"></div>
                         </div>`
                             : ""
                     }
@@ -26119,7 +26456,7 @@ async function loadVirtualServersForChat() {
         // Add hover event to show tooltip immediately on hover
         const serverItems = document.querySelectorAll(".server-item");
         serverItems.forEach((item) => {
-            const tooltip = item.querySelector(".tooltip");
+            const tooltip = item.querySelector('[data-role="tooltip"]');
             item.addEventListener("mouseenter", () => {
                 if (tooltip) {
                     tooltip.style.opacity = "1"; // Make tooltip visible
@@ -26889,7 +27226,7 @@ function showConnectionSuccess() {
             tools.forEach((toolName, index) => {
                 const pill = document.createElement("span");
                 pill.className =
-                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105";
+                    "inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105";
 
                 // Tool icon
                 const icon = document.createElementNS(
@@ -30780,7 +31117,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Inactive
                 <svg class="ml-1 h-4 w-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
         </div>`;
     } else if (!reachable) {
         // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
@@ -30790,7 +31127,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Offline
                 <svg class="ml-1 h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
         </div>`;
     } else {
         // CASE 3: Active (Enabled and Reachable) -> GREEN
@@ -30800,7 +31137,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
                 Active
                 <svg class="ml-1 h-4 w-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-30 whitespace-nowrap shadow">💡${label} is Active</div>
         </div>`;
     }
 }
@@ -32392,6 +32729,144 @@ function refreshLLMProviders() {
     }
 }
 
+// Full model list for the model-id combobox (reset on each modal open)
+let _llmAllModels = [];
+var _llmModelsFetched = false; // eslint-disable-line no-var -- reassigned across function scopes
+let _llmComboboxActiveIndex = -1;
+function _llmComboboxSetExpanded(expanded) {
+    const input = document.getElementById("llm-model-model-id");
+    if (input) input.setAttribute("aria-expanded", String(expanded));
+}
+
+function llmModelComboboxOpen() {
+    if (!_llmModelsFetched) return;
+    _llmComboboxActiveIndex = -1;
+    _renderLLMModelDropdown(_llmAllModels);
+    document.getElementById("llm-model-dropdown").classList.remove("hidden");
+    _llmComboboxSetExpanded(true);
+}
+
+function llmModelComboboxClose() {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (ul) {
+        ul.classList.add("hidden");
+    }
+    _llmComboboxActiveIndex = -1;
+    _llmComboboxSetExpanded(false);
+    _llmComboboxClearHighlight();
+}
+
+function llmModelComboboxFilter(text) {
+    if (!_llmModelsFetched) return;
+    const lower = text.toLowerCase();
+    const filtered = _llmAllModels.filter((m) =>
+        m.id.toLowerCase().includes(lower),
+    );
+    _llmComboboxActiveIndex = -1;
+    _renderLLMModelDropdown(filtered);
+    document.getElementById("llm-model-dropdown").classList.remove("hidden");
+    _llmComboboxSetExpanded(true);
+}
+
+function llmModelComboboxSelect(value) {
+    document.getElementById("llm-model-model-id").value = value;
+    llmModelComboboxClose();
+}
+
+function llmModelComboboxKeydown(event) {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (!ul || ul.classList.contains("hidden")) return;
+    const items = ul.querySelectorAll("li[data-model-id]");
+    if (!items.length) return;
+
+    if (event.key === "ArrowDown") {
+        event.preventDefault();
+        _llmComboboxActiveIndex = Math.min(
+            _llmComboboxActiveIndex + 1,
+            items.length - 1,
+        );
+        _llmComboboxHighlight(items);
+    } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        _llmComboboxActiveIndex = Math.max(_llmComboboxActiveIndex - 1, 0);
+        _llmComboboxHighlight(items);
+    } else if (event.key === "Enter") {
+        if (_llmComboboxActiveIndex >= 0 && items[_llmComboboxActiveIndex]) {
+            event.preventDefault();
+            llmModelComboboxSelect(
+                items[_llmComboboxActiveIndex].dataset.modelId,
+            );
+        }
+    } else if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        llmModelComboboxClose();
+    }
+}
+
+function _llmComboboxHighlight(items) {
+    const ul = document.getElementById("llm-model-dropdown");
+    _llmComboboxClearHighlight();
+    if (_llmComboboxActiveIndex >= 0 && items[_llmComboboxActiveIndex]) {
+        const active = items[_llmComboboxActiveIndex];
+        active.classList.add("bg-indigo-100", "dark:bg-indigo-700");
+        active.id = "llm-model-active-option";
+        const input = document.getElementById("llm-model-model-id");
+        if (input) {
+            input.setAttribute("aria-activedescendant", active.id);
+        }
+        if (ul && active.scrollIntoView) {
+            active.scrollIntoView({ block: "nearest" });
+        }
+    }
+}
+
+function _llmComboboxClearHighlight() {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (!ul) return;
+    ul.querySelectorAll("li").forEach((li) => {
+        li.classList.remove("bg-indigo-100", "dark:bg-indigo-700");
+        li.removeAttribute("id");
+    });
+    const input = document.getElementById("llm-model-model-id");
+    if (input) input.removeAttribute("aria-activedescendant");
+}
+
+function _renderLLMModelDropdown(models) {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (!ul) {
+        return;
+    }
+    ul.innerHTML = "";
+    if (!models.length) {
+        const li = document.createElement("li");
+        li.className = "px-3 py-2 text-xs text-gray-400 dark:text-gray-500";
+        li.textContent = "No models found. Enter ID manually.";
+        ul.appendChild(li);
+        return;
+    }
+    models.forEach((m) => {
+        const li = document.createElement("li");
+        li.className =
+            "px-3 py-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100";
+        li.setAttribute("role", "option");
+        li.dataset.modelId = m.id;
+        li.textContent = m.id;
+        ul.appendChild(li);
+    });
+}
+
+// Wire up delegated events on the dropdown once at load time
+document.addEventListener("DOMContentLoaded", () => {
+    const ul = document.getElementById("llm-model-dropdown");
+    if (!ul) return;
+    ul.addEventListener("mousedown", (e) => e.preventDefault());
+    ul.addEventListener("click", (e) => {
+        const li = e.target.closest("li[data-model-id]");
+        if (li) llmModelComboboxSelect(li.dataset.modelId);
+    });
+});
+
 /**
  * Show Add Model Modal
  */
@@ -32400,6 +32875,9 @@ async function showAddModelModal() {
     document.getElementById("llm-model-form").reset();
     document.getElementById("llm-model-modal-title").textContent =
         "Add LLM Model";
+    _llmAllModels = [];
+    _llmModelsFetched = false;
+    llmModelComboboxClose();
 
     // Populate providers dropdown
     await populateProviderDropdown();
@@ -32449,11 +32927,12 @@ function closeLLMModelModal() {
 async function onModelProviderChange() {
     const providerId = document.getElementById("llm-model-provider").value;
     const modelInput = document.getElementById("llm-model-model-id");
-    const datalist = document.getElementById("llm-model-suggestions");
     const statusEl = document.getElementById("llm-model-fetch-status");
 
     // Clear existing suggestions
-    datalist.innerHTML = "";
+    _llmAllModels = [];
+    _llmModelsFetched = false;
+    llmModelComboboxClose();
 
     if (!providerId) {
         modelInput.placeholder = "Select provider first...";
@@ -32467,18 +32946,24 @@ async function onModelProviderChange() {
     await fetchModelsForModelModal();
 }
 
+// Monotonic counter — each fetchModelsForModelModal call bumps it; stale
+// responses (from a prior call to the same or different provider) are discarded.
+var _llmFetchSeq = 0; // eslint-disable-line no-var -- reassigned across function scopes
+
 /**
  * Fetch available models for the model modal
  */
 async function fetchModelsForModelModal() {
-    const providerId = document.getElementById("llm-model-provider").value;
-    const datalist = document.getElementById("llm-model-suggestions");
+    const providerSelect = document.getElementById("llm-model-provider");
+    const providerId = providerSelect.value;
     const statusEl = document.getElementById("llm-model-fetch-status");
 
     if (!providerId) {
         showToast("Please select a provider first", "warning");
         return;
     }
+
+    const seq = ++_llmFetchSeq;
 
     statusEl.textContent = "Fetching models...";
     statusEl.classList.remove("hidden");
@@ -32496,25 +32981,28 @@ async function fetchModelsForModelModal() {
 
         const result = await response.json();
 
+        // Discard stale: provider changed, or a newer request superseded this one
+        if (providerSelect.value !== providerId || seq !== _llmFetchSeq) return;
+
         if (result.success && result.models && result.models.length > 0) {
-            // Populate datalist with model suggestions
-            datalist.innerHTML = "";
-            result.models.forEach((model) => {
-                const option = document.createElement("option");
-                option.value = model.id;
-                option.textContent = model.name || model.id;
-                datalist.appendChild(option);
-            });
+            _llmAllModels = result.models;
+            _llmModelsFetched = true;
+            _renderLLMModelDropdown(_llmAllModels);
 
             statusEl.textContent = `Found ${result.models.length} models. Type to filter or enter custom.`;
             statusEl.classList.remove("hidden");
         } else {
+            _llmAllModels = [];
+            _llmModelsFetched = true;
             statusEl.textContent =
                 result.error || "No models found. Enter model ID manually.";
             statusEl.classList.remove("hidden");
         }
     } catch (error) {
         console.error("Error fetching models:", error);
+        if (providerSelect.value !== providerId || seq !== _llmFetchSeq) return;
+        _llmAllModels = [];
+        _llmModelsFetched = true;
         statusEl.textContent =
             "Failed to fetch models. Enter model ID manually.";
         statusEl.classList.remove("hidden");
@@ -32528,6 +33016,9 @@ window.fetchModelsForModelModal = fetchModelsForModelModal;
  * Edit LLM Model
  */
 async function editLLMModel(modelId) {
+    _llmAllModels = [];
+    _llmModelsFetched = false;
+    llmModelComboboxClose();
     try {
         const response = await fetch(
             `${window.ROOT_PATH}/llm/models/${modelId}`,
@@ -32920,6 +33411,11 @@ window.fetchLLMProviderModels = fetchLLMProviderModels;
 window.syncLLMProviderModels = syncLLMProviderModels;
 window.showAddModelModal = showAddModelModal;
 window.closeLLMModelModal = closeLLMModelModal;
+window.llmModelComboboxOpen = llmModelComboboxOpen;
+window.llmModelComboboxClose = llmModelComboboxClose;
+window.llmModelComboboxFilter = llmModelComboboxFilter;
+window.llmModelComboboxSelect = llmModelComboboxSelect;
+window.llmModelComboboxKeydown = llmModelComboboxKeydown;
 window.editLLMModel = editLLMModel;
 window.saveLLMModel = saveLLMModel;
 window.deleteLLMModel = deleteLLMModel;
@@ -32928,273 +33424,214 @@ window.refreshLLMModels = refreshLLMModels;
 window.filterModelsByProvider = filterModelsByProvider;
 window.llmApiInfoApp = llmApiInfoApp;
 
-// Debounce helper for search
-const searchDebounceTimers = {};
-function debouncedServerSideUserSearch(teamId, searchTerm, delay = 300) {
-    if (searchDebounceTimers[teamId]) {
-        clearTimeout(searchDebounceTimers[teamId]);
-    }
-    searchDebounceTimers[teamId] = setTimeout(() => {
-        serverSideUserSearch(teamId, searchTerm);
-    }, delay);
-}
-window.debouncedServerSideUserSearch = debouncedServerSideUserSearch;
+// Debounce timers for member and non-member search
+const memberSearchTimers = {};
+const nonMemberSearchTimers = {};
 
-// Team user search function - searches all users and splits into members/non-members
-async function serverSideUserSearch(teamId, searchTerm) {
-    const membersContainer = document.getElementById(
-        `team-members-container-${teamId}`,
-    );
-    const nonMembersContainer = document.getElementById(
+// Selection caches to preserve state across searches
+// nonMemberSelectionsCache: teamId -> {email: role}
+const nonMemberSelectionsCache = {};
+// memberOverridesCache: teamId -> {email: {checked: bool, role: string}}
+const memberOverridesCache = {};
+
+function captureNonMemberSelections(teamId) {
+    const container = document.getElementById(
         `team-non-members-container-${teamId}`,
     );
+    if (!container) return;
+    if (!nonMemberSelectionsCache[teamId]) {
+        nonMemberSelectionsCache[teamId] = {};
+    }
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb && cb.checked && !cb.getAttribute("data-auto-check")) {
+            nonMemberSelectionsCache[teamId][email] = roleSelect
+                ? roleSelect.value
+                : "member";
+        } else if (cb && !cb.checked && !cb.getAttribute("data-auto-check")) {
+            delete nonMemberSelectionsCache[teamId][email];
+        }
+    });
+}
 
-    if (!membersContainer || !nonMembersContainer) {
-        console.error("Team containers not found");
+function restoreNonMemberSelections(teamId) {
+    const container = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+    if (!container || !nonMemberSelectionsCache[teamId]) return;
+    const cache = nonMemberSelectionsCache[teamId];
+    const visibleEmails = new Set();
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        visibleEmails.add(email);
+        if (cache[email] !== undefined) {
+            const cb = item.querySelector('input[name="associatedUsers"]');
+            const roleSelect = item.querySelector(".role-select");
+            if (cb) cb.checked = true;
+            if (roleSelect) roleSelect.value = cache[email];
+        }
+    });
+    container
+        .querySelectorAll(".cached-selection")
+        .forEach((el) => el.remove());
+    for (const [email, role] of Object.entries(cache)) {
+        if (!visibleEmails.has(email)) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "cached-selection hidden";
+            const cbHidden = document.createElement("input");
+            cbHidden.type = "checkbox";
+            cbHidden.name = "associatedUsers";
+            cbHidden.value = email;
+            cbHidden.checked = true;
+            cbHidden.className = "hidden";
+            const roleHidden = document.createElement("input");
+            roleHidden.type = "hidden";
+            roleHidden.name = "role_" + encodeURIComponent(email);
+            roleHidden.value = role;
+            wrapper.appendChild(cbHidden);
+            wrapper.appendChild(roleHidden);
+            container.appendChild(wrapper);
+        }
+    }
+}
+
+function captureMemberOverrides(teamId) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container) return;
+    if (!memberOverridesCache[teamId]) {
+        memberOverridesCache[teamId] = {};
+    }
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb && cb.getAttribute("data-auto-check") === "true") {
+            if (!cb.checked || (roleSelect && roleSelect.value)) {
+                memberOverridesCache[teamId][email] = {
+                    checked: cb.checked,
+                    role: roleSelect ? roleSelect.value : "member",
+                };
+            }
+        }
+    });
+}
+
+function restoreMemberOverrides(teamId) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container || !memberOverridesCache[teamId]) return;
+    const cache = memberOverridesCache[teamId];
+    container.querySelectorAll(".user-item").forEach((item) => {
+        const email = item.getAttribute("data-user-email");
+        if (!email || !cache[email]) return;
+        const cb = item.querySelector('input[name="associatedUsers"]');
+        const roleSelect = item.querySelector(".role-select");
+        if (cb) cb.checked = cache[email].checked;
+        if (roleSelect) roleSelect.value = cache[email].role;
+    });
+}
+
+function debouncedMemberSearch(teamId, searchTerm, delay = 300) {
+    if (memberSearchTimers[teamId]) {
+        clearTimeout(memberSearchTimers[teamId]);
+    }
+    memberSearchTimers[teamId] = setTimeout(() => {
+        serverSideMemberSearch(teamId, searchTerm);
+    }, delay);
+}
+window.debouncedMemberSearch = debouncedMemberSearch;
+
+function debouncedNonMemberSearch(teamId, searchTerm, delay = 300) {
+    if (nonMemberSearchTimers[teamId]) {
+        clearTimeout(nonMemberSearchTimers[teamId]);
+    }
+    nonMemberSearchTimers[teamId] = setTimeout(() => {
+        serverSideNonMemberSearch(teamId, searchTerm);
+    }, delay);
+}
+window.debouncedNonMemberSearch = debouncedNonMemberSearch;
+
+// Search current team members via server-side filtering
+async function serverSideMemberSearch(teamId, searchTerm) {
+    const container = document.getElementById(
+        `team-members-container-${teamId}`,
+    );
+    if (!container) {
+        return;
+    }
+    captureMemberOverrides(teamId);
+    const perPage =
+        container.dataset.perPage ||
+        container.getAttribute("data-per-page") ||
+        50;
+    try {
+        const searchParam =
+            searchTerm && searchTerm.trim() !== ""
+                ? `&search=${encodeURIComponent(searchTerm.trim())}`
+                : "";
+        const response = await fetchWithAuth(
+            `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${perPage}${searchParam}`,
+        );
+        if (response.ok) {
+            container.innerHTML = await response.text();
+            if (typeof htmx !== "undefined") {
+                htmx.process(container);
+            }
+            restoreMemberOverrides(teamId);
+        }
+    } catch (error) {
+        console.error("Error searching members:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching members</div>';
+    }
+}
+window.serverSideMemberSearch = serverSideMemberSearch;
+
+// Search non-members (users not in team) via server-side filtering
+async function serverSideNonMemberSearch(teamId, searchTerm) {
+    const container = document.getElementById(
+        `team-non-members-container-${teamId}`,
+    );
+    if (!container) {
         return;
     }
 
-    // Read per_page from data attributes (set server-side), fallback to 20
-    const membersPerPage =
-        membersContainer.dataset.perPage ||
-        membersContainer.getAttribute("data-per-page") ||
-        20;
-    const nonMembersPerPage =
-        nonMembersContainer.dataset.perPage ||
-        nonMembersContainer.getAttribute("data-per-page") ||
-        20;
+    captureNonMemberSelections(teamId);
 
-    // If search is empty, reload both sections with full data
-    if (!searchTerm || searchTerm.trim() === "") {
-        try {
-            // Reload members - use fetchWithAuth for bearer token support
-            const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
-            );
-            if (membersResponse.ok) {
-                membersContainer.innerHTML = await membersResponse.text();
-                // Re-initialize HTMX on new content for infinite scroll triggers
-                if (typeof htmx !== "undefined") {
-                    htmx.process(membersContainer);
-                }
-            }
-
-            // Reload non-members
-            const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
-            );
-            if (nonMembersResponse.ok) {
-                nonMembersContainer.innerHTML = await nonMembersResponse.text();
-                // Re-initialize HTMX on new content for infinite scroll triggers
-                if (typeof htmx !== "undefined") {
-                    htmx.process(nonMembersContainer);
-                }
-            }
-        } catch (error) {
-            console.error("Error reloading user lists:", error);
-        }
+    // Require at least 2 characters for non-member search
+    if (!searchTerm || searchTerm.trim().length < 2) {
+        container.innerHTML =
+            '<div class="text-center py-4 text-gray-500 dark:text-gray-400">Type at least 2 characters to search for users.</div>';
+        restoreNonMemberSelections(teamId);
         return;
     }
 
     try {
-        // First, collect member data AND checkbox states from DOM (before search replaces content)
-        const memberDataFromDom = {};
-        const checkboxStates = {}; // Track checkbox states for all visible users
-        const existingMemberItems = document.querySelectorAll(
-            `#team-members-container-${teamId} .user-item`,
+        const response = await fetchWithAuth(
+            `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=50&search=${encodeURIComponent(searchTerm.trim())}`,
         );
-        existingMemberItems.forEach((item) => {
-            const email = item.dataset.userEmail;
-            if (email) {
-                const roleSelect = item.querySelector(".role-select");
-                const checkbox = item.querySelector(".user-checkbox");
-                memberDataFromDom[email] = {
-                    role: roleSelect ? roleSelect.value : "member",
-                };
-                if (checkbox) {
-                    checkboxStates[email] = checkbox.checked;
-                }
+        if (response.ok) {
+            container.innerHTML = await response.text();
+            if (typeof htmx !== "undefined") {
+                htmx.process(container);
             }
-        });
-
-        // Also collect checkbox states from non-members section
-        const existingNonMemberItems = document.querySelectorAll(
-            `#team-non-members-container-${teamId} .user-item`,
-        );
-        existingNonMemberItems.forEach((item) => {
-            const email = item.dataset.userEmail;
-            if (email) {
-                const checkbox = item.querySelector(".user-checkbox");
-                const roleSelect = item.querySelector(".role-select");
-                if (checkbox) {
-                    checkboxStates[email] = checkbox.checked;
-                    // Also preserve role selection for users being added
-                    if (checkbox.checked && roleSelect) {
-                        memberDataFromDom[email] = {
-                            role: roleSelect.value,
-                            pendingAdd: true, // Flag that this is a pending addition
-                        };
-                    }
-                }
-            }
-        });
-
-        // If no members found in DOM yet, fetch from server to get membership data with roles
-        if (Object.keys(memberDataFromDom).length === 0) {
-            try {
-                const membersResp = await fetchWithAuth(
-                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
-                );
-                if (membersResp.ok) {
-                    const tempDiv = document.createElement("div");
-                    tempDiv.innerHTML = await membersResp.text();
-                    tempDiv.querySelectorAll(".user-item").forEach((item) => {
-                        const email = item.dataset.userEmail;
-                        if (email) {
-                            const roleSelect =
-                                item.querySelector(".role-select");
-                            memberDataFromDom[email] = {
-                                role: roleSelect ? roleSelect.value : "member",
-                            };
-                        }
-                    });
-                }
-            } catch (e) {
-                console.error("Error fetching member data:", e);
-            }
-        }
-
-        // Search all users - use fetchWithAuth for bearer token support
-        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
-        const response = await fetchWithAuth(searchUrl);
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.users && data.users.length > 0) {
-            // Split users into members and non-members based on collected data
-            const members = [];
-            const nonMembers = [];
-
-            data.users.forEach((user) => {
-                if (memberDataFromDom[user.email]) {
-                    members.push({
-                        ...user,
-                        role: memberDataFromDom[user.email].role,
-                    });
-                } else {
-                    nonMembers.push(user);
-                }
-            });
-
-            // Helper to escape HTML
-            function escapeHtml(text) {
-                const div = document.createElement("div");
-                div.textContent = text;
-                return div.innerHTML;
-            }
-
-            // Render members with preserved roles, checkbox states, and loadedMembers hidden input
-            let membersHtml = "";
-            members.forEach((user) => {
-                const fullName = escapeHtml(user.full_name || user.email);
-                const email = escapeHtml(user.email);
-                const role = user.role || "member";
-                const isOwner = role === "owner";
-                // Preserve checkbox state if available, otherwise default to checked for existing members
-                const isChecked =
-                    checkboxStates[user.email] !== undefined
-                        ? checkboxStates[user.email]
-                        : true;
-                membersHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20" data-user-email="${email}">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                            </div>
-                        </div>
-                        <input type="hidden" name="loadedMembers" value="${email}" />
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} data-auto-check="true" />
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                                ${isOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-                        </div>
-                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            // Render non-members with preserved checkbox states and roles
-            let nonMembersHtml = "";
-            nonMembers.forEach((user) => {
-                const fullName = escapeHtml(user.full_name || user.email);
-                const email = escapeHtml(user.email);
-                // Preserve checkbox state if available, otherwise default to unchecked for non-members
-                const isChecked =
-                    checkboxStates[user.email] !== undefined
-                        ? checkboxStates[user.email]
-                        : false;
-                // Preserve role selection for users being added
-                const pendingData = memberDataFromDom[user.email];
-                const role =
-                    pendingData && pendingData.pendingAdd
-                        ? pendingData.role
-                        : "member";
-                const isOwner = role === "owner";
-                nonMembersHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-transparent" data-user-email="${email}" data-is-member="false">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                            </div>
-                        </div>
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} />
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-                        </div>
-                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            membersContainer.innerHTML =
-                membersHtml ||
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML =
-                nonMembersHtml ||
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
-        } else {
-            // No results
-            membersContainer.innerHTML =
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML =
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
+            restoreNonMemberSelections(teamId);
         }
     } catch (error) {
-        console.error("Error searching users:", error);
-        membersContainer.innerHTML =
-            '<div class="text-center py-4 text-red-600">Error searching users</div>';
-        nonMembersContainer.innerHTML =
+        console.error("Error searching non-members:", error);
+        container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching users</div>';
     }
 }
-
-window.serverSideUserSearch = serverSideUserSearch;
+window.serverSideNonMemberSearch = serverSideNonMemberSearch;
 
 // ============================================================================ //
 //                         TEAM SEARCH AND FILTER FUNCTIONS                      //

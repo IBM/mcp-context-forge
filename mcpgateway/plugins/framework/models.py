@@ -485,6 +485,8 @@ class MCPClientConfig(BaseModel):
         cwd (Optional[str]): Working directory for STDIO server process.
         uds (Optional[str]): Unix domain socket path for streamable HTTP.
         tls (Optional[MCPClientTLSConfig]): Client-side TLS configuration for mTLS.
+        reconnect_attempts (int): Number of reconnection attempts on failure.
+        reconnect_delay (float): Base delay between reconnection attempts (seconds).
     """
 
     proto: TransportType
@@ -495,6 +497,8 @@ class MCPClientConfig(BaseModel):
     cwd: Optional[str] = None
     uds: Optional[str] = None
     tls: Optional[MCPClientTLSConfig] = None
+    reconnect_attempts: int = Field(default=3, description="Number of reconnection attempts on failure")
+    reconnect_delay: float = Field(default=0.1, description="Base delay between reconnection attempts (seconds)")
 
     @field_validator(URL, mode="after")
     @classmethod
@@ -1332,6 +1336,9 @@ class PluginResult(BaseModel, Generic[T]):
             violation (Optional[PluginViolation]): violation object.
             metadata (Optional[dict[str, Any]]): additional metadata.
             http_headers (Optional[dict[str, str]]): HTTP headers to include in successful responses.
+            retry_delay_ms (int): Milliseconds the gateway should wait before retrying the tool call.
+                0 (default) means no retry. Set by retry_with_backoff plugin to request
+                a delayed re-execution of the tool.
 
      Examples:
         >>> result = PluginResult()
@@ -1354,6 +1361,9 @@ class PluginResult(BaseModel, Generic[T]):
         >>> r2 = PluginResult(continue_processing=False)
         >>> r2.continue_processing
         False
+        >>> r3 = PluginResult(retry_delay_ms=500)
+        >>> r3.retry_delay_ms
+        500
     """
 
     continue_processing: bool = True
@@ -1361,6 +1371,7 @@ class PluginResult(BaseModel, Generic[T]):
     violation: Optional[PluginViolation] = None
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
     http_headers: Optional[dict[str, str]] = None
+    retry_delay_ms: int = 0
 
 
 class GlobalContext(BaseModel):

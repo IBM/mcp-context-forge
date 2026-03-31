@@ -8,6 +8,7 @@ This plugin exports comprehensive tool invocation telemetry to OpenTelemetry.
 """
 
 # Standard
+import re
 from typing import Dict
 
 # Third-Party
@@ -22,6 +23,21 @@ from mcpgateway.services.logging_service import LoggingService
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+_MASKED_HEADER_VALUE = "******"
+_SENSITIVE_HEADER_PATTERNS = (
+    re.compile(r"^authorization$", re.IGNORECASE),
+    re.compile(r"^proxy-authorization$", re.IGNORECASE),
+    re.compile(r"^(?:x-)?(?:upstream|delegation)[-_]?authorization$", re.IGNORECASE),
+    re.compile(r"^cookie$", re.IGNORECASE),
+    re.compile(r"^set-cookie$", re.IGNORECASE),
+    re.compile(r"^x-vault-tokens$", re.IGNORECASE),
+    re.compile(r"^x-api-key$", re.IGNORECASE),
+    re.compile(r"^api-key$", re.IGNORECASE),
+    re.compile(r"^apikey$", re.IGNORECASE),
+    re.compile(r"^x-(?:auth|api|access|refresh|client|bearer|session|security|vault|delegation|upstream)[-_]?(?:token|secret|key|authorization)$", re.IGNORECASE),
+    re.compile(r"^(?:auth|api|access|refresh|client|bearer|session|security|vault|delegation|upstream)[-_]?(?:token|secret|key)$", re.IGNORECASE),
+)
 
 
 class ToolsTelemetryExporterPlugin(Plugin):
@@ -111,6 +127,23 @@ class ToolsTelemetryExporterPlugin(Plugin):
             **self._get_base_context_attributes(context),
         }
 
+    @staticmethod
+    def _is_sensitive_header_name(name: str) -> bool:
+        """Return whether a header name should be redacted before export."""
+        return any(pattern.match(name) for pattern in _SENSITIVE_HEADER_PATTERNS)
+
+    @classmethod
+    def _serialize_headers(cls, payload: ToolPreInvokePayload) -> str:
+        """Serialize headers for telemetry, redacting sensitive values by default."""
+        if not payload.headers:
+            return "{}"
+
+        sanitized_headers = {}
+        for key, value in payload.headers.root.items():
+            sanitized_headers[key] = _MASKED_HEADER_VALUE if cls._is_sensitive_header_name(key) else value
+
+        return orjson.dumps(sanitized_headers, default=str).decode()
+
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Capture pre-invocation telemetry for tools.
 
@@ -136,7 +169,7 @@ class ToolsTelemetryExporterPlugin(Plugin):
             "tool.target_tool_name": context_attributes["tool"]["target_tool_name"],
             "tool.description": context_attributes["tool"]["description"],
             "tool.invocation.args": orjson.dumps(payload.args, default=str).decode(),
-            "headers": payload.headers.model_dump_json() if payload.headers else "{}",
+            "headers": self._serialize_headers(payload),
         }
 
         await self._export_telemetry(attributes=export_attributes, span_name="tool.pre_invoke")

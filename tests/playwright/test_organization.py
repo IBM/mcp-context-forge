@@ -155,6 +155,8 @@ class TestTeams:
         # Verify other form fields are present
         expect(modal_content.locator('input[name="slug"]')).to_be_visible()
         expect(modal_content.locator('select[name="visibility"]')).to_be_visible()
+        expect(modal_content.locator('input[name="max_members"]')).to_be_visible()
+        expect(modal_content.locator('input[name="use_default_max_members"]')).to_be_visible()
 
         # Close modal without saving
         cancel_btn = team_edit_modal.locator('button:has-text("Cancel")')
@@ -165,6 +167,64 @@ class TestTeams:
             team_page.page.evaluate("document.getElementById('team-edit-modal').classList.add('hidden')")
 
         # Cleanup
+        team_page.delete_team(team_name)
+
+    @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="HTMX search DOM swap timing in headless mode")
+    def test_edit_settings_max_members_defaults_to_global(self, team_page):
+        """New teams use global default: checkbox is checked and number input is disabled."""
+        team_page.navigate_to_teams_tab()
+        team_name = f"Test Team {uuid.uuid4().hex[:8]}"
+
+        # Create test team (max_members is NULL = use global default)
+        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
+            team_page.create_team(team_name)
+
+        team_page.page.wait_for_load_state("domcontentloaded")
+        team_page.page.reload(wait_until="domcontentloaded")
+        team_page.navigate_to_teams_tab()
+
+        team_search = team_page.page.locator("#team-search")
+        team_search.wait_for(state="visible", timeout=30000)
+        team_search.fill(team_name)
+        team_page.wait_for_team_visible(team_name)
+
+        team_page.page.wait_for_function(
+            "() => !document.querySelector('#teams-loading.htmx-request')",
+            timeout=15000,
+        )
+
+        edit_btn = team_page.get_team_edit_settings_btn(team_name)
+        try:
+            expect(edit_btn).to_be_visible(timeout=15000)
+        except AssertionError:
+            pytest.skip("Edit Settings button not visible")
+        edit_btn.click(force=True, timeout=15000)
+
+        modal_content = team_page.page.locator("#team-edit-modal-content")
+        expect(modal_content).to_contain_text("Edit Team", timeout=5000)
+
+        # Verify the "Use global default" checkbox exists and is checked
+        checkbox = modal_content.locator('input[name="use_default_max_members"]')
+        expect(checkbox).to_be_visible()
+        expect(checkbox).to_be_checked()
+
+        # Verify the max_members number input is disabled (checkbox is checked)
+        max_members_input = modal_content.locator('input[name="max_members"]')
+        expect(max_members_input).to_be_visible()
+        expect(max_members_input).to_be_disabled()
+
+        # Uncheck the checkbox — number input should become enabled
+        checkbox.uncheck()
+        expect(max_members_input).to_be_enabled()
+
+        # Re-check — number input should become disabled again
+        checkbox.check()
+        expect(max_members_input).to_be_disabled()
+
+        # Close and cleanup
+        cancel_btn = team_page.page.locator('#team-edit-modal button:has-text("Cancel")')
+        if cancel_btn.count() > 0:
+            cancel_btn.first.click()
         team_page.delete_team(team_name)
 
     @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="HTMX refresh timing in headless mode")

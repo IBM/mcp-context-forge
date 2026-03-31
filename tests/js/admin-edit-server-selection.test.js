@@ -2733,3 +2733,282 @@ describe("serverSideEditToolSearch — error catch visibility (#3314)", () => {
         }
     });
 });
+
+// ---------------------------------------------------------------------------
+// Select All button count display (#3833)
+// ---------------------------------------------------------------------------
+describe("Select All button shows count in update() (#3833)", () => {
+    beforeEach(() => {
+        win.initToolSelect = realInitToolSelect;
+    });
+
+    /**
+     * Helper: build the DOM scaffolding needed by initToolSelect and return
+     * references to the key elements.
+     */
+    function buildToolSelectDOM({
+        containerId,
+        pillsId,
+        warnId,
+        selectBtnId,
+        clearBtnId,
+    }) {
+        const wrapper = doc.createElement("div");
+        doc.body.appendChild(wrapper);
+
+        const container = doc.createElement("div");
+        container.id = containerId;
+        wrapper.appendChild(container);
+
+        const pills = doc.createElement("div");
+        pills.id = pillsId;
+        wrapper.appendChild(pills);
+
+        const warn = doc.createElement("div");
+        warn.id = warnId;
+        wrapper.appendChild(warn);
+
+        const selectBtn = doc.createElement("button");
+        selectBtn.id = selectBtnId;
+        selectBtn.textContent = "Select All";
+        wrapper.appendChild(selectBtn);
+
+        const clearBtn = doc.createElement("button");
+        clearBtn.id = clearBtnId;
+        wrapper.appendChild(clearBtn);
+
+        return { wrapper, container, pills, warn, selectBtn, clearBtn };
+    }
+
+    test("button text shows 'Select All (N)' after selecting tools", async () => {
+        const { container } = buildToolSelectDOM({
+            containerId: "edit-server-tools",
+            pillsId: "selectedEditToolsPills",
+            warnId: "selectedEditToolsWarning",
+            selectBtnId: "selectAllEditToolsBtn",
+            clearBtnId: "clearAllEditToolsBtn",
+        });
+
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "t1",
+            checked: false,
+        });
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "t2",
+            checked: false,
+        });
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tool_ids: ["t1", "t2", "t3"] },
+            }),
+        );
+
+        win.initToolSelect(
+            "edit-server-tools",
+            "selectedEditToolsPills",
+            "selectedEditToolsWarning",
+            6,
+            "selectAllEditToolsBtn",
+            "clearAllEditToolsBtn",
+        );
+
+        // Click Select All
+        const newSelectBtn = doc.getElementById("selectAllEditToolsBtn");
+        newSelectBtn.click();
+
+        // Wait for async handler to settle
+        for (let i = 0; i < 20; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            if (win.getEditSelections("edit-server-tools").size >= 3) break;
+        }
+
+        // Button should display count
+        expect(newSelectBtn.textContent).toBe("Select All (3)");
+    });
+
+    test("button text resets to 'Select All' after Clear All", async () => {
+        const { container } = buildToolSelectDOM({
+            containerId: "edit-server-tools",
+            pillsId: "selectedEditToolsPills",
+            warnId: "selectedEditToolsWarning",
+            selectBtnId: "selectAllEditToolsBtn",
+            clearBtnId: "clearAllEditToolsBtn",
+        });
+
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "t1",
+            checked: false,
+        });
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "t2",
+            checked: false,
+        });
+
+        win.fetch = vi.fn().mockResolvedValue(
+            mockResponse({
+                ok: true,
+                contentType: "application/json",
+                body: { tool_ids: ["t1", "t2"] },
+            }),
+        );
+
+        win.initToolSelect(
+            "edit-server-tools",
+            "selectedEditToolsPills",
+            "selectedEditToolsWarning",
+            6,
+            "selectAllEditToolsBtn",
+            "clearAllEditToolsBtn",
+        );
+
+        // Select All
+        const selectBtn = doc.getElementById("selectAllEditToolsBtn");
+        selectBtn.click();
+
+        for (let i = 0; i < 20; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            if (win.getEditSelections("edit-server-tools").size >= 2) break;
+        }
+
+        expect(selectBtn.textContent).toBe("Select All (2)");
+
+        // Clear All
+        const clearBtn = doc.getElementById("clearAllEditToolsBtn");
+        clearBtn.click();
+
+        // update() is synchronous after clear — button should reset
+        expect(selectBtn.textContent).toBe("Select All");
+    });
+
+    test("button shows 'Select All' when no selectBtnId is provided", () => {
+        const wrapper = doc.createElement("div");
+        doc.body.appendChild(wrapper);
+
+        const container = doc.createElement("div");
+        container.id = "tools-no-btn";
+        wrapper.appendChild(container);
+
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "t1",
+            checked: true,
+        });
+
+        const pills = doc.createElement("div");
+        pills.id = "pills-no-btn";
+        wrapper.appendChild(pills);
+
+        const warn = doc.createElement("div");
+        warn.id = "warn-no-btn";
+        wrapper.appendChild(warn);
+
+        // No selectBtnId — should not throw
+        win.initToolSelect(
+            "tools-no-btn",
+            "pills-no-btn",
+            "warn-no-btn",
+            6,
+            null,
+            null,
+        );
+    });
+
+    test("button text updates on individual checkbox change", () => {
+        const { container } = buildToolSelectDOM({
+            containerId: "edit-server-tools",
+            pillsId: "selectedEditToolsPills",
+            warnId: "selectedEditToolsWarning",
+            selectBtnId: "selectAllEditToolsBtn",
+            clearBtnId: "clearAllEditToolsBtn",
+        });
+
+        const cb1 = addCheckbox(container, {
+            name: "associatedTools",
+            value: "t1",
+            checked: false,
+        });
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "t2",
+            checked: false,
+        });
+
+        win.initToolSelect(
+            "edit-server-tools",
+            "selectedEditToolsPills",
+            "selectedEditToolsWarning",
+            6,
+            "selectAllEditToolsBtn",
+            "clearAllEditToolsBtn",
+        );
+
+        const selectBtn = doc.getElementById("selectAllEditToolsBtn");
+
+        // Initially no selections
+        expect(selectBtn.textContent).toBe("Select All");
+
+        // Check one checkbox and fire change event from the checkbox (bubbles to container)
+        cb1.checked = true;
+        cb1.dispatchEvent(new win.Event("change", { bubbles: true }));
+
+        expect(selectBtn.textContent).toBe("Select All (1)");
+    });
+
+    test("button text shows count on error recovery via update()", async () => {
+        const { container } = buildToolSelectDOM({
+            containerId: "edit-server-tools",
+            pillsId: "selectedEditToolsPills",
+            warnId: "selectedEditToolsWarning",
+            selectBtnId: "selectAllEditToolsBtn",
+            clearBtnId: "clearAllEditToolsBtn",
+        });
+
+        addCheckbox(container, {
+            name: "associatedTools",
+            value: "t1",
+            checked: true,
+        });
+
+        // Mock fetch to fail
+        win.fetch = vi.fn().mockRejectedValue(new Error("Network error"));
+
+        // Suppress alert during test
+        const origAlert = win.alert;
+        win.alert = vi.fn();
+
+        win.initToolSelect(
+            "edit-server-tools",
+            "selectedEditToolsPills",
+            "selectedEditToolsWarning",
+            6,
+            "selectAllEditToolsBtn",
+            "clearAllEditToolsBtn",
+        );
+
+        const selectBtn = doc.getElementById("selectAllEditToolsBtn");
+
+        // There's 1 checked checkbox, so initial update() should show count
+        expect(selectBtn.textContent).toBe("Select All (1)");
+
+        // Click Select All — will fail due to mock fetch error
+        selectBtn.click();
+
+        for (let i = 0; i < 20; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            if (!selectBtn.disabled) break;
+        }
+
+        // After error, update() is called — button should still show count for checked items
+        expect(selectBtn.textContent).toBe("Select All (1)");
+        expect(selectBtn.disabled).toBe(false);
+
+        win.alert = origAlert;
+    });
+});

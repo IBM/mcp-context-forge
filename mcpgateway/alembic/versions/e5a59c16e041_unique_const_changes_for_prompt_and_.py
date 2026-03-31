@@ -25,7 +25,7 @@ def upgrade() -> None:
     """
     Apply schema changes to add or update unique constraints for prompts, resources and a2a agents.
     This migration recreates tables with updated unique constraints and preserves data.
-    Compatible with SQLite, MySQL, and PostgreSQL.
+    Compatible with SQLite and PostgreSQL.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -54,8 +54,7 @@ def upgrade() -> None:
             incoming_fks = []
             if bind.dialect.name == "postgresql":
                 # Query PostgreSQL system catalogs to find foreign keys pointing to this table
-                fk_query = sa.text(
-                    """
+                fk_query = sa.text("""
                     SELECT
                         tc.table_name,
                         tc.constraint_name,
@@ -70,8 +69,7 @@ def upgrade() -> None:
                         AND ccu.table_schema = tc.table_schema
                     WHERE tc.constraint_type = 'FOREIGN KEY'
                         AND ccu.table_name = :table_name
-                """
-                )
+                """)
                 result = bind.execute(fk_query, {"table_name": tbl})
                 for row in result:
                     incoming_fks.append(
@@ -162,7 +160,7 @@ def downgrade() -> None:
     """
     Revert schema changes, restoring previous unique constraints for prompts, resources and a2a_agents.
     This migration recreates tables with the original unique constraints and preserves data.
-    Compatible with SQLite, MySQL, and PostgreSQL.
+    Compatible with SQLite and PostgreSQL.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -190,8 +188,7 @@ def downgrade() -> None:
             incoming_fks = []
             if bind.dialect.name == "postgresql":
                 # Query PostgreSQL system catalogs to find foreign keys pointing to this table
-                fk_query = sa.text(
-                    """
+                fk_query = sa.text("""
                     SELECT
                         tc.table_name,
                         tc.constraint_name,
@@ -206,8 +203,7 @@ def downgrade() -> None:
                         AND ccu.table_schema = tc.table_schema
                     WHERE tc.constraint_type = 'FOREIGN KEY'
                         AND ccu.table_name = :table_name
-                """
-                )
+                """)
                 result = bind.execute(fk_query, {"table_name": tbl})
                 for row in result:
                     incoming_fks.append(

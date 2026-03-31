@@ -18,7 +18,7 @@ async def main():
             sys.executable, "-m", "mcpgateway.utils.create_jwt_token",
             "--username", "admin@example.com",
             "--exp", "0",
-            "--secret", "my-test-key"
+            "--secret", "my-test-key-but-now-longer-than-32-bytes"
         ],
         capture_output=True,
         text=True

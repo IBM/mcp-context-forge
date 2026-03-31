@@ -16,7 +16,6 @@ tests.
 from __future__ import annotations
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, List, Optional, TypeVar
@@ -121,6 +120,41 @@ def _build_db_prompt(
     p.gateway_id = None
     p.gateway = None
     p.metrics = metrics or []
+
+    # Mock metrics_summary property to match the new implementation
+    # Calculate summary from provided metrics
+    if metrics:
+        total = len(metrics)
+        successful = sum(1 for m in metrics if m.is_success)
+        failed = total - successful
+        failure_rate = failed / total if total > 0 else 0.0
+        min_rt = min((m.response_time for m in metrics), default=None)
+        max_rt = max((m.response_time for m in metrics), default=None)
+        avg_rt = sum(m.response_time for m in metrics) / total if total > 0 else None
+        last_time = max((m.timestamp for m in metrics), default=None)
+
+        p.metrics_summary = {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failure_rate,
+            "min_response_time": min_rt,
+            "max_response_time": max_rt,
+            "avg_response_time": avg_rt,
+            "last_execution_time": last_time,
+        }
+    else:
+        p.metrics_summary = {
+            "total_executions": 0,
+            "successful_executions": 0,
+            "failed_executions": 0,
+            "failure_rate": 0.0,
+            "min_response_time": None,
+            "max_response_time": None,
+            "avg_response_time": None,
+            "last_execution_time": None,
+        }
+
     # validate_arguments: accept anything
     p.validate_arguments = Mock()
     return p
@@ -369,6 +403,43 @@ class TestPromptService:
     # ──────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
+    async def test_register_prompt_content_size_error(self, prompt_service, test_db):
+        """Test that ContentSizeError is caught and re-raised during prompt registration."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises ContentSizeError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
+            prompt = PromptCreate(
+                name="large-prompt",
+                description="A prompt with large template",
+                template="x" * 15000,  # 15KB template
+            )
+
+            with pytest.raises(ContentSizeError) as exc_info:
+                await prompt_service.register_prompt(
+                    test_db,
+                    prompt,
+                    created_by="user@example.com",
+                    owner_email="user@example.com",
+                )
+
+            # Verify the error details
+            assert exc_info.value.actual_size == 15000
+            assert exc_info.value.max_size == 10240
+            assert exc_info.value.content_type == "Prompt template"
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_get_prompt_with_metadata(self, prompt_service, test_db):
         """Test get_prompt accepts metadata."""
         db_prompt = _build_db_prompt(template="Hello!")
@@ -396,18 +467,170 @@ class TestPromptService:
         assert msg.content.text == "Hello, Alice!"
 
     @pytest.mark.asyncio
-    async def test_get_prompt_by_name(self, prompt_service, test_db):
-        """Prompt lookup falls back to name when ID lookup misses."""
-        db_prompt = _build_db_prompt(template="Hello!")
-        test_db.execute = Mock(
-            side_effect=[
-                _make_execute_result(scalar=None),  # active by id
-                _make_execute_result(scalar=db_prompt),  # active by name
-            ]
+    async def test_get_prompt_gateway_backed_blank_template_fetches_remote_result(self, prompt_service, test_db):
+        """Gateway-backed prompts without local templates should execute upstream."""
+        gateway = MagicMock()
+        gateway.id = "gw-1"
+        gateway.url = "http://gateway.example.com/mcp"
+        gateway.transport = "streamable_http"
+
+        db_prompt = _build_db_prompt(
+            name="fast-time-convert-time-detailed",
+            template="",
+            desc="Convert time with detailed context",
         )
+        db_prompt.original_name = "convert_time_detailed"
+        db_prompt.gateway_id = gateway.id
+        db_prompt.gateway = gateway
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+        test_db.commit = Mock()
+        # Mock _apply_access_control to return the query unchanged (simulates access granted)
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        remote_result = PromptResult(
+            messages=[
+                Message(
+                    role=Role.USER,
+                    content=TextContent(
+                        type="text",
+                        text="Rendered prompt for America/New_York and Europe/Dublin",
+                    ),
+                )
+            ],
+            description="Convert time with detailed context",
+        )
+        prompt_service._fetch_gateway_prompt_result = AsyncMock(return_value=remote_result)
+
+        result = await prompt_service.get_prompt(
+            test_db,
+            db_prompt.name,
+            {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
+            user="user@test.com",
+        )
+
+        prompt_service._fetch_gateway_prompt_result.assert_awaited_once_with(
+            db_prompt,
+            {"from_timezone": "UTC", "to_timezones": "America/New_York,Europe/Dublin"},
+            "user@test.com",
+        )
+        test_db.commit.assert_called_once()
+        assert result.description == "Convert time with detailed context"
+        assert result.messages[0].content.text == "Rendered prompt for America/New_York and Europe/Dublin"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_by_name(self, prompt_service, test_db):
+        """Prompt lookup prioritizes name first (MCP spec), then falls back to ID."""
+        db_prompt = _build_db_prompt(template="Hello!")
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
         result = await prompt_service.get_prompt(test_db, "gateway__greeting", {})
         assert result.messages[0].content.text == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_name_lookup_priority(self, prompt_service, test_db):
+        """Issue #1704: Verify name-based lookup is prioritized over ID lookup per MCP spec.
+
+        This test ensures that when a prompt is looked up, the service tries to find it
+        by name first (MCP specification requirement), and only falls back to ID lookup
+        if the name lookup fails (for backward compatibility).
+        """
+        db_prompt = _build_db_prompt(name="compare_timezones", template="Hello!")
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+
+        result = await prompt_service.get_prompt(test_db, "compare_timezones", {})
+        assert result.messages[0].content.text == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_id_fallback_backward_compat(self, prompt_service, test_db):
+        """Verify ID-based lookup still works as fallback for backward compatibility."""
+        db_prompt = _build_db_prompt(pid=123, name="some_prompt", template="Hello!")
+        db_prompt.enabled = True  # Ensure prompt is active
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+        # Single execute call - _find_prompt_by_name_or_id uses OR query (name OR id)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+
+        result = await prompt_service.get_prompt(test_db, "123", {})
+        assert result.messages[0].content.text == "Hello!"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_multiple_results_falls_back_to_name(self, prompt_service, test_db):
+        """When OR(name, id) matches multiple rows, fall back to name-only lookup."""
+        # Third-Party
+        from sqlalchemy.exc import MultipleResultsFound
+
+        db_prompt = _build_db_prompt(name="collision_id", template="By name!")
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        first_result = MagicMock()
+        first_result.scalar_one_or_none.side_effect = MultipleResultsFound()
+
+        second_result = _make_execute_result(scalar=db_prompt)
+        test_db.execute = Mock(side_effect=[first_result, second_result])
+
+        result = await prompt_service.get_prompt(test_db, "collision_id", {})
+        assert result.messages[0].content.text == "By name!"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_ambiguous_name_raises_prompt_error(self, prompt_service, test_db):
+        """When multiple accessible prompts share the same name, raise explicit ambiguity error."""
+        # Third-Party
+        from sqlalchemy.exc import MultipleResultsFound
+
+        # First-Party
+        from mcpgateway.services.prompt_service import PromptError
+
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        # Both OR query and name-only fallback hit multiple rows
+        or_result = MagicMock()
+        or_result.scalar_one_or_none.side_effect = MultipleResultsFound()
+        name_result = MagicMock()
+        name_result.scalar_one_or_none.side_effect = MultipleResultsFound()
+        test_db.execute = Mock(side_effect=[or_result, name_result])
+
+        with pytest.raises(PromptError, match="ambiguous"):
+            await prompt_service.get_prompt(test_db, "code_review", {})
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_multi_team_same_name(self, prompt_service, test_db):
+        """Issue #1704: Verify team scoping prevents cross-team prompt access with duplicate names.
+
+        When multiple teams have prompts with the same name, the service should:
+        1. Apply team scoping BEFORE lookup to find the correct team's prompt
+        2. Not return another team's prompt even if it has the same name
+        3. Respect the user's token_teams for access control
+        """
+        # Team A's prompt with name "code_review"
+        team_a_prompt = _build_db_prompt(pid="prompt-team-a", name="code_review", template="Team A template")
+        team_a_prompt.team_id = "team-a"
+        team_a_prompt.owner_email = "owner-a@test.com"
+        team_a_prompt.visibility = "team"
+
+        # Team B's prompt with same name "code_review"
+        team_b_prompt = _build_db_prompt(pid="prompt-team-b", name="code_review", template="Team B template")
+        team_b_prompt.team_id = "team-b"
+        team_b_prompt.owner_email = "owner-b@test.com"
+        team_b_prompt.visibility = "team"
+
+        # Mock _apply_access_control to return scoped query for team B
+        async def mock_apply_access_control(query, db, user, token_teams, team_id):
+            # Simulate filtering to only team B's prompts
+            # First-Party
+            from mcpgateway.db import Prompt as DbPrompt
+
+            return query.where(DbPrompt.team_id == "team-b")
+
+        with patch.object(prompt_service, "_apply_access_control", side_effect=mock_apply_access_control):
+            # User from Team B requests "code_review"
+            test_db.execute = Mock(return_value=_make_execute_result(scalar=team_b_prompt))
+
+            result = await prompt_service.get_prompt(test_db, "code_review", {}, user="member-b@test.com", token_teams=["team-b"])
+
+            # Should get Team B's template, not Team A's
+            assert result.messages[0].content.text == "Team B template"
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_found(self, prompt_service, test_db):
@@ -419,11 +642,11 @@ class TestPromptService:
     @pytest.mark.asyncio
     async def test_get_prompt_inactive(self, prompt_service, test_db):
         inactive = _build_db_prompt(is_active=False)
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
         test_db.execute = Mock(
             side_effect=[
-                _make_execute_result(scalar=None),  # active by id
-                _make_execute_result(scalar=None),  # active by name
-                _make_execute_result(scalar=inactive),  # inactive by id
+                _make_execute_result(scalar=None),  # active query (OR name/id) - not found
+                _make_execute_result(scalar=inactive),  # inactive query (OR name/id) - found
             ]
         )
         with pytest.raises(PromptNotFoundError) as exc_info:
@@ -532,19 +755,28 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_get_prompt_access_denied_raises_generic_not_found(self, prompt_service, test_db):
-        db_prompt = _build_db_prompt(template="Hello!")
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
-        prompt_service._check_prompt_access = AsyncMock(return_value=False)
+        """Access control is now applied via scoped query, so denied prompts are not found."""
 
-        with patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf:
-            mock_get_buf.record_prompt_metric = Mock()
-            with pytest.raises(PromptNotFoundError, match="Prompt not found"):
-                await prompt_service.get_prompt(test_db, "1", {})
+        # Mock _apply_access_control to return a query that filters out all prompts
+        async def mock_apply_access_control(query, db, user, token_teams, team_id):
+            # First-Party
+            from mcpgateway.db import Prompt as DbPrompt
+
+            # Return query that will never match (simulates access denial)
+            return query.where(DbPrompt.id == "nonexistent")
+
+        with patch.object(prompt_service, "_apply_access_control", side_effect=mock_apply_access_control):
+            test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+
+            with patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf:
+                mock_get_buf.record_prompt_metric = Mock()
+                with pytest.raises(PromptNotFoundError, match="Prompt not found"):
+                    await prompt_service.get_prompt(test_db, "1", {})
 
     @pytest.mark.asyncio
     async def test_get_prompt_server_scoping_not_attached_raises_not_found(self, prompt_service, test_db):
         db_prompt = _build_db_prompt(template="Hello!")
-        prompt_service._check_prompt_access = AsyncMock(return_value=True)
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
 
         server_match_result = MagicMock()
         server_match_result.first.return_value = None
@@ -554,6 +786,34 @@ class TestPromptService:
             mock_get_buf.record_prompt_metric = Mock()
             with pytest.raises(PromptNotFoundError, match="Prompt not found"):
                 await prompt_service.get_prompt(test_db, "1", {}, server_id="server-1")
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_server_id_disambiguates_duplicate_names(self, prompt_service, test_db):
+        """When server_id is provided, it scopes the lookup so duplicate names across servers resolve correctly."""
+        db_prompt = _build_db_prompt(name="shared_prompt", template="Server 1 version")
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+
+        # First call: server-joined lookup returns the prompt; second call: post-lookup server check
+        server_match_result = MagicMock()
+        server_match_result.first.return_value = ("ok",)
+        test_db.execute = Mock(side_effect=[_make_execute_result(scalar=db_prompt), server_match_result])
+
+        result = await prompt_service.get_prompt(test_db, "shared_prompt", {}, server_id="server-1")
+        assert result.messages[0].content.text == "Server 1 version"
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_server_id_inactive_scoped(self, prompt_service, test_db):
+        """Inactive prompt lookup also applies server_id scoping."""
+        inactive = _build_db_prompt(is_active=False, name="disabled_prompt")
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=None),  # active server-scoped query - not found
+                _make_execute_result(scalar=inactive),  # inactive server-scoped query - found
+            ]
+        )
+        with pytest.raises(PromptNotFoundError, match="inactive"):
+            await prompt_service.get_prompt(test_db, "disabled_prompt", {}, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_get_prompt_render_error_sets_span_attributes(self, prompt_service, test_db):
@@ -596,6 +856,7 @@ class TestPromptService:
         server_match_result.first.return_value = ("ok",)
 
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=db_prompt), server_match_result])
+        prompt_service._apply_access_control = AsyncMock(side_effect=lambda q, *args, **kwargs: q)
 
         plugin_mgr = MagicMock()
         plugin_mgr.has_hooks_for.side_effect = lambda hook: hook in {PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH}
@@ -718,6 +979,82 @@ class TestPromptService:
         assert res["template"] == "Hi, {{ name }}!"
 
     @pytest.mark.asyncio
+    async def test_update_prompt_team_id_rejects_nonexistent_team(self, prompt_service, test_db):
+        """Reassigning a prompt to a non-existent team must raise PromptError."""
+        existing = _build_db_prompt()
+        existing.team_id = "old-team"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None  # team not found
+        test_db.query = Mock(return_value=mock_query)
+
+        upd = PromptUpdate(team_id="nonexistent-team")
+
+        with pytest.raises(Exception, match="not found"):
+            await prompt_service.update_prompt(test_db, 1, upd)
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_visibility_team_without_team_id_rejects(self, prompt_service, test_db):
+        """Setting visibility to 'team' without any team_id must raise."""
+        existing = _build_db_prompt()
+        existing.team_id = None
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        test_db.query = Mock(return_value=mock_query)
+
+        upd = PromptUpdate(visibility="team")
+
+        with pytest.raises(Exception, match="without a team_id"):
+            await prompt_service.update_prompt(test_db, 1, upd)
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_team_id_rejects_non_owner(self, prompt_service, test_db):
+        """Reassigning a prompt to a team where user is not owner must raise."""
+        # First-Party
+        from mcpgateway.services.prompt_service import _validate_prompt_team_assignment
+
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        # Team exists but membership check returns None
+        mock_query.first.side_effect = [MagicMock(), None]
+
+        mock_db = MagicMock()
+        mock_db.query.return_value = mock_query
+
+        with pytest.raises(ValueError, match="membership"):
+            _validate_prompt_team_assignment(mock_db, "user@example.com", "other-team")
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_team_id_skips_ownership_without_user_email(self, prompt_service, test_db):
+        """System updates without user_email skip ownership checks and persist team_id."""
+        existing = _build_db_prompt()
+        existing.team_id = "old-team"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = MagicMock()  # Team exists
+        test_db.query = Mock(return_value=mock_query)
+        prompt_service._notify_prompt_updated = AsyncMock()
+
+        upd = PromptUpdate(team_id="new-team")
+        await prompt_service.update_prompt(test_db, 1, upd, user_email=None)
+
+        assert existing.team_id == "new-team"
+
+    @pytest.mark.asyncio
     async def test_update_prompt_name_conflict(self, prompt_service, test_db):
         existing = _build_db_prompt()
         test_db.get = Mock(return_value=existing)
@@ -766,6 +1103,42 @@ class TestPromptService:
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.update_prompt(test_db, 1, upd)
         assert "Failed to update prompt" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_update_prompt_content_size_error(self, prompt_service, test_db):
+        """Test that ContentSizeError is caught and re-raised during prompt update."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentSizeError
+
+        existing = _build_db_prompt()
+        existing.team_id = "team-123"
+        test_db.get = Mock(return_value=existing)
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=existing),
+                _make_execute_result(scalar=None),
+            ]
+        )
+        test_db.rollback = Mock()
+
+        # Mock get_content_security_service to return a mock that raises ContentSizeError
+        mock_security_service = Mock()
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
+
+        with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
+            # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
+            upd = PromptUpdate(template="x" * 15000)  # 15KB template
+
+            with pytest.raises(ContentSizeError) as exc_info:
+                await prompt_service.update_prompt(test_db, 1, upd)
+
+            # Verify the error details
+            assert exc_info.value.actual_size == 15000
+            assert exc_info.value.max_size == 10240
+            assert exc_info.value.content_type == "Prompt template"
+
+            # Verify rollback was called
+            test_db.rollback.assert_called_once()
 
     # ──────────────────────────────────────────────────────────────────
     #   set state
@@ -978,7 +1351,7 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cache_hit_returns_cached(self, prompt_service, test_db):
-        cached = PromptMetrics(
+        PromptMetrics(
             total_executions=123,
             successful_executions=100,
             failed_executions=23,
@@ -1039,7 +1412,7 @@ class TestPromptService:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql"
         session.get_bind.return_value = bind
 
         with patch("mcpgateway.services.prompt_service.select", return_value=mock_query):
@@ -1109,7 +1482,7 @@ class TestJinjaTemplateCaching:
     def test_format_fallback_still_works(self):
         """Verify Python format() fallback works when Jinja render fails."""
         # First-Party
-        from mcpgateway.services.prompt_service import _compile_jinja_template, PromptService
+        from mcpgateway.services.prompt_service import PromptService
 
         service = PromptService()
 
@@ -1239,7 +1612,6 @@ class TestPromptGatewayNamespacing:
         the executed SQL and checking for the gateway_id clause.
         """
         # First-Party
-        from mcpgateway.db import Gateway as DbGateway
 
         # Setup prompt create data
         pc = PromptCreate(name="hello", description="greet a user", template="Hello {{ name }}!", arguments=[], gateway_id="gateway-2")
@@ -1277,7 +1649,6 @@ class TestPromptGatewayNamespacing:
     async def test_prompt_namespacing_same_gateway(self, prompt_service, test_db):
         """Test: Same `name` **cannot** be registered for the **same** gateway (same team/owner)."""
         # First-Party
-        from mcpgateway.db import Gateway as DbGateway
 
         # Setup existing prompt
         existing = _build_db_prompt(name="hello")
@@ -1754,7 +2125,7 @@ class TestListPromptsAdvanced:
 
         with (
             patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
-            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service._get_registry_cache"),
             patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
         ):
             mock_paginate.return_value = {
@@ -2062,6 +2433,34 @@ class TestListServerPrompts:
         assert result == ["converted"]
 
     @pytest.mark.asyncio
+    async def test_list_server_prompts_with_include_metrics_true(self, prompt_service):
+        """Test that list_server_prompts eager loads metrics when include_metrics=True.
+
+        This test ensures that when include_metrics=True, the query includes
+        selectinload for both metrics and metrics_hourly relationships to prevent N+1 queries.
+        Regression test for PR #3649 performance optimization.
+        """
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.enabled = True
+        mock_prompt.team_id = None
+        mock_prompt.team = None
+
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [mock_prompt]
+        db.execute = MagicMock(return_value=prompt_result)
+        db.commit = MagicMock()
+
+        prompt_service.convert_prompt_to_read = MagicMock(return_value="converted_prompt_with_metrics")
+
+        # Call with include_metrics=True to trigger eager loading code path
+        prompts = await prompt_service.list_server_prompts(db, server_id="server-1", include_metrics=True)
+
+        assert prompts == ["converted_prompt_with_metrics"]
+        # Verify convert_prompt_to_read was called with include_metrics=True
+        prompt_service.convert_prompt_to_read.assert_called_once_with(mock_prompt, include_metrics=True)
+
+    @pytest.mark.asyncio
     async def test_include_inactive_true_skips_enabled_filter(self, prompt_service):
         """Covers include_inactive=True branch (skips DbPrompt.enabled filter)."""
         db = MagicMock()
@@ -2217,7 +2616,7 @@ class TestUpdatePromptNameConflict:
 
         with (
             patch("mcpgateway.services.prompt_service.get_for_update") as mock_gfu,
-            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service._get_registry_cache"),
         ):
             mock_gfu.side_effect = [existing, conflicting]  # first: get prompt, second: conflict check
 
@@ -2297,7 +2696,7 @@ class TestUpdatePromptFieldsAndExceptions:
                 tags=["v2"],
             )
 
-            result = await prompt_service.update_prompt(db, 1, upd, modified_by="admin", modified_from_ip="1.2.3.4", modified_via="api", modified_user_agent="test-agent")
+            await prompt_service.update_prompt(db, 1, upd, modified_by="admin", modified_from_ip="1.2.3.4", modified_via="api", modified_user_agent="test-agent")
 
         assert existing.template == "Hi {{ user }}!"
         assert existing.argument_schema["properties"]["user"]["description"] == "Username"
@@ -2728,3 +3127,146 @@ class TestRegisterPromptsBulkChunkException:
 
         assert result["failed"] >= 1
         assert any("Chunk processing failed" in err for err in result["errors"])
+
+
+# --------------------------------------------------------------------------- #
+#                   Gateway ID Filtering Tests (#3638)                        #
+# --------------------------------------------------------------------------- #
+
+
+class TestListPromptsGatewayIdFilter:
+    """Tests for gateway_id filtering in list_prompts."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_filter(self, prompt_service):
+        """gateway_id filter should add a WHERE clause matching the gateway ID."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        captured_query = None
+
+        async def capture_paginate(db, query, **kwargs):
+            nonlocal captured_query
+            captured_query = query
+            return ([], None)
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", side_effect=capture_paginate):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="some-gateway-id")
+
+        assert result == []
+        assert next_cursor is None
+        # Verify the compiled query contains the gateway_id equality filter
+        compiled = str(captured_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "some-gateway-id" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_null_filter(self, prompt_service):
+        """gateway_id='null' should add an IS NULL WHERE clause."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        captured_query = None
+
+        async def capture_paginate(db, query, **kwargs):
+            nonlocal captured_query
+            captured_query = query
+            return ([], None)
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", side_effect=capture_paginate):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="null")
+
+        assert result == []
+        assert next_cursor is None
+        compiled = str(captured_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "gateway_id IS NULL" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_null_case_insensitive(self, prompt_service):
+        """gateway_id='NULL' (uppercase) should also add an IS NULL WHERE clause."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        captured_query = None
+
+        async def capture_paginate(db, query, **kwargs):
+            nonlocal captured_query
+            captured_query = query
+            return ([], None)
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", side_effect=capture_paginate):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="NULL")
+
+        assert result == []
+        assert next_cursor is None
+        compiled = str(captured_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "gateway_id IS NULL" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_nonexistent_returns_empty(self, prompt_service):
+        """Nonexistent gateway_id should return empty list, not an error."""
+        db = MagicMock()
+        db.commit = Mock()
+        prompt_service.convert_prompt_to_read = Mock(return_value=MagicMock())
+
+        captured_query = None
+
+        async def capture_paginate(db, query, **kwargs):
+            nonlocal captured_query
+            captured_query = query
+            return ([], None)
+
+        with patch("mcpgateway.services.prompt_service.unified_paginate", side_effect=capture_paginate):
+            result, next_cursor = await prompt_service.list_prompts(db, gateway_id="nonexistent-id")
+
+        assert result == []
+        assert next_cursor is None
+        compiled = str(captured_query.compile(compile_kwargs={"literal_binds": True}))
+        assert "nonexistent-id" in compiled
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_gateway_id_included_in_cache_hash(self, prompt_service):
+        """gateway_id should be part of the cache hash to prevent cache poisoning."""
+        db = MagicMock()
+        db.commit = Mock()
+
+        with patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value="hash123")
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+
+            with patch("mcpgateway.services.prompt_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+                await prompt_service.list_prompts(db, gateway_id="gw-123")
+
+            # Verify gateway_id was passed to hash_filters
+            mock_cache.hash_filters.assert_called_once()
+            call_kwargs = mock_cache.hash_filters.call_args[1]
+            assert call_kwargs.get("gateway_id") == "gw-123"
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_without_gateway_id_no_filter(self, prompt_service):
+        """When gateway_id is None, no gateway filtering should be applied."""
+        db = MagicMock()
+        db.commit = Mock()
+        mock_prompt = _build_db_prompt()
+        mock_prompt.team_id = None
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache_fn.return_value = AsyncMock(hash_filters=MagicMock(return_value="h"), get=AsyncMock(return_value=None), set=AsyncMock())
+            mock_paginate.return_value = ([mock_prompt], None)
+
+            result, _ = await prompt_service.list_prompts(db, gateway_id=None)
+
+        assert result == ["converted"]

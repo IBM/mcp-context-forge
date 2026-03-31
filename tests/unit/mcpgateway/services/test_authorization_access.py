@@ -654,6 +654,95 @@ class TestCachePoisoningPrevention:
             # Cache get should have been called
             mock_cache.get.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_list_tools_cache_hash_includes_visibility(self, tool_service, mock_db):
+        """Cache hash must include visibility so admin requests with different visibility filters get different cache keys."""
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_get_cache:
+            mock_cache = MagicMock()
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_cache.hash_filters = Mock(return_value="test_hash")
+            mock_get_cache.return_value = mock_cache
+
+            mock_scalars = Mock()
+            mock_scalars.all.return_value = []
+            mock_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=mock_scalars)))
+
+            # Admin request with visibility=team
+            await tool_service.list_tools(mock_db, user_email=None, token_teams=None, visibility="team")
+
+            # hash_filters must include visibility="team"
+            mock_cache.hash_filters.assert_called_once()
+            call_kwargs = mock_cache.hash_filters.call_args[1]
+            assert call_kwargs["visibility"] == "team"
+
+    @pytest.mark.asyncio
+    async def test_list_tools_cache_hash_visibility_none_when_unset(self, tool_service, mock_db):
+        """Cache hash must include visibility=None when no visibility filter is set."""
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_get_cache:
+            mock_cache = MagicMock()
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            mock_cache.hash_filters = Mock(return_value="test_hash")
+            mock_get_cache.return_value = mock_cache
+
+            mock_scalars = Mock()
+            mock_scalars.all.return_value = []
+            mock_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=mock_scalars)))
+
+            # Admin request without visibility filter
+            await tool_service.list_tools(mock_db, user_email=None, token_teams=None)
+
+            # hash_filters must include visibility=None
+            mock_cache.hash_filters.assert_called_once()
+            call_kwargs = mock_cache.hash_filters.call_args[1]
+            assert call_kwargs["visibility"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_tools_different_visibility_produces_different_cache_keys(self, tool_service, mock_db):
+        """Different visibility values must produce different cache keys to prevent stale results."""
+        from mcpgateway.cache.registry_cache import RegistryCache
+
+        real_cache = RegistryCache()
+
+        hash_no_filter = real_cache.hash_filters(include_inactive=False, tags=None, gateway_id=None, limit=100, visibility=None)
+        hash_public = real_cache.hash_filters(include_inactive=False, tags=None, gateway_id=None, limit=100, visibility="public")
+        hash_team = real_cache.hash_filters(include_inactive=False, tags=None, gateway_id=None, limit=100, visibility="team")
+        hash_private = real_cache.hash_filters(include_inactive=False, tags=None, gateway_id=None, limit=100, visibility="private")
+
+        # All hashes must be distinct
+        all_hashes = [hash_no_filter, hash_public, hash_team, hash_private]
+        assert len(set(all_hashes)) == 4, f"Expected 4 distinct hashes, got {set(all_hashes)}"
+
+    @pytest.mark.asyncio
+    async def test_admin_visibility_filter_changes_cache_key(self, tool_service, mock_db):
+        """Admin requests with vs. without visibility filter must use different cache keys."""
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_get_cache:
+            mock_cache = MagicMock()
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+            # Use the real hash_filters to verify distinct keys
+            from mcpgateway.cache.registry_cache import RegistryCache
+
+            real_cache = RegistryCache()
+            mock_cache.hash_filters = real_cache.hash_filters
+            mock_get_cache.return_value = mock_cache
+
+            mock_scalars = Mock()
+            mock_scalars.all.return_value = []
+            mock_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=mock_scalars)))
+
+            # First call: admin, no visibility filter
+            await tool_service.list_tools(mock_db, user_email=None, token_teams=None)
+            first_hash = mock_cache.get.call_args_list[0][0][1]
+
+            # Second call: admin, visibility=team
+            await tool_service.list_tools(mock_db, user_email=None, token_teams=None, visibility="team")
+            second_hash = mock_cache.get.call_args_list[1][0][1]
+
+            # The two hashes must be different
+            assert first_hash != second_hash, "Cache keys must differ when visibility filter changes"
+
 
 # Note: list_tools filtering tests are better done as integration tests
 # because the visibility filtering happens at the SQL query level in the WHERE clause,

@@ -93,13 +93,13 @@ Our security pipeline operates at multiple levels:
 
 **Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, Dodgy for hardcoded secrets detection, and detect-private-key for catching committed private keys, along with type checking and code quality enforcement. Pre-commit hooks also enforce **AI content integrity** (preventing AI-generated artifacts such as hallucinated citations, stock phrases, and malformed code fences) and **Unicode safety** (fixing smart quotes, ligatures, and forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)). Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
 
-**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including CodeQL and Semgrep for semantic analysis, Gitleaks and TruffleHog for secret detection, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, container security assessment with Trivy, Grype, Dockle, and Hadolint, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
+**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including Semgrep for semantic analysis, Gitleaks and TruffleHog for secret detection, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, SBOM generation, and Hadolint-style linting where configured, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
 **Supply Chain Security**: We maintain strict oversight of our software supply chain through automated dependency vulnerability scanning, Software Bill of Materials (SBOM) generation, and license compliance checking to ensure all components meet security standards. Automated dependency update PRs are managed via Renovate bot, and Snyk custom rules enforce detection of hardcoded JWT secrets and basic auth credentials (CWE-798). License policies explicitly deny strong-copyleft licenses (GPL-3.0, AGPL-3.0, SSPL) and flag licenses requiring review (MPL-2.0, LGPL-2.0, CC-BY-SA-4.0).
 
-**Container Security Hardening**: Our containerized deployments follow security best practices including multi-stage builds, minimal base images (UBI Micro) with the latest updates, non-root user execution, read-only filesystems, and comprehensive container scanning with tools like Trivy, Grype, Dockle, and OSV-Scanner.
+**Container Security Hardening**: Our containerized deployments follow security best practices including multi-stage builds, minimal base images (UBI Micro) with the latest updates, non-root user execution, read-only filesystems, and SBOM-based review with complementary dependency and OS/package analysis where configured.
 
 **Runtime Security Monitoring**: Beyond build-time security, we implement runtime monitoring and security policies to detect and respond to potential threats in production environments.
 
@@ -109,8 +109,8 @@ Our security toolchain includes **40+ different security and quality tools**, ea
 
 - **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, DevSkim (Microsoft security anti-patterns), and multiple type checkers
 - **Secret Detection**: Gitleaks for git history scanning, TruffleHog for filesystem-level secret scanning, Dodgy for hardcoded secrets in code, detect-private-key for committed private keys, and Snyk custom rules for hardcoded JWT secrets and credentials (CWE-798)
-- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, pip-audit, npm audit, cargo audit (Rust), govulncheck (Go), and GitHub dependency review with license policy enforcement
-- **Container Security**: Hadolint for Dockerfile linting, Dockle for container security, and Trivy/Grype for vulnerability scanning
+- **Dependency Vulnerability Scanning**: OSV-Scanner, pip-audit, npm audit, cargo audit (Rust), govulncheck (Go), and GitHub dependency review with license policy enforcement
+- **Container Security**: Dockerfile linting, SBOM generation, and Dockle where used
 - **Infrastructure as Code (IaC) Security**: Checkov for IaC security scanning (Dockerfiles, Helm charts, docker-compose), kube-linter for Kubernetes/Helm manifest best practices
 - **CI/CD Pipeline Security**: Zizmor for GitHub Actions workflow security linting, actionlint for workflow syntax validation
 - **Go Security**: gosec for Go static security analysis, golangci-lint with security rules, govulncheck for Go vulnerability database checking
@@ -142,13 +142,15 @@ We believe that security should enhance rather than hinder the development proce
 - `make dodgy` - Detect hardcoded passwords, API keys, and secrets
 - `make devskim` - DevSkim security anti-pattern detection (Microsoft)
 - `make gitleaks` - Scan git history for accidentally committed secrets
+- `make detect-secrets-scan` - Scan git structure for accidentally committed secrets
+- `make detect-secrets-audit` - Manually attest to detected secrets being or not being actual secrets
+- `make detect-secrets-hook` - Locally execute the equivalent command that the pre-commit hook will run
 - `make dlint` - Python security best practices enforcement
 - `make interrogate` - Ensure comprehensive docstring coverage
 - `make prospector` - Comprehensive code analysis combining multiple tools
 - `make pyupgrade` - Modernize Python syntax for security improvements
 - `make pip-audit` - Python dependency vulnerability scanning
-- `make trivy` - Container vulnerability scanning
-- `make grype-scan` - Container security audit and vulnerability scanning
+- `make security-scan` - Show current local container review guidance
 - `make dockle` - Container security and best practices analysis
 - `make hadolint` - Dockerfile linting for security issues
 - `make osv-scan` - Open Source Vulnerability database scanning
@@ -182,7 +184,7 @@ Our security posture is continuously evolving. We regularly update our toolchain
 
 ### Input Validation Framework
 
-As of version 0.3.1, ContextForge implements comprehensive input validation across all API endpoints using Pydantic data models with strict validation rules:
+As of version 0.3.1, ContextForge implements comprehensive input validation across all API endpoints using the [`SecurityValidator`](mcpgateway/common/validators.py:287) class with strict validation rules:
 
 - **Character restrictions** for names and identifiers to prevent injection attacks
 - **URL scheme validation** blocking potentially dangerous protocols (`javascript:`, `data:`, `vbscript:`)
@@ -191,6 +193,112 @@ As of version 0.3.1, ContextForge implements comprehensive input validation acro
 - **MIME type validation** for content type security
 
 These validation rules help prevent XSS injection when data from untrusted MCP servers is displayed in downstream UIs. However, **the gateway is only one layer of defense** - downstream applications should implement their own validation and sanitization appropriate to their specific use cases.
+
+### Cross-Site Scripting (XSS) Protection
+
+ContextForge implements enterprise-grade XSS protection through the [`SecurityValidator`](mcpgateway/common/validators.py:287) class:
+
+**HTML Sanitization:**
+- [`sanitize_display_text()`](mcpgateway/common/validators.py:313) - Strips HTML tags and dangerous patterns
+- Blocks `<script>`, `<iframe>`, `<object>`, `<embed>`, and other dangerous tags
+- Removes event handlers (`onclick`, `onerror`, etc.)
+- Prevents `javascript:`, `vbscript:`, and `data:` URI schemes
+
+**Polyglot Attack Prevention:**
+- 6 precompiled regex patterns detect polyglot XSS attempts
+- Blocks mixed-context attacks (HTML + JavaScript + CSS)
+- Validates against known XSS bypass techniques
+
+**Character Validation:**
+- Strict allowlists for names, identifiers, and URIs
+- Length limits prevent buffer overflow attacks
+- Unicode normalization prevents homograph attacks
+
+**Pydantic Integration:**
+- All API schemas use SecurityValidator for automatic input validation
+- Type-safe validation at the schema level
+- Consistent validation across all endpoints
+
+**Example Usage:**
+```python
+from mcpgateway.common.validators import SecurityValidator
+
+# Sanitize user-provided text
+safe_text = SecurityValidator.sanitize_display_text(user_input)
+
+# Validate tool names
+SecurityValidator.validate_tool_name(tool_name)
+
+# Validate identifiers
+SecurityValidator.validate_identifier(identifier)
+```
+
+### Server-Side Request Forgery (SSRF) Protection
+
+ContextForge implements comprehensive SSRF protection through [`validate_url()`](mcpgateway/common/validators.py:885):
+
+**Scheme Allowlist:**
+- Only permits: `http://`, `https://`, `ws://`, `wss://`
+- Blocks dangerous protocols: `javascript:`, `data:`, `file:`, `ftp:`, `vbscript:`, `about:`, `chrome:`, `mailto:`
+
+**Network Security:**
+- Blocks IPv6 addresses (prevents `[::1]` localhost bypass)
+- Prevents line break injection (`\r`, `\n`)
+- Validates URL structure and format
+
+**Length & Format Validation:**
+- Maximum URL length: 2048 characters
+- Prevents malformed URLs with spaces
+- Validates against URL parsing vulnerabilities
+
+**Example Usage:**
+```python
+from mcpgateway.common.validators import SecurityValidator
+
+# Validate external URLs before making requests
+try:
+    SecurityValidator.validate_url(url, "External API endpoint")
+except ValueError as e:
+    logger.error(f"Invalid URL rejected: {e}")
+    raise
+```
+
+### Log Injection Protection (CWE-117)
+
+As of version 1.0.0-RC-2, ContextForge implements log injection protection to prevent attackers from forging log entries:
+
+**Protection Mechanism:**
+- [`sanitize_log_message()`](mcpgateway/common/validators.py:884) - Sanitizes user-controlled data in logs
+- Removes newline characters (`\n`, `\r`) that enable log forging
+- Strips ANSI escape sequences
+- Removes control characters
+- Truncates excessive length (default: 10,000 characters)
+
+**Attack Prevention:**
+- Prevents fake log entry injection
+- Protects log parsing and SIEM systems
+- Prevents hiding malicious activity in logs
+- Ensures log integrity for security auditing
+
+**Example Usage:**
+```python
+from mcpgateway.common.validators import SecurityValidator
+
+# Sanitize user-controlled data before logging
+logger.info(f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource")
+logger.error(f"Failed to process: {SecurityValidator.sanitize_log_message(error_message)}")
+logger.debug(f"Session {SecurityValidator.sanitize_log_message(session_id)} established")
+```
+
+**Implementation Status:**
+- ✅ Phase 1 Complete: Critical authentication paths protected
+- 📋 Phase 2-4 In Progress: Gradual rollout to all log statements
+
+**Developer Guidelines:**
+- Always sanitize user-controlled data in log statements
+- Apply to: user emails, session IDs, error messages, request parameters
+- Use for any data that originates from external sources
+- Test log output to ensure no injection vectors remain
 
 ### Secure by Default Configuration
 
@@ -264,6 +372,9 @@ When deploying ContextForge in production:
 - [ ] Configure appropriate rate limits per endpoint and per client
 - [ ] Set up comprehensive monitoring, alerting, and anomaly detection
 - [ ] Review and customize validation rules for your use case
+- [ ] Verify XSS protection is active (SecurityValidator automatically applied via Pydantic schemas)
+- [ ] Verify SSRF protection is active (validate_url() used for all external requests)
+- [ ] Verify log injection protection is applied to user-controlled data in logs
 - [ ] Secure database connections (use TLS, strong passwords, restricted access)
 - [ ] Secure Redis connections if using Redis (password, TLS, network isolation)
 - [ ] Configure resource limits (CPU, memory) to prevent DoS attacks
@@ -415,9 +526,8 @@ flowchart TD
 
     S --> S1[Hadolint - Dockerfile Linting]
     S --> S2[Dockle - Container Security]
-    S --> S3[Trivy - Vulnerability Scanner]
-    S --> S4[Grype - Security Audit]
-    S --> S5[OSV-Scanner - Open Source Vulns]
+    S --> S3[Container review guidance]
+    S --> S4[OSV-Scanner - Open Source Vulns]
 
     T[Local Development] --> U[Make Targets]
 
@@ -443,12 +553,11 @@ flowchart TD
     W --> W11[make pyupgrade - Modernize Syntax]
     W --> W12[make pip-audit - Dependency Scanning]
     W --> W13[make osv-scan - Vulnerability Check]
-    W --> W14[make trivy - Container Security]
-    W --> W15[make grype-scan - Container Vulnerability]
-    W --> W16[make dockle - Image Analysis]
-    W --> W17[make hadolint - Dockerfile Linting]
-    W --> W18[make devskim - Security Anti-patterns]
-    W --> W19[make linting-security-trufflehog]
+    W --> W14[make security-scan - Container Review]
+    W --> W15[make dockle - Image Analysis]
+    W --> W16[make hadolint - Dockerfile Linting]
+    W --> W17[make devskim - Security Anti-patterns]
+    W --> W18[make linting-security-trufflehog]
     W --> W20[make linting-security-checkov]
     W --> W21[make linting-security-kube-linter]
     W --> W22[make linting-workflow-zizmor]
