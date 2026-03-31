@@ -7,6 +7,10 @@
 requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+exclude-newer = "10 days"
+exclude-newer-package = { requests = "2026-03-25T15:10:42Z", langchain-openai = "2026-03-23T18:59:20Z", langchain-core = "2026-03-24T18:48:45Z" }
+
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
@@ -649,7 +653,7 @@ markers = [
     "mcp_client_features: marks roots/sampling/elicitation checks",
     "mcp_utilities: marks ping/cancel/progress/pagination checks",
     "mcp_tasks: marks tasks capability checks",
-    "mcp_auth: marks authorization discovery checks",
+    "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
     "mcp_security: marks security compliance checks",
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
