@@ -548,13 +548,11 @@ async def list_all_tokens(
     """
     _require_authenticated_session(current_user)
 
-    # SECURITY: Require un-narrowed admin. Narrowed/public-only admin sessions
-    # must not access the token oversight surface to prevent privilege escalation.
-    token_teams = current_user.get("token_teams")
-    if not current_user.get("is_admin") or token_teams is not None:
+    if not current_user.get("is_admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
-    # SECURITY: Block narrowed/public-only admin sessions from token oversight
+    # SECURITY: Require un-narrowed admin. Narrowed/public-only admin sessions
+    # must not access the token oversight surface to prevent privilege escalation.
     token_teams = current_user.get("token_teams")
     if token_teams is not None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token oversight requires un-narrowed admin access")
@@ -645,13 +643,11 @@ async def admin_revoke_token(
     """
     _require_authenticated_session(current_user)
 
-    # SECURITY: Require un-narrowed admin. Narrowed/public-only admin sessions
-    # must not revoke arbitrary tokens to prevent privilege escalation.
-    revoke_token_teams = current_user.get("token_teams")
-    if not current_user.get("is_admin") or revoke_token_teams is not None:
+    if not current_user.get("is_admin"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
-    # SECURITY: Block narrowed/public-only admin sessions from token oversight
+    # SECURITY: Require un-narrowed admin. Narrowed/public-only admin sessions
+    # must not revoke arbitrary tokens to prevent privilege escalation.
     token_teams = current_user.get("token_teams")
     if token_teams is not None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token oversight requires un-narrowed admin access")

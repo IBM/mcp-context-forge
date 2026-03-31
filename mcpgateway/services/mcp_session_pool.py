@@ -883,7 +883,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         try:
             pool = await self._get_or_create_pool(pool_key)
         except RuntimeError as e:
-            # Convert pool key limit error to user-friendly timeout error
+            # NOTE: Intentionally convert RuntimeError to TimeoutError for user-facing error messages.
+            # This provides clearer guidance (capacity exhaustion vs generic runtime error).
+            # Original error is preserved via 'from e' for debugging/monitoring.
             if "Maximum pool keys" in str(e):
                 logger.error(f"Pool key limit reached, cannot acquire session: {e}")
                 raise asyncio.TimeoutError(f"Session pool capacity exhausted. " f"Enable MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION or increase limits.") from e
@@ -2244,6 +2246,8 @@ def init_mcp_session_pool(
     message_handler_factory: Optional[MessageHandlerFactory] = None,
     enable_notifications: bool = True,
     notification_debounce_seconds: float = 5.0,
+    max_total_keys: int = 0,
+    max_total_sessions: int = 0,
 ) -> MCPSessionPool:
     """Initialize the global MCP session pool.
 
@@ -2299,6 +2303,8 @@ def init_mcp_session_pool(
         health_check_methods=health_check_methods,
         health_check_timeout_seconds=health_check_timeout_seconds,
         message_handler_factory=effective_handler_factory,
+        max_total_keys=max_total_keys,
+        max_total_sessions=max_total_sessions,
     )
     logger.info("MCP session pool initialized")
     return _mcp_session_pool

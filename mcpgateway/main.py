@@ -1549,7 +1549,10 @@ def _create_jwt_identity_extractor() -> callable:
             return None
 
         try:
-            # Decode without signature verification (we only need claims for identity)
+            # SECURITY NOTE: JWT decoded without signature verification for session pool bucketing only.
+            # This is NOT a security boundary - authentication happens separately via get_current_user.
+            # We only extract stable identity (sub/email/user_id) to group sessions by user.
+            # Crafted JWTs could influence pool key selection but cannot bypass authentication.
             # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
             claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
             # Try standard claims in order of preference
