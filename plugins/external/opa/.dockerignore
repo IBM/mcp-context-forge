@@ -183,7 +183,6 @@ podman-compose*.yaml
 # Testing configurations
 .coveragerc
 .pylintrc
-.flake8
 pytest.ini
 tox.ini
 .pytest.ini
