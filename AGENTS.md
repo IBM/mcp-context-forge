@@ -8,6 +8,7 @@ For domain-specific guidance, see subdirectory AGENTS.md files:
 - `charts/AGENTS.md` - Helm chart operations
 - `docs/AGENTS.md` - Documentation authoring
 - `mcp-servers/AGENTS.md` - MCP server implementation
+- `tools_rust/mcp_runtime/DEVELOPING.md` - Rust MCP runtime development workflows, command matrix, and validation
 
 **Note:** The `llms/` directory contains guidance for LLMs *using* ContextForge solution (end-user runtime guidance), not for code agents working on this codebase.
 
@@ -38,7 +39,7 @@ charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
-tools_rust/                 # Rust utilities (for example stdio wrapper tooling)
+tools_rust/                 # Rust utilities and MCP runtime (see tools_rust/mcp_runtime/DEVELOPING.md)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
@@ -66,6 +67,9 @@ make autoflake isort black pre-commit
 
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make flake8 bandit interrogate pylint verify
+
+# Before committing Rust changes (plugins_rust/ or tools_rust/):
+make rust-check                   # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
 ```
 
 ## Authentication & RBAC Overview
@@ -77,7 +81,7 @@ ContextForge implements a **two-layer security model**:
 
 ### Token Scoping Quick Reference
 
-The `teams` claim in JWT tokens determines resource visibility:
+**API / legacy tokens** — JWT `teams` claim is the sole authority (`normalize_token_teams()`):
 
 | JWT `teams` State | `is_admin: true` | `is_admin: false` |
 |-------------------|------------------|-------------------|
@@ -86,11 +90,20 @@ The `teams` claim in JWT tokens determines resource visibility:
 | `teams: []` | PUBLIC-ONLY `[]` | PUBLIC-ONLY `[]` |
 | `teams: ["t1"]` | Team + Public | Team + Public |
 
+**Session tokens** (`token_use: "session"`) — DB is the authority; JWT `teams` only narrows (`resolve_session_teams()`):
+
+| JWT `teams` State | DB admin? | Result | Access Level |
+|-------------------|-----------|--------|--------------|
+| any | yes | `None` | ADMIN BYPASS (DB authority) |
+| Missing/null/`[]` | no | DB teams | Full DB membership |
+| `["t1"]` | no | intersection | Narrowed to overlap |
+| `["revoked"]` | no | `[]` | Public-only (fail-closed) |
+
 **Key behaviors:**
 
-- Missing `teams` key = public-only access (secure default)
-- Admin bypass requires BOTH `teams: null` AND `is_admin: true`
-- `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth
+- **API/legacy tokens**: Missing `teams` key = public-only access (secure default). Admin bypass requires BOTH `teams: null` AND `is_admin: true`. `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth.
+- **Session tokens**: Admin bypass is determined by the DB `is_admin` flag, not the JWT `teams` claim. Non-admin sessions can be narrowed via JWT `teams`. `resolve_session_teams()` in `mcpgateway/auth.py` is the single policy point.
+- **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
 
 ### Security Invariants (Required)
 
@@ -99,7 +112,7 @@ The `teams` claim in JWT tokens determines resource visibility:
 - Keep the two-layer model on every path:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
-- Do not re-implement token team interpretation logic; always use `normalize_token_teams()` in `mcpgateway/auth.py`.
+- Do not re-implement token team interpretation logic; use `normalize_token_teams()` for API/legacy tokens and `resolve_session_teams()` for session tokens (both in `mcpgateway/auth.py`).
 - Do not accept inbound client auth tokens via URL query parameters.
 - Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
 - High-risk transports must be feature-flagged and disabled by default.

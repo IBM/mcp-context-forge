@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """Tests for secrets detection plugin regex patterns."""
 
+import logging
 import os
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.plugins.framework import PluginConfig, ResourceHookType
+from mcpgateway.services.resource_service import ResourceService
 from plugins.secrets_detection.secrets_detection import SecretsDetectionPlugin
 
 # Try to import Rust implementation
@@ -284,6 +286,56 @@ class TestSecretsDetectionBothImplementations:
         assert len(findings) >= 1
         assert any(f.get("type") == "google_api_key" for f in findings)
 
+    def test_detects_github_token_without_label(self, use_rust):
+        """Should detect provider-specific GitHub tokens without relying on labels."""
+        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+
+        config = SecretsDetectionConfig()
+        data = {"message": "Token value ghp_1234567890abcdefghijklmnopqrstuvwxyZ was pasted into the chat"}  # pragma: allowlist secret
+
+        count, _redacted, findings = _scan_container(data, config, use_rust=use_rust)
+
+        assert count >= 1
+        assert any(f.get("type") == "github_token" for f in findings)
+
+    def test_detects_github_fine_grained_pat_without_label(self, use_rust):
+        """Should detect GitHub fine-grained PATs from their intrinsic prefix."""
+        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+
+        config = SecretsDetectionConfig()
+        token = "github_pat_abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ12"  # pragma: allowlist secret
+        data = {"message": f"{token} was pasted into the chat"}
+
+        count, _redacted, findings = _scan_container(data, config, use_rust=use_rust)
+
+        assert count >= 1
+        assert any(f.get("type") == "github_token" for f in findings)
+
+    def test_detects_stripe_secret_key_without_label(self, use_rust):
+        """Should detect Stripe secret keys from their intrinsic prefix."""
+        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+
+        config = SecretsDetectionConfig()
+        stripe_secret = "_".join(["sk", "live", "1234567890abcdefghijklmnop"])  # pragma: allowlist secret
+        data = {"message": f"{stripe_secret} should never be committed"}
+
+        count, _redacted, findings = _scan_container(data, config, use_rust=use_rust)
+
+        assert count >= 1
+        assert any(f.get("type") == "stripe_secret_key" for f in findings)
+
+    def test_does_not_treat_publishable_stripe_key_as_secret(self, use_rust):
+        """Should avoid obvious Stripe false positives like publishable keys."""
+        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+
+        config = SecretsDetectionConfig()
+        publishable_key = "_".join(["pk", "live", "1234567890abcdefghijklmnop"])  # pragma: allowlist secret
+        data = {"message": f"{publishable_key} is a publishable key example"}
+
+        count, _redacted, findings = _scan_container(data, config, use_rust=use_rust)
+
+        assert not any(f.get("type") == "stripe_secret_key" for f in findings)
+
     def test_redaction_works(self, use_rust):
         """Should redact secrets when enabled."""
         from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
@@ -364,3 +416,151 @@ def test_implementation_info():
         print("  cd plugins_rust/secrets_detection && maturin develop --release")
 
     print("=" * 60)
+
+
+def test_default_config_disables_broad_generic_api_key_pattern():
+    """Broad generic API-key assignment detection should stay opt-in."""
+    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig
+
+    config = SecretsDetectionConfig()
+
+    assert config.enabled["generic_api_key_assignment"] is False
+
+
+def test_partial_enabled_config_preserves_safe_defaults():
+    """Partial enabled maps should not silently enable broad heuristics."""
+    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig
+
+    config = SecretsDetectionConfig(enabled={"aws_access_key_id": False})
+
+    assert config.enabled["aws_access_key_id"] is False
+    assert config.enabled["github_token"] is True
+    assert config.enabled["stripe_secret_key"] is True
+    assert config.enabled["generic_api_key_assignment"] is False
+
+
+@pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available")
+def test_rust_scan_emits_python_log_records(caplog):
+    """Rust logging should bridge into Python logging via pyo3_log."""
+    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+
+    caplog.set_level(logging.DEBUG)
+    # Fake AWS key for testing - not a real credential
+    secret = "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"
+
+    count, _redacted, findings = _scan_container(secret, SecretsDetectionConfig(), use_rust=True)
+
+    assert count >= 1
+    assert findings
+    assert any("Rust secrets scan finished" in record.message for record in caplog.records)
+    assert any("Pattern 'aws_access_key_id' matched" in record.message for record in caplog.records)
+    # Verify secret is not exposed in logs (use generic assertion to avoid exposing in failure message)
+    for record in caplog.records:
+        assert "AKIAFAKE12345EXAMPLE" not in record.message, "Secret value found in log record"
+
+
+def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):
+    """Fallback to Python should keep the Rust exception and traceback in logs."""
+    from plugins.secrets_detection import secrets_detection as module
+
+    secret = "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"
+
+    def boom(container, cfg):
+        raise RuntimeError("simulated rust failure")
+
+    monkeypatch.setattr(module, "_RUST_AVAILABLE", True)
+    monkeypatch.setattr(module, "secrets_detection", boom)
+    caplog.set_level(logging.WARNING, logger=module.__name__)
+
+    count, redacted, findings = module._scan_container(secret, module.SecretsDetectionConfig(), use_rust=True)
+
+    assert count >= 1
+    assert redacted == secret
+    assert findings
+    failure_logs = [record for record in caplog.records if "Rust scan failed, falling back to Python" in record.message]
+    assert failure_logs
+    assert failure_logs[0].exc_info is not None
+    assert "simulated rust failure" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "use_rust",
+    [
+        pytest.param(False, id="python"),
+        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
+    ],
+)
+def test_generic_api_key_assignment_detection_is_opt_in(use_rust):
+    """Generic assignment-based API key detection should work when explicitly enabled."""
+    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+
+    config = SecretsDetectionConfig(
+        enabled={
+            **SecretsDetectionConfig().enabled,
+            "generic_api_key_assignment": True,
+        }
+    )
+    text = "X-API-Key: test12345678901234567890"  # gitleaks:allow
+
+    count, _redacted, findings = _scan_container(text, config, use_rust=use_rust)
+
+    assert count >= 1
+    assert any(f.get("type") == "generic_api_key_assignment" for f in findings)
+
+
+@pytest.mark.parametrize(
+    "use_rust",
+    [
+        pytest.param(False, id="python"),
+        pytest.param(True, marks=pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available"), id="rust"),
+    ],
+)
+def test_generic_api_key_assignment_ignores_short_or_prose_values(use_rust):
+    """The broad API-key pattern should avoid matching short values or prose."""
+    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+
+    config = SecretsDetectionConfig(
+        enabled={
+            **SecretsDetectionConfig().enabled,
+            "generic_api_key_assignment": True,
+        }
+    )
+
+    for text in [
+        "api_key=short",
+        "api key rotation is enabled",
+        "The api_key field is documented below",
+    ]:
+        count, _redacted, findings = _scan_container(text, config, use_rust=use_rust)
+        assert not any(f.get("type") == "generic_api_key_assignment" for f in findings), text
+        if count:
+            assert all(f.get("type") != "generic_api_key_assignment" for f in findings)
+
+
+def test_plugin_warns_when_broad_patterns_enabled(caplog):
+    """Enabling broad heuristic API-key patterns should emit an operator warning."""
+    from plugins.secrets_detection.secrets_detection import SecretsDetectionPlugin
+
+    caplog.set_level(logging.WARNING, logger="plugins.secrets_detection.secrets_detection")
+    SecretsDetectionPlugin(
+        PluginConfig(
+            name="secrets_detection",
+            kind="plugins.secrets_detection.secrets_detection.SecretsDetectionPlugin",
+            config={
+                "enabled": {
+                    "aws_access_key_id": True,
+                    "aws_secret_access_key": True,
+                    "google_api_key": True,
+                    "generic_api_key_assignment": True,
+                    "slack_token": True,
+                    "private_key_block": True,
+                    "jwt_like": False,
+                    "hex_secret_32": False,
+                    "base64_24": False,
+                }
+            },
+        )
+    )
+
+    assert "Broad secrets heuristics enabled" in caplog.text
+    assert "generic_api_key_assignment" in caplog.text

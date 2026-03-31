@@ -10,7 +10,7 @@ These variables have insecure defaults and **must be changed** before production
 
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
-| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | `my-test-key` | Generate with `openssl rand -hex 32` |
+| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | `my-test-key-but-now-longer-than-32-bytes` | Generate with `openssl rand -hex 32` |
 | `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `my-test-salt` | Generate with `openssl rand -hex 32` |
 | `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
 | `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
@@ -57,8 +57,6 @@ ContextForge supports multiple database backends with full feature parity across
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
 | PostgreSQL  | ✅ Full       | `postgresql+psycopg://postgres:changeme@localhost:5432/mcp` | Recommended for production     |
-| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
-| MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
 
 ### PostgreSQL System Dependencies
 
@@ -84,92 +82,6 @@ ContextForge supports multiple database backends with full feature parity across
     ```bash
     pip install .[postgres]
     ```
-
-### MariaDB/MySQL Setup Details
-
-!!! success "MariaDB & MySQL Full Support"
-    MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
-
-    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
-    - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
-    - Complete feature parity with SQLite and PostgreSQL
-    - Supports all ContextForge features including federation, caching, and A2A agents
-
-#### Connection String Format
-
-```bash
-DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
-```
-
-#### Local MariaDB/MySQL Installation
-
-=== "Ubuntu/Debian (MariaDB)"
-    ```bash
-    # Install MariaDB server
-    sudo apt update && sudo apt install mariadb-server
-
-    # Secure installation (optional)
-    sudo mariadb-secure-installation
-
-    # Create database and user
-    sudo mariadb -e "CREATE DATABASE mcp;"
-    sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    sudo mariadb -e "FLUSH PRIVILEGES;"
-    ```
-
-=== "Ubuntu/Debian (MySQL)"
-    ```bash
-    # Install MySQL server
-    sudo apt update && sudo apt install mysql-server
-
-    # Secure installation (optional)
-    sudo mysql_secure_installation
-
-    # Create database and user
-    sudo mysql -e "CREATE DATABASE mcp;"
-    sudo mysql -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    sudo mysql -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
-    ```
-
-=== "macOS (Homebrew - MariaDB)"
-    ```bash
-    # Install MariaDB
-    brew install mariadb
-    brew services start mariadb
-
-    # Create database and user
-    mariadb -u root -e "CREATE DATABASE mcp;"
-    mariadb -u root -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    mariadb -u root -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    mariadb -u root -e "FLUSH PRIVILEGES;"
-    ```
-
-#### Docker MariaDB/MySQL Setup
-
-```bash
-# Start MariaDB container (recommended)
-docker run -d --name mariadb-mcp \
-  -e MYSQL_ROOT_PASSWORD=mysecretpassword \
-  -e MYSQL_DATABASE=mcp \
-  -e MYSQL_USER=mysql \
-  -e MYSQL_PASSWORD=changeme \
-  -p 3306:3306 \
-  registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
-
-# Or start MySQL container
-docker run -d --name mysql-mcp \
-  -e MYSQL_ROOT_PASSWORD=mysecretpassword \
-  -e MYSQL_DATABASE=mcp \
-  -e MYSQL_USER=mysql \
-  -e MYSQL_PASSWORD=changeme \
-  -p 3306:3306 \
-  mysql:8
-
-# Connection string for ContextForge (same for both)
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
-```
 
 ---
 
@@ -204,7 +116,7 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 | `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
 | `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
 | `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
-| `JWT_SECRET_KEY`            | Secret key used to **sign JWT tokens** for API access                        | `my-test-key`       | string      |
+| `JWT_SECRET_KEY`            | Secret key used to **sign JWT tokens** for API access                        | `my-test-key-but-now-longer-than-32-bytes`       | string      |
 | `JWT_PUBLIC_KEY_PATH`       | If an asymmetric algorithm is used, a public key is required                 | (empty)             | path to pem |
 | `JWT_PRIVATE_KEY_PATH`      | If an asymmetric algorithm is used, a private key is required                | (empty)             | path to pem |
 | `JWT_AUDIENCE`              | JWT audience claim for token validation                                      | `mcpgateway-api`    | string      |
@@ -242,7 +154,7 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 !!! tip "JWT Token Generation"
     `JWT_SECRET_KEY` is used to sign JSON Web Tokens. Generate tokens via:
     ```bash
-    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
+    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
     ```
 
 ### UI Features
@@ -586,6 +498,8 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_OKTA_CLIENT_ID`          | Okta client ID                                   | (none)                | string  |
 | `SSO_OKTA_CLIENT_SECRET`      | Okta client secret                               | (none)                | string  |
 | `SSO_OKTA_ISSUER`             | Okta issuer URL                                  | (none)                | string  |
+| `SSO_OKTA_SCOPE`              | Okta OIDC scopes (space-separated)               | `openid profile email`| string  |
+| `OKTA_GROUP_MAPPING`          | JSON mapping of Okta group names to team UUIDs   | (none)                | string  |
 
 ### OAuth 2.0 Dynamic Client Registration (DCR) & PKCE
 
@@ -611,7 +525,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `AUTO_CREATE_PERSONAL_TEAMS`             | Enable automatic personal team creation for new users | `true`   | bool    |
 | `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix (empty = derive from display name) | `""` | string  |
 | `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
-| `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |
+| `MAX_MEMBERS_PER_TEAM`                   | Default maximum members per team, resolved at check time. Teams without an explicit per-team override use this value. Platform admins are exempt from this limit. | `100`      | int > 0 |
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
 | `ALLOW_TEAM_CREATION`                    | Allow users to create organizational teams (admins always can) | `true`  | bool    |
@@ -756,6 +670,31 @@ mcpContextForge:
     The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
     (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
     Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
+
+### Content Security - Size Limits
+
+Content size limits prevent DoS attacks and resource exhaustion from oversized content submissions. Validation occurs at the service layer before database writes and returns **HTTP 413 Payload Too Large** with structured error details.
+
+| Setting                      | Description                                      | Default   | Range           |
+| ---------------------------- | ------------------------------------------------ | --------- | --------------- |
+| `CONTENT_MAX_RESOURCE_SIZE`  | Maximum resource content size (bytes)            | `102400` (100KB) | 1KB – 10MB |
+| `CONTENT_MAX_PROMPT_SIZE`    | Maximum prompt template size (bytes)             | `10240` (10KB)   | 512B – 1MB |
+
+!!! note "Scope"
+    Size limits apply only to new create and update operations. Existing content is not retroactively validated.
+
+!!! example "Error Response"
+    Oversized content returns a structured 413 response:
+    ```json
+    {
+      "detail": {
+        "error": "Resource content size limit exceeded",
+        "message": "Resource content size (195.3 KB) exceeds maximum allowed size (100.0 KB)",
+        "actual_size": 200000,
+        "max_size": 102400
+      }
+    }
+    ```
 
 ### Ed25519 Certificate Signing
 
@@ -937,6 +876,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | Setting | Description | Default | Options |
 | :--- | :--- | :--- | :--- |
 | `JSON_SCHEMA_VALIDATION_STRICT` | Enforce strict JSON Schema validation for tools and prompts | `true` | bool |
+| `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED` | Enable forbidden pattern checks on tool descriptions | `true` | bool |
+| `TOOL_DESCRIPTION_FORBIDDEN_PATTERNS` | Substrings blocked in tool descriptions | `["&&", ";", "||", "$(", "> ", "< "]` | JSON array |
 
 **Strict Mode Scenarios:**
 
@@ -1070,6 +1011,25 @@ settings split in code.
 - See [Plugin Configuration Reference](configuration-plugins.md) for all
   `PLUGINS_*` settings and aliases.
 
+#### Gateway-Level Plugin Security Overrides
+
+These settings control how much authority plugins have over gateway security
+decisions. They are part of the core gateway `Settings` (not the plugin
+framework's `PluginsSettings`) and require a **server restart** to take effect.
+
+Both default to `false` (secure by default). Only enable them when all loaded
+plugins are fully trusted.
+
+| Setting                              | Description                                                                                                           | Default | Options |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ------- | ------- |
+| `PLUGINS_CAN_OVERRIDE_RBAC`         | Allow `HTTP_AUTH_CHECK_PERMISSION` plugin hooks to short-circuit built-in RBAC grants. When disabled, plugin grant decisions are audit-only. | `false` | bool    |
+| `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS`  | Allow pre-request plugin hooks to override auth-sensitive headers (`Authorization`, `Cookie`, `X-Api-Key`, `Proxy-Authorization`) that the client already sent. Required for plugin-driven token exchange workflows (e.g. WXO auth). | `false` | bool    |
+
+!!! danger "Security Impact"
+    Enabling `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS` allows a plugin to rewrite the
+    `Authorization` header, effectively impersonating any user. Only enable when
+    all loaded plugins are fully trusted and the deployment specifically requires
+    plugin-driven token exchange.
 
 #### Plugin Framework (Standalone) Settings
 
@@ -1148,7 +1108,7 @@ Create a `.env` file for Docker deployments:
 # .env file for Docker
 HOST=0.0.0.0
 PORT=4444
-DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp
+DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
 REDIS_URL=redis://redis:6379/0
 JWT_SECRET_KEY=my-secret-key
 BASIC_AUTH_USER=admin
@@ -1162,7 +1122,7 @@ MCPGATEWAY_UI_HIDE_SECTIONS=
 MCPGATEWAY_UI_HIDE_HEADER_ITEMS=
 ```
 
-### Docker Compose with MySQL
+### Docker Compose with PostgreSQL
 
 ```yaml
 version: "3.9"
@@ -1173,26 +1133,25 @@ services:
     ports:
       - "4444:4444"
     environment:
-      - DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp
+      - DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=my-secret-key
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_started
 
-  mysql:
-    image: mysql:8
+  postgres:
+    image: postgres:17
     environment:
-      - MYSQL_ROOT_PASSWORD=mysecretpassword
-      - MYSQL_DATABASE=mcp
-      - MYSQL_USER=mysql
-      - MYSQL_PASSWORD=changeme
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=changeme
+      - POSTGRES_DB=mcp
     volumes:
-      - mysql_data:/var/lib/mysql
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -1203,7 +1162,7 @@ services:
       - redis_data:/data
 
 volumes:
-  mysql_data:
+  pg_data:
   redis_data:
 ```
 
@@ -1219,7 +1178,7 @@ kind: ConfigMap
 metadata:
   name: mcpgateway-config
 data:
-  DATABASE_URL: "mysql+pymysql://mysql:changeme@mysql-service:3306/mcp"
+  DATABASE_URL: "postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp"
   REDIS_URL: "redis://redis-service:6379/0"
   JWT_SECRET_KEY: "your-secret-key"
   BASIC_AUTH_USER: "admin"
@@ -1227,55 +1186,6 @@ data:
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
   LOG_LEVEL: "INFO"
-```
-
-### MySQL Service Example
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mysql
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mysql
-  template:
-    metadata:
-      labels:
-        app: mysql
-    spec:
-      containers:
-        - name: mysql
-          image: mysql:8
-          env:
-            - name: MYSQL_ROOT_PASSWORD
-              value: "mysecretpassword"
-            - name: MYSQL_DATABASE
-              value: "mcp"
-            - name: MYSQL_USER
-              value: "mysql"
-            - name: MYSQL_PASSWORD
-              value: "changeme"
-          volumeMounts:
-            - name: mysql-storage
-              mountPath: /var/lib/mysql
-      volumes:
-        - name: mysql-storage
-          persistentVolumeClaim:
-            claimName: mysql-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mysql-service
-spec:
-  selector:
-    app: mysql
-  ports:
-    - port: 3306
-      targetPort: 3306
 ```
 
 ---

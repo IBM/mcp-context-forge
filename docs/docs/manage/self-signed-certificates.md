@@ -94,8 +94,10 @@ When the gateway invokes a tool from an MCP server with a custom CA certificate:
 1. **SSL Context Creation**: A custom SSL context is created using Python's `ssl.create_default_context()`
 2. **Certificate Loading**: The CA certificate is loaded using `ctx.load_verify_locations(cadata=ca_certificate)`
 3. **Signature Validation** (if enabled): The certificate signature is validated using Ed25519 to ensure it hasn't been tampered with
-4. **HTTPS Client Configuration**: The SSL context is passed to the HTTPX client as the `verify` parameter
+4. **mTLS client cert/key support**: If `client_cert` and `client_key` are configured for the gateway, the SSL context is loaded with `ctx.load_cert_chain(client_cert, client_key)` for mutual TLS
+5. **HTTPS Client Configuration**: The SSL context is passed to the HTTPX client as the `verify` parameter
 5. **Secure Connection**: All HTTPS requests to the MCP server use the custom CA certificate for validation
+6. **HTTP Bypass**: For plain `http://` gateway URLs, SSL context creation is skipped and default HTTPX verification is used for reduced overhead
 
 ### Usage During Gateway Registration
 

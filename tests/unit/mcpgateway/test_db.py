@@ -256,21 +256,13 @@ def test_tool_metrics_summary_detached():
     assert summary["failure_rate"] == 0.0
 
 
-def test_build_engine_mysql_branch(monkeypatch):
-    monkeypatch.setattr(db, "backend", "mysql")
-    monkeypatch.setattr(db.settings, "database_url", "mysql://user:pass@localhost/db")
-    monkeypatch.setattr(db.settings, "db_pool_size", 5)
-    monkeypatch.setattr(db.settings, "db_max_overflow", 10)
-    monkeypatch.setattr(db.settings, "db_pool_timeout", 30)
-    monkeypatch.setattr(db.settings, "db_pool_recycle", 300)
-    monkeypatch.setattr(db, "connect_args", {"arg": "val"})
-
-    with patch("mcpgateway.db.create_engine") as mock_create:
+@pytest.mark.parametrize("unsupported_backend", ["mysql", "mariadb", "mongodb", "oracle"])
+def test_build_engine_rejects_unsupported_backend(monkeypatch, unsupported_backend):
+    """build_engine() raises ValueError for any backend other than postgresql/sqlite."""
+    monkeypatch.setattr(db, "backend", unsupported_backend)
+    monkeypatch.setattr(db.settings, "database_url", f"{unsupported_backend}://user:pass@host/db")
+    with pytest.raises(ValueError, match="Unsupported database backend"):
         db.build_engine()
-        kwargs = mock_create.call_args.kwargs
-        assert kwargs["pool_pre_ping"] is True
-        assert kwargs["pool_size"] == 5
-        assert kwargs["max_overflow"] == 10
 
 
 def test_build_engine_null_pool_branch(monkeypatch):
@@ -332,31 +324,40 @@ def test_tool_metrics_summary_sql_path(monkeypatch):
     tool = db.Tool()
     tool.id = "test-tool-id"
 
-    # Mock the session and query result for full aggregation
-    # (count, sum_success, min_rt, max_rt, avg_rt, max_timestamp)
+    # Mock the session and query results for TWO queries (hourly + uncovered raw)
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [5, 3, 1.0, 5.0, 2.5, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [3, 2, 2.0, 5.0, 8.5, mock_timestamp][i]
+
+    # Raw query result (metrics after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [2, 1, 1.0, 3.0, 4.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
-    # Patch object_session where it's imported (in sqlalchemy.orm)
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = tool.metrics_summary
 
+    # Expected: hourly(3,2) + raw(2,1) = total(5,3)
     assert summary["total_executions"] == 5
     assert summary["successful_executions"] == 3
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.4
-    assert summary["min_response_time"] == 1.0
-    assert summary["max_response_time"] == 5.0
-    assert summary["avg_response_time"] == 2.5
+    assert summary["min_response_time"] == 1.0  # min(2.0, 1.0)
+    assert summary["max_response_time"] == 5.0  # max(5.0, 3.0)
+    assert summary["avg_response_time"] == 2.5  # (8.5 + 4.0) / 5
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -448,27 +449,38 @@ def test_resource_metrics_summary_sql_path(monkeypatch):
     resource.id = "test-resource-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [6, 4, 0.5, 3.0, 1.5, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [4, 3, 1.0, 3.0, 6.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [2, 1, 0.5, 2.0, 3.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = resource.metrics_summary
 
+    # Expected: hourly(4,3) + raw(2,1) = total(6,4)
     assert summary["total_executions"] == 6
     assert summary["successful_executions"] == 4
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == pytest.approx(0.333, rel=0.01)
-    assert summary["min_response_time"] == 0.5
-    assert summary["max_response_time"] == 3.0
-    assert summary["avg_response_time"] == 1.5
+    assert summary["min_response_time"] == 0.5  # min(1.0, 0.5)
+    assert summary["max_response_time"] == 3.0  # max(3.0, 2.0)
+    assert summary["avg_response_time"] == 1.5  # (6.0 + 3.0) / 6
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -560,27 +572,38 @@ def test_prompt_metrics_summary_sql_path(monkeypatch):
     prompt.id = "test-prompt-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [10, 8, 0.2, 4.0, 2.0, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [7, 6, 0.5, 4.0, 14.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [3, 2, 0.2, 3.0, 6.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = prompt.metrics_summary
 
+    # Expected: hourly(7,6) + raw(3,2) = total(10,8)
     assert summary["total_executions"] == 10
     assert summary["successful_executions"] == 8
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.2
-    assert summary["min_response_time"] == 0.2
-    assert summary["max_response_time"] == 4.0
-    assert summary["avg_response_time"] == 2.0
+    assert summary["min_response_time"] == 0.2  # min(0.5, 0.2)
+    assert summary["max_response_time"] == 4.0  # max(4.0, 3.0)
+    assert summary["avg_response_time"] == 2.0  # (14.0 + 6.0) / 10
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -672,27 +695,38 @@ def test_server_metrics_summary_sql_path(monkeypatch):
     server.id = "test-server-id"
 
     mock_timestamp = datetime.now(timezone.utc)
-    mock_result = MagicMock()
-    mock_result.__getitem__ = lambda self, i: [20, 18, 0.1, 6.0, 3.0, mock_timestamp][i]
 
-    mock_query = MagicMock()
-    mock_query.filter.return_value = mock_query
-    mock_query.one.return_value = mock_result
+    # Hourly query result: (sum_total, sum_success, min_rt, max_rt, weighted_sum_rt, max_hour_start)
+    mock_hourly_result = MagicMock()
+    mock_hourly_result.__getitem__ = lambda self, i: [15, 14, 0.5, 6.0, 45.0, mock_timestamp][i]
+
+    # Raw query result (after hourly coverage): (count, sum_success, min_rt, max_rt, sum_rt, max_timestamp)
+    mock_raw_result = MagicMock()
+    mock_raw_result.__getitem__ = lambda self, i: [5, 4, 0.1, 4.0, 15.0, mock_timestamp][i]
+
+    mock_hourly_query = MagicMock()
+    mock_hourly_query.filter.return_value = mock_hourly_query
+    mock_hourly_query.one.return_value = mock_hourly_result
+
+    mock_raw_query = MagicMock()
+    mock_raw_query.filter.return_value = mock_raw_query
+    mock_raw_query.one.return_value = mock_raw_result
 
     mock_session = MagicMock()
-    mock_session.query.return_value = mock_query
+    mock_session.query.side_effect = [mock_hourly_query, mock_raw_query]
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
     summary = server.metrics_summary
 
+    # Expected: hourly(15,14) + raw(5,4) = total(20,18)
     assert summary["total_executions"] == 20
     assert summary["successful_executions"] == 18
     assert summary["failed_executions"] == 2
     assert summary["failure_rate"] == 0.1
-    assert summary["min_response_time"] == 0.1
-    assert summary["max_response_time"] == 6.0
-    assert summary["avg_response_time"] == 3.0
+    assert summary["min_response_time"] == 0.1  # min(0.5, 0.1)
+    assert summary["max_response_time"] == 6.0  # max(6.0, 4.0)
+    assert summary["avg_response_time"] == 3.0  # (45.0 + 15.0) / 20
     assert summary["last_execution_time"] == mock_timestamp
 
 
@@ -2264,44 +2298,6 @@ def test_validate_prompt_schema_logs_unsupported_draft(caplog):
     assert any("Unsupported JSON Schema draft" in record.message for record in caplog.records)
 
 
-# --- MariaDB VARCHAR patching helper ---
-def test_patch_string_columns_for_mariadb_sets_varchar_length():
-    # Standard
-    from types import SimpleNamespace
-
-    # Third-Party
-    from sqlalchemy import Column, MetaData, String, Table
-    from sqlalchemy.sql.sqltypes import VARCHAR
-
-    md = MetaData()
-    tbl = Table("t", md, Column("c1", String()), Column("c2", String(10)))
-    base = SimpleNamespace(metadata=md)
-    engine_ = SimpleNamespace(dialect=SimpleNamespace(name="mariadb"))
-
-    db.patch_string_columns_for_mariadb(base, engine_)
-
-    assert isinstance(tbl.c.c1.type, VARCHAR)
-    assert tbl.c.c1.type.length == 255
-    assert tbl.c.c2.type.length == 10
-
-
-def test_patch_string_columns_for_mariadb_non_mariadb_noop():
-    # Standard
-    from types import SimpleNamespace
-
-    # Third-Party
-    from sqlalchemy import Column, MetaData, String, Table
-
-    md = MetaData()
-    tbl = Table("t", md, Column("c1", String()))
-    base = SimpleNamespace(metadata=md)
-    engine_ = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
-
-    db.patch_string_columns_for_mariadb(base, engine_)
-    assert isinstance(tbl.c.c1.type, String)
-    assert tbl.c.c1.type.length is None
-
-
 # --- EmailApiToken permissions helper ---
 def test_email_api_token_get_effective_permissions_team_token():
     team = db.EmailTeam(name="Team", slug="team", created_by="user@example.com", is_personal=False)
@@ -2824,6 +2820,18 @@ def test_llm_provider_type_helpers():
 
     defaults = db.LLMProviderType.get_provider_defaults()
     assert "api_base" in defaults[db.LLMProviderType.OPENAI]
+
+
+def test_ollama_provider_defaults_use_native_api():
+    """Ollama defaults must point to native API, not the OpenAI-compatible /v1 shim."""
+    defaults = db.LLMProviderType.get_provider_defaults()
+    ollama = defaults[db.LLMProviderType.OLLAMA]
+
+    assert ollama["api_base"] == "http://localhost:11434", "api_base must not include /v1"
+    assert ollama["models_endpoint"] == "/api/tags", "models_endpoint must use native Ollama endpoint"
+    assert ollama["requires_api_key"] is False
+    assert ollama["supports_model_list"] is True
+    assert "OpenAI" not in ollama["description"]
 
 
 def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):

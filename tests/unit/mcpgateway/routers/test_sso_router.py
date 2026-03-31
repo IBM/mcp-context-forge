@@ -560,6 +560,7 @@ async def test_get_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
         trusted_domains=["example.com"],
         auto_create_users=True,
         team_mapping={},
+        provider_metadata={},
         is_enabled=True,
         created_at="created",
         updated_at="updated",
@@ -577,6 +578,8 @@ async def test_get_sso_provider_success(monkeypatch: pytest.MonkeyPatch):
     result = await sso_router.get_sso_provider("provider", db=MagicMock(), user={"email": "admin@example.com"})
 
     assert result["authorization_url"] == "https://auth"
+    assert "provider_metadata" in result
+    assert result["provider_metadata"] == {}
 
 
 @pytest.mark.asyncio

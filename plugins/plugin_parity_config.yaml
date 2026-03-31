@@ -1,0 +1,55 @@
+plugins:
+  - name: "LicenseHeaderInjector"
+    kind: "plugins.license_header_injector.license_header_injector.LicenseHeaderInjectorPlugin"
+    description: "Injects an SPDX header into the parity-test resource output."
+    version: "0.1"
+    author: "ContextForge Team"
+    hooks: ["resource_post_fetch"]
+    tags: ["plugin", "resource", "parity", "test"]
+    mode: "enforce"
+    priority: 100
+    conditions:
+      - resources: ["time://formats"]
+    config:
+      header_template: "SPDX-License-Identifier: Apache-2.0"
+      languages: ["python"]
+      max_size_kb: 512
+
+  - name: "ToolOutputSentinelPlugin"
+    kind: "plugins.test_tool_output_sentinel.ToolOutputSentinelPlugin"
+    description: "Appends a deterministic sentinel to tool results for MCP parity tests."
+    version: "0.1"
+    author: "ContextForge Team"
+    hooks: ["tool_post_invoke"]
+    tags: ["plugin", "tool", "parity", "test"]
+    mode: "enforce"
+    priority: 110
+    conditions:
+      - tools: ["fast-time-get-system-time"]
+    config:
+      sentinel_text: "[TOOL-POST-INVOKE-SENTINEL]"
+      separator: "\n"
+      append_to_all_text_blocks: false
+
+  - name: "PromptOutputSentinelPlugin"
+    kind: "plugins.test_prompt_output_sentinel.PromptOutputSentinelPlugin"
+    description: "Appends a deterministic sentinel to prompt results for MCP parity tests."
+    version: "0.1"
+    author: "ContextForge Team"
+    hooks: ["prompt_post_fetch"]
+    tags: ["plugin", "prompt", "parity", "test"]
+    mode: "enforce"
+    priority: 120
+    conditions:
+      - prompts: ["fast-time-convert-time-detailed"]
+    config:
+      sentinel_text: "[PROMPT-POST-FETCH-SENTINEL]"
+      separator: "\n"
+      append_to_all_messages: false
+
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

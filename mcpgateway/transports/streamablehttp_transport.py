@@ -38,6 +38,7 @@ import contextvars
 from dataclasses import dataclass
 import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Tuple, Union
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 # Third-Party
@@ -59,12 +60,15 @@ from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404
 from starlette.types import Receive, Scope, Send
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics import mcp_auth_cache_events_counter
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
@@ -72,15 +76,41 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Precompiled regex for server ID extraction from path
-_SERVER_ID_RE: Pattern[str] = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp")
+
+def _record_mcp_auth_cache_event(outcome: str) -> None:
+    """Best-effort Prometheus counter update for MCP auth cache flow.
+
+    Args:
+        outcome: Cache-flow outcome label to emit.
+    """
+    try:
+        mcp_auth_cache_events_counter.labels(outcome=outcome).inc()
+    except Exception:
+        pass  # nosec B110 - Metrics must not break auth flow
+
+
+# Precompiled regex for server ID extraction from path.
+# SECURITY: Uses [^/]+ (any non-slash characters) instead of a restrictive hex-only
+# class to ensure ALL server-scoped paths are captured.  A narrow regex caused non-hex
+# IDs (e.g. "xyz") to silently fall through to unscoped global behaviour (#3891).
+_SERVER_ID_RE: Pattern[str] = re.compile(r"^/servers/(?P<server_id>[^/]+)/mcp")
+
+# Pattern that detects a server-scoped MCP path even when _SERVER_ID_RE doesn't
+# match (e.g. empty segment: /servers//mcp).  Used as a defense-in-depth guard.
+_SERVER_SCOPED_PATH_RE: Pattern[str] = re.compile(r"^/servers/.*/mcp(?:/)?$")
+
+# Sentinel returned by _validate_server_id to signal that an error response
+# has already been sent and the caller should return immediately.
+_REJECT = object()
 
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
@@ -98,6 +128,9 @@ request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.Contex
 user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
 _oauth_checked_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_oauth_checked", default=False)
 _shared_session_registry: Optional[Any] = None
+_rust_event_store_client: Optional[httpx.AsyncClient] = None
+_rust_event_store_client_lock = asyncio.Lock()
+_RUST_EVENT_STORE_DEFAULT_KEY_PREFIX = "mcpgw:eventstore"
 
 # ------------------------------ Event store ------------------------------
 
@@ -396,6 +429,128 @@ class InMemoryEventStore(EventStore):
         return last_event.stream_id
 
 
+class RustEventStore(EventStore):
+    """Rust-backed event store that delegates resumable stream state to the sidecar."""
+
+    def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600, key_prefix: str = _RUST_EVENT_STORE_DEFAULT_KEY_PREFIX):
+        """Initialize the Rust-backed event store wrapper.
+
+        Args:
+            max_events_per_stream: Maximum number of events retained per stream.
+            ttl: Event retention time in seconds.
+            key_prefix: Redis key prefix shared with the Rust sidecar.
+        """
+        self.max_events_per_stream = max_events_per_stream
+        self.ttl = ttl
+        self.key_prefix = key_prefix.rstrip(":")
+
+    async def store_event(self, stream_id: StreamId, message: JSONRPCMessage | None) -> EventId:
+        """Store an event in the Rust-backed resumable event store.
+
+        Args:
+            stream_id: Stream that owns the event.
+            message: JSON-RPC payload to persist for replay.
+
+        Returns:
+            The generated event identifier returned by the Rust sidecar.
+
+        Raises:
+            RuntimeError: If the Rust sidecar event store is unavailable or returns invalid data.
+        """
+        client = await _get_rust_event_store_client()
+        message_dict = None if message is None else (message.model_dump() if hasattr(message, "model_dump") else dict(message))
+        response = await client.post(
+            _build_rust_runtime_internal_url("/_internal/event-store/store"),
+            json={
+                "streamId": stream_id,
+                "message": message_dict,
+                "keyPrefix": self.key_prefix,
+                "maxEventsPerStream": self.max_events_per_stream,
+                "ttlSeconds": self.ttl,
+            },
+            timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
+            follow_redirects=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        event_id = payload.get("eventId")
+        if not isinstance(event_id, str) or not event_id:
+            raise RuntimeError("Rust event store returned an invalid eventId")
+        return event_id
+
+    async def replay_events_after(self, last_event_id: EventId, send_callback: EventCallback) -> Union[StreamId, None]:
+        """Replay events newer than ``last_event_id`` through the provided callback.
+
+        Args:
+            last_event_id: Last event acknowledged by the reconnecting client.
+            send_callback: Callback invoked for each replayed event payload.
+
+        Returns:
+            The associated stream identifier when replay succeeds, else ``None``.
+        """
+        client = await _get_rust_event_store_client()
+        response = await client.post(
+            _build_rust_runtime_internal_url("/_internal/event-store/replay"),
+            json={
+                "lastEventId": last_event_id,
+                "keyPrefix": self.key_prefix,
+            },
+            timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
+            follow_redirects=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        stream_id = payload.get("streamId")
+        if not isinstance(stream_id, str) or not stream_id:
+            return None
+        for event in payload.get("events", []):
+            if not isinstance(event, dict):
+                continue
+            await send_callback(event.get("message"))
+        return stream_id
+
+
+async def _get_rust_event_store_client() -> httpx.AsyncClient:
+    """Return the HTTP client used for Python -> Rust event-store calls.
+
+    Returns:
+        An async HTTP client configured for Rust event-store access.
+    """
+    global _rust_event_store_client  # pylint: disable=global-statement
+
+    uds_path = settings.experimental_rust_mcp_runtime_uds
+    if not uds_path:
+        return await get_http_client()
+
+    if _rust_event_store_client is not None:
+        return _rust_event_store_client
+
+    async with _rust_event_store_client_lock:
+        if _rust_event_store_client is None:
+            _rust_event_store_client = httpx.AsyncClient(
+                transport=httpx.AsyncHTTPTransport(uds=uds_path),
+                limits=get_http_limits(),
+                timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
+                follow_redirects=False,
+            )
+        return _rust_event_store_client
+
+
+def _build_rust_runtime_internal_url(path: str) -> str:
+    """Build a Rust sidecar internal URL for UDS or loopback HTTP transport.
+
+    Args:
+        path: Internal Rust runtime path to append to the configured base URL.
+
+    Returns:
+        Absolute URL targeting the Rust sidecar over HTTP or UDS-backed transport.
+    """
+    base = urlsplit(settings.experimental_rust_mcp_runtime_url)
+    base_path = base.path.rstrip("/")
+    target_path = f"{base_path}{path}" if base_path else path
+    return urlunsplit((base.scheme, base.netloc, target_path, "", ""))
+
+
 # ------------------------------ Streamable HTTP Transport ------------------------------
 
 
@@ -655,6 +810,29 @@ def _check_scoped_permission(user_context: dict[str, Any], permission: str) -> b
     return allowed
 
 
+def _check_any_team_for_server_scoped_rbac(user_context: dict[str, Any] | None, server_id: str | None) -> bool:
+    """Return whether Streamable HTTP RBAC should check across team-scoped roles.
+
+    Server-scoped MCP routes (``/servers/<id>/mcp``) should authorize team-bound
+    callers against the specific virtual server context. Session tokens already do
+    this via ``check_any_team=True`` because they have no single explicit team_id.
+    Team-scoped API tokens need the same treatment on server-scoped routes; otherwise
+    they are evaluated only in global scope and incorrectly denied.
+
+    Args:
+        user_context: Current authenticated MCP user context, if any.
+        server_id: Effective virtual server identifier for the MCP request.
+
+    Returns:
+        ``True`` when RBAC should search across the caller's token teams.
+    """
+    if not user_context:
+        return False
+    if user_context.get("token_use") == "session":
+        return True
+    return bool(server_id) and bool(user_context.get("teams"))
+
+
 def set_shared_session_registry(session_registry: Any) -> None:
     """Set the process-wide session registry used by Streamable HTTP helpers.
 
@@ -723,6 +901,9 @@ async def _validate_streamable_session_access(
     if not _should_enforce_streamable_rbac(user_context):
         return True, 200, ""
 
+    if isinstance(user_context, dict) and user_context.get("_rust_session_validated") is True:
+        return True, 200, ""
+
     # Initialize establishes a new session and is authorized separately.
     if (rpc_method or "").strip() == "initialize":
         return True, 200, ""
@@ -774,12 +955,21 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         # Prepare headers with gateway auth
         headers = build_gateway_auth_headers(gateway)
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gw_passthrough,
+            )
 
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -817,12 +1007,21 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         # Prepare headers with gateway auth
         headers = build_gateway_auth_headers(gateway)
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gw_passthrough,
+            )
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
@@ -874,12 +1073,21 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         if gw_id:
             headers[GATEWAY_ID_HEADER] = gw_id
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gw_passthrough,
+            )
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
@@ -996,11 +1204,10 @@ async def call_tool(name: str, arguments: dict) -> Union[
         # Layer 2: RBAC check
         # Session tokens have no explicit team_id; check across all team-scoped roles.
         # Mirrors the @require_permission decorator's check_any_team fallback (rbac.py:562-576).
-        _is_session_token = user_context.get("token_use") == "session"
         has_execute_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="tools.execute",
-            check_any_team=_is_session_token,
+            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
         if not has_execute_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
@@ -1350,7 +1557,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
             elif isinstance(raw_payload, dict):
                 # Normalize raw JWT payload to canonical user context shape
                 # (matches streamable_http_auth normalization at lines 2155-2259)
-                user_ctx = _normalize_jwt_payload(raw_payload)
+                user_ctx = await _normalize_jwt_payload(raw_payload)
             else:
                 user_ctx = {}
         except Exception as e:
@@ -1367,7 +1574,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         return s_id, request_headers_var.get(), user_context_var.get()
 
 
-def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
     Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
@@ -1390,16 +1597,11 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     token_use = payload.get("token_use")
     if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-        # Session token: resolve teams from DB/cache
-        if is_admin:
-            final_teams = None  # Admin bypass
-        elif email:
-            # First-Party
-            from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+        # Session token: resolve teams from DB/cache via single policy point
+        # First-Party
+        from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
 
-            final_teams = _resolve_teams_from_db_sync(email, is_admin=False)
-        else:
-            final_teams = []  # No email — public-only
+        final_teams = await resolve_session_teams(payload, email, {"is_admin": is_admin})
     else:
         # API token or legacy: use embedded teams from JWT
         # First-Party
@@ -2060,11 +2262,12 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         if not _check_scoped_permission(user_context, "admin.system_config"):
             raise PermissionError(_ACCESS_DENIED_MSG)
         # Layer 2: RBAC check
-        has_admin_permission = await _check_streamable_permission(
+        has_permission = await _check_streamable_permission(
             user_context=user_context,
             permission="admin.system_config",
+            check_any_team=_check_any_team_for_server_scoped_rbac(user_context, server_id),
         )
-        if not has_admin_permission:
+        if not has_permission:
             raise PermissionError(_ACCESS_DENIED_MSG)
 
     try:
@@ -2227,8 +2430,14 @@ class SessionManagerWrapper:
         """
 
         if settings.use_stateful_sessions:
+            if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled and settings.experimental_rust_mcp_event_store_enabled:
+                event_store = RustEventStore(
+                    max_events_per_stream=settings.streamable_http_max_events_per_stream,
+                    ttl=settings.streamable_http_event_ttl,
+                )
+                logger.debug("Using RustEventStore for stateful sessions")
             # Use Redis event store for single-worker stateful deployments
-            if settings.cache_type == "redis" and settings.redis_url:
+            elif settings.cache_type == "redis" and settings.redis_url:
                 event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
                 logger.debug("Using RedisEventStore for stateful sessions (single-worker)")
             else:
@@ -2277,6 +2486,58 @@ class SessionManagerWrapper:
         """
         logger.debug("Stopping Streamable HTTP Session Manager...")
         await self.stack.aclose()
+
+    @staticmethod
+    async def _validate_server_id(match: "re.Match[str] | None", path: str, scope: Scope, receive: Receive, send: Send) -> str | None:
+        """Validate and resolve the server_id from the request path.
+
+        Args:
+            match: Result of ``_SERVER_ID_RE.search(path)``.
+            path: Original request path (``scope["modified_path"]``).
+            scope: ASGI scope dict.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+
+        Returns:
+            The validated server_id string, ``None`` when the path is
+            not server-scoped (legitimate global ``/mcp``), or the
+            sentinel ``_REJECT`` when an error response has already been
+            sent and the caller should return immediately.
+        """
+        if match:
+            server_id = match.group("server_id")
+            # SECURITY: Validate that the server_id exists in the database
+            # to prevent unauthorized access via invalid server IDs.
+            # Uses the shared BaseService.entity_exists() for a lightweight
+            # EXISTS check — no row data is loaded.
+            try:
+                # First-Party
+                from mcpgateway.services.server_service import server_service as _server_svc  # pylint: disable=import-outside-toplevel,no-name-in-module
+
+                async with get_db() as db:
+                    if not await _server_svc.entity_exists(db, server_id):
+                        logger.warning("Invalid server ID in MCP request path: %s", server_id)
+                        response = ORJSONResponse({"detail": "Server not found"}, status_code=404)
+                        await response(scope, receive, send)
+                        return _REJECT
+            except Exception as e:
+                logger.error("Failed to validate server ID %s: %s", server_id, e)
+                response = ORJSONResponse({"detail": "Service unavailable — unable to verify server"}, status_code=503)
+                await response(scope, receive, send)
+                return _REJECT
+            return server_id
+
+        # SECURITY (defense-in-depth): If the path looks server-scoped but
+        # the primary regex didn't capture a server_id (e.g. empty segment
+        # /servers//mcp, or an encoding edge case), reject immediately
+        # rather than falling through to unscoped global behaviour (#3891).
+        if _SERVER_SCOPED_PATH_RE.search(path):
+            logger.warning("Server-scoped MCP path with unparseable server ID rejected: %s", path)
+            response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+            await response(scope, receive, send)
+            return _REJECT
+
+        return None  # Legitimate unscoped /mcp path
 
     async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
         """
@@ -2359,11 +2620,11 @@ class SessionManagerWrapper:
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
-            _is_session = user_context.get("token_use") == "session" if user_context else False
+            _server_id = match.group("server_id")
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
                 permission="servers.use",
-                check_any_team=_is_session,
+                check_any_team=_check_any_team_for_server_scoped_rbac(user_context, _server_id),
             )
             if not has_server_access:
                 response = ORJSONResponse(
@@ -2372,6 +2633,14 @@ class SessionManagerWrapper:
                 )
                 await response(scope, receive, send)
                 return
+
+        # SECURITY: Validate server existence early — before affinity routing
+        # can shortcut to /rpc, which checks token scoping but not server
+        # existence.  Without this, nonexistent server IDs that reach the
+        # affinity branches would bypass the 404 and get empty-scoped results.
+        validated = await self._validate_server_id(match, path, scope, receive, send)
+        if validated is _REJECT:
+            return
 
         if is_internally_forwarded:
             logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)
@@ -2436,7 +2705,7 @@ class SessionManagerWrapper:
                     body = orjson.dumps(json_body)
                     logger.debug("[HTTP_AFFINITY_FORWARDED] Injected server_id %s into /rpc params", server_id)
 
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                     rpc_headers = {
                         "content-type": "application/json",
                         "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
@@ -2445,9 +2714,14 @@ class SessionManagerWrapper:
                     # Copy auth header if present
                     if "authorization" in headers:
                         rpc_headers["authorization"] = headers["authorization"]
+                    # Forward passthrough headers for upstream MCP servers (see #3640).
+                    # First-Party
+                    from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                    rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
                     response = await client.post(
-                        f"http://127.0.0.1:{settings.port}/rpc",
+                        f"{internal_loopback_base_url()}/rpc",
                         content=body,
                         headers=rpc_headers,
                         timeout=30.0,
@@ -2598,7 +2872,7 @@ class SessionManagerWrapper:
                             body = orjson.dumps(json_body)
                             logger.debug("[HTTP_AFFINITY_LOCAL] Injected server_id %s into /rpc params", server_id)
 
-                        async with httpx.AsyncClient() as client:
+                        async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                             rpc_headers = {
                                 "content-type": "application/json",
                                 "x-mcp-session-id": mcp_session_id,
@@ -2606,9 +2880,14 @@ class SessionManagerWrapper:
                             }
                             if "authorization" in headers:
                                 rpc_headers["authorization"] = headers["authorization"]
+                            # Forward passthrough headers for upstream MCP servers (see #3640).
+                            # First-Party
+                            from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
+
+                            rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
                             response = await client.post(
-                                f"http://127.0.0.1:{settings.port}/rpc",
+                                f"{internal_loopback_base_url()}/rpc",
                                 content=body,
                                 headers=rpc_headers,
                                 timeout=30.0,
@@ -2648,11 +2927,7 @@ class SessionManagerWrapper:
         # Store headers in context for tool invocations
         request_headers_var.set(headers)
 
-        if match:
-            server_id = match.group("server_id")
-            server_id_var.set(server_id)
-        else:
-            server_id_var.set(None)
+        server_id_var.set(validated)
 
         # For session affinity: wrap send to capture session ID from response headers
         # This allows us to register ownership for new sessions created by the SDK
@@ -2764,8 +3039,45 @@ def _set_proxy_user_context(proxy_user: str) -> None:
             "teams": [],
             "is_authenticated": True,
             "is_admin": False,
+            "permission_is_admin": False,
         }
     )
+
+
+def get_streamable_http_auth_context() -> dict[str, Any]:
+    """Return the current StreamableHTTP auth context for trusted internal forwarding.
+
+    The Rust MCP proxy uses this to carry already-authenticated MCP request context
+    across the Python -> Rust -> Python seam so the internal dispatcher does not
+    need to repeat JWT verification and team normalization on the hot path.
+
+    Returns:
+        A shallow copy of the trusted auth context fields that may be forwarded
+        across the internal MCP seam.
+    """
+    user_context = user_context_var.get()
+    if not isinstance(user_context, dict):
+        return {}
+
+    forwarded: dict[str, Any] = {}
+    for key in (
+        "email",
+        "teams",
+        "is_authenticated",
+        "is_admin",
+        "token_use",
+        "permission_is_admin",
+        "scoped_permissions",
+        "scoped_server_id",
+    ):
+        if key not in user_context:
+            continue
+        value = user_context[key]
+        if isinstance(value, list):
+            forwarded[key] = list(value)
+        else:
+            forwarded[key] = value
+    return forwarded
 
 
 class _StreamableHttpAuthHandler:
@@ -2800,10 +3112,11 @@ class _StreamableHttpAuthHandler:
     async def authenticate(self) -> bool:
         """Perform authentication check in middleware context (ASGI scope).
 
-        Authenticates only requests targeting paths ending in "/mcp" or "/mcp/".
+        Authenticates requests targeting MCP transport paths: ``/mcp``, ``/mcp/``,
+        ``/mcp/sse``, and ``/mcp/message`` (including ``/servers/{id}/...`` prefixed variants).
 
         Behavior:
-        - If the path does not end with "/mcp", authentication is skipped.
+        - If the path is not an MCP transport path, authentication is skipped.
         - If mcp_require_auth=True (strict mode): requests without valid auth are rejected with 401.
         - If mcp_require_auth=False (permissive mode):
           - Requests without auth are allowed but get public-only access (token_teams=[]).
@@ -2818,7 +3131,11 @@ class _StreamableHttpAuthHandler:
             False if authentication fails and a 401 response is sent.
         """
         path = self.scope.get("path", "")
-        if (not path.endswith("/mcp") and not path.endswith("/mcp/")) or path.startswith("/.well-known/"):
+        # Normalize trailing slash for consistent matching
+        normalized = path.rstrip("/")
+        # Check if this is an MCP-related path that requires authentication
+        is_mcp_path = normalized.endswith("/mcp") or normalized == "/mcp" or normalized.endswith("/mcp/sse") or normalized.endswith("/mcp/message")
+        if not is_mcp_path or path.startswith("/.well-known/"):
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
 
@@ -2899,6 +3216,7 @@ class _StreamableHttpAuthHandler:
                 "teams": [],  # Empty list = public-only access
                 "is_authenticated": False,
                 "is_admin": False,
+                "permission_is_admin": False,
             }
         )
         return True  # Allow request to proceed with public-only access
@@ -2918,23 +3236,109 @@ class _StreamableHttpAuthHandler:
             if not isinstance(user_payload, dict):
                 return True
 
+            # First-Party
+            from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+            from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
+
             jti = user_payload.get("jti")
-            if jti:
-                # First-Party
-                from mcpgateway.auth import _check_token_revoked_sync  # pylint: disable=import-outside-toplevel
-
-                try:
-                    is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
-                except Exception as exc:
-                    logger.warning("MCP token revocation check failed for jti=%s; allowing request (fail-open): %s", jti, exc)
-                    is_revoked = False
-                if is_revoked:
-                    return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
-
             user_email = user_payload.get("sub") or user_payload.get("email")
-            if user_email:
+            nested_user = user_payload.get("user", {})
+            nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
+            is_admin = user_payload.get("is_admin", False) or nested_is_admin
+            token_use = user_payload.get("token_use")
+            db_user_is_admin = False
+            user_record = None
+            auth_cache = get_auth_cache() if settings.auth_cache_enabled else None
+            cached_ctx: CachedAuthContext | None = None
+            batched_auth_ctx: dict[str, Any] | None = None
+            cached_team_ids: list[str] | None = None
+            platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+
+            if user_email and auth_cache is not None:
+                try:
+                    cached_ctx = await auth_cache.get_auth_context(user_email, jti)
+                    if cached_ctx is not None:
+                        _record_mcp_auth_cache_event("auth_context_hit")
+                        if cached_ctx.is_token_revoked:
+                            _record_mcp_auth_cache_event("auth_context_hit_revoked")
+                            return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
+
+                        cached_user = cached_ctx.user
+                        if cached_user and not cached_user.get("is_active", True):
+                            _record_mcp_auth_cache_event("auth_context_hit_inactive")
+                            return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
+
+                        if cached_user:
+                            db_user_is_admin = bool(cached_user.get("is_admin", False))
+                        elif settings.require_user_in_db and user_email != platform_admin_email:
+                            return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
+
+                        if token_use == "session" and not is_admin:  # nosec B105 - token_use is a JWT claim type, not a password
+                            cached_team_ids = await auth_cache.get_user_teams(f"{user_email}:True")
+                            if cached_team_ids is not None:
+                                _record_mcp_auth_cache_event("teams_cache_hit")
+                    else:
+                        _record_mcp_auth_cache_event("auth_context_miss")
+                except HTTPException:
+                    raise
+                except Exception as cache_error:
+                    _record_mcp_auth_cache_event("auth_context_cache_error")
+                    logger.debug("MCP auth cache lookup failed for %s: %s", user_email, cache_error)
+                    cached_ctx = None
+
+            if user_email and cached_ctx is None and settings.auth_cache_batch_queries:
+                try:
+                    batched_auth_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, user_email, jti)
+                    _record_mcp_auth_cache_event("auth_context_batch_hit")
+                    if batched_auth_ctx.get("is_token_revoked", False):
+                        _record_mcp_auth_cache_event("auth_context_batch_revoked")
+                        return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
+
+                    cached_user = batched_auth_ctx.get("user")
+                    if cached_user and not cached_user.get("is_active", True):
+                        _record_mcp_auth_cache_event("auth_context_batch_inactive")
+                        return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
+
+                    if cached_user:
+                        db_user_is_admin = bool(cached_user.get("is_admin", False))
+                    elif settings.require_user_in_db and user_email != platform_admin_email:
+                        return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
+
+                    if auth_cache is not None:
+                        await auth_cache.set_auth_context(
+                            user_email,
+                            jti,
+                            CachedAuthContext(
+                                user=cached_user,
+                                personal_team_id=batched_auth_ctx.get("personal_team_id"),
+                                is_token_revoked=bool(batched_auth_ctx.get("is_token_revoked", False)),
+                            ),
+                        )
+                        if token_use == "session" and not is_admin:  # nosec B105 - token_use is a JWT claim type, not a password
+                            cached_team_ids = list(batched_auth_ctx.get("team_ids") or [])
+                            await auth_cache.set_user_teams(f"{user_email}:True", cached_team_ids)
+                            _record_mcp_auth_cache_event("teams_batch_hit")
+                except HTTPException:
+                    raise
+                except Exception as batch_error:
+                    _record_mcp_auth_cache_event("auth_context_batch_error")
+                    logger.warning("Batched MCP auth lookup failed for user=%s; falling back to individual checks: %s", user_email, batch_error)
+                    batched_auth_ctx = None
+
+            if user_email and cached_ctx is None and batched_auth_ctx is None:
+                _record_mcp_auth_cache_event("auth_context_fallback")
                 # First-Party
-                from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+                is_revoked = False
+                if jti:
+                    try:
+                        is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                    except Exception as exc:
+                        logger.warning("MCP token revocation check failed for jti=%s; allowing request (fail-open): %s", jti, exc)
+                        is_revoked = False
+                    if is_revoked:
+                        return await self._send_error(detail="Token has been revoked", headers={"WWW-Authenticate": "Bearer"})
 
                 user_lookup_succeeded = True
                 try:
@@ -2947,25 +3351,53 @@ class _StreamableHttpAuthHandler:
                 if user_lookup_succeeded:
                     if user_record and not getattr(user_record, "is_active", True):
                         return await self._send_error(detail="Account disabled", headers={"WWW-Authenticate": "Bearer"})
-                    if user_record is None and settings.require_user_in_db and user_email != getattr(settings, "platform_admin_email", "admin@example.com"):
+                    if user_record:
+                        db_user_is_admin = bool(getattr(user_record, "is_admin", False))
+                    if user_record is None and settings.require_user_in_db and user_email != platform_admin_email:
                         return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
 
-            # Resolve teams based on token_use claim
-            token_use = user_payload.get("token_use")
-            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
-                # Session token: resolve teams from DB/cache
-                user_email_for_teams = user_payload.get("sub") or user_payload.get("email")
-                is_admin_flag = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
-                if is_admin_flag:
-                    final_teams = None  # Admin bypass
-                elif user_email_for_teams:
-                    # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
-                    # First-Party
-                    from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+                    if auth_cache is not None:
+                        try:
+                            await auth_cache.set_auth_context(
+                                user_email,
+                                jti,
+                                CachedAuthContext(
+                                    user=(
+                                        {
+                                            "email": user_record.email,
+                                            "password_hash": user_record.password_hash,
+                                            "full_name": user_record.full_name,
+                                            "is_admin": bool(user_record.is_admin),
+                                            "is_active": bool(user_record.is_active),
+                                            "auth_provider": user_record.auth_provider,
+                                            "password_change_required": bool(user_record.password_change_required),
+                                            "email_verified_at": user_record.email_verified_at,
+                                            "created_at": user_record.created_at,
+                                            "updated_at": user_record.updated_at,
+                                        }
+                                        if user_record is not None
+                                        else None
+                                    ),
+                                    personal_team_id=None,
+                                    is_token_revoked=is_revoked,
+                                ),
+                            )
+                        except Exception as cache_set_error:
+                            logger.debug("Failed to cache MCP auth context for %s: %s", user_email, cache_set_error)
 
-                    final_teams = _resolve_teams_from_db_sync(user_email_for_teams, is_admin=False)
+            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                # Session token: resolve teams via single policy point (DB-first intersection)
+                # First-Party
+                from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+
+                if cached_team_ids is not None:
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=cached_team_ids)
+                elif batched_auth_ctx is not None:
+                    preresolved = None if is_admin else list(batched_auth_ctx.get("team_ids") or [])
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=preresolved)
                 else:
-                    final_teams = []  # No email — public-only
+                    _record_mcp_auth_cache_event("teams_db_resolve")
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin})
             else:
                 # API token or legacy: use embedded teams from JWT
                 # First-Party
@@ -2977,11 +3409,11 @@ class _StreamableHttpAuthHandler:
             # SECURITY: Validate team membership for team-scoped tokens
             # Users removed from a team should lose MCP access immediately, not at token expiry
             # ═══════════════════════════════════════════════════════════════════════════
-            is_admin = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
-
-            # Only validate membership for team-scoped tokens (non-empty teams list)
-            # Skip for: public-only tokens ([]), admin unrestricted tokens (None)
-            if final_teams and len(final_teams) > 0 and user_email:
+            # Validate membership for API/legacy tokens whose teams come from
+            # the JWT and have never been checked against the DB.  Session tokens
+            # are skipped: resolve_session_teams() already resolved teams from
+            # DB/cache, so a second membership query would be redundant.
+            if token_use != "session" and final_teams and len(final_teams) > 0 and user_email:  # nosec B105
                 # Import lazily to avoid circular imports
                 # Third-Party
                 from sqlalchemy import select  # pylint: disable=import-outside-toplevel
@@ -2995,10 +3427,12 @@ class _StreamableHttpAuthHandler:
                 # Check cache first (60s TTL)
                 cached_result = auth_cache.get_team_membership_valid_sync(user_email, final_teams)
                 if cached_result is False:
+                    _record_mcp_auth_cache_event("team_membership_cache_reject")
                     logger.warning("MCP auth rejected: User %s no longer member of teams (cached)", user_email)
                     return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
 
                 if cached_result is None:
+                    _record_mcp_auth_cache_event("team_membership_cache_miss")
                     # Cache miss - query database
                     with SessionLocal() as db:
                         memberships = (
@@ -3023,12 +3457,15 @@ class _StreamableHttpAuthHandler:
 
                         # Cache positive result
                         auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
+                else:
+                    _record_mcp_auth_cache_event("team_membership_cache_hit")
 
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,
                 "teams": final_teams,
                 "is_authenticated": True,
                 "is_admin": is_admin,
+                "permission_is_admin": db_user_is_admin or is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
             # Extract scoped permissions from JWT for per-method enforcement
@@ -3036,6 +3473,9 @@ class _StreamableHttpAuthHandler:
             jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
             if jwt_scoped_perms:
                 auth_user_ctx["scoped_permissions"] = jwt_scoped_perms
+            scoped_server_id = jwt_scopes.get("server_id") if isinstance(jwt_scopes, dict) else None
+            if isinstance(scoped_server_id, str) and scoped_server_id:
+                auth_user_ctx["scoped_server_id"] = scoped_server_id
             user_context_var.set(auth_user_ctx)
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)

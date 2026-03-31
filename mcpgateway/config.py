@@ -90,6 +90,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
+        "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -137,6 +138,7 @@ UI_HIDABLE_SECTIONS = frozenset(
         "teams",
         "users",
         "agents",
+        "grpc-services",
         "tokens",
         "settings",
     }
@@ -147,7 +149,6 @@ UI_HIDE_SECTION_ALIASES = {
     "virtual_servers": "servers",
     "a2a-agents": "agents",
     "a2a": "agents",
-    "grpc-services": "agents",
     "api_tokens": "tokens",
     "llm-settings": "settings",
 }
@@ -215,7 +216,7 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="sqlite:///./mcp.db",
         description=(
-            "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. "
+            "Database connection URL. Supports SQLite (dev) and PostgreSQL (production). "
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
             "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
             "(See Issue #1535 for details)"
@@ -235,6 +236,48 @@ class Settings(BaseSettings):
 
     # Protocol
     protocol_version: str = "2025-11-25"
+    experimental_rust_mcp_runtime_enabled: bool = Field(
+        default=False,
+        description="Proxy POST /mcp traffic through the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_url: str = Field(
+        default="http://127.0.0.1:8787",
+        description="Base URL for the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_uds: Optional[str] = Field(
+        default=None,
+        description="Optional Unix domain socket path for the experimental Rust MCP runtime sidecar.",
+    )
+    experimental_rust_mcp_runtime_timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Timeout in seconds for Python-to-Rust MCP runtime proxy requests.",
+    )
+    experimental_rust_mcp_session_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session metadata core while keeping Python as the fallback transport backend.",
+    )
+    experimental_rust_mcp_event_store_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned resumable MCP event-store backend for Streamable HTTP sessions.",
+    )
+    experimental_rust_mcp_resume_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned public MCP replay/resume path for GET /mcp with Last-Event-ID while keeping Python fallback available.",
+    )
+    experimental_rust_mcp_live_stream_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned public MCP live GET /mcp SSE path while keeping Python as the fallback upstream stream source.",
+    )
+    experimental_rust_mcp_affinity_core_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session-affinity forwarding path while keeping Python worker forwarding as the fallback.",
+    )
+    experimental_rust_mcp_session_auth_reuse_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -285,6 +328,8 @@ class Settings(BaseSettings):
     sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")
     sso_okta_client_secret: Optional[SecretStr] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
+    sso_okta_scope: str = Field(default="openid profile email", description="Okta OIDC scopes (space-separated)")
+    okta_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of Okta group names to team UUIDs")
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
     sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")
@@ -317,6 +362,11 @@ class Settings(BaseSettings):
             r"[\x00-\x1f\x7f-\x9f]",  # Control characters
         ],
         description="Regex patterns for dangerous input",
+    )
+    tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
+    tool_description_forbidden_patterns: List[str] = Field(
+        default_factory=lambda: ["&&", ";", "||", "$(", "> ", "< "],
+        description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&",";"]\'.',
     )
 
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
@@ -738,6 +788,17 @@ class Settings(BaseSettings):
         default=False,
         description=("Allow HTTP_AUTH_CHECK_PERMISSION plugins to short-circuit built-in RBAC grants. " "Disabled by default so plugin grant decisions are audit-only unless explicitly enabled."),
     )
+    plugins_can_override_auth_headers: bool = Field(
+        default=False,
+        description=(
+            "DANGEROUS: Allow pre-request plugin hooks to override auth-sensitive headers "
+            "(authorization, cookie, x-api-key, proxy-authorization) that the client already sent. "
+            "Disabled by default because a malicious or misconfigured plugin could impersonate any "
+            "user by rewriting the Authorization header. Only enable when all loaded plugins are "
+            "fully trusted and the deployment requires token exchange (e.g. WXO auth). "
+            "Requires a server restart to take effect."
+        ),
+    )
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
@@ -824,7 +885,7 @@ class Settings(BaseSettings):
 
         # Check for default/weak secrets
         if not info.data.get("client_mode"):
-            weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
+            weak_secrets = ["my-test-key", "my-test-key-but-now-longer-than-32-bytes", "my-test-salt", "changeme", "secret", "password"]
             if value.lower() in weak_secrets:
                 logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
@@ -932,7 +993,7 @@ class Settings(BaseSettings):
 
             # Warn about SQLite in production
             if v.startswith("sqlite"):
-                logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
+                logger.info("Using SQLite database. Consider PostgreSQL for production.")
 
         return v
 
@@ -992,7 +1053,7 @@ class Settings(BaseSettings):
 
         # Database warnings
         if self.database_url.startswith("sqlite") and not self.dev_mode:
-            warnings.append("💾 SQLite database in use - consider PostgreSQL/MySQL for production")
+            warnings.append("💾 SQLite database in use - consider PostgreSQL for production")
 
         # Rate limiting warnings
         if self.tool_rate_limit > 1000:
@@ -1024,7 +1085,7 @@ class Settings(BaseSettings):
 
         return {
             "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
-            != "my-test-key",  # nosec B105 - checking for default value
+            not in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"),  # nosec B105 - checking for default values
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -1504,6 +1565,10 @@ class Settings(BaseSettings):
     tool_rate_limit: int = 100  # requests per minute
     tool_concurrent_limit: int = 10
 
+    # Content Security - Size Limits
+    content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
+    content_max_prompt_size: int = Field(default=10240, ge=512, le=1048576, description="Maximum size in bytes for prompt templates (default: 10KB)")  # 10KB  # Minimum 512 bytes  # Maximum 1MB
+
     # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
     # Disabled by default for safety. Enable explicitly in production after testing.
     mcp_session_pool_enabled: bool = False
@@ -1614,7 +1679,7 @@ class Settings(BaseSettings):
     default_roots: List[str] = []
 
     # Database
-    db_driver: str = "mariadb+mariadbconnector"
+    db_driver: str = "postgresql+psycopg"
     db_pool_size: int = 200
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
@@ -1830,6 +1895,30 @@ Disallow: /
             return bool(info.data["well_known_security_txt"].strip())
         return bool(v)
 
+    @field_validator("experimental_rust_mcp_runtime_uds", mode="after")
+    @classmethod
+    def _validate_experimental_rust_mcp_runtime_uds(cls, value: Optional[str]) -> Optional[str]:
+        """Validate the optional UDS path used for the Rust MCP runtime sidecar.
+
+        Args:
+            value: Candidate UDS path from configuration.
+
+        Returns:
+            The normalized absolute UDS path, or ``None`` when unset.
+
+        Raises:
+            ValueError: If the path is not absolute or its parent directory is missing.
+        """
+        if value in (None, ""):
+            return None
+
+        uds_path = Path(value).expanduser()
+        if not uds_path.is_absolute():
+            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
+        if not uds_path.parent.exists():
+            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
+        return str(uds_path)
+
     # -------------------------------
     # Flexible list parsing for envs
     # -------------------------------
@@ -1842,6 +1931,7 @@ Disallow: /
         "insecure_queryparam_auth_allowed_hosts",
         "mcpgateway_ui_hide_sections",
         "mcpgateway_ui_hide_header_items",
+        "tool_description_forbidden_patterns",
         mode="before",
     )
     @classmethod
@@ -1877,6 +1967,19 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    @field_validator("tool_description_forbidden_patterns", mode="after")
+    @classmethod
+    def _filter_empty_forbidden_patterns(cls, value: list[str]) -> list[str]:
+        """Strip empty/blank entries that would match every description.
+
+        Args:
+            value: List of forbidden pattern strings.
+
+        Returns:
+            list[str]: Filtered list with empty/blank entries removed.
+        """
+        return [p for p in value if p and p.strip()]
 
     @field_validator("mcpgateway_ui_hide_sections", mode="after")
     @classmethod

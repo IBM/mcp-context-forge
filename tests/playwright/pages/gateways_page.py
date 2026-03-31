@@ -11,7 +11,7 @@ Gateways page object for MCP Server & Federated Gateway management.
 import logging
 
 # Third-Party
-from playwright.sync_api import expect, Locator
+from playwright.sync_api import Error as PlaywrightError, expect, Locator
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
@@ -517,6 +517,12 @@ class GatewaysPage(BasePage):
         is_checked = self.show_inactive_checkbox.is_checked()
         if (show and not is_checked) or (not show and is_checked):
             self.click_locator(self.show_inactive_checkbox)
+            # Wait for the HTMX table swap triggered by the checkbox
+            self.page.wait_for_function(
+                "() => !document.querySelector('#gateways-loading.htmx-request')",
+                timeout=15000,
+            )
+            self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
 
     def get_gateway_row(self, gateway_index: int) -> Locator:
         """Get a specific gateway row by index.
@@ -611,7 +617,7 @@ class GatewaysPage(BasePage):
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-        activate_btn = gateway_row.locator('button:has-text("Activate")')
+        activate_btn = gateway_row.locator('button:text-is("Activate")')
         self.click_locator(activate_btn)
 
     def _click_delete_and_wait(self, delete_btn, confirm: bool = True) -> None:
@@ -669,6 +675,8 @@ class GatewaysPage(BasePage):
         avoiding the issue where client-side search filtering hides rows via CSS
         but gateway_rows.nth(0) still returns the first DOM row (possibly hidden).
 
+        Retries on detached-element errors caused by HTMX table swaps.
+
         Args:
             gateway_name: Name of the gateway to delete
             confirm: Whether to confirm the deletion dialog (default: True)
@@ -676,18 +684,24 @@ class GatewaysPage(BasePage):
         Returns:
             True if gateway was found and deleted, False if not found
         """
-        # Check if gateway exists
         if not self.gateway_exists(gateway_name):
             return False
 
-        # Find the specific row by name and click its delete button
-        gateway_row = self.get_gateway_row_by_name(gateway_name)
-        gateway_row.first.scroll_into_view_if_needed()
+        for attempt in range(3):
+            try:
+                gateway_row = self.get_gateway_row_by_name(gateway_name)
+                gateway_row.first.wait_for(state="attached", timeout=5000)
+                gateway_row.first.scroll_into_view_if_needed()
+                delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
+                self._click_delete_and_wait(delete_btn, confirm)
+                return True
+            except PlaywrightError as exc:
+                if "not attached to the DOM" in str(exc) and attempt < 2:
+                    self.page.wait_for_timeout(500)
+                    continue
+                raise
 
-        delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
-        self._click_delete_and_wait(delete_btn, confirm)
-
-        return True
+        return False
 
     def delete_gateway_by_url(self, gateway_url: str, confirm: bool = True) -> bool:
         """Delete ALL gateways with the specified URL.
@@ -920,6 +934,16 @@ class GatewaysPage(BasePage):
     def test_modal_response(self) -> Locator:
         """Response display area in test modal."""
         return self.page.locator("#gateway-test-response")
+
+    @property
+    def test_modal_result(self) -> Locator:
+        """Result container (hidden until test runs) in test modal."""
+        return self.page.locator("#gateway-test-result")
+
+    @property
+    def test_modal_response_json(self) -> Locator:
+        """Response JSON display area in test modal."""
+        return self.page.locator("#gateway-test-response-json")
 
     # ==================== View Gateway Modal Elements ====================
 

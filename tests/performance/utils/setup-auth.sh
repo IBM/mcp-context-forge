@@ -25,7 +25,7 @@ warn() {
 }
 
 # Configuration
-JWT_SECRET="${JWT_SECRET:-my-test-key}"
+JWT_SECRET="${JWT_SECRET:-my-test-key-but-now-longer-than-32-bytes}"  # pragma: allowlist secret
 JWT_ALGO="${JWT_ALGO:-HS256}"
 USERNAME="${USERNAME:-admin@example.com}"
 EXPIRATION="${EXPIRATION:-10080}" # 7 days in minutes

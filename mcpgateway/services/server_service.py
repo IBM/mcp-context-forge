@@ -299,6 +299,9 @@ class ServerService(BaseService):
             ...     created_at=now, updated_at=now, enabled=True,
             ...     associated_tools=[], associated_resources=[], associated_prompts=[], associated_a2a_agents=[],
             ...     tags=[], metrics=[m1, m2],
+            ...     metrics_summary={"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
+            ...                      "failure_rate": 0.5, "min_response_time": 0.2, "max_response_time": 0.4,
+            ...                      "avg_response_time": 0.3, "last_execution_time": now},
             ...     tools=[], resources=[], prompts=[], a2a_agents=[],
             ...     team_id=None, owner_email=None, visibility=None,
             ...     created_by=None, modified_by=None
@@ -341,46 +344,17 @@ class ServerService(BaseService):
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
         if include_metrics:
-            total = 0
-            successful = 0
-            failed = 0
-            min_rt = None
-            max_rt = None
-            sum_rt = 0.0
-            last_time = None
-
-            if hasattr(server, "metrics") and server.metrics:
-                for m in server.metrics:
-                    total += 1
-                    if m.is_success:
-                        successful += 1
-                    else:
-                        failed += 1
-
-                    # Track min/max response times
-                    if min_rt is None or m.response_time < min_rt:
-                        min_rt = m.response_time
-                    if max_rt is None or m.response_time > max_rt:
-                        max_rt = m.response_time
-
-                    sum_rt += m.response_time
-
-                    # Track last execution time
-                    if last_time is None or m.timestamp > last_time:
-                        last_time = m.timestamp
-
-            failure_rate = (failed / total) if total > 0 else 0.0
-            avg_rt = (sum_rt / total) if total > 0 else None
-
+            # Use metrics_summary which combines raw + hourly rollup data (matches tool_service pattern)
+            metrics = server.metrics_summary
             server_dict["metrics"] = {
-                "total_executions": total,
-                "successful_executions": successful,
-                "failed_executions": failed,
-                "failure_rate": failure_rate,
-                "min_response_time": min_rt,
-                "max_response_time": max_rt,
-                "avg_response_time": avg_rt,
-                "last_execution_time": last_time,
+                "total_executions": metrics["total_executions"],
+                "successful_executions": metrics["successful_executions"],
+                "failed_executions": metrics["failed_executions"],
+                "failure_rate": metrics["failure_rate"],
+                "min_response_time": metrics["min_response_time"],
+                "max_response_time": metrics["max_response_time"],
+                "avg_response_time": metrics["avg_response_time"],
+                "last_execution_time": metrics["last_execution_time"],
             }
         else:
             server_dict["metrics"] = None
@@ -754,6 +728,7 @@ class ServerService(BaseService):
         self,
         db: Session,
         include_inactive: bool = False,
+        include_metrics: bool = False,
         tags: Optional[List[str]] = None,
         cursor: Optional[str] = None,
         limit: Optional[int] = None,
@@ -769,6 +744,7 @@ class ServerService(BaseService):
         Args:
             db: Database session.
             include_inactive: Whether to include inactive servers.
+            include_metrics: Whether to include aggregated metrics in the results.
             tags: Filter servers by tags. If provided, only servers with at least one matching tag will be returned.
             cursor: Cursor for pagination (encoded last created_at and id).
             limit: Maximum number of servers to return. None for default, 0 for unlimited.
@@ -806,7 +782,7 @@ class ServerService(BaseService):
         is_public_only = token_teams is not None and len(token_teams) == 0
         use_cache = cursor is None and user_email is None and page is None and is_public_only
         if use_cache:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
                 # Reconstruct ServerRead objects from cached dicts
@@ -825,6 +801,10 @@ class ServerService(BaseService):
             )
             .order_by(desc(DbServer.created_at), desc(DbServer.id))
         )
+
+        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+        if include_metrics:
+            query = query.options(selectinload(DbServer.metrics), selectinload(DbServer.metrics_hourly))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -867,7 +847,7 @@ class ServerService(BaseService):
         result = []
         for s in servers_db:
             try:
-                result.append(self.convert_server_to_read(s, include_metrics=False))
+                result.append(self.convert_server_to_read(s, include_metrics=include_metrics))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
                 # Continue with remaining servers instead of failing completely

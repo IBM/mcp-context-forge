@@ -13,6 +13,8 @@ and time-based restrictions.
 # Standard
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+import hashlib
+import hmac
 import ipaddress
 import re
 from typing import List, Optional, Pattern, Tuple
@@ -23,7 +25,7 @@ from fastapi.security import HTTPBearer
 from sqlalchemy import and_, func, select
 
 # First-Party
-from mcpgateway.auth import normalize_token_teams
+from mcpgateway.auth import normalize_token_teams, resolve_session_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
@@ -59,6 +61,11 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
 _AUTH_COOKIE_NAMES = ("jwt_token", "access_token")
+_INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
+_INTERNAL_MCP_RUNTIME_HEADER = "x-contextforge-mcp-runtime"
+_INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
+_INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
+_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
@@ -1210,6 +1217,13 @@ class TokenScopingMiddleware:
             if normalized_path == "/":
                 return await call_next(request)
 
+            # Trusted internal Rust -> Python MCP dispatch already carries a
+            # normalized auth context and is re-authorized by the internal MCP
+            # handlers. Re-applying token-scoping path checks here would reject
+            # the private /_internal/mcp/* hop for scoped tokens.
+            if self._is_trusted_internal_mcp_runtime_request(request, normalized_path):
+                return await call_next(request)
+
             if any(normalized_path.startswith(path) for path in skip_paths):
                 return await call_next(request)
 
@@ -1234,12 +1248,9 @@ class TokenScopingMiddleware:
                 # Session token: resolve teams from DB/cache directly
                 # Cannot rely on request.state.token_teams — AuthContextMiddleware
                 # is gated by security_logging_enabled (defaults to False)
-                # First-Party
-                from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
-
                 is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
                 user_info = {"is_admin": is_admin}
-                token_teams = await _resolve_teams_from_db(user_email, user_info)
+                token_teams = await resolve_session_teams(payload, user_email, user_info)
             else:
                 # API token or legacy: use embedded teams with normalize_token_teams
                 token_teams = normalize_token_teams(payload)
@@ -1257,8 +1268,15 @@ class TokenScopingMiddleware:
 
                 db = next(get_db())
                 try:
-                    # Check team membership with shared session
-                    if not self._check_team_membership(payload, db=db):
+                    # Check team membership — only for API/legacy tokens whose teams
+                    # come from JWT claims and may be stale.  Session tokens skip this
+                    # because resolve_session_teams() already resolved membership from
+                    # the DB; re-checking the raw JWT claim here would conflict with
+                    # the intersection semantics (stale JWT teams would cause a 403
+                    # even though the user has valid DB teams).
+                    # NOTE: session-token membership staleness is bounded by the
+                    # auth_cache TTL (see _resolve_teams_from_db).
+                    if token_use != "session" and not self._check_team_membership(payload, db=db):  # nosec B105 - Not a password; token_use is a JWT claim type
                         logger.warning("Token rejected: User no longer member of associated team(s)")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
@@ -1273,8 +1291,11 @@ class TokenScopingMiddleware:
                     finally:
                         db.close()
             else:
-                # Public-only token: no team membership check needed, but still check resource ownership
-                if not self._check_team_membership(payload):
+                # Public-only token (or session token with empty intersection):
+                # skip _check_team_membership for session tokens — the empty
+                # intersection already means no team-scoped access.
+                # Membership staleness bounded by auth_cache TTL.
+                if token_use != "session" and not self._check_team_membership(payload):  # nosec B105 - Not a password; token_use is a JWT claim type
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
@@ -1327,6 +1348,72 @@ class TokenScopingMiddleware:
                 status_code=exc.status_code,
                 content={"detail": exc.detail},
             )
+
+    def _is_trusted_internal_mcp_runtime_request(self, request: Request, normalized_path: str) -> bool:
+        """Return whether the request is a trusted loopback Rust MCP sidecar hop.
+
+        Args:
+            request: Incoming HTTP request.
+            normalized_path: Canonicalized request path used for route matching.
+
+        Returns:
+            ``True`` when the request originated from the local Rust MCP runtime and
+            includes the expected trusted headers.
+        """
+        if normalized_path != _INTERNAL_MCP_PATH_PREFIX and not normalized_path.startswith(f"{_INTERNAL_MCP_PATH_PREFIX}/"):
+            return False
+
+        if request.headers.get(_INTERNAL_MCP_RUNTIME_HEADER) != "rust":
+            return False
+
+        provided_auth = request.headers.get(_INTERNAL_MCP_RUNTIME_AUTH_HEADER)
+        if not provided_auth:
+            return False
+
+        expected_auth = self._expected_internal_mcp_runtime_auth_header()
+        if not hmac.compare_digest(provided_auth, expected_auth):
+            return False
+
+        if not request.headers.get(_INTERNAL_MCP_AUTH_CONTEXT_HEADER):
+            return False
+
+        client_host = getattr(getattr(request, "client", None), "host", None)
+        return client_host in ("127.0.0.1", "::1")
+
+    @staticmethod
+    def _auth_encryption_secret_value() -> str:
+        """Return the configured auth-encryption secret as a plain string.
+
+        Returns:
+            The auth-encryption secret, normalized to a regular string.
+        """
+        secret = settings.auth_encryption_secret
+        if hasattr(secret, "get_secret_value"):
+            return secret.get_secret_value()
+        return str(secret)
+
+    @staticmethod
+    @lru_cache(maxsize=8)
+    def _expected_internal_mcp_runtime_auth_header_for_secret(secret: str) -> str:
+        """Return the expected shared internal-auth header for a specific secret.
+
+        Args:
+            secret: Auth-encryption secret to derive the trust header from.
+
+        Returns:
+            Hex-encoded SHA-256 digest derived from the provided auth secret.
+        """
+        material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
+        return hashlib.sha256(material).hexdigest()
+
+    @staticmethod
+    def _expected_internal_mcp_runtime_auth_header() -> str:
+        """Return the expected shared internal-auth header for Rust MCP hops.
+
+        Returns:
+            Shared secret-derived digest expected on trusted internal Rust MCP calls.
+        """
+        return TokenScopingMiddleware._expected_internal_mcp_runtime_auth_header_for_secret(TokenScopingMiddleware._auth_encryption_secret_value())
 
 
 # Create middleware instance

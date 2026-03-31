@@ -103,6 +103,314 @@ LOGIN_PATH = "/login"
 router = APIRouter(tags=["meta"])
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean environment variable using common truthy spellings.
+
+    Args:
+        name: Environment variable name.
+        default: Default value used when the variable is unset.
+
+    Returns:
+        Parsed boolean value.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _rust_build_included() -> bool:
+    """Return whether the current image includes Rust MCP artifacts.
+
+    Returns:
+        ``True`` when the current image contains the Rust MCP binaries/plugins.
+    """
+    return _env_flag("CONTEXTFORGE_ENABLE_RUST_BUILD", default=False)
+
+
+def _rust_runtime_managed() -> bool:
+    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
+
+    Returns:
+        ``True`` when the gateway should launch and supervise the Rust sidecar.
+    """
+    return _env_flag("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", default=True)
+
+
+def _current_mcp_transport_mount() -> str:
+    """Return which public ``/mcp`` transport is currently mounted.
+
+    Returns:
+        Runtime label identifying the currently mounted public MCP transport.
+    """
+    return "rust" if _should_mount_public_rust_transport() else "python"
+
+
+def _should_mount_public_rust_transport() -> bool:
+    """Return whether public ``/mcp`` should be served directly by Rust.
+
+    Returns:
+        ``True`` only when the Rust runtime is enabled and Rust can safely own
+        steady-state public MCP session traffic.
+    """
+    return bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+
+
+def _should_use_rust_public_session_stack() -> bool:
+    """Return whether Rust should own the effective public MCP session stack.
+
+    Returns:
+        ``True`` only when the public MCP transport and session semantics should
+        stay on the Rust-backed path.
+    """
+    return _should_mount_public_rust_transport()
+
+
+def _current_mcp_runtime_mode() -> str:
+    """Return the current MCP runtime mode label used for health and UI surfaces.
+
+    Returns:
+        Human-readable runtime mode label for diagnostics and UI reporting.
+    """
+    if settings.experimental_rust_mcp_runtime_enabled:
+        return "rust-managed" if _rust_runtime_managed() else "rust-external"
+    if _rust_build_included():
+        return "python-rust-built-disabled"
+    return "python"
+
+
+def _current_mcp_session_core_mode() -> str:
+    """Return which runtime currently owns MCP session metadata.
+
+    Returns:
+        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_event_store_mode() -> str:
+    """Return which runtime currently owns MCP resumable event-store semantics.
+
+    Returns:
+        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_resume_core_mode() -> str:
+    """Return which runtime currently owns public MCP replay/resume behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
+    """
+    if (
+        _should_use_rust_public_session_stack()
+        and settings.experimental_rust_mcp_session_core_enabled
+        and settings.experimental_rust_mcp_event_store_enabled
+        and settings.experimental_rust_mcp_resume_core_enabled
+    ):
+        return "rust"
+    return "python"
+
+
+def _current_mcp_live_stream_core_mode() -> str:
+    """Return which runtime currently owns non-resume public GET ``/mcp`` SSE behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns live GET ``/mcp`` streaming, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_affinity_core_mode() -> str:
+    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
+
+    Returns:
+        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_session_auth_reuse_mode() -> str:
+    """Return which runtime currently owns MCP session-bound auth-context reuse.
+
+    Returns:
+        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
+    """
+    if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled:
+        return "rust"
+    return "python"
+
+
+def _mcp_runtime_status_payload() -> Dict[str, Any]:
+    """Return MCP runtime diagnostics for health, UI, and version surfaces.
+
+    Returns:
+        Diagnostic payload describing the active MCP runtime configuration.
+    """
+    payload: Dict[str, Any] = {
+        "mode": _current_mcp_runtime_mode(),
+        "mounted": _current_mcp_transport_mount(),
+        "rust_build_included": _rust_build_included(),
+        "rust_runtime_enabled": settings.experimental_rust_mcp_runtime_enabled,
+        "session_core_mode": _current_mcp_session_core_mode(),
+        "event_store_mode": _current_mcp_event_store_mode(),
+        "resume_core_mode": _current_mcp_resume_core_mode(),
+        "live_stream_core_mode": _current_mcp_live_stream_core_mode(),
+        "affinity_core_mode": _current_mcp_affinity_core_mode(),
+        "session_auth_reuse_mode": _current_mcp_session_auth_reuse_mode(),
+        "rust_session_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled),
+        "rust_event_store_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled),
+        "rust_resume_core_enabled": bool(
+            _should_use_rust_public_session_stack()
+            and settings.experimental_rust_mcp_session_core_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
+            and settings.experimental_rust_mcp_resume_core_enabled
+        ),
+        "rust_live_stream_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled),
+        "rust_affinity_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled),
+        "rust_session_auth_reuse_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled),
+    }
+
+    if settings.experimental_rust_mcp_runtime_enabled:
+        payload["rust_runtime_managed"] = _rust_runtime_managed()
+        if settings.experimental_rust_mcp_runtime_uds:
+            payload["sidecar_transport"] = "uds"
+            payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_uds
+        else:
+            payload["sidecar_transport"] = "http"
+            payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_url
+
+    return payload
+
+
+def rust_build_included() -> bool:
+    """Return whether the current image includes Rust MCP artifacts.
+
+    Returns:
+        ``True`` when the current image contains the Rust MCP binaries/plugins.
+    """
+    return _rust_build_included()
+
+
+def rust_runtime_managed() -> bool:
+    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
+
+    Returns:
+        ``True`` when the gateway should launch and supervise the Rust sidecar.
+    """
+    return _rust_runtime_managed()
+
+
+def current_mcp_transport_mount() -> str:
+    """Return which public ``/mcp`` transport is currently mounted.
+
+    Returns:
+        Runtime label identifying the currently mounted public MCP transport.
+    """
+    return _current_mcp_transport_mount()
+
+
+def should_mount_public_rust_transport() -> bool:
+    """Return whether public ``/mcp`` should be served directly by Rust.
+
+    Returns:
+        ``True`` only when the Rust runtime is enabled and Rust can safely own
+        steady-state public MCP session traffic.
+    """
+    return _should_mount_public_rust_transport()
+
+
+def should_use_rust_public_session_stack() -> bool:
+    """Return whether Rust should own the effective public MCP session stack.
+
+    Returns:
+        ``True`` only when the public MCP transport and session semantics should
+        stay on the Rust-backed path.
+    """
+    return _should_use_rust_public_session_stack()
+
+
+def current_mcp_runtime_mode() -> str:
+    """Return the current MCP runtime mode label used for health and UI surfaces.
+
+    Returns:
+        Human-readable runtime mode label for diagnostics and UI reporting.
+    """
+    return _current_mcp_runtime_mode()
+
+
+def current_mcp_session_core_mode() -> str:
+    """Return which runtime currently owns MCP session metadata.
+
+    Returns:
+        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_session_core_mode()
+
+
+def current_mcp_event_store_mode() -> str:
+    """Return which runtime currently owns MCP resumable event-store semantics.
+
+    Returns:
+        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_event_store_mode()
+
+
+def current_mcp_resume_core_mode() -> str:
+    """Return which runtime currently owns public MCP replay/resume behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
+    """
+    return _current_mcp_resume_core_mode()
+
+
+def current_mcp_live_stream_core_mode() -> str:
+    """Return which runtime currently owns non-resume public GET ``/mcp`` SSE behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns live GET ``/mcp`` streaming, otherwise ``"python"``.
+    """
+    return _current_mcp_live_stream_core_mode()
+
+
+def current_mcp_affinity_core_mode() -> str:
+    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
+
+    Returns:
+        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
+    """
+    return _current_mcp_affinity_core_mode()
+
+
+def current_mcp_session_auth_reuse_mode() -> str:
+    """Return which runtime currently owns MCP session-bound auth-context reuse.
+
+    Returns:
+        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_session_auth_reuse_mode()
+
+
+def mcp_runtime_status_payload() -> Dict[str, Any]:
+    """Return MCP runtime diagnostics for health, UI, and version surfaces.
+
+    Returns:
+        Diagnostic payload describing the active MCP runtime configuration.
+    """
+    return _mcp_runtime_status_payload()
+
+
 def _is_secret(key: str) -> bool:
     """Identify if an environment variable key likely represents a secret.
 
@@ -276,9 +584,6 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
         >>> _sanitize_url("redis://:xxxxx@localhost:6379")
         'redis://localhost:6379'
 
-        >>> # Complex URL with query params
-        >>> _sanitize_url("mysql://root:xxxxx@db.local:3306/mydb?charset=utf8")
-        'mysql://root@db.local:3306/mydb?charset=utf8'
     """
     if not url:
         return None
@@ -349,7 +654,6 @@ def _database_version() -> tuple[str, bool]:
     stmts = {
         "sqlite": "SELECT sqlite_version();",
         "postgresql": "SELECT current_setting('server_version');",
-        "mysql": "SELECT version();",
     }
     stmt = stmts.get(dialect, "XXSELECT version();XX")
     try:
@@ -563,6 +867,7 @@ def _build_payload(
             "metrics_cleanup_enabled": getattr(settings, "metrics_cleanup_enabled", True),
             "metrics_rollup_enabled": getattr(settings, "metrics_rollup_enabled", True),
         },
+        "mcp_runtime": _mcp_runtime_status_payload(),
         "env": _public_env(),
         "system": _system_metrics(),
     }
@@ -629,6 +934,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ...     "database": {"dialect": "sqlite", "reachable": True},
         ...     "redis": {"available": False},
         ...     "settings": {"cache_type": "memory"},
+        ...     "mcp_runtime": {"mode": "python", "mounted": "python"},
         ...     "system": {"cpu_count": 4},
         ...     "env": {"PATH": "/usr/bin"}
         ... }
@@ -645,6 +951,8 @@ def _render_html(payload: Dict[str, Any]) -> str:
         >>> '<h2>App</h2>' in html
         True
         >>> '<h2>Database</h2>' in html
+        True
+        >>> '<h2>MCP Runtime</h2>' in html
         True
         >>> '<style>' in html
         True
@@ -667,6 +975,7 @@ def _render_html(payload: Dict[str, Any]) -> str:
         ("Database", "database"),
         ("Redis", "redis"),
         ("Settings", "settings"),
+        ("MCP Runtime", "mcp_runtime"),
         ("System", "system"),
     ):
         sections += f"<h2>{title}</h2>{_html_table(payload[key])}"
