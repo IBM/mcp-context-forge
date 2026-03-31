@@ -2494,7 +2494,11 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
     @property
     def ui_base_path(self) -> str:
-        """Return the configured UI base path."""
+        """Return the configured UI base path.
+
+        Returns:
+            str: The configured UI base path from settings
+        """
         return settings.mcpgateway_ui_base_path
 
     @property
@@ -2502,6 +2506,9 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         """Return the list of paths exempt from authentication.
 
         Paths are dynamically built based on the configured UI base path.
+
+        Returns:
+            list[str]: List of paths that do not require authentication
         """
         base = self.ui_base_path
         return [

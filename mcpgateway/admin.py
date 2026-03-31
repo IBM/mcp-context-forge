@@ -251,6 +251,7 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
     "mcp-registry": "servers.read",  # Catalog is part of servers
 }
 
+
 # Section-to-route-path mapping for validation
 # NOTE: Only includes routes that exist on admin_router itself.
 # Routes on other routers (version.py, llm_admin_router, etc.) are excluded
