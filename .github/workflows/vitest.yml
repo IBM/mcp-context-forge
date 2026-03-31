@@ -62,13 +62,19 @@ jobs:
           cache: npm
 
       # -----------------------------------------------------------
-      # 2️⃣  Install Dependencies
+      # 2️⃣  Upgrade npm to minimum required version
+      # -----------------------------------------------------------
+      - name: 🔧  Upgrade npm to minimum required version
+        run: npm install -g npm@^11.10.0
+
+      # -----------------------------------------------------------
+      # 3️⃣  Install Dependencies
       # -----------------------------------------------------------
       - name: 📥  Install dependencies
         run: npm ci
 
       # -----------------------------------------------------------
-      # 3️⃣  Run Vitest
+      # 4️⃣  Run Vitest
       # -----------------------------------------------------------
       - name: 🧪  Run Vitest
         run: npx vitest run
