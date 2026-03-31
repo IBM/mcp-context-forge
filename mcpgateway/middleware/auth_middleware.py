@@ -193,6 +193,15 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log successful auth: {log_error}")
+                    # Rollback shared session to clear PendingRollbackError state so
+                    # downstream call_next()/get_db() does not inherit a broken session.
+                    try:
+                        db.rollback()
+                    except Exception:
+                        try:
+                            db.invalidate()
+                        except Exception:
+                            pass  # nosec B110 - Best effort cleanup
                 finally:
                     # Only close if we created the session
                     if owned:
@@ -224,6 +233,15 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         db.commit()
                     except Exception as log_error:
                         logger.debug(f"Failed to log auth failure: {log_error}")
+                        # Rollback shared session to clear PendingRollbackError state so
+                        # downstream call_next()/get_db() does not inherit a broken session.
+                        try:
+                            db.rollback()
+                        except Exception:
+                            try:
+                                db.invalidate()
+                            except Exception:
+                                pass  # nosec B110 - Best effort cleanup
                     finally:
                         # Only close if we created the session
                         if owned:
@@ -283,6 +301,15 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log auth failure: {log_error}")
+                    # Rollback shared session to clear PendingRollbackError state so
+                    # downstream call_next()/get_db() does not inherit a broken session.
+                    try:
+                        db.rollback()
+                    except Exception:
+                        try:
+                            db.invalidate()
+                        except Exception:
+                            pass  # nosec B110 - Best effort cleanup
                 finally:
                     # Only close if we created the session
                     if owned:

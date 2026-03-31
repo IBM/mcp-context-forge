@@ -239,6 +239,281 @@ async def test_success_logging_exception(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_success_logging_exception_rolls_back_shared_session():
+    """When success logging fails on a shared session, rollback must clear PendingRollbackError."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "token"}
+    request.headers = {}
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    # Shared session (owned=False) — simulate ObservabilityMiddleware providing it
+    shared_session = MagicMock()
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    # Shared session must be rolled back to prevent PendingRollbackError downstream
+    shared_session.rollback.assert_called_once()
+    # Shared session must NOT be closed (owned by ObservabilityMiddleware)
+    shared_session.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_hard_deny_logging_exception_rolls_back_shared_session():
+    """When hard-deny logging fails on a shared session, rollback must clear PendingRollbackError."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "revoked_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "10.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    # Shared session (owned=False)
+    shared_session = MagicMock()
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    shared_session.rollback.assert_called_once()
+    shared_session.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_generic_failure_logging_exception_rolls_back_shared_session():
+    """When generic-exception logging fails on a shared session, rollback must clear PendingRollbackError."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    # Shared session (owned=False)
+    shared_session = MagicMock()
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    shared_session.rollback.assert_called_once()
+    shared_session.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rollback_failure_falls_back_to_invalidate():
+    """When rollback also fails, session.invalidate() is called as last resort."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "token"}
+    request.headers = {}
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    # Shared session where rollback also fails
+    shared_session = MagicMock()
+    shared_session.rollback.side_effect = Exception("rollback failed")
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    shared_session.rollback.assert_called_once()
+    shared_session.invalidate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_success_invalidate_failure_silenced():
+    """When rollback AND invalidate both fail on success path, request still succeeds."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "token"}
+    request.headers = {}
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    shared_session = MagicMock()
+    shared_session.rollback.side_effect = Exception("rollback failed")
+    shared_session.invalidate.side_effect = Exception("invalidate failed")
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    shared_session.rollback.assert_called_once()
+    shared_session.invalidate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_hard_deny_invalidate_failure_silenced():
+    """When rollback AND invalidate both fail on hard-deny path, response still returns."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "revoked_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "10.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    shared_session = MagicMock()
+    shared_session.rollback.side_effect = Exception("rollback failed")
+    shared_session.invalidate.side_effect = Exception("invalidate failed")
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_generic_failure_invalidate_failure_silenced():
+    """When rollback AND invalidate both fail on generic-exception path, request still continues."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    shared_session = MagicMock()
+    shared_session.rollback.side_effect = Exception("rollback failed")
+    shared_session.invalidate.side_effect = Exception("invalidate failed")
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_hard_deny_rollback_failure_falls_back_to_invalidate():
+    """When hard-deny rollback also fails, session.invalidate() is called."""
+    from fastapi import HTTPException
+
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.cookies = {"jwt_token": "revoked_token"}
+    request.headers = {"accept": "application/json"}
+    request.client = MagicMock()
+    request.client.host = "10.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    shared_session = MagicMock()
+    shared_session.rollback.side_effect = Exception("rollback failed")
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    shared_session.rollback.assert_called_once()
+    shared_session.invalidate.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_generic_failure_rollback_failure_falls_back_to_invalidate():
+    """When generic-exception rollback also fails, session.invalidate() is called."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    shared_session = MagicMock()
+    shared_session.rollback.side_effect = Exception("rollback failed")
+    request.state.db = shared_session
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("decode error"))), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    shared_session.rollback.assert_called_once()
+    shared_session.invalidate.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_auth_failure_logging_disabled(monkeypatch):
     """Auth fails but failure logging is disabled (branch 153->176)."""
     middleware = AuthContextMiddleware(app=AsyncMock())

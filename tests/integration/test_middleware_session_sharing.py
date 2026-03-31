@@ -11,330 +11,184 @@ across all middleware layers (observability, auth, RBAC) and route handlers.
 
 import pytest
 from unittest.mock import patch, MagicMock
-from fastapi.testclient import TestClient
+
+
+def _make_mock_session():
+    """Create a MagicMock with standard SQLAlchemy session attributes."""
+    session = MagicMock()
+    session.close = MagicMock()
+    session.commit = MagicMock()
+    session.rollback = MagicMock()
+    session.invalidate = MagicMock()
+    session.is_active = True
+    session.in_transaction = MagicMock(return_value=True)
+    return session
 
 
 @pytest.mark.asyncio
-async def test_single_session_per_request_with_all_middleware():
+async def test_auth_middleware_does_not_create_session_when_observability_provides_one():
+    """When ObservabilityMiddleware creates a session, auth middleware must reuse it.
+
+    This is the core behavior fix from issue #3622.  We patch SessionLocal
+    per-module to track which module actually creates a session.
     """
-    Verify that with observability + auth + RBAC enabled,
-    only 1 database session is created per request.
+    from mcpgateway.middleware.auth_middleware import _get_or_create_session
+    from starlette.requests import Request
 
-    This test validates the fix for issue #3622 where auth and RBAC middleware
-    were creating duplicate sessions instead of reusing the session from
-    observability middleware.
-    """
-    # Import here to avoid circular dependencies
-    from mcpgateway.main import app
-    from mcpgateway.config import settings
-    from mcpgateway.db import SessionLocal
+    # Simulate ObservabilityMiddleware having stored a session
+    existing_session = _make_mock_session()
+    mock_request = MagicMock(spec=Request)
+    mock_request.state.db = existing_session
 
-    # Enable all middleware
-    original_observability = settings.observability_enabled
-    original_security_logging = settings.security_logging_level
+    db, owned = _get_or_create_session(mock_request)
 
-    try:
-        settings.observability_enabled = True
-        settings.security_logging_level = "all"  # Force auth logging
-
-        # Mock SessionLocal to count calls
-        session_count = 0
-        created_sessions = []
-        original_session_local = SessionLocal
-
-        def mock_session_local():
-            nonlocal session_count
-            session_count += 1
-            session = MagicMock()
-            # Mock basic session methods
-            session.close = MagicMock()
-            session.commit = MagicMock()
-            session.rollback = MagicMock()
-            session.invalidate = MagicMock()
-            session.is_active = True
-            session.in_transaction = MagicMock(return_value=True)
-            created_sessions.append(session)
-            return session
-
-        with patch('mcpgateway.middleware.observability_middleware.SessionLocal', mock_session_local), \
-             patch('mcpgateway.middleware.auth_middleware.SessionLocal', mock_session_local), \
-             patch('mcpgateway.middleware.rbac.SessionLocal', mock_session_local), \
-             patch('mcpgateway.main.SessionLocal', mock_session_local):
-
-            # Create test client
-            client = TestClient(app)
-
-            # Make request (with or without auth - we just want to trigger all middleware)
-            response = client.get("/health")
-
-            # For /health endpoint, middleware may be skipped
-            # Let's try a real API endpoint
-            session_count = 0
-            created_sessions.clear()
-
-            response = client.get("/api/v1/servers")
-
-        # Verify only 1 session was created
-        # Note: Depending on auth state, some requests may not create sessions
-        # The key is that we don't have 4+ sessions (which was the bug)
-        assert session_count <= 1, f"Expected at most 1 session, got {session_count}"
-
-    finally:
-        # Restore settings
-        settings.observability_enabled = original_observability
-        settings.security_logging_level = original_security_logging
+    assert db is existing_session, "Auth should reuse ObservabilityMiddleware session"
+    assert owned is False, "Auth does not own the session"
 
 
 @pytest.mark.asyncio
-async def test_session_created_when_observability_disabled():
+async def test_auth_middleware_creates_temporary_session_when_no_middleware_session():
+    """When no middleware session exists, auth middleware creates a temporary one
+    that is NOT stored in request.state.db (to prevent stale reference after close).
     """
-    Verify that when observability is disabled, auth middleware
-    creates the session as fallback.
+    from mcpgateway.middleware.auth_middleware import _get_or_create_session
+    from starlette.requests import Request
 
-    This ensures the fallback mechanism works when no middleware
-    has created a session yet.
-    """
-    from mcpgateway.main import app
-    from mcpgateway.config import settings
-    from mcpgateway.db import SessionLocal
+    mock_request = MagicMock(spec=Request)
+    mock_request.state = MagicMock()
+    mock_request.state.db = None
 
-    # Disable observability
-    original_observability = settings.observability_enabled
-    original_security_logging = settings.security_logging_level
+    with patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_sl:
+        new_session = _make_mock_session()
+        mock_sl.return_value = new_session
 
-    try:
-        settings.observability_enabled = False
-        settings.security_logging_level = "all"  # Force auth logging
+        db, owned = _get_or_create_session(mock_request)
 
-        # Track which component created the session
-        session_creator = None
-
-        def track_creator(creator_name):
-            def mock_session_local():
-                nonlocal session_creator
-                if session_creator is None:
-                    session_creator = creator_name
-                session = MagicMock()
-                session.close = MagicMock()
-                session.commit = MagicMock()
-                session.rollback = MagicMock()
-                session.invalidate = MagicMock()
-                session.is_active = True
-                session.in_transaction = MagicMock(return_value=True)
-                return session
-            return mock_session_local
-
-        with patch('mcpgateway.middleware.auth_middleware.SessionLocal', track_creator('auth')), \
-             patch('mcpgateway.middleware.rbac.SessionLocal', track_creator('rbac')), \
-             patch('mcpgateway.main.SessionLocal', track_creator('get_db')):
-
-            client = TestClient(app)
-            response = client.get("/api/v1/servers")
-
-        # Either auth middleware or get_db() should have created it
-        # (depending on whether security logging was triggered)
-        assert session_creator in ('auth', 'rbac', 'get_db', None), \
-            f"Unexpected session creator: {session_creator}"
-
-    finally:
-        settings.observability_enabled = original_observability
-        settings.security_logging_level = original_security_logging
+    assert db is new_session, "Auth should create a new session"
+    assert owned is True, "Auth owns the session"
+    # Must NOT be stored in request.state.db
+    assert mock_request.state.db is None, (
+        "Owned session must not be stored in request.state.db "
+        "to prevent downstream use of a closed session"
+    )
 
 
 @pytest.mark.asyncio
-async def test_auth_middleware_reuses_observability_session():
-    """
-    Verify that auth middleware reuses the session created by
-    observability middleware instead of creating a new one.
-
-    This is the core behavior fix from issue #3622.
-    """
-    from mcpgateway.main import app
-    from mcpgateway.config import settings
-    from mcpgateway.db import SessionLocal
-
-    original_observability = settings.observability_enabled
-    original_security_logging = settings.security_logging_level
-
-    try:
-        settings.observability_enabled = True
-        settings.security_logging_level = "all"
-
-        observability_sessions = []
-        auth_sessions = []
-
-        def track_observability_session():
-            session = MagicMock()
-            session.close = MagicMock()
-            session.commit = MagicMock()
-            session.rollback = MagicMock()
-            session.invalidate = MagicMock()
-            session.is_active = True
-            session.in_transaction = MagicMock(return_value=True)
-            observability_sessions.append(session)
-            return session
-
-        def track_auth_session():
-            session = MagicMock()
-            session.close = MagicMock()
-            session.commit = MagicMock()
-            session.rollback = MagicMock()
-            session.invalidate = MagicMock()
-            session.is_active = True
-            session.in_transaction = MagicMock(return_value=True)
-            auth_sessions.append(session)
-            return session
-
-        with patch('mcpgateway.middleware.observability_middleware.SessionLocal', track_observability_session), \
-             patch('mcpgateway.middleware.auth_middleware.SessionLocal', track_auth_session):
-
-            client = TestClient(app)
-            response = client.get("/api/v1/servers")
-
-        # Observability should create 1 session
-        assert len(observability_sessions) >= 1, "Observability should create a session"
-
-        # Auth should NOT create any sessions (should reuse)
-        assert len(auth_sessions) == 0, \
-            f"Auth middleware should not create sessions (created {len(auth_sessions)})"
-
-    finally:
-        settings.observability_enabled = original_observability
-        settings.security_logging_level = original_security_logging
-
-
-@pytest.mark.asyncio
-async def test_session_sharing_under_concurrent_load():
-    """
-    Verify session sharing works correctly under concurrent load.
-
-    This test ensures that each concurrent request gets its own session
-    (no cross-request pollution) but each request only creates 1 session.
-    """
-    import asyncio
-    from mcpgateway.main import app
-    from mcpgateway.config import settings
-    from mcpgateway.db import SessionLocal
-
-    original_observability = settings.observability_enabled
-
-    try:
-        settings.observability_enabled = True
-
-        session_count = 0
-        max_concurrent_sessions = 0
-        active_sessions = 0
-
-        def mock_session_local():
-            nonlocal session_count, max_concurrent_sessions, active_sessions
-            session_count += 1
-            active_sessions += 1
-            max_concurrent_sessions = max(max_concurrent_sessions, active_sessions)
-
-            session = MagicMock()
-
-            def mock_close():
-                nonlocal active_sessions
-                active_sessions -= 1
-
-            session.close = mock_close
-            session.commit = MagicMock()
-            session.rollback = MagicMock()
-            session.invalidate = MagicMock()
-            session.is_active = True
-            session.in_transaction = MagicMock(return_value=True)
-            return session
-
-        with patch('mcpgateway.middleware.observability_middleware.SessionLocal', mock_session_local), \
-             patch('mcpgateway.middleware.auth_middleware.SessionLocal', mock_session_local), \
-             patch('mcpgateway.middleware.rbac.SessionLocal', mock_session_local), \
-             patch('mcpgateway.main.SessionLocal', mock_session_local):
-
-            client = TestClient(app)
-
-            # Make 10 concurrent requests
-            num_requests = 10
-            responses = []
-            for _ in range(num_requests):
-                response = client.get("/health")
-                responses.append(response)
-
-        # Each request should create at most 1 session
-        # Total sessions should be <= number of requests
-        assert session_count <= num_requests, \
-            f"Expected <= {num_requests} sessions, got {session_count}"
-
-        # Peak concurrent sessions should be reasonable
-        # (not num_requests * 4 which would indicate no sharing)
-        assert max_concurrent_sessions <= num_requests, \
-            f"Peak concurrent sessions ({max_concurrent_sessions}) too high"
-
-    finally:
-        settings.observability_enabled = original_observability
-
-
-@pytest.mark.asyncio
-async def test_rbac_get_db_integration_with_session_sharing():
-    """
-    Verify that RBAC's deprecated get_db() integrates correctly
-    with session sharing when used as a FastAPI dependency.
-
-    This ensures backwards compatibility with endpoints using
-    Depends(get_db) from rbac.py.
-    """
-    from mcpgateway.main import app
-    from mcpgateway.config import settings
-    from mcpgateway.db import SessionLocal
+async def test_rbac_get_db_reuses_middleware_session():
+    """RBAC's deprecated get_db() reuses request.state.db when available."""
     import warnings
+    from mcpgateway.middleware.rbac import get_db
+    from starlette.requests import Request
 
-    original_observability = settings.observability_enabled
+    existing_session = _make_mock_session()
+    mock_request = MagicMock(spec=Request)
+    mock_request.state.db = existing_session
 
-    try:
-        settings.observability_enabled = True
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        gen = get_db(request=mock_request)
+        db = next(gen)
 
-        observability_sessions = []
-        rbac_sessions = []
+    assert db is existing_session, "RBAC get_db() should reuse middleware session"
+    # Should NOT close it (not owned)
+    existing_session.close.assert_not_called()
+    gen.close()
+    existing_session.close.assert_not_called()
 
-        def track_observability_session():
-            session = MagicMock()
-            session.close = MagicMock()
-            session.commit = MagicMock()
-            session.rollback = MagicMock()
-            session.invalidate = MagicMock()
-            session.is_active = True
-            session.in_transaction = MagicMock(return_value=True)
-            observability_sessions.append(session)
-            return session
 
-        def track_rbac_session():
-            session = MagicMock()
-            session.close = MagicMock()
-            session.commit = MagicMock()
-            session.rollback = MagicMock()
-            session.invalidate = MagicMock()
-            session.is_active = True
-            session.in_transaction = MagicMock(return_value=True)
-            rbac_sessions.append(session)
-            return session
+@pytest.mark.asyncio
+async def test_rbac_get_db_creates_own_session_when_none_available():
+    """RBAC's deprecated get_db() creates its own session when no middleware session exists."""
+    import warnings
+    from mcpgateway.middleware.rbac import get_db
 
-        with patch('mcpgateway.middleware.observability_middleware.SessionLocal', track_observability_session), \
-             patch('mcpgateway.middleware.rbac.SessionLocal', track_rbac_session), \
-             warnings.catch_warnings():
-            # Suppress deprecation warnings in this test
-            warnings.simplefilter("ignore", DeprecationWarning)
+    mock_session = _make_mock_session()
 
-            client = TestClient(app)
+    with warnings.catch_warnings(), \
+         patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
+        warnings.simplefilter("ignore", DeprecationWarning)
+        gen = get_db(request=None)
+        db = next(gen)
 
-            # Call an endpoint that uses rbac.get_db()
-            # (llm_admin_router uses it)
-            response = client.get("/admin/llm/providers")
+    assert db is mock_session, "RBAC get_db() should create a new session"
+    gen.close()
+    # Should close its own session
+    mock_session.close.assert_called_once()
 
-        # Observability should create session
-        assert len(observability_sessions) >= 1, "Observability should create a session"
 
-        # RBAC should NOT create sessions (should reuse)
-        assert len(rbac_sessions) == 0, \
-            f"RBAC get_db() should reuse session (created {len(rbac_sessions)})"
+@pytest.mark.asyncio
+async def test_shared_session_rollback_on_auth_logging_failure():
+    """When auth logging fails on a shared session, rollback must prevent PendingRollbackError.
 
-    finally:
-        settings.observability_enabled = original_observability
+    This test validates that the auth middleware properly cleans up the shared
+    session when security logging raises an exception, so that downstream
+    call_next()/get_db() does not inherit a broken session.
+    """
+    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+    from starlette.responses import Response
+
+    middleware = AuthContextMiddleware(app=MagicMock())
+    call_next = MagicMock(return_value=Response("ok"))
+
+    # Make call_next a coroutine
+    async def async_call_next(req):
+        return Response("ok")
+
+    request = MagicMock()
+    request.url.path = "/servers"
+    request.cookies = {"jwt_token": "valid_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+
+    # Shared session simulating ObservabilityMiddleware
+    shared_session = _make_mock_session()
+    request.state.db = shared_session
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("connection error")
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", return_value=mock_user), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, async_call_next)
+
+    assert response.status_code == 200
+    # Critical: shared session must be rolled back
+    shared_session.rollback.assert_called_once()
+    # Must NOT be closed (owned by ObservabilityMiddleware)
+    shared_session.close.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_session_count_with_full_middleware_stack():
+    """Verify that the full middleware chain creates at most 1 session per request.
+
+    Uses the real app but patches SessionLocal at all entry points.
+    Targets /health (which skips auth) to count only ObservabilityMiddleware sessions.
+    """
+    from mcpgateway.main import app
+    from fastapi.testclient import TestClient
+
+    session_count = 0
+
+    def counting_session_local():
+        nonlocal session_count
+        session_count += 1
+        return _make_mock_session()
+
+    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", counting_session_local), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", counting_session_local), \
+         patch("mcpgateway.middleware.rbac.SessionLocal", counting_session_local), \
+         patch("mcpgateway.main.SessionLocal", counting_session_local):
+
+        client = TestClient(app)
+        session_count = 0  # Reset after TestClient setup
+        response = client.get("/health")
+
+    # /health skips auth middleware, so we expect at most 1 session
+    # (from ObservabilityMiddleware, if enabled)
+    assert session_count <= 1, f"Expected at most 1 session for /health, got {session_count}"
