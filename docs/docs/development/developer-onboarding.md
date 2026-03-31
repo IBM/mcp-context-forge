@@ -71,7 +71,7 @@ If not using Dev Containers, set up manually:
 ???+ check "Additional tools"
 
     - [ ] `helm` installed for Kubernetes deployments ([Helm install docs](https://helm.sh/docs/intro/install/))
-    - [ ] Security tools in `$PATH`: `hadolint`, `dockle`, `trivy`, `osv-scanner`
+    - [ ] Security tools in `$PATH`: `hadolint`, `dockle`, `osv-scanner`
 
 ???+ check "Useful VS Code extensions"
 
@@ -160,7 +160,7 @@ If not using Dev Containers, set up manually:
 
     - [ ] Run:
         ```bash
-        make hadolint dockle osv-scan trivy pip-audit
+        make hadolint dockle osv-scan security-scan pip-audit
         ```
 
 ???+ check "SonarQube analysis"
@@ -176,7 +176,7 @@ If not using Dev Containers, set up manually:
 
     - [ ] Export a token with:
         ```bash
-        export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
+        export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
         ```
 
     - [ ] Verify authenticated API access:

@@ -110,6 +110,7 @@ class TestTeamsRouterV2:
         member.joined_at = datetime.now(timezone.utc)
         member.invited_by = "owner@example.com"
         member.is_active = True
+        member.grant_source = None
         return member
 
     # =========================================================================
@@ -194,7 +195,7 @@ class TestTeamsRouterV2:
     async def test_update_team_success(self, mock_user_context, mock_db, mock_team):
         """Test updating a team successfully."""
         team_id = mock_team.id
-        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
+        request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=100)
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -276,6 +277,7 @@ class TestTeamsRouterV2:
         new_member.joined_at = datetime.now(timezone.utc)
         new_member.invited_by = mock_user_context["email"]
         new_member.is_active = True
+        new_member.grant_source = None
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -481,6 +483,7 @@ class TestTeamsRouterV2:
         new_owner.joined_at = datetime.now(timezone.utc)
         new_owner.invited_by = mock_user_context["email"]
         new_owner.is_active = True
+        new_owner.grant_source = None
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)

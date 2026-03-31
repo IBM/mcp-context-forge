@@ -129,7 +129,7 @@ Create a `server_config.json` file to define your ContextForge Gateway connectio
 
 ```bash
 # From your mcp-context-forge directory
-python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --secret my-test-key
+python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 > **⚠️ Important Notes**

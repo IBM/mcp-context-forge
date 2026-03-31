@@ -256,21 +256,13 @@ def test_tool_metrics_summary_detached():
     assert summary["failure_rate"] == 0.0
 
 
-def test_build_engine_mysql_branch(monkeypatch):
-    monkeypatch.setattr(db, "backend", "mysql")
-    monkeypatch.setattr(db.settings, "database_url", "mysql://user:pass@localhost/db")
-    monkeypatch.setattr(db.settings, "db_pool_size", 5)
-    monkeypatch.setattr(db.settings, "db_max_overflow", 10)
-    monkeypatch.setattr(db.settings, "db_pool_timeout", 30)
-    monkeypatch.setattr(db.settings, "db_pool_recycle", 300)
-    monkeypatch.setattr(db, "connect_args", {"arg": "val"})
-
-    with patch("mcpgateway.db.create_engine") as mock_create:
+@pytest.mark.parametrize("unsupported_backend", ["mysql", "mariadb", "mongodb", "oracle"])
+def test_build_engine_rejects_unsupported_backend(monkeypatch, unsupported_backend):
+    """build_engine() raises ValueError for any backend other than postgresql/sqlite."""
+    monkeypatch.setattr(db, "backend", unsupported_backend)
+    monkeypatch.setattr(db.settings, "database_url", f"{unsupported_backend}://user:pass@host/db")
+    with pytest.raises(ValueError, match="Unsupported database backend"):
         db.build_engine()
-        kwargs = mock_create.call_args.kwargs
-        assert kwargs["pool_pre_ping"] is True
-        assert kwargs["pool_size"] == 5
-        assert kwargs["max_overflow"] == 10
 
 
 def test_build_engine_null_pool_branch(monkeypatch):
@@ -2306,44 +2298,6 @@ def test_validate_prompt_schema_logs_unsupported_draft(caplog):
     assert any("Unsupported JSON Schema draft" in record.message for record in caplog.records)
 
 
-# --- MariaDB VARCHAR patching helper ---
-def test_patch_string_columns_for_mariadb_sets_varchar_length():
-    # Standard
-    from types import SimpleNamespace
-
-    # Third-Party
-    from sqlalchemy import Column, MetaData, String, Table
-    from sqlalchemy.sql.sqltypes import VARCHAR
-
-    md = MetaData()
-    tbl = Table("t", md, Column("c1", String()), Column("c2", String(10)))
-    base = SimpleNamespace(metadata=md)
-    engine_ = SimpleNamespace(dialect=SimpleNamespace(name="mariadb"))
-
-    db.patch_string_columns_for_mariadb(base, engine_)
-
-    assert isinstance(tbl.c.c1.type, VARCHAR)
-    assert tbl.c.c1.type.length == 255
-    assert tbl.c.c2.type.length == 10
-
-
-def test_patch_string_columns_for_mariadb_non_mariadb_noop():
-    # Standard
-    from types import SimpleNamespace
-
-    # Third-Party
-    from sqlalchemy import Column, MetaData, String, Table
-
-    md = MetaData()
-    tbl = Table("t", md, Column("c1", String()))
-    base = SimpleNamespace(metadata=md)
-    engine_ = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
-
-    db.patch_string_columns_for_mariadb(base, engine_)
-    assert isinstance(tbl.c.c1.type, String)
-    assert tbl.c.c1.type.length is None
-
-
 # --- EmailApiToken permissions helper ---
 def test_email_api_token_get_effective_permissions_team_token():
     team = db.EmailTeam(name="Team", slug="team", created_by="user@example.com", is_personal=False)
@@ -2866,6 +2820,18 @@ def test_llm_provider_type_helpers():
 
     defaults = db.LLMProviderType.get_provider_defaults()
     assert "api_base" in defaults[db.LLMProviderType.OPENAI]
+
+
+def test_ollama_provider_defaults_use_native_api():
+    """Ollama defaults must point to native API, not the OpenAI-compatible /v1 shim."""
+    defaults = db.LLMProviderType.get_provider_defaults()
+    ollama = defaults[db.LLMProviderType.OLLAMA]
+
+    assert ollama["api_base"] == "http://localhost:11434", "api_base must not include /v1"
+    assert ollama["models_endpoint"] == "/api/tags", "models_endpoint must use native Ollama endpoint"
+    assert ollama["requires_api_key"] is False
+    assert ollama["supports_model_list"] is True
+    assert "OpenAI" not in ollama["description"]
 
 
 def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):

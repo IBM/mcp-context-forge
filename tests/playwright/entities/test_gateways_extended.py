@@ -1364,8 +1364,8 @@ class TestGatewayTableDisplay:
         _skip_if_no_gateways(gateways_page)
 
         first_row = gateways_page.get_gateway_row(0)
-        # Owner column index shifted +1 after Gateway ID insertion (Actions=0, S.No.=1, GatewayID=2, Name=3, URL=4, Tags=5, Status=6, LastSeen=7, Owner=8)
-        owner = first_row.locator("td").nth(9).text_content().strip()
+        # Column order: Actions=0, S.No.=1, GatewayID=2, Name=3, URL=4, Tags=5, Status=6, LastSeen=7, Owner=8, Team=9, Visibility=10
+        owner = first_row.locator("td").nth(8).text_content().strip()
         # Owner should be an email or "None"
         assert "@" in owner or owner == "None", f"Unexpected owner value: '{owner}'"
 

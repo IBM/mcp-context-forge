@@ -18,7 +18,6 @@ from typing import Any, Iterable, List, Union
 import uuid
 
 # Third-Party
-import orjson
 from sqlalchemy import and_, func, or_, text
 from sqlalchemy.sql.elements import TextClause
 
@@ -187,24 +186,6 @@ def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], matc
 
     dialect = session.get_bind().dialect.name
 
-    # ---------- MySQL ----------
-    # For dict-format tags: use JSON_SEARCH to find tags with matching id
-    # JSON_SEARCH returns path if found, NULL otherwise
-    if dialect == "mysql":
-        # Build conditions that check for both string tags and dict tags with matching id
-        conditions = []
-        for tag_value in values_list:
-            # Check if tag exists as plain string OR as dict with matching id
-            # JSON_SEARCH(col, 'one', value) finds plain string value
-            # JSON_CONTAINS with path $.*.id checks dict format
-            string_match = func.json_search(col, "one", tag_value).isnot(None)
-            dict_match = func.json_contains(col, orjson.dumps([{"id": tag_value}]).decode()) == 1
-            conditions.append(or_(string_match, dict_match))
-
-        if match_any:
-            return or_(*conditions)
-        return and_(*conditions)
-
     # ---------- PostgreSQL ----------
     # For dict-format tags: use JSON functions that work with both JSON and JSONB types
     # Note: .contains() only works with JSONB, but our column is JSON type
@@ -318,23 +299,6 @@ def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_an
         raise ValueError("values must be non-empty")
 
     dialect = session.get_bind().dialect.name
-
-    # ---------- MySQL ----------
-    # - all-of: JSON_CONTAINS(col, '["a","b"]') == 1
-    # - any-of: prefer JSON_OVERLAPS (MySQL >= 8.0.17), otherwise OR of JSON_CONTAINS for each value
-    if dialect == "mysql":
-        try:
-            if match_any:
-                # JSON_OVERLAPS exists in modern MySQL; SQLAlchemy will emit func.json_overlaps(...)
-                return func.json_overlaps(col, orjson.dumps(values_list).decode()) == 1
-            else:
-                return func.json_contains(col, orjson.dumps(values_list).decode()) == 1
-        except Exception:
-            # Fallback: compose OR of json_contains for each scalar
-            if match_any:
-                return or_(*[func.json_contains(col, orjson.dumps(t).decode()) == 1 for t in values_list])
-            else:
-                return and_(*[func.json_contains(col, orjson.dumps(t).decode()) == 1 for t in values_list])
 
     # ---------- PostgreSQL ----------
     # - all-of: col.contains(list)  (works if col is JSONB)

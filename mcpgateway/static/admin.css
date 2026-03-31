@@ -3,12 +3,6 @@
     /* Panels handle their own internal padding */
 }
 
-/* Sidebar navigation */
-.sidebar-nav {
-    position: relative;
-    z-index: 50;
-    flex-shrink: 0;
-}
 
 /* Sidebar scrollbar */
 .sidebar-scroll {
@@ -56,17 +50,6 @@
     padding-bottom: 0.25rem;
 }
 
-/* Mobile sidebar overlay */
-@media (width <=1023px) {
-    .sidebar-nav {
-        position: fixed;
-        top: 0;
-        left: 0;
-        height: 100vh;
-        z-index: 60;
-        box-shadow: 4px 0 6px -1px rgb(0 0 0 / 10%);
-    }
-}
 
 /* CodeMirror code example styling (for LLM API Info) */
 .code-example {
@@ -116,41 +99,6 @@
     /* Ensures it behaves like a block-level element */
 }
 
-/* CSS for the tooltip */
-.tooltip {
-    position: fixed;
-    z-index: 9999;
-    background-color: #1f2937;
-
-    /* Tailwind's gray-800 */
-    color: white;
-    font-size: 0.875rem;
-
-    /* text-sm */
-    border-radius: 0.5rem;
-
-    /* Increased rounded corners */
-    padding: 0.75rem 1rem;
-
-    /* More padding */
-    pointer-events: none;
-    opacity: 0;
-    transform: scale(0.8);
-
-    /* Tooltip starts slightly smaller */
-    transition:
-        transform 0.2s ease,
-        opacity 0.3s ease;
-
-    /* Added smooth transition */
-}
-
-.tooltip.show {
-    opacity: 1;
-    transform: scale(1);
-
-    /* Scales up smoothly */
-}
 
 @keyframes spin {
     0% {
@@ -170,10 +118,6 @@
   display: none;
 }
 
-/* Modal z-index to prevent sticky header overlap */
-.fixed.z-10 {
-    z-index: 9999 !important;
-}
 
 /* ===== LLM Chat — Toolbar-based layout with maximized chat area ===== */
 

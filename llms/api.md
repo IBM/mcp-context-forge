@@ -154,7 +154,7 @@ PY
 - `tags` (comma‑separated or repeated): filter by tag.
 - `team_id` (str): team scoping.
 - `visibility` (str): `private|team|public`.
-- `gateway_id` (str): filter by physical gateway ID (`/tools` only). Use `null` for tools without a gateway.
+- `gateway_id` (str): filter by physical gateway ID (`/tools`, `/prompts`, `/resources`). Use `null` for items without a gateway.
 - `limit` (int): max items to return. Use `0` for all (no limit). Default: 50.
 
 **Auth & Errors**
