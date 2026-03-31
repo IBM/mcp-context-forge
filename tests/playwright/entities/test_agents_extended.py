@@ -38,15 +38,11 @@ def _open_view_modal(agents_page: AgentsPage, index: int = 0) -> None:
     row = agents_page.get_agent_row(index)
     view_btn = row.locator('button:has-text("View")')
     with agents_page.page.expect_response(
-<<<<<<< HEAD
-        lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
-=======
         lambda resp: (
             re.search(r"/ui/a2a/[0-9a-f]", resp.url) is not None
             and "/partial" not in resp.url
             and resp.request.method == "GET"
         ),
->>>>>>> f5fd9a243 (Playwright tests fix)
         timeout=30000,
     ) as resp_info:
         view_btn.click()
@@ -71,15 +67,11 @@ def _open_edit_modal(agents_page: AgentsPage, index: int = 0) -> None:
     row = agents_page.get_agent_row(index)
     edit_btn = row.locator('button:has-text("Edit")')
     with agents_page.page.expect_response(
-<<<<<<< HEAD
-        lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
-=======
         lambda resp: (
             re.search(r"/ui/a2a/[0-9a-f]", resp.url) is not None
             and "/partial" not in resp.url
             and resp.request.method == "GET"
         ),
->>>>>>> f5fd9a243 (Playwright tests fix)
         timeout=30000,
     ) as resp_info:
         edit_btn.click()
