@@ -102,7 +102,7 @@ def advisory_lock(conn: Connection):
     Acquire a distributed advisory lock to serialize migrations across multiple instances.
 
     Behavior depends on the database backend:
-    - Postgres: Uses `pg_advisory_lock` (blocking)
+    - Postgres: Uses `pg_try_advisory_lock` (non-blocking)
     - SQLite: Fallback to local `FileLock`
 
     Args:
@@ -119,8 +119,35 @@ def advisory_lock(conn: Connection):
     pg_lock_id = 42424242424242
 
     if dialect == "postgresql":
-        logger.info("Acquiring Postgres advisory lock...")
-        conn.execute(text(f"SELECT pg_advisory_lock({pg_lock_id})"))
+        logger.info("Attempting to acquire Postgres advisory lock...")
+        
+        # Retry parameters
+        max_retries = 60  # 60 attempts
+        base_delay = 1.0  # Start with 1 second
+        max_delay = 10.0  # Cap at 10 seconds
+        
+        acquired = False
+        for attempt in range(max_retries):
+            # Try non-blocking lock
+            result = conn.execute(text(f"SELECT pg_try_advisory_lock({pg_lock_id})"))
+            acquired = result.scalar()
+            
+            if acquired:
+                logger.info(f"Acquired Postgres advisory lock on attempt {attempt + 1}")
+                break
+            
+            # Exponential backoff with jitter
+            delay = min(base_delay * (1.5 ** attempt), max_delay)
+            jitter = delay * 0.1 * (2 * (attempt % 2) - 1)  # ±10% jitter
+            sleep_time = delay + jitter
+            
+            logger.info(f"Lock held by another instance, retrying in {sleep_time:.1f}s (attempt {attempt + 1}/{max_retries})")
+            import time
+            time.sleep(sleep_time)
+        
+        if not acquired:
+            raise TimeoutError(f"Failed to acquire advisory lock after {max_retries} attempts")
+
         try:
             yield
         finally:

@@ -476,6 +476,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._leader_ttl = settings.redis_leader_ttl
             self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
             self._leader_heartbeat_task: Optional[asyncio.Task] = None
+            self._follower_election_task: Optional[asyncio.Task] = None
+
+            # Log instance mapping for debugging
+            logger.info(f"Instance started: instance_id={self._instance_id}, port={settings.port}, pid={os.getpid()}")
 
         # Always initialize file lock as fallback (used if Redis connection fails at runtime)
         if settings.cache_type != "none":
@@ -588,8 +592,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.info("Acquired Redis leadership. Starting health check and heartbeat tasks.")
                 self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
                 self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
+            else:
+                # Did not acquire leadership - start follower election loop
+                logger.info("Did not acquire leadership. Starting follower election loop.")
+                self._follower_election_task = asyncio.create_task(self._run_follower_election(user_email))
         else:
-            # Always create the health check task in filelock mode; leader check is handled inside.
+            # No Redis available - always create the health check task in filelock mode
             self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
 
     async def shutdown(self) -> None:
@@ -639,6 +647,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.info("Released Redis leadership on shutdown")
             except Exception as e:
                 logger.warning(f"Failed to release Redis leader key on shutdown: {e}")
+
+        if hasattr(self, '_follower_election_task') and self._follower_election_task:
+            self._follower_election_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._follower_election_task
 
         await self._http_client.aclose()
         await self._event_service.shutdown()
@@ -3901,34 +3914,95 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return self.convert_gateway_to_read(result)
 
     async def _run_leader_heartbeat(self) -> None:
-        """Run leader heartbeat loop to keep leader key alive.
+        """Run leader heartbeat loop with Redis reconnection support."""
+        consecutive_failures = 0
+        max_failures = 3
 
-        This runs independently from health checks to ensure the leader key
-        is refreshed frequently enough (every redis_leader_heartbeat_interval seconds)
-        to prevent expiration during long-running health check operations.
-
-        The loop exits if this instance loses leadership.
-        """
         while True:
             try:
                 await asyncio.sleep(self._leader_heartbeat_interval)
 
                 if not self._redis_client:
-                    return
+                    logger.warning("Redis client unavailable in heartbeat")
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_failures:
+                        logger.error("Lost Redis connection, stopping heartbeat")
+                        return
+                    continue
 
                 # Check if we're still the leader
                 current_leader = await self._redis_client.get(self._leader_key)
                 if current_leader != self._instance_id:
                     logger.info("Lost Redis leadership, stopping heartbeat")
+                    # Start follower election to try to reclaim leadership
+                    if not hasattr(self, '_follower_election_task') or self._follower_election_task is None or self._follower_election_task.done():
+                        self._follower_election_task = asyncio.create_task(self._run_follower_election(settings.platform_admin_email))
                     return
 
                 # Refresh the leader key TTL
                 await self._redis_client.expire(self._leader_key, self._leader_ttl)
                 logger.debug(f"Leader heartbeat: refreshed TTL to {self._leader_ttl}s")
+                consecutive_failures = 0
 
             except Exception as e:
-                logger.warning(f"Leader heartbeat error: {e}")
+                consecutive_failures += 1
+                logger.warning(f"Leader heartbeat error (failure {consecutive_failures}/{max_failures}): {e}")
                 # Continue trying - the main health check loop will handle leadership loss
+                if consecutive_failures >= max_failures:
+                    logger.error("Too many consecutive heartbeat failures, attempting re-election")
+                    # Try to re-acquire leadership after Redis recovery
+                    try:
+                        is_leader = await self._redis_client.set(
+                            self._leader_key, 
+                            self._instance_id, 
+                            ex=self._leader_ttl, 
+                            nx=True
+                        )
+                        if is_leader:
+                            logger.info("Re-acquired leadership after Redis recovery")
+                            consecutive_failures = 0
+                        else:
+                            logger.info("Could not re-acquire leadership, starting follower election")
+                            if not hasattr(self, '_follower_election_task') or self._follower_election_task is None or self._follower_election_task.done():
+                                self._follower_election_task = asyncio.create_task(self._run_follower_election(settings.platform_admin_email))
+                            return
+                    except Exception as retry_error:
+                        logger.error(f"Re-election failed: {retry_error}")
+                        return
+
+    async def _run_follower_election(self, user_email: str) -> None:
+        """Continuously attempt to acquire leadership when not the leader.
+
+        This runs on follower instances and polls Redis to claim leadership
+        when the current leader key expires or becomes available.
+        """
+        retry_interval = max(1, self._leader_ttl // 3)  # Poll at 1/3 of TTL
+
+        while True:
+            try:
+                await asyncio.sleep(retry_interval)
+                
+                if not self._redis_client:
+                    logger.warning("Redis client unavailable, cannot attempt election.")
+                    continue
+
+                # Attempt to acquire leadership
+                is_leader = await self._redis_client.set(
+                    self._leader_key, 
+                    self._instance_id, 
+                    ex=self._leader_ttl, 
+                    nx=True
+                )
+
+                if is_leader:
+                    logger.info("Acquired Redis leadership via follower election. Starting health check and heartbeat.")
+                    self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
+                    self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
+                    return  # Exit follower loop, now running as leader
+
+            except Exception as e:
+                logger.warning(f"Follower election error: {e}", exc_info=True)
+                # Continue trying on errors
 
     async def _run_health_checks(self, user_email: str) -> None:
         """Run health checks periodically,
