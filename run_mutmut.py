@@ -6,14 +6,15 @@ Generates mutants and then runs them despite stats failure.
 """
 
 # Standard
-import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
 
 def run_command(cmd):
     """Run a shell command and return output."""
+    # Using shell=True for complex pipe/grep operations; commands are constructed internally
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     return result.stdout, result.stderr, result.returncode
 
@@ -32,7 +33,8 @@ def main():
 
     # Clean previous runs
     print("🧹 Cleaning previous mutants...")
-    os.system("rm -rf mutants .mutmut-cache")
+    for path in ["mutants", ".mutmut-cache"]:
+        shutil.rmtree(path, ignore_errors=True)
 
     # Generate mutants (will fail at stats but mutants are created)
     print("📝 Generating mutants (this may take a minute)...")
