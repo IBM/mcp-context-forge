@@ -3712,13 +3712,13 @@ class TestJwtIdentityExtractorNone:
     async def test_session_reraises_non_capacity_runtime_error(self):
         """Test that RuntimeError without 'Maximum pool keys' message is re-raised as-is."""
         pool = MCPSessionPool(max_total_keys=1, max_sessions_per_key=1)
-        
+
         # Mock _get_or_create_pool to raise RuntimeError with different message
         async def mock_get_or_create_pool(pool_key):
             raise RuntimeError("Some other runtime error")
-        
+
         pool._get_or_create_pool = mock_get_or_create_pool
-        
+
         # Should re-raise the RuntimeError as-is (not convert to TimeoutError)
         with pytest.raises(RuntimeError, match="Some other runtime error"):
             async with pool.session(

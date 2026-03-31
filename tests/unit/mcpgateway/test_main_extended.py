@@ -408,7 +408,7 @@ class TestJwtIdentityExtractor:
         from unittest.mock import patch
 
         extractor = _create_jwt_identity_extractor()
-        
+
         # Create a valid-looking token that will fail decode
         with patch("jwt.decode", side_effect=Exception("Decode failed")):
             headers = {"Authorization": "Bearer some-token"}
