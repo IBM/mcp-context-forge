@@ -1,0 +1,10 @@
+description: "CRT-based semantic tool router - provides API methods for tool ranking and automatic tool validation via hooks"
+author: "MCP Gateway Team"
+version: "1.0.0"
+available_hooks:
+  - "tool_pre_invoke"
+default_config:
+  calibration_path: "data/calibration/crt_model.json"
+  default_k: 10
+  default_threshold: 0.72
+  cache_enabled: true
