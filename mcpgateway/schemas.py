@@ -8062,7 +8062,7 @@ class HealthCheckResponse(BaseModel):
     """Health check response containing status of all monitored components."""
 
     status: str = Field(..., description="Overall health status: 'healthy' if all components are healthy, 'unhealthy' otherwise")
-    status_Items: List[HealthStatusItem] = Field(..., description="List of component health statuses")
+    status_items: List[HealthStatusItem] = Field(..., description="List of component health statuses")
     mcp_runtime: Dict[str, Any] = Field(default_factory=dict, description="MCP runtime diagnostics and configuration")
 
 

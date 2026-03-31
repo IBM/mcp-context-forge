@@ -11058,7 +11058,7 @@ async def healthcheck(response: Response):
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_200_OK, message="Database Connection Successful"))
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_200_OK, message="Database Connection Successful"))
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -11070,7 +11070,7 @@ async def healthcheck(response: Response):
                 pass  # nosec B110 - Best effort cleanup on connection failure
         error_message = f"Database health check failed: {str(e)}"
         logger.error(error_message)
-        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database"))
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database"))
     finally:
         db.close()
 
@@ -11080,28 +11080,28 @@ async def healthcheck(response: Response):
         try:
             # is_redis_available() checks if Redis is available and responding to ping.
             if await is_redis_available():
-                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_200_OK, message="ready"))
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_200_OK, message="ready"))
             else:
-                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
         except Exception as e:
             logger.error(f"Redis health check failed: {str(e)}")
-            status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
+            status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
 
     # Determine overall status:
     # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
     # - "unhealthy" if Database is unhealthy (503) OR Redis is unhealthy when enabled
     database_status = next((item for item in status_items if item.name == "Database"), None)
-    redis_status = next((item for item in status_items if item.name == "Redis"), None)
+    redis_status = next((item for item in status_items if item.name == "Cache"), None)
 
     # Check database health
-    database_healthy = database_status and database_status.statusCode == 200
+    database_healthy = database_status and database_status.status_code == 200
 
-    redis_healthy = not redis_enabled or (redis_status and redis_status.statusCode == 200)
+    redis_healthy = not redis_enabled or (redis_status and redis_status.status_code == 200)
 
     overall_status = "healthy" if database_healthy and redis_healthy else "unhealthy"
 
     _apply_runtime_mode_headers(response)
-    return HealthCheckResponse(status=overall_status, statusItems=status_items, mcp_runtime=_mcp_runtime_status_payload())
+    return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
 
 @app.get("/ready")
 async def readiness_check():

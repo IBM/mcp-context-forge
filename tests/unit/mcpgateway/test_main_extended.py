@@ -10053,19 +10053,19 @@ class TestRemainingCoverageGaps:
         # Check overall status
         assert result.status == "healthy"
         
-        # Check statusItems for Database and Redis
-        assert len(result.statusItems) == 2
+        # Check status_items for Database and Redis
+        assert len(result.status_items) == 2
         
         # Check Database status
-        db_status = next((item for item in result.statusItems if item.name == "Database"), None)
+        db_status = next((item for item in result.status_items if item.name == "Database"), None)
         assert db_status is not None
-        assert db_status.statusCode == 200
+        assert db_status.status_code == 200
         assert db_status.message == "Database Connection Successful"
         
         # Check Redis status
-        redis_status = next((item for item in result.statusItems if item.name == "Redis"), None)
+        redis_status = next((item for item in result.status_items if item.name == "Cache"), None)
         assert redis_status is not None
-        assert redis_status.statusCode == 200
+        assert redis_status.status_code == 200
         assert redis_status.message == "ready"
         
         # Check MCP runtime fields
@@ -10119,20 +10119,20 @@ class TestRemainingCoverageGaps:
         # Check overall status - should be unhealthy due to Redis failure
         assert result.status == "unhealthy"
         
-        # Check statusItems
-        assert len(result.statusItems) == 2
+        # Check status_items
+        assert len(result.status_items) == 2
         
         # Check Database status - should be healthy
-        db_status = next((item for item in result.statusItems if item.name == "Database"), None)
+        db_status = next((item for item in result.status_items if item.name == "Database"), None)
         assert db_status is not None
-        assert db_status.statusCode == 200
+        assert db_status.status_code == 200
         assert db_status.message == "Database Connection Successful"
         
-        # Check Redis status - should be unhealthy due to exception
-        redis_status = next((item for item in result.statusItems if item.name == "Redis"), None)
-        assert redis_status is not None
-        assert redis_status.statusCode == 503
-        assert redis_status.message == "Cannot connect to Redis"
+        # Check cache status - should be unhealthy due to exception
+        cache_status = next((item for item in result.status_items if item.name == "Cache"), None)
+        assert cache_status is not None
+        assert cache_status.status_code == 503
+        assert cache_status.message == "Cannot connect to Cache"
 
 
     async def test_readiness_check_invalidate_failure_is_best_effort(self, monkeypatch):
