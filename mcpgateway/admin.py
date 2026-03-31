@@ -255,30 +255,37 @@ SECTION_PERMISSIONS: Dict[str, Optional[str]] = {
 # NOTE: Only includes routes that exist on admin_router itself.
 # Routes on other routers (version.py, llm_admin_router, etc.) are excluded
 # from validation since they're mounted separately and have their own decorators.
-_SECTION_TO_ROUTE_PATH: Dict[str, str] = {
-    "users": "/admin/users/partial",
-    "maintenance": "/admin/maintenance/partial",
-    "logs": "/admin/logs",
-    "export-import": "/admin/export/configuration",
-    "plugins": "/admin/plugins/partial",
-    "metrics": "/admin/metrics",
-    # "version-info": "/admin/version",  # Route is on version.py router, not admin_router
-    # "settings": "/admin/llm-settings",  # No such route exists
-    # "llm-providers": "/admin/llm/providers/html",  # Route is on llm_admin_router
-    # "llm-models": "/admin/llm/models/html",  # Route is on llm_admin_router
-    # "llm-api-info": "/admin/llm/api-info/html",  # Route is on llm_admin_router
-    "tools": "/admin/tools/partial",
-    "servers": "/admin/servers/partial",
-    "resources": "/admin/resources/partial",
-    "prompts": "/admin/prompts/partial",
-    "gateways": "/admin/gateways/partial",
-    "teams": "/admin/teams/partial",
-    "tokens": "/admin/tokens/partial",
-    "agents": "/admin/a2a/partial",
-    "overview": "/admin/overview/partial",
-    # "roots": "/admin/roots/partial",  # No such route exists on admin_router
-    "mcp-registry": "/admin/servers/partial",
-}
+def _get_section_to_route_path() -> Dict[str, str]:
+    """Get the mapping of UI sections to route paths using the current UI base path.
+
+    Returns:
+        Dict mapping section names to their route paths with the dynamic UI base path.
+    """
+    base = settings.mcpgateway_ui_base_path
+    return {
+        "users": f"{base}/users/partial",
+        "maintenance": f"{base}/maintenance/partial",
+        "logs": f"{base}/logs",
+        "export-import": f"{base}/export/configuration",
+        "plugins": f"{base}/plugins/partial",
+        "metrics": f"{base}/metrics",
+        # "version-info": f"{base}/version",  # Route is on version.py router, not admin_router
+        # "settings": f"{base}/llm-settings",  # No such route exists
+        # "llm-providers": f"{base}/llm/providers/html",  # Route is on llm_admin_router
+        # "llm-models": f"{base}/llm/models/html",  # Route is on llm_admin_router
+        # "llm-api-info": f"{base}/llm/api-info/html",  # Route is on llm_admin_router
+        "tools": f"{base}/tools/partial",
+        "servers": f"{base}/servers/partial",
+        "resources": f"{base}/resources/partial",
+        "prompts": f"{base}/prompts/partial",
+        "gateways": f"{base}/gateways/partial",
+        "teams": f"{base}/teams/partial",
+        "tokens": f"{base}/tokens/partial",
+        "agents": f"{base}/a2a/partial",
+        "overview": f"{base}/overview/partial",
+        # "roots": f"{base}/roots/partial",  # No such route exists on admin_router
+        "mcp-registry": f"{base}/servers/partial",
+    }
 
 
 def _extract_permission_from_route(route) -> Optional[str]:
@@ -326,9 +333,10 @@ def validate_section_permissions(router) -> None:
         ValueError: In test/CI environments when mismatches are found
     """
     mismatches = []
+    section_to_route_path = _get_section_to_route_path()
 
     for section, expected_perm in SECTION_PERMISSIONS.items():
-        route_path = _SECTION_TO_ROUTE_PATH.get(section)
+        route_path = section_to_route_path.get(section)
 
         if route_path is None:
             # Section's route located on a different sub-router, skipping validation
@@ -364,7 +372,7 @@ def validate_section_permissions(router) -> None:
         LOGGER.warning(error_msg)
         LOGGER.warning("This may indicate the mapping needs updating.")
     else:
-        validated_count = len(_SECTION_TO_ROUTE_PATH)
+        validated_count = len(section_to_route_path)
         LOGGER.info(f"SECTION_PERMISSIONS validation passed: all {validated_count} mapped sections verified (skipped {len(SECTION_PERMISSIONS) - validated_count} sections on other routers)")
 
 
