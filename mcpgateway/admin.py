@@ -507,6 +507,7 @@ async def get_hidden_sections_for_user(
             user_email=user_email,
             team_id=None,  # Check across all teams
             include_all_teams=True,  # Include all team-scoped roles
+            token_teams=token_teams,  # SECURITY: Respect token narrowing for menu visibility
         )
         if inspect.isawaitable(maybe_permissions):
             user_permissions = await maybe_permissions
