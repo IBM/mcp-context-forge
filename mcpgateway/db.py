@@ -4,7 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-ContextForge Database Models.
+MCP Gateway Database Models.
 This module defines SQLAlchemy models for storing MCP entities including:
 - Tools with input schema validation
 - Resources with subscription tracking
@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -41,13 +41,13 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
-from sqlalchemy.types import TypeDecorator
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
+from mcpgateway.utils.pgvector import HAS_PGVECTOR, Vector
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ elif backend == "sqlite":
     # Allow pooled connections to hop across threads.
     connect_args["check_same_thread"] = False
 
-# 4. Other backends leave `connect_args` empty.
+# 4. Other backends (MySQL, MSSQL, etc.) leave `connect_args` empty.
 
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
@@ -132,9 +132,6 @@ def build_engine() -> Engine:
 
     Returns:
         SQLAlchemy Engine instance configured for the specified database.
-
-    Raises:
-        ValueError: If the database backend is not postgresql or sqlite.
     """
     if _sqlalchemy_echo:
         logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
@@ -163,8 +160,22 @@ def build_engine() -> Engine:
             echo=_sqlalchemy_echo,
         )
 
-    if backend != "postgresql":
-        raise ValueError(f"Unsupported database backend: '{backend}'. Only 'postgresql' and 'sqlite' are supported.")
+    if backend in ("mysql", "mariadb"):
+        # MariaDB/MySQL specific configuration
+        logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
+
+        return create_engine(
+            settings.database_url,
+            pool_pre_ping=True,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            connect_args=connect_args,
+            isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
+            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
+            echo=_sqlalchemy_echo,
+        )
 
     # Determine if PgBouncer is in use (detected via URL or explicit config)
     is_pgbouncer = "pgbouncer" in settings.database_url.lower()
@@ -258,123 +269,6 @@ def utc_now() -> datetime:
         True
     """
     return datetime.now(timezone.utc)
-
-
-class TokenEncryptionWriteError(ValueError):
-    """Raised when OAuth token encryption fails during DB write binding."""
-
-
-class EncryptedText(TypeDecorator):  # pylint: disable=too-many-ancestors
-    """Text type that applies best-effort encryption/decryption at ORM boundary.
-
-    This preserves compatibility with service-layer encryption:
-    - Pre-encrypted values pass through unchanged.
-    - Plaintext values are encrypted when possible before persistence.
-    - On read, encrypted values are decrypted for runtime usage.
-    """
-
-    impl = Text
-    cache_ok = True
-
-    @property
-    def python_type(self):
-        """Return the Python type represented by this SQLAlchemy type.
-
-        Returns:
-            type: Python ``str`` type.
-        """
-        return str
-
-    @staticmethod
-    def _get_encryption():
-        """Resolve encryption service for column-level token protection.
-
-        Returns:
-            Optional[EncryptionService]: Encryption service instance when configured,
-                otherwise ``None``.
-        """
-        secret = getattr(settings, "auth_encryption_secret", None)
-        if not secret:
-            return None
-        try:
-            # First-Party
-            from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
-
-            return get_encryption_service(secret)
-        except Exception as exc:
-            logger.debug("Unable to initialize encryption service for EncryptedText: %s", exc)
-            return None
-
-    def process_literal_param(self, value, _dialect):  # pylint: disable=unused-argument
-        """Render literal SQL parameter value via encrypted bind processing.
-
-        Args:
-            value (Any): Raw value from SQLAlchemy.
-            _dialect: SQLAlchemy dialect (unused).
-
-        Returns:
-            Any: Bound parameter value after encryption handling.
-        """
-        processed = self.process_bind_param(value, _dialect)
-        return processed
-
-    def process_bind_param(self, value, _dialect):  # pylint: disable=unused-argument
-        """Encrypt plaintext values before persistence when encryption is available.
-
-        Args:
-            value (Any): Raw value from SQLAlchemy.
-            _dialect: SQLAlchemy dialect (unused).
-
-        Returns:
-            Any: Encrypted value for persistence or unchanged value when no
-                encryption is applied.
-
-        Raises:
-            TokenEncryptionWriteError: If encryption is configured and token
-                encryption fails.
-        """
-        if value in (None, "") or not isinstance(value, str):
-            return value
-
-        encryption = self._get_encryption()
-        if not encryption:
-            return value
-
-        try:
-            if encryption.is_encrypted(value):
-                return value
-            return encryption.encrypt_secret(value)
-        except Exception as exc:
-            logger.warning("EncryptedText bind encryption failed; rejecting token write")
-            logger.debug("EncryptedText bind encryption exception: %s", exc)
-            raise TokenEncryptionWriteError("OAuth token encryption failed during write") from exc
-
-    def process_result_value(self, value, _dialect):  # pylint: disable=unused-argument
-        """Decrypt stored encrypted values when reading rows.
-
-        Args:
-            value (Any): Raw value loaded from database.
-            _dialect: SQLAlchemy dialect (unused).
-
-        Returns:
-            Any: Decrypted value when encrypted, otherwise unchanged.
-        """
-        if value in (None, "") or not isinstance(value, str):
-            return value
-
-        encryption = self._get_encryption()
-        if not encryption:
-            return value
-
-        try:
-            if not encryption.is_encrypted(value):
-                return value
-            decrypted = encryption.decrypt_secret_or_plaintext(value)
-            return decrypted if decrypted is not None else value
-        except Exception as exc:
-            logger.warning("EncryptedText result decryption failed, returning stored value")
-            logger.debug("EncryptedText result decryption exception: %s", exc)
-            return value
 
 
 # Configure SQLite for better concurrency if using SQLite
@@ -579,13 +473,15 @@ def before_commit_handler(session):
     """Handler before commit to ensure transaction is in good state.
 
     This is called before COMMIT, ensuring any pending work is flushed.
-    If the flush fails, the exception is propagated so the commit also fails
-    and the caller's error handling (e.g. get_db rollback) can clean up properly.
 
     Args:
         session: The SQLAlchemy session about to commit.
     """
-    session.flush()
+    try:
+        session.flush()
+    except Exception:  # nosec B110
+        # If flush fails, the commit will also fail and trigger rollback
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -886,227 +782,10 @@ def refresh_slugs_on_startup(batch_size: Optional[int] = None) -> None:
         logger.warning("Failed to refresh slugs on startup (unexpected error): %s", e)
 
 
-def _compute_metrics_summary(
-    raw_metrics: List[Any],
-    hourly_metrics: List[Any],
-    session: Optional[Any] = None,
-    entity_id: Optional[str] = None,
-    raw_metric_class: Optional[Any] = None,
-    hourly_metric_class: Optional[Any] = None,
-) -> Dict[str, Any]:
-    """Compute aggregated metrics from both raw and hourly tables without double-counting.
-
-    This function prevents double-counting by including raw metrics only from hours
-    that have no corresponding hourly aggregate. This correctly handles:
-    - Normal operation (hourly rollup complete, raw data retained or deleted)
-    - Rollup lag (completed hour not yet rolled up)
-    - Rollup disabled or failed
-
-    The approach mirrors ``aggregate_metrics_combined()`` in metrics_query_service.py.
-
-    Args:
-        raw_metrics: List of raw metric objects loaded in memory (or None if using session)
-        hourly_metrics: List of hourly aggregate objects loaded in memory (or None if using session)
-        session: SQLAlchemy session for database queries (required if raw_metrics/hourly_metrics not loaded)
-        entity_id: ID of the entity (tool/resource/prompt/server/agent) for SQL query
-        raw_metric_class: ORM class for raw metrics (e.g., ToolMetric) for SQL query
-        hourly_metric_class: ORM class for hourly metrics (e.g., ToolMetricsHourly) for SQL query
-
-    Returns:
-        Dict with keys: total_executions, successful_executions, failed_executions,
-        failure_rate, min_response_time, max_response_time, avg_response_time,
-        last_execution_time
-
-    Raises:
-        ValueError: If both in-memory and SQL query parameters are incomplete
-    """
-    # Determine if we're using in-memory or SQL query path
-    use_memory = raw_metrics is not None and hourly_metrics is not None
-
-    if use_memory:
-        # ============================================================
-        # IN-MEMORY PATH: Iterate over loaded objects
-        # ============================================================
-
-        # Build set of hours already covered by hourly aggregates
-        covered_hours: set[datetime] = set()
-        for h in hourly_metrics:
-            hs = h.hour_start if h.hour_start.tzinfo is not None else h.hour_start.replace(tzinfo=timezone.utc)
-            covered_hours.add(hs)
-
-        total = 0
-        successful = 0
-        min_rt: Optional[float] = None
-        max_rt: Optional[float] = None
-        sum_rt = 0.0
-        last_time: Optional[datetime] = None
-
-        # Include raw metrics only from hours NOT covered by hourly aggregates
-        for m in raw_metrics:
-            metric_ts = m.timestamp if m.timestamp.tzinfo is not None else m.timestamp.replace(tzinfo=timezone.utc)
-            metric_hour = metric_ts.replace(minute=0, second=0, microsecond=0)
-            if metric_hour in covered_hours:
-                continue  # Already counted in hourly aggregates
-
-            total += 1
-            if m.is_success:
-                successful += 1
-            rt = m.response_time
-            if min_rt is None or rt < min_rt:
-                min_rt = rt
-            if max_rt is None or rt > max_rt:
-                max_rt = rt
-            sum_rt += rt
-            if last_time is None or metric_ts > last_time:
-                last_time = metric_ts
-
-        # Process hourly aggregated metrics (completed hours)
-        for h in hourly_metrics:
-            total += h.total_count
-            successful += h.success_count
-            if h.min_response_time is not None:
-                if min_rt is None or h.min_response_time < min_rt:
-                    min_rt = h.min_response_time
-            if h.max_response_time is not None:
-                if max_rt is None or h.max_response_time > max_rt:
-                    max_rt = h.max_response_time
-            if h.avg_response_time is not None and h.total_count > 0:
-                sum_rt += h.avg_response_time * h.total_count
-            hs = h.hour_start if h.hour_start.tzinfo is not None else h.hour_start.replace(tzinfo=timezone.utc)
-            if last_time is None or hs > last_time:
-                last_time = hs
-
-        failed = total - successful
-        return {
-            "total_executions": total,
-            "successful_executions": successful,
-            "failed_executions": failed,
-            "failure_rate": failed / total if total > 0 else 0.0,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": sum_rt / total if total > 0 else None,
-            "last_execution_time": last_time,
-        }
-
-    # ============================================================
-    # SQL QUERY PATH: hourly aggregates + uncovered raw metrics
-    # ============================================================
-    if session is None or entity_id is None or raw_metric_class is None or hourly_metric_class is None:
-        raise ValueError("For SQL query path, must provide: session, entity_id, raw_metric_class, hourly_metric_class")
-
-    # Third-Party
-    from sqlalchemy import case  # pylint: disable=import-outside-toplevel
-
-    # Determine the foreign key column name (tool_id, resource_id, etc.)
-    class_name = raw_metric_class.__name__
-    if class_name.endswith("Metric"):
-        entity_type = class_name[:-6].lower()  # ToolMetric -> tool
-        fk_column_name = f"{entity_type}_id"
-    else:
-        raise ValueError(f"Cannot determine foreign key column for {class_name}")
-
-    fk_column_raw = getattr(raw_metric_class, fk_column_name)
-    fk_column_hourly = getattr(hourly_metric_class, fk_column_name)
-
-    # Query 1: All hourly aggregates for this entity (includes max hour_start)
-    hourly_result = (
-        session.query(
-            func.sum(hourly_metric_class.total_count),  # pylint: disable=not-callable
-            func.sum(hourly_metric_class.success_count),  # pylint: disable=not-callable
-            func.min(hourly_metric_class.min_response_time),  # pylint: disable=not-callable
-            func.max(hourly_metric_class.max_response_time),  # pylint: disable=not-callable
-            func.sum(hourly_metric_class.avg_response_time * hourly_metric_class.total_count),  # weighted sum
-            func.max(hourly_metric_class.hour_start),  # pylint: disable=not-callable
-        )
-        .filter(fk_column_hourly == entity_id)
-        .one()
-    )
-
-    hourly_total = hourly_result[0] or 0
-    hourly_successful = hourly_result[1] or 0
-    hourly_min_rt = hourly_result[2]
-    hourly_max_rt = hourly_result[3]
-    hourly_weighted_sum_rt = hourly_result[4] or 0.0
-    hourly_last_bucket = hourly_result[5]
-
-    # Query 2: Raw metrics from hours NOT covered by hourly aggregates.
-    # Use max_hour_start to determine the boundary: hourly data covers
-    # up to max_hour_start + 1h, raw data covers everything after that.
-    # When no hourly data exists, all raw metrics are counted.
-    raw_query = session.query(
-        func.count(raw_metric_class.id),  # pylint: disable=not-callable
-        func.sum(case((raw_metric_class.is_success.is_(True), 1), else_=0)),
-        func.min(raw_metric_class.response_time),  # pylint: disable=not-callable
-        func.max(raw_metric_class.response_time),  # pylint: disable=not-callable
-        func.sum(raw_metric_class.response_time),  # pylint: disable=not-callable
-        func.max(raw_metric_class.timestamp),  # pylint: disable=not-callable
-    ).filter(fk_column_raw == entity_id)
-    if hourly_last_bucket is not None:
-        # Only include raw metrics from after the last rolled-up hour
-        hourly_coverage_end = hourly_last_bucket + timedelta(hours=1)
-        raw_query = raw_query.filter(raw_metric_class.timestamp >= hourly_coverage_end)
-
-    raw_result = raw_query.one()
-
-    raw_total = raw_result[0] or 0
-    raw_successful = raw_result[1] or 0
-    raw_min_rt = raw_result[2]
-    raw_max_rt = raw_result[3]
-    raw_sum_rt = raw_result[4] or 0.0
-    raw_last_time = raw_result[5]
-
-    # Aggregate totals
-    total = hourly_total + raw_total
-    successful = hourly_successful + raw_successful
-    failed = total - successful
-
-    # Min/max across both sources
-    min_rt = None
-    if raw_min_rt is not None and hourly_min_rt is not None:
-        min_rt = min(raw_min_rt, hourly_min_rt)
-    elif raw_min_rt is not None:
-        min_rt = raw_min_rt
-    elif hourly_min_rt is not None:
-        min_rt = hourly_min_rt
-
-    max_rt = None
-    if raw_max_rt is not None and hourly_max_rt is not None:
-        max_rt = max(raw_max_rt, hourly_max_rt)
-    elif raw_max_rt is not None:
-        max_rt = raw_max_rt
-    elif hourly_max_rt is not None:
-        max_rt = hourly_max_rt
-
-    # Weighted average response time
-    avg_rt = None
-    if total > 0:
-        avg_rt = (hourly_weighted_sum_rt + raw_sum_rt) / total
-
-    # Last execution time: most recent (use hour_start for hourly, consistent with aggregate_metrics_combined)
-    last_time = None
-    if raw_last_time is not None and hourly_last_bucket is not None:
-        last_time = max(raw_last_time, hourly_last_bucket)
-    elif raw_last_time is not None:
-        last_time = raw_last_time
-    elif hourly_last_bucket is not None:
-        last_time = hourly_last_bucket
-
-    return {
-        "total_executions": total,
-        "successful_executions": successful,
-        "failed_executions": failed,
-        "failure_rate": failed / total if total > 0 else 0.0,
-        "min_response_time": min_rt,
-        "max_response_time": max_rt,
-        "avg_response_time": avg_rt,
-        "last_execution_time": last_time,
-    }
-
-
 class Base(DeclarativeBase):
     """Base class for all models."""
 
-    # Naming convention for foreign keys
+    # MariaDB-compatible naming convention for foreign keys
     metadata = MetaData(
         naming_convention={
             "fk": "fk_%(table_name)s_%(column_0_name)s",
@@ -1309,18 +988,6 @@ class Permissions:
     ADMIN_GRPC = "admin.grpc"
     ADMIN_PLUGINS = "admin.plugins"
     ADMIN_METRICS = "admin.metrics"
-    ADMIN_EXPORT = "admin.export"
-    ADMIN_IMPORT = "admin.import"
-    ADMIN_SSO_PROVIDERS_CREATE = "admin.sso_providers:create"
-    ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
-    ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
-    ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
-
-    # Observability and audit read permissions
-    LOGS_READ = "logs:read"
-    METRICS_READ = "metrics:read"
-    AUDIT_READ = "audit:read"
-    SECURITY_READ = "security:read"
 
     # A2A Agent permissions
     A2A_CREATE = "a2a.create"
@@ -1349,7 +1016,7 @@ class Permissions:
         for attr_name in dir(cls):
             if not attr_name.startswith("_") and attr_name.isupper() and attr_name != "ALL_PERMISSIONS":
                 attr_value = getattr(cls, attr_name)
-                if isinstance(attr_value, str):
+                if isinstance(attr_value, str) and "." in attr_value:
                     permissions.append(attr_value)
         return sorted(permissions)
 
@@ -1362,12 +1029,7 @@ class Permissions:
         """
         resource_permissions = {}
         for permission in cls.get_all_permissions():
-            if "." in permission:
-                resource_type = permission.split(".", 1)[0]
-            elif ":" in permission:
-                resource_type = permission.split(":", 1)[0]
-            else:
-                resource_type = permission
+            resource_type = permission.split(".")[0]
             if resource_type not in resource_permissions:
                 resource_permissions[resource_type] = []
             resource_permissions[resource_type].append(permission)
@@ -2297,6 +1959,106 @@ class EmailTeamJoinRequest(Base):
         return self.status == "pending" and not self.is_expired()
 
 
+class ToolUsageEvent(Base):
+    """Tool usage event model for collaborative filtering analytics.
+
+    Captures individual tool executions along with user context to enable
+    usage-based recommendations and similarity analysis between users.
+
+    Attributes:
+        id (str): Primary key UUID
+        user_email (str): Email of user who executed the tool
+        tool_id (str): Tool identifier (name or ID)
+        timestamp (datetime): When the tool was executed
+        execution_duration_ms (int): Execution time in milliseconds
+        success (bool): Whether the execution succeeded
+        error_message (str): Error message if execution failed
+        session_id (str): Session identifier for grouping related events
+        user_role (str): User's role at time of execution
+        user_team_id (str): Team ID at time of execution
+    """
+
+    __tablename__ = "tool_usage_events"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # User and tool identifiers
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    tool_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Timing
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+    # Execution details
+    execution_duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # User context at time of execution
+    user_role: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    user_team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
+
+    # Interaction metadata
+    interaction_type: Mapped[str] = mapped_column(String(20), default="invoke", nullable=False, server_default="invoke")
+    context_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    # Relationships
+    team: Mapped[Optional["EmailTeam"]] = relationship("EmailTeam")
+
+    # Composite indexes for common queries
+    __table_args__ = (
+        Index("idx_usage_events_user_tool", "user_email", "tool_id"),
+        Index("idx_usage_events_team_tool", "user_team_id", "tool_id"),
+        Index("idx_usage_events_interaction_type", "interaction_type"),
+    )
+
+    def __repr__(self) -> str:
+        """String representation of the tool usage event.
+
+        Returns:
+            str: String representation of the event.
+        """
+        return f"<ToolUsageEvent(user_email='{self.user_email}', tool_id='{self.tool_id}', timestamp='{self.timestamp}')>"
+
+
+class UserPreference(Base):
+    """User preference model for privacy and analytics opt-in/out.
+
+    Tracks user-level preferences for analytics data collection and retention.
+
+    Attributes:
+        user_email (str): Primary key, user email
+        analytics_opted_in (bool): Whether user has opted into usage analytics
+        data_retention_days (int): How long to retain user's analytics data
+        last_updated (datetime): When preferences were last modified
+    """
+
+    __tablename__ = "user_preferences"
+
+    # Primary key
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), primary_key=True)
+
+    # Preferences
+    analytics_opted_in: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    data_retention_days: Mapped[int] = mapped_column(Integer, default=90, nullable=False)
+
+    # Timing
+    last_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Relationships
+    user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[user_email])
+
+    def __repr__(self) -> str:
+        """String representation of user preferences.
+
+        Returns:
+            str: String representation of preferences.
+        """
+        return f"<UserPreference(user_email='{self.user_email}', analytics_opted_in={self.analytics_opted_in})>"
+
+
 class PendingUserApproval(Base):
     """Model for pending SSO user registrations awaiting admin approval.
 
@@ -2477,6 +2239,7 @@ class ToolMetric(Base):
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
 
     # Relationship back to the Tool model.
     tool: Mapped["Tool"] = relationship("Tool", back_populates="metrics")
@@ -3248,11 +3011,9 @@ class Tool(Base):
 
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
-    metrics_hourly: Mapped[List["ToolMetricsHourly"]] = relationship(
-        "ToolMetricsHourly",
-        primaryjoin="Tool.id == foreign(ToolMetricsHourly.tool_id)",
-        viewonly=True,
-    )
+
+    # Embeddings relationship
+    embeddings: Mapped[List["ToolEmbedding"]] = relationship("ToolEmbedding", back_populates="tool", cascade="all, delete-orphan")
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -3505,26 +3266,53 @@ class Tool(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """Aggregated metrics for the tool combining raw and hourly data without double-counting.
+        """Aggregated metrics for the tool.
 
-        When metrics are loaded: computes from memory (raw + hourly)
-        When not loaded: uses SQL queries with time partitioning
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        # Try in-memory path first
+        # If metrics are loaded, compute everything in a single pass
         if self._metrics_loaded():
-            try:
-                hourly_metrics = self.metrics_hourly
-            except AttributeError:
-                hourly_metrics = []  # Relationship not loaded
-            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
 
-        # SQL query path
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
+        # Use single SQL query with full aggregation
         # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
@@ -3540,14 +3328,252 @@ class Tool(Base):
                 "last_execution_time": None,
             }
 
-        return _compute_metrics_summary(
-            raw_metrics=None,
-            hourly_metrics=None,
-            session=session,
-            entity_id=self.id,
-            raw_metric_class=ToolMetric,
-            hourly_metric_class=ToolMetricsHourly,
+        result = (
+            session.query(
+                func.count(ToolMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)),
+                func.min(ToolMetric.response_time),  # pylint: disable=not-callable
+                func.max(ToolMetric.response_time),  # pylint: disable=not-callable
+                func.avg(ToolMetric.response_time),  # pylint: disable=not-callable
+                func.max(ToolMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(ToolMetric.tool_id == self.id)
+            .one()
         )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
+
+
+class ToolEmbedding(Base):
+    __tablename__ = "tool_embeddings"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+        nullable=False,
+    )
+    tool_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("tools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    if HAS_PGVECTOR:
+        embedding: Mapped[list[float]] = mapped_column(
+            Vector(settings.embedding_dim),
+            nullable=False,
+        )
+    else:
+        embedding: Mapped[list[float]] = mapped_column(
+            JSON,
+            nullable=False,
+        )
+
+    model_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="text-embedding-3-small",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    tool: Mapped["Tool"] = relationship(
+        "Tool",
+        back_populates="embeddings",
+        passive_deletes=True,
+    )
+
+    if HAS_PGVECTOR:
+        __table_args__ = (
+            # Vector similarity index (PostgreSQL/pgvector)
+            Index(
+                "idx_tool_embeddings_hnsw",
+                "embedding",
+                postgresql_using="hnsw",
+                postgresql_with={"m": settings.hnsw_m, "ef_construction": settings.hnsw_ef_construction},
+                postgresql_ops={"embedding": "vector_cosine_ops"},
+            ),
+            # Composite indexes for efficient queries
+            Index("idx_tool_embeddings_toolid_model", "tool_id", "model_name"),
+            Index("idx_tool_embeddings_toolid_created", "tool_id", "created_at"),
+        )
+    else:
+        __table_args__ = (
+            # Composite indexes for efficient queries (SQLite/other)
+            Index("idx_tool_embeddings_toolid_model", "tool_id", "model_name"),
+            Index("idx_tool_embeddings_toolid_created", "tool_id", "created_at"),
+        )
+
+    def __repr__(self) -> str:
+        return f"<ToolEmbedding(id={self.id}, " f"tool_id={self.tool_id}, " f"model_name={self.model_name})>"
+
+    def similar_to(
+        self,
+        db: "Session",
+        limit: int = 10,
+        threshold: Optional[float] = None,
+    ) -> "List[tuple[ToolEmbedding, float]]":
+        """Find other ToolEmbeddings similar to this one.
+
+        Uses pgvector cosine distance on PostgreSQL, numpy fallback on SQLite.
+
+        Args:
+            db: Active database session.
+            limit: Maximum number of results.
+            threshold: Optional minimum similarity (0-1).
+
+        Returns:
+            List of (ToolEmbedding, similarity_score) tuples, ordered by
+            descending similarity. Does not include self.
+        """
+        dialect_name = db.get_bind().dialect.name
+
+        if dialect_name == "postgresql":
+            distance_expr = ToolEmbedding.embedding.cosine_distance(self.embedding)
+            query = select(ToolEmbedding, (1 - distance_expr).label("similarity")).filter(ToolEmbedding.id != self.id)
+            if threshold is not None:
+                query = query.filter(distance_expr <= (1 - threshold))
+            query = query.order_by(distance_expr.asc()).limit(limit)
+            rows = db.execute(query).all()
+            return [(te, max(0.0, min(1.0, float(sim)))) for te, sim in rows]
+        else:
+            # SQLite: compute cosine similarity in Python
+            # First-Party
+            from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+            all_embeddings = db.query(ToolEmbedding).filter(ToolEmbedding.id != self.id).all()
+            scored = []
+            for te in all_embeddings:
+                sim = _cosine_similarity_numpy(self.embedding, te.embedding)
+                if threshold is not None and sim < threshold:
+                    continue
+                scored.append((te, sim))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return scored[:limit]
+
+
+class AgentEmbedding(Base):
+    """ORM model for A2A agent embedding vectors used in semantic discovery.
+
+    Stores description and capability embeddings for each registered A2A agent,
+    enabling semantic search over agent capabilities using pgvector (PostgreSQL)
+    or JSON fallback (SQLite).
+    """
+
+    __tablename__ = "agent_embeddings"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+        nullable=False,
+    )
+    agent_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("a2a_agents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    if HAS_PGVECTOR:
+        description_embedding: Mapped[list[float]] = mapped_column(
+            Vector(settings.embedding_dim),
+            nullable=False,
+        )
+        capability_embedding: Mapped[Optional[list[float]]] = mapped_column(
+            Vector(settings.embedding_dim),
+            nullable=True,
+        )
+    else:
+        description_embedding: Mapped[list[float]] = mapped_column(
+            JSON,
+            nullable=False,
+        )
+        capability_embedding: Mapped[Optional[list[float]]] = mapped_column(
+            JSON,
+            nullable=True,
+        )
+
+    capabilities: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    skills: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    model_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="text-embedding-3-small",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    agent: Mapped["A2AAgent"] = relationship(
+        "A2AAgent",
+        back_populates="embeddings",
+        passive_deletes=True,
+    )
+
+    if HAS_PGVECTOR:
+        __table_args__ = (
+            Index(
+                "idx_agent_embeddings_desc_hnsw",
+                "description_embedding",
+                postgresql_using="hnsw",
+                postgresql_with={"m": settings.hnsw_m, "ef_construction": settings.hnsw_ef_construction},
+                postgresql_ops={"description_embedding": "vector_cosine_ops"},
+            ),
+            Index(
+                "idx_agent_embeddings_cap_hnsw",
+                "capability_embedding",
+                postgresql_using="hnsw",
+                postgresql_with={"m": settings.hnsw_m, "ef_construction": settings.hnsw_ef_construction},
+                postgresql_ops={"capability_embedding": "vector_cosine_ops"},
+            ),
+            Index("idx_agent_embeddings_agentid_model", "agent_id", "model_name"),
+            Index("idx_agent_embeddings_agentid_created", "agent_id", "created_at"),
+        )
+    else:
+        __table_args__ = (
+            Index("idx_agent_embeddings_agentid_model", "agent_id", "model_name"),
+            Index("idx_agent_embeddings_agentid_created", "agent_id", "created_at"),
+        )
+
+    def __repr__(self) -> str:
+        return f"<AgentEmbedding(id={self.id}, agent_id={self.agent_id}, agent_name={self.agent_name})>"
 
 
 class Resource(Base):
@@ -3591,11 +3617,6 @@ class Resource(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["ResourceMetric"]] = relationship("ResourceMetric", back_populates="resource", cascade="all, delete-orphan")
-    metrics_hourly: Mapped[List["ResourceMetricsHourly"]] = relationship(
-        "ResourceMetricsHourly",
-        primaryjoin="Resource.id == foreign(ResourceMetricsHourly.resource_id)",
-        viewonly=True,
-    )
 
     # Content storage - can be text or binary
     text_content: Mapped[Optional[str]] = mapped_column(Text)
@@ -3837,26 +3858,51 @@ class Resource(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """Aggregated metrics for the resource combining raw and hourly data without double-counting.
+        """Aggregated metrics for the resource.
 
-        When metrics are loaded: computes from memory (raw + hourly)
-        When not loaded: uses SQL queries with time partitioning
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        # Try in-memory path first
         if self._metrics_loaded():
-            try:
-                hourly_metrics = self.metrics_hourly
-            except AttributeError:
-                hourly_metrics = []
-            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
 
-        # SQL query path
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
         # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
@@ -3872,14 +3918,33 @@ class Resource(Base):
                 "last_execution_time": None,
             }
 
-        return _compute_metrics_summary(
-            raw_metrics=None,
-            hourly_metrics=None,
-            session=session,
-            entity_id=self.id,
-            raw_metric_class=ResourceMetric,
-            hourly_metric_class=ResourceMetricsHourly,
+        result = (
+            session.query(
+                func.count(ResourceMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)),
+                func.min(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.max(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.avg(ResourceMetric.response_time),  # pylint: disable=not-callable
+                func.max(ResourceMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(ResourceMetric.resource_id == self.id)
+            .one()
         )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -3970,11 +4035,6 @@ class Prompt(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
-    metrics_hourly: Mapped[List["PromptMetricsHourly"]] = relationship(
-        "PromptMetricsHourly",
-        primaryjoin="Prompt.id == foreign(PromptMetricsHourly.prompt_id)",
-        viewonly=True,
-    )
 
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"))
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="prompts")
@@ -4209,26 +4269,51 @@ class Prompt(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """Aggregated metrics for the prompt combining raw and hourly data without double-counting.
+        """Aggregated metrics for the prompt.
 
-        When metrics are loaded: computes from memory (raw + hourly)
-        When not loaded: uses SQL queries with time partitioning
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        # Try in-memory path first
         if self._metrics_loaded():
-            try:
-                hourly_metrics = self.metrics_hourly
-            except AttributeError:
-                hourly_metrics = []
-            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
 
-        # SQL query path
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
         # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
@@ -4244,14 +4329,33 @@ class Prompt(Base):
                 "last_execution_time": None,
             }
 
-        return _compute_metrics_summary(
-            raw_metrics=None,
-            hourly_metrics=None,
-            session=session,
-            entity_id=self.id,
-            raw_metric_class=PromptMetric,
-            hourly_metric_class=PromptMetricsHourly,
+        result = (
+            session.query(
+                func.count(PromptMetric.id),  # pylint: disable=not-callable
+                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)),
+                func.min(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.max(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.avg(PromptMetric.response_time),  # pylint: disable=not-callable
+                func.max(PromptMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(PromptMetric.prompt_id == self.id)
+            .one()
         )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
 
 
 class Server(Base):
@@ -4299,11 +4403,6 @@ class Server(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
-    metrics_hourly: Mapped[List["ServerMetricsHourly"]] = relationship(
-        "ServerMetricsHourly",
-        primaryjoin="Server.id == foreign(ServerMetricsHourly.server_id)",
-        viewonly=True,
-    )
 
     # Many-to-many relationships for associated items
     tools: Mapped[List["Tool"]] = relationship("Tool", secondary=server_tool_association, back_populates="servers")
@@ -4475,26 +4574,51 @@ class Server(Base):
 
     @property
     def metrics_summary(self) -> Dict[str, Any]:
-        """Aggregated metrics for the server combining raw and hourly data without double-counting.
+        """Aggregated metrics for the server.
 
-        When metrics are loaded: computes from memory (raw + hourly)
-        When not loaded: uses SQL queries with time partitioning
+        When metrics are loaded: computes all values from memory in a single pass.
+        When not loaded: uses a single SQL query with aggregation for all fields.
 
         Returns:
             Dict[str, Any]: Dictionary containing aggregated metrics:
                 - total_executions, successful_executions, failed_executions
                 - failure_rate, min/max/avg_response_time, last_execution_time
         """
-        # Try in-memory path first
         if self._metrics_loaded():
-            try:
-                hourly_metrics = self.metrics_hourly
-            except AttributeError:
-                hourly_metrics = []
-            return _compute_metrics_summary(raw_metrics=self.metrics, hourly_metrics=hourly_metrics)
+            total = 0
+            successful = 0
+            min_rt: Optional[float] = None
+            max_rt: Optional[float] = None
+            sum_rt = 0.0
+            last_time: Optional[datetime] = None
 
-        # SQL query path
+            for m in self.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                rt = m.response_time
+                if min_rt is None or rt < min_rt:
+                    min_rt = rt
+                if max_rt is None or rt > max_rt:
+                    max_rt = rt
+                sum_rt += rt
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+
+            failed = total - successful
+            return {
+                "total_executions": total,
+                "successful_executions": successful,
+                "failed_executions": failed,
+                "failure_rate": failed / total if total > 0 else 0.0,
+                "min_response_time": min_rt,
+                "max_response_time": max_rt,
+                "avg_response_time": sum_rt / total if total > 0 else None,
+                "last_execution_time": last_time,
+            }
+
         # Third-Party
+        from sqlalchemy import case  # pylint: disable=import-outside-toplevel
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 
         session = object_session(self)
@@ -4510,14 +4634,33 @@ class Server(Base):
                 "last_execution_time": None,
             }
 
-        return _compute_metrics_summary(
-            raw_metrics=None,
-            hourly_metrics=None,
-            session=session,
-            entity_id=self.id,
-            raw_metric_class=ServerMetric,
-            hourly_metric_class=ServerMetricsHourly,
+        result = (
+            session.query(
+                func.count(ServerMetric.id),  # pylint: disable=not-callable
+                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)),
+                func.min(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.max(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.avg(ServerMetric.response_time),  # pylint: disable=not-callable
+                func.max(ServerMetric.timestamp),  # pylint: disable=not-callable
+            )
+            .filter(ServerMetric.server_id == self.id)
+            .one()
         )
+
+        total = result[0] or 0
+        successful = result[1] or 0
+        failed = total - successful
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": result[2],
+            "max_response_time": result[3],
+            "avg_response_time": float(result[4]) if result[4] is not None else None,
+            "last_execution_time": result[5],
+        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -4528,6 +4671,16 @@ class Server(Base):
     # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Meta-server fields
+    # server_type: 'standard' (default) or 'meta' (exposes meta-tools instead of real tools)
+    server_type: Mapped[str] = mapped_column(String(20), nullable=False, default="standard")
+    # When True, underlying tools are hidden from tool listing endpoints
+    hide_underlying_tools: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # JSON configuration for meta-server behavior (MetaConfig schema)
+    meta_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # JSON scope rules for filtering which tools are visible (MetaToolScope schema)
+    meta_scope: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
@@ -4619,7 +4772,7 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
@@ -4768,8 +4921,8 @@ class A2AAgent(Base):
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "authheaders", "oauth", "query_param" or None
-    auth_value: Mapped[Optional[str]] = mapped_column(Text)
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
+    auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
         JSON,
         nullable=True,
@@ -4820,6 +4973,7 @@ class A2AAgent(Base):
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     tool: Mapped[Optional["Tool"]] = relationship("Tool", foreign_keys=[tool_id])
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
+    embeddings: Mapped[List["AgentEmbedding"]] = relationship("AgentEmbedding", back_populates="agent", cascade="all, delete-orphan")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
         Index("idx_a2a_agents_created_at_id", "created_at", "id"),
@@ -5029,6 +5183,83 @@ class SessionMessageRecord(Base):
     session: Mapped["SessionRecord"] = relationship("SessionRecord", back_populates="messages")
 
 
+class ConversationSession(Base):
+    """ORM model representing a persisted conversation session.
+
+    This model stores metadata about a user's conversation session and
+    maintains a relationship to all associated conversation turns.
+
+    Attributes:
+        session_id (str): Unique identifier for the session (UUID string).
+        user_email (str): Email address of the user owning the session.
+        created_at (datetime): Timestamp when the session was created.
+        last_accessed (datetime): Timestamp of the most recent access.
+        expires_at (datetime): Expiration timestamp for the session.
+        turns (List[ConversationTurn]): Ordered list of conversation turns.
+
+    Examples:
+        >>> session = ConversationSession(
+        ...     user_email="user@example.com",
+        ...     expires_at=utc_now()
+        ... )
+        >>> isinstance(session.session_id, str)
+        True
+    """
+
+    __tablename__ = "discovery_conversation_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    turns: Mapped[List["ConversationTurn"]] = relationship("ConversationTurn", back_populates="session", cascade="all, delete-orphan", order_by="ConversationTurn.created_at")
+
+    def __repr__(self) -> str:
+        return f"<ConversationSession(session_id='{self.session_id}', user_email='{self.user_email}')>"
+
+
+class ConversationTurn(Base):
+    """ORM model representing a single turn in a conversation session.
+
+    Each turn corresponds to either a user or assistant message and may
+    include metadata about resolved tools used during processing.
+
+    Attributes:
+        id (int): Primary key identifier for the turn.
+        session_id (str): Foreign key linking to the parent session.
+        role (str): Role of the speaker ("user" or "assistant").
+        message (str): Message content.
+        resolved_tool_names (Optional[str]): JSON-encoded list of tool names.
+        created_at (datetime): Timestamp when the turn was created.
+        session (ConversationSession): Parent session relationship.
+
+    Examples:
+        >>> turn = ConversationTurn(
+        ...     session_id="uuid",
+        ...     role="user",
+        ...     message="Hello"
+        ... )
+        >>> turn.role
+        'user'
+    """
+
+    __tablename__ = "discovery_conversation_turns"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("discovery_conversation_sessions.session_id", ondelete="CASCADE"))
+    role: Mapped[str] = mapped_column(String(10), nullable=False)  # "user" or "assistant"
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    resolved_tool_names: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON-encoded list
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    session: Mapped["ConversationSession"] = relationship("ConversationSession", back_populates="turns")
+
+    def __repr__(self) -> str:
+        return f"<ConversationTurn(id={self.id}, session_id='{self.session_id}', role='{self.role}')>"
+
+
 class OAuthToken(Base):
     """ORM model for OAuth access and refresh tokens with user association."""
 
@@ -5037,9 +5268,9 @@ class OAuthToken(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
-    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # ContextForge user
-    access_token: Mapped[str] = mapped_column(EncryptedText(), nullable=False)
-    refresh_token: Mapped[Optional[str]] = mapped_column(EncryptedText(), nullable=True)
+    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # MCP Gateway user
+    access_token: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
@@ -5063,7 +5294,6 @@ class OAuthState(Base):
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
-    app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -5181,13 +5411,9 @@ class EmailApiToken(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
 
-    # Unique constraint for user+name+team_id combination (per-team scope).
-    # The composite UniqueConstraint handles non-NULL team_id rows.  SQL NULL != NULL
-    # semantics mean it cannot protect global-scope tokens (team_id IS NULL), so we add
-    # a partial unique index for that case — matching the pattern used by resources/prompts.
+    # Unique constraint for user+name combination
     __table_args__ = (
-        UniqueConstraint("user_email", "name", "team_id", name="uq_email_api_tokens_user_name_team"),
-        Index("uq_email_api_tokens_user_name_global", "user_email", "name", unique=True, postgresql_where=text("team_id IS NULL"), sqlite_where=text("team_id IS NULL")),
+        UniqueConstraint("user_email", "name", name="uq_email_api_tokens_user_name"),
         Index("idx_email_api_tokens_user_email", "user_email"),
         Index("idx_email_api_tokens_jti", "jti"),
         Index("idx_email_api_tokens_expires_at", "expires_at"),
@@ -5384,7 +5610,6 @@ class SSOProvider(Base):
         token_url (str): OAuth token endpoint
         userinfo_url (str): User info endpoint
         issuer (str): OIDC issuer (optional)
-        jwks_uri (str): OIDC JWKS endpoint for token signature verification (optional)
         trusted_domains (List[str]): Auto-approved email domains
         scope (str): OAuth scope string
         auto_create_users (bool): Auto-create users on first login
@@ -5422,7 +5647,6 @@ class SSOProvider(Base):
     token_url: Mapped[str] = mapped_column(String(500), nullable=False)
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
-    jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -5765,6 +5989,25 @@ def get_for_update(
 fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
+def patch_string_columns_for_mariadb(base, engine_) -> None:
+    """
+    MariaDB requires VARCHAR to have an explicit length.
+    Auto-assign VARCHAR(255) to any String() columns without a length.
+
+    Args:
+        base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
+        engine_ (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
+    """
+    if engine_.dialect.name != "mariadb":
+        return
+
+    for table in base.metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, String) and column.type.length is None:
+                # Replace with VARCHAR(255)
+                column.type = VARCHAR(255)
+
+
 def extract_json_field(column, json_path: str, dialect_name: Optional[str] = None):
     """Extract a JSON field in a database-agnostic way.
 
@@ -5809,6 +6052,18 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
+        # Enable pgvector extension for PostgreSQL
+        if backend == "postgresql":
+            with engine.connect() as conn:
+                try:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                    conn.commit()
+                except Exception as e:
+                    logger.warning(f"Could not create pgvector extension: {e}")
+
+        # Apply MariaDB compatibility fix
+        patch_string_columns_for_mariadb(Base, engine)
+
         # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:
@@ -6074,12 +6329,12 @@ class LLMProviderType:
                 "description": "Anthropic Claude models",
             },
             cls.OLLAMA: {
-                "api_base": "http://localhost:11434",
+                "api_base": "http://localhost:11434/v1",
                 "default_model": "llama3.2",
                 "supports_model_list": True,
-                "models_endpoint": "/api/tags",
+                "models_endpoint": "/models",
                 "requires_api_key": False,
-                "description": "Local Ollama server",
+                "description": "Local Ollama server (OpenAI-compatible)",
             },
             cls.OPENAI_COMPATIBLE: {
                 "api_base": "http://localhost:8080/v1",
@@ -6361,6 +6616,134 @@ class AuditTrail(Base):
         Index("idx_audit_user_time", "user_id", "timestamp"),
         Index("idx_audit_classification", "data_classification", "timestamp"),
         Index("idx_audit_review", "requires_review", "timestamp"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dynamic Server models
+# ---------------------------------------------------------------------------
+
+
+class DynamicRule(Base):
+    """A single filtering rule attached to a DynamicServer.
+
+    Rules define how tools, resources, and prompts are selected when a
+    dynamic server's catalog is evaluated at query time.  Three matching
+    strategies are supported:
+
+    * ``"tag"``   — match entities whose tags contain *value*.
+    * ``"regex"`` — match entities whose name or description matches *value*
+      as a regular-expression pattern.
+    * ``"llm"``   — use *value* as an LLM prompt for semantic selection.
+
+    Attributes:
+        id: UUID primary key.
+        dynamic_server_id: FK → DynamicServer; cascades on delete.
+        rule_type: One of ``"tag"``, ``"regex"``, ``"llm"``.
+        entity_type: One of ``"tool"``, ``"resource"``, ``"prompt"``.
+        value: The tag label, regex pattern, or LLM prompt string.
+        created_at: UTC timestamp of creation.
+
+    Examples:
+        >>> rule = DynamicRule(
+        ...     dynamic_server_id="server-uuid",
+        ...     rule_type="tag",
+        ...     entity_type="tool",
+        ...     value="finance",
+        ... )
+        >>> rule.rule_type
+        'tag'
+    """
+
+    __tablename__ = "dynamic_rules"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    dynamic_server_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("dynamic_servers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rule_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    # Back-reference to parent server
+    server: Mapped["DynamicServer"] = relationship("DynamicServer", back_populates="rules")
+
+
+class DynamicServer(Base):
+    """A virtual MCP server whose catalog is computed from rules at query time.
+
+    A dynamic server does not directly own tools, resources, or prompts.
+    Instead its :attr:`rules` list is evaluated against the live entity
+    catalog whenever the server is queried, producing a filtered view.
+
+    Attributes:
+        id: UUID primary key.
+        name: Human-readable server name; unique per (team_id, owner_email).
+        description: Optional free-text description.
+        enabled: Whether the server is active (soft-disable flag).
+        refresh_interval: Optional catalog refresh interval in seconds.
+        visibility: Access visibility level — ``"public"`` or ``"private"``.
+        team_id: FK → email_teams; ``SET NULL`` on team deletion.
+        owner_email: Email address of the owning user.
+        created_at: UTC creation timestamp.
+        updated_at: UTC last-modified timestamp.
+        created_by: Username/email of the creator.
+        modified_by: Username/email of the last modifier.
+        version: Optimistic-lock version counter.
+        rules: One-to-many relationship to :class:`DynamicRule`; cascade
+            delete removes all rules when the server is deleted.
+
+    Examples:
+        >>> server = DynamicServer(name="finance-tools", owner_email="a@example.com")
+        >>> server.name
+        'finance-tools'
+        >>> server.owner_email
+        'a@example.com'
+    """
+
+    __tablename__ = "dynamic_servers"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Core fields
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    refresh_interval: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Access control
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+    team_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("email_teams.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Audit fields
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Relationships
+    rules: Mapped[List["DynamicRule"]] = relationship(
+        "DynamicRule",
+        back_populates="server",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "name", name="uq_dynamic_servers_team_owner_name"),
+        Index("idx_dynamic_servers_created_at_id", "created_at", "id"),
     )
 
 
