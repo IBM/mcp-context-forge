@@ -331,11 +331,11 @@ class TestJwtIdentityExtractor:
 
         extractor = _create_jwt_identity_extractor()
         token = jwt.encode({"sub": "user-case"}, "secret", algorithm="HS256")
-        
+
         # Test lowercase key
         headers_lower = {"authorization": f"Bearer {token}"}
         assert extractor(headers_lower) == "user-case"
-        
+
         # Test uppercase key
         headers_upper = {"Authorization": f"Bearer {token}"}
         assert extractor(headers_upper) == "user-case"

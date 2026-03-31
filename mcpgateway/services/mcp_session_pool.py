@@ -520,7 +520,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
     async def _get_or_create_pool(self, pool_key: PoolKey) -> asyncio.Queue[PooledSession]:
         """Get or create a pool queue for the given key (thread-safe).
-        
+
         Raises:
             RuntimeError: If max_total_keys limit would be exceeded.
         """
@@ -534,11 +534,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                         f"Consider increasing MCP_SESSION_POOL_MAX_TOTAL_KEYS or enabling "
                         f"MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION to reduce bucket explosion."
                     )
-                    raise RuntimeError(
-                        f"Maximum pool keys ({self._max_total_keys}) reached. "
-                        f"Cannot create new session pool."
-                    )
-                
+                    raise RuntimeError(f"Maximum pool keys ({self._max_total_keys}) reached. " f"Cannot create new session pool.")
+
                 # Warn when approaching limit (at 80% capacity)
                 if self._max_total_keys > 0:
                     current_count = len(self._pools)
@@ -549,7 +546,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                             f"({current_count * 100 // self._max_total_keys}%). "
                             f"Consider enabling JWT identity extraction or increasing limit."
                         )
-                
+
                 self._pools[pool_key] = asyncio.Queue(maxsize=self._max_sessions)
                 self._active[pool_key] = set()
                 self._semaphores[pool_key] = asyncio.Semaphore(self._max_sessions)
@@ -881,10 +878,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                         f"Consider increasing MCP_SESSION_POOL_MAX_TOTAL_SESSIONS or reducing "
                         f"MCP_SESSION_POOL_MAX_PER_KEY."
                     )
-                    raise asyncio.TimeoutError(
-                        f"Maximum total active sessions ({self._max_total_sessions}) reached. "
-                        f"Cannot acquire new session."
-                    )
+                    raise asyncio.TimeoutError(f"Maximum total active sessions ({self._max_total_sessions}) reached. " f"Cannot acquire new session.")
 
         try:
             pool = await self._get_or_create_pool(pool_key)
@@ -892,10 +886,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Convert pool key limit error to user-friendly timeout error
             if "Maximum pool keys" in str(e):
                 logger.error(f"Pool key limit reached, cannot acquire session: {e}")
-                raise asyncio.TimeoutError(
-                    f"Session pool capacity exhausted. "
-                    f"Enable MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION or increase limits."
-                ) from e
+                raise asyncio.TimeoutError(f"Session pool capacity exhausted. " f"Enable MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION or increase limits.") from e
             raise
 
         # Update pool key last used time IMMEDIATELY after getting pool
@@ -2130,10 +2121,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         """
         total_requests = self._hits + self._misses
         total_affinity_requests = self._session_affinity_local_hits + self._session_affinity_redis_hits + self._session_affinity_misses
-        
+
         # Calculate total active sessions across all pools
         total_active = sum(len(active_set) for active_set in self._active.values())
-        
+
         return {
             "hits": self._hits,
             "misses": self._misses,

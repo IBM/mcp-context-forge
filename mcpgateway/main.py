@@ -36,7 +36,6 @@ import hashlib
 import hmac
 import html
 import json
-import jwt
 import logging
 import re
 import signal
@@ -60,6 +59,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
+import jwt
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -1516,53 +1516,48 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
-
-
 def _create_jwt_identity_extractor() -> callable:
     """Create JWT identity extractor function for session pool.
-    
+
     Extracts stable user ID from JWT token to prevent bucket explosion
     when using short-lived JWTs with rotating jti/exp/iat claims.
-    
+
     Returns:
         Callable that extracts stable user identifier from request headers,
         or None if extraction fails.
     """
+
     def jwt_identity_extractor(headers: dict) -> Optional[str]:
         """Extract stable user ID from JWT token.
-        
+
         Decodes JWT without signature verification to extract sub, email, or user_id claim.
         This prevents bucket explosion when using short-lived JWTs with rotating jti/exp/iat.
-        
+
         Args:
             headers: Request headers dict (case-insensitive lookup handled by caller).
-        
+
         Returns:
             Stable user identifier (sub, email, or user_id claim), or None if extraction fails.
         """
         auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
         if not auth_header:
             return None
-        
+
         # Extract token from "Bearer <token>" format
         token = auth_header.replace("Bearer ", "").replace("bearer ", "").strip()
         if not token:
             return None
-        
+
         try:
             # Decode without signature verification (we only need claims for identity)
             # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
-            claims = jwt.decode(
-                token,
-                options={"verify_signature": False},
-                algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"]
-            )
+            claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
             # Try standard claims in order of preference
             return claims.get("sub") or claims.get("email") or claims.get("user_id")
         except Exception as e:
             logger.debug(f"JWT identity extraction failed: {e}")
             return None
-    
+
     return jwt_identity_extractor
 
 
@@ -1674,13 +1669,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
 
         max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
-        
+
         # Create JWT identity extractor if enabled (prevents bucket explosion from rotating tokens)
         identity_extractor = None
         if settings.mcp_session_pool_jwt_identity_extraction:
             identity_extractor = _create_jwt_identity_extractor()
             logger.info("JWT identity extraction enabled for session pool")
-        
+
         init_mcp_session_pool(
             max_sessions_per_key=max_sessions_per_key,
             session_ttl_seconds=settings.mcp_session_pool_ttl,

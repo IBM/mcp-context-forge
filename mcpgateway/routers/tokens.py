@@ -553,14 +553,11 @@ async def list_all_tokens(
     token_teams = current_user.get("token_teams")
     if not current_user.get("is_admin") or token_teams is not None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    
+
     # SECURITY: Block narrowed/public-only admin sessions from token oversight
     token_teams = current_user.get("token_teams")
     if token_teams is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token oversight requires un-narrowed admin access"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token oversight requires un-narrowed admin access")
 
     service = TokenCatalogService(db)
 
@@ -653,14 +650,11 @@ async def admin_revoke_token(
     revoke_token_teams = current_user.get("token_teams")
     if not current_user.get("is_admin") or revoke_token_teams is not None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    
+
     # SECURITY: Block narrowed/public-only admin sessions from token oversight
     token_teams = current_user.get("token_teams")
     if token_teams is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token oversight requires un-narrowed admin access"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token oversight requires un-narrowed admin access")
 
     service = TokenCatalogService(db)
     admin_email = current_user["email"]

@@ -154,7 +154,7 @@ async def test_check_permission_admin_bypass(svc):
 @pytest.mark.asyncio
 async def test_check_permission_public_only_token_blocks_admin_permissions(svc):
     """Token-level narrowing for admin.* is enforced at endpoint level, not in check_permission.
-    
+
     check_permission only evaluates RBAC permissions (Layer 2).
     Token narrowing (Layer 1) is handled by endpoint-level guards.
     """

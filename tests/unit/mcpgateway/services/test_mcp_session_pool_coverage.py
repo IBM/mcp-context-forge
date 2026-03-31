@@ -3520,25 +3520,25 @@ class TestMaxTotalKeysLimit:
     async def test_max_total_keys_limit_raises_runtime_error(self):
         """_get_or_create_pool should raise RuntimeError when max_total_keys is reached."""
         pool = MCPSessionPool(max_total_keys=2)
-        
+
         # Create two pool keys to reach the limit
         key1 = ("user1", "http://test1:8080", "hash1", "streamablehttp", "")
         key2 = ("user2", "http://test2:8080", "hash2", "streamablehttp", "")
         await pool._get_or_create_pool(key1)
         await pool._get_or_create_pool(key2)
-        
+
         # Third key should raise RuntimeError
         key3 = ("user3", "http://test3:8080", "hash3", "streamablehttp", "")
         with pytest.raises(RuntimeError, match="Maximum pool keys.*reached"):
             await pool._get_or_create_pool(key3)
-        
+
         await pool.close_all()
 
     @pytest.mark.asyncio
     async def test_max_total_keys_converted_to_timeout_error_in_acquire(self):
         """acquire should convert RuntimeError from key limit to asyncio.TimeoutError."""
         pool = MCPSessionPool(max_total_keys=1, session_create_timeout_seconds=0.1)
-        
+
         # Mock _create_session to return a fake session quickly
         async def mock_create(url, *args, **kwargs):
             mock_session = MagicMock()
@@ -3550,15 +3550,15 @@ class TestMaxTotalKeysLimit:
             mock_session.transport_type = TransportType.STREAMABLE_HTTP
             mock_session.gateway_id = None
             return mock_session
-        
+
         with patch.object(pool, "_create_session", side_effect=mock_create):
             # First acquire succeeds and creates a pool key
             session1 = await pool.acquire("http://test1:8080", headers={"Authorization": "Bearer token1"})
-            
+
             # Second acquire with different identity should hit the limit and raise TimeoutError
             with pytest.raises(asyncio.TimeoutError):
                 await pool.acquire("http://test2:8080", headers={"Authorization": "Bearer token2"})
-        
+
         # Don't release - just close all to avoid hitting limit again
         await pool.close_all()
 
@@ -3566,7 +3566,7 @@ class TestMaxTotalKeysLimit:
     async def test_80_percent_warning_emitted(self):
         """Should emit warning when pool key count reaches 80% of max_total_keys."""
         pool = MCPSessionPool(max_total_keys=10)
-        
+
         # Create 8 pool keys to reach 80% threshold (warning at 8/10)
         # Patch the logger at the module level where it's imported
         import mcpgateway.services.mcp_session_pool as pool_module
@@ -3581,7 +3581,7 @@ class TestMaxTotalKeysLimit:
             warning_calls = [call for call in mock_logger.warning.call_args_list
                            if "approaching limit" in str(call).lower()]
             assert len(warning_calls) > 0, f"Expected warning about approaching limit. Got calls: {mock_logger.warning.call_args_list}"
-        
+
         await pool.close_all()
 
 
@@ -3592,7 +3592,7 @@ class TestMaxTotalSessionsLimit:
     async def test_max_total_sessions_limit_raises_timeout_error(self):
         """acquire should raise asyncio.TimeoutError when max_total_sessions is reached."""
         pool = MCPSessionPool(max_sessions_per_key=2, max_total_sessions=2, session_create_timeout_seconds=0.1)
-        
+
         # Mock _create_session to return fake sessions quickly
         call_count = [0]
         async def mock_create(url, *args, **kwargs):
@@ -3611,11 +3611,11 @@ class TestMaxTotalSessionsLimit:
             # Acquire two sessions to reach the limit
             session1 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token1"})
             session2 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token2"})
-            
+
             # Third acquire should raise TimeoutError
             with pytest.raises(asyncio.TimeoutError):
                 await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token3"})
-            
+
             await pool.release(session1)
             await pool.release(session2)
         await pool.close_all()
@@ -3644,23 +3644,23 @@ class TestMaxTotalSessionsLimit:
             # Acquire two sessions to reach the limit (use same auth to get same pool key)
             session1 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token1"})
             session2 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token1"})
-            
+
             # Verify we're at the limit (2 active sessions in same pool)
             pool_key = list(pool._active.keys())[0]
             assert len(pool._active[pool_key]) == 2
-            
+
             # Release one session - it goes back to the pool
             await pool.release(session1)
-            
+
             # Now we have 1 active (session2) and 1 in pool (session1)
             # Acquiring should reuse session1 from the pool, not create a new one
             session3 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token1"})
-            
+
             # Should still have 2 active sessions (session2 and reused session1)
             assert len(pool._active[pool_key]) == 2
             # Only 2 sessions should have been created total
             assert call_count[0] == 2
-        
+
         await pool.close_all()
 
 
@@ -3672,15 +3672,15 @@ class TestJwtIdentityExtractorNone:
         """When jwt_identity_extractor returns None, should fall back to header hash."""
         def extractor_returns_none(headers: dict) -> Optional[str]:
             return None
-        
+
         pool = MCPSessionPool(identity_extractor=extractor_returns_none)
-        
+
         # Should not crash and should fall back to normal identity computation
         identity_hash = pool._compute_identity_hash({"Authorization": "Bearer invalid"})
-        
+
         # Should not be "anonymous" since we have an Authorization header
         assert identity_hash != "anonymous"
-        
+
         await pool.close_all()
 
     @pytest.mark.asyncio
@@ -3688,15 +3688,15 @@ class TestJwtIdentityExtractorNone:
         """When jwt_identity_extractor raises, should fall back to header hash."""
         def extractor_raises(headers: dict) -> Optional[str]:
             raise ValueError("Invalid JWT")
-        
+
         pool = MCPSessionPool(identity_extractor=extractor_raises)
-        
+
         # Should not crash and should fall back to normal identity computation
         identity_hash = pool._compute_identity_hash({"Authorization": "Bearer token"})
-        
+
         # Should not be "anonymous" since we have an Authorization header
         assert identity_hash != "anonymous"
-        
+
         await pool.close_all()
 
     @pytest.mark.asyncio
@@ -3704,17 +3704,17 @@ class TestJwtIdentityExtractorNone:
         """Test the actual jwt_identity_extractor implementation with invalid JWT."""
         # Standard
         import jwt
-        
+
         def jwt_identity_extractor(headers: dict) -> Optional[str]:
             """Mimics the real implementation from main.py."""
             auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
             if not auth_header:
                 return None
-            
+
             token = auth_header.replace("Bearer ", "").replace("bearer ", "").strip()
             if not token:
                 return None
-            
+
             try:
                 claims = jwt.decode(
                     token,
@@ -3724,13 +3724,13 @@ class TestJwtIdentityExtractorNone:
                 return claims.get("sub") or claims.get("email") or claims.get("user_id")
             except Exception:
                 return None
-        
+
         pool = MCPSessionPool(identity_extractor=jwt_identity_extractor)
-        
+
         # Test with invalid JWT (not a valid JWT format)
         identity_hash = pool._compute_identity_hash({"Authorization": "Bearer not-a-jwt"})
-        
+
         # Should fall back to header-based identity (not anonymous since we have auth header)
         assert identity_hash != "anonymous"
-        
+
         await pool.close_all()
