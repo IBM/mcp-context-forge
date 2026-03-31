@@ -15,6 +15,11 @@
 #   - Explicit Docker Hub image references to avoid pull rate-limit ambiguity
 ########################################################################
 
+# --- Global ---
+global:
+  imagePullSecrets:
+    - dockerhub-pull
+
 # --- Gateway ---
 mcpContextForge:
   replicaCount: 1                          # single replica to avoid migration deadlock
@@ -45,7 +50,10 @@ postgres:
     repository: docker.io/library/postgres
     tag: "17"
   persistence:
-    enabled: false                         # ephemeral storage for now — NFS PV pending setup
+    enabled: true
+    size: 2Gi
+    useReadWriteOncePod: false
+    accessModes: [ReadWriteOnce]
   credentials:
     database: postgresdb
     user: admin
@@ -61,6 +69,10 @@ redis:
   image:
     repository: docker.io/library/redis
     tag: 7-alpine
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessModes: [ReadWriteOnce]
 
 # --- NGINX Proxy ---
 nginxProxy:
