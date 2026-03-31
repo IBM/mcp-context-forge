@@ -50,7 +50,7 @@ def test_validate_redirect_uri_allows_relative(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router.settings, "allowed_origins", ["https://example.com:8443"])
     monkeypatch.setattr(sso_router.settings, "app_domain", HttpUrl("https://myapp.com"))
 
-    assert sso_router._validate_redirect_uri("/admin", None) is True
+    assert sso_router._validate_redirect_uri("/ui", None) is True
     assert sso_router._validate_redirect_uri("https://example.com:8443/cb", None) is True
     assert sso_router._validate_redirect_uri("https://myapp.com/cb", None) is True
     assert sso_router._validate_redirect_uri("https://evil.com/cb", None) is False
@@ -222,7 +222,7 @@ async def test_handle_sso_callback_failure_redirect(monkeypatch: pytest.MonkeyPa
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+    assert "/ui/login?error=sso_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -259,7 +259,7 @@ async def test_handle_sso_callback_user_creation_failed(monkeypatch: pytest.Monk
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert "/admin/login?error=user_creation_failed" in response.headers.get("location", "")
+    assert "/ui/login?error=user_creation_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio
@@ -291,7 +291,7 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/ui")
     assert set_cookie.called
 
 
@@ -329,7 +329,7 @@ async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatc
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/ui")
     assert "sso_id_token_hint=id-token-hint" in response.headers.get("set-cookie", "")
     assert set_cookie.called
 
@@ -369,7 +369,7 @@ async def test_handle_sso_callback_keycloak_oversized_id_token_skips_hint_cookie
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert response.headers.get("location", "").endswith("/admin")
+    assert response.headers.get("location", "").endswith("/ui")
     assert "sso_id_token_hint=" not in response.headers.get("set-cookie", "")
     assert "id_token too large for cookie storage" in caplog.text
     assert set_cookie.called
@@ -396,7 +396,7 @@ async def test_handle_sso_callback_missing_session_cookie_redirects_failed(monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
-    assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+    assert "/ui/login?error=sso_failed" in response.headers.get("location", "")
 
 
 @pytest.mark.asyncio

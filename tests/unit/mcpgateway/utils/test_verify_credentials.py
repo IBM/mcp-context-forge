@@ -1413,7 +1413,7 @@ async def test_require_admin_auth_email_auth_get_db_http_401_redirects_html(monk
         await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
 
     assert exc.value.status_code == status.HTTP_302_FOUND
-    assert exc.value.headers["Location"] == "/root/admin/login"
+    assert exc.value.headers["Location"] == "/root/ui/login"
 
 
 @pytest.mark.asyncio
@@ -1469,7 +1469,7 @@ async def test_require_admin_auth_email_auth_fallback_redirects_for_htmx(monkeyp
         await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token=None, basic_credentials=None)
 
     assert exc.value.status_code == status.HTTP_302_FOUND
-    assert exc.value.headers["Location"].endswith("/admin/login")
+    assert exc.value.headers["Location"].endswith("/ui/login")
 
 
 @pytest.mark.asyncio

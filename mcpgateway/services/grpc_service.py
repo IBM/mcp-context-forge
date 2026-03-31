@@ -37,6 +37,7 @@ from sqlalchemy import and_, desc, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
@@ -64,9 +65,6 @@ def _validate_grpc_target(target: str) -> None:
     Raises:
         GrpcServiceError: If the target resolves to a blocked address.
     """
-    # First-Party
-    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
     # Extract host (strip port)
     host = target.rsplit(":", 1)[0].strip("[]")
     if not host:
@@ -302,7 +300,7 @@ class GrpcService:
             per_page=per_page,
             cursor=cursor,
             limit=limit,
-            base_url="/admin/grpc",
+            base_url=f"{settings.mcpgateway_ui_base_path}/grpc",
             query_params={"include_inactive": include_inactive} if include_inactive else {},
         )
 

@@ -35,7 +35,7 @@ class TestToolsCRUD:
         tools_page.tool_integration_type_select.select_option(test_tool_data["integrationType"])
 
         # Submit the form and assert success response
-        with tools_page.page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
+        with tools_page.page.expect_response(lambda response: "/ui/tools" in response.url and response.request.method == "POST") as response_info:
             tools_page.click_locator(tools_page.add_tool_btn)
         response = response_info.value
         if response.status in (401, 403):
@@ -58,7 +58,7 @@ class TestToolsCRUD:
         tools_page.fill_locator(tools_page.tool_url_input, test_tool_data["url"])
         tools_page.fill_locator(tools_page.tool_description_input, test_tool_data["description"])
         tools_page.tool_integration_type_select.select_option(test_tool_data["integrationType"])
-        with tools_page.page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
+        with tools_page.page.expect_response(lambda response: "/ui/tools" in response.url and response.request.method == "POST") as response_info:
             tools_page.click_locator(tools_page.add_tool_btn)
         response = response_info.value
         if response.status in (401, 403):

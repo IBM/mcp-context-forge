@@ -34,7 +34,7 @@ class AdminPage(BasePage):
 
     def __init__(self, page: Page, base_url: str):
         super().__init__(page)
-        self.url = f"{base_url}/admin/"
+        self.url = f"{base_url}/ui/"
 
     # ==================== Navigation ====================
 

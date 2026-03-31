@@ -80,18 +80,18 @@ def _bypass_a2aagentread_validation(monkeypatch):
 def mock_all_settings():
     """Mock settings in schemas, a2a_service, and config modules."""
     with patch("mcpgateway.schemas.settings") as schema_settings, \
-         patch("mcpgateway.config.settings") as config_settings:
+         patch("mcpgateway.services.a2a_service.settings") as service_settings:
         # Configure schema settings
         schema_settings.insecure_allow_queryparam_auth = True
         schema_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
         schema_settings.masked_auth_value = "*****"
 
-        # Configure config settings (used by service layer imports)
-        config_settings.insecure_allow_queryparam_auth = True
-        config_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
-        config_settings.masked_auth_value = "*****"
+        # Configure service settings (used by service layer imports)
+        service_settings.insecure_allow_queryparam_auth = True
+        service_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
+        service_settings.masked_auth_value = "*****"
 
-        yield {"schema": schema_settings, "config": config_settings}
+        yield {"schema": schema_settings, "service": service_settings}
 
 
 @pytest.fixture(autouse=True)
@@ -413,8 +413,8 @@ class TestA2AQueryParamAuthUpdate:
     @pytest.mark.asyncio
     async def test_update_agent_queryparam_url_change_grandfather_when_disabled(self, a2a_service, test_db, monkeypatch, mock_all_settings):
         """Existing query_param agents can change URL even when feature flag is disabled (no cred changes)."""
-        mock_all_settings["config"].insecure_allow_queryparam_auth = False
-        mock_all_settings["config"].insecure_queryparam_auth_allowed_hosts = []
+        mock_all_settings["service"].insecure_allow_queryparam_auth = False
+        mock_all_settings["service"].insecure_queryparam_auth_allowed_hosts = []
 
         mock_agent = MagicMock()
         mock_agent.id = "agent-123"

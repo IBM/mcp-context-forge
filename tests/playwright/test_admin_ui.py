@@ -39,15 +39,15 @@ class TestAdminUI:
         # Test servers tab (it's actually "catalog" in the URL)
         admin_page.click_servers_tab()
         # Accept both with and without trailing slash
-        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#catalog"))
+        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/ui/?#catalog"))
 
         # Test tools tab
         admin_page.click_tools_tab()
-        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#tools"))
+        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/ui/?#tools"))
 
         # Test gateways tab
         admin_page.click_gateways_tab()
-        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#gateways"))
+        expect(admin_page.page).to_have_url(re.compile(f"{re.escape(base_url)}/ui/?#gateways"))
 
     def test_search_functionality(self, admin_page: AdminPage):
         """Test search functionality in admin panel."""

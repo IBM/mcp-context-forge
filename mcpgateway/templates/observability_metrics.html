@@ -112,7 +112,7 @@ window.createMetricsController = function() {
     },
     async loadPercentiles() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/metrics/percentiles?hours=${this.timeRange}&interval_minutes=${this.interval}`
+        `{{ root_path }}{{ ui_base_path }}/observability/metrics/percentiles?hours=${this.timeRange}&interval_minutes=${this.interval}`
       );
       if (!response.ok) throw new Error('Failed to load percentiles');
       const data = await response.json();
@@ -120,7 +120,7 @@ window.createMetricsController = function() {
     },
     async loadTimeSeries() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/metrics/timeseries?hours=${this.timeRange}&interval_minutes=${this.interval}`
+        `{{ root_path }}{{ ui_base_path }}/observability/metrics/timeseries?hours=${this.timeRange}&interval_minutes=${this.interval}`
       );
       if (!response.ok) throw new Error('Failed to load time series');
       const data = await response.json();
@@ -128,7 +128,7 @@ window.createMetricsController = function() {
     },
     async loadTopSlow() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/metrics/top-slow?hours=${this.timeRange}&limit=${this.limit}`
+        `{{ root_path }}{{ ui_base_path }}/observability/metrics/top-slow?hours=${this.timeRange}&limit=${this.limit}`
       );
       if (!response.ok) throw new Error('Failed to load top slow endpoints');
       const data = await response.json();
@@ -136,7 +136,7 @@ window.createMetricsController = function() {
     },
     async loadTopVolume() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/metrics/top-volume?hours=${this.timeRange}&limit=${this.limit}`
+        `{{ root_path }}{{ ui_base_path }}/observability/metrics/top-volume?hours=${this.timeRange}&limit=${this.limit}`
       );
       if (!response.ok) throw new Error('Failed to load top volume endpoints');
       const data = await response.json();
@@ -144,7 +144,7 @@ window.createMetricsController = function() {
     },
     async loadTopErrors() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/metrics/top-errors?hours=${this.timeRange}&limit=${this.limit}`
+        `{{ root_path }}{{ ui_base_path }}/observability/metrics/top-errors?hours=${this.timeRange}&limit=${this.limit}`
       );
       if (!response.ok) throw new Error('Failed to load top error endpoints');
       const data = await response.json();
@@ -152,7 +152,7 @@ window.createMetricsController = function() {
     },
     async loadHeatmap() {
       const response = await fetch(
-        `{{ root_path }}/admin/observability/metrics/heatmap?hours=${this.timeRange}&time_buckets=24&latency_buckets=20`
+        `{{ root_path }}{{ ui_base_path }}/observability/metrics/heatmap?hours=${this.timeRange}&time_buckets=24&latency_buckets=20`
       );
       if (!response.ok) throw new Error('Failed to load heatmap');
       const data = await response.json();

@@ -127,8 +127,8 @@
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
               <div class="flex items-center space-x-2">
-                <button onclick="toggleLLMModel({{ model.id|tojson_attr }})" class="focus:outline-none"
-                  hx-post="{{ root_path }}/admin/llm/models/{{ model.id }}/state" hx-target="#model-row-{{ model.id }}"
+                <button onclick="toggleLLMModel('{{ model.id }}')" class="focus:outline-none"
+                  hx-post="{{ root_path }}{{ ui_base_path }}/llm/models/{{ model.id }}/state" hx-target="#model-row-{{ model.id }}"
                   hx-swap="outerHTML">
                   {% if model.enabled %}
                   <span

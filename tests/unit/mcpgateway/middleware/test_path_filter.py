@@ -43,7 +43,7 @@ class TestObservabilitySkip:
             ("/health/security", True),
             ("/healthz/check", True),
             ("/tools", True),
-            ("/admin", True),
+            ("/ui", True),
             ("/api/v1/tools", True),
             ("/", True),
             ("/docs", True),
@@ -91,7 +91,7 @@ class TestAuthContextSkip:
             ("/.well-known/openid-configuration", False),
             # Normal paths not skipped
             ("/tools", False),
-            ("/admin", False),
+            ("/ui", False),
         ],
     )
     def test_should_skip_auth_context(self, path: str, expected: bool):
@@ -119,7 +119,7 @@ class TestLoggingSkip:
             ("/ready", False),  # Not in request logging skip list
             ("/metrics", False),  # Not in request logging skip list
             ("/tools", False),
-            ("/admin", False),
+            ("/ui", False),
             ("/api/v1/tools", False),
             ("/", False),
         ],
@@ -149,7 +149,7 @@ class TestDbQueryLoggingSkip:
             ("/metrics", False),
             # Normal paths not skipped
             ("/tools", False),
-            ("/admin", False),
+            ("/ui", False),
             ("/api/v1/tools", False),
         ],
     )
@@ -293,11 +293,11 @@ class TestObservabilityIncludeExclude:
 
     def test_custom_include_overrides_default(self, monkeypatch: pytest.MonkeyPatch):
         """Custom include list should allow only matching paths."""
-        monkeypatch.setattr(settings, "observability_include_paths", [r"^/admin$"], raising=False)
+        monkeypatch.setattr(settings, "observability_include_paths", [r"^/ui$"], raising=False)
         monkeypatch.setattr(settings, "observability_exclude_paths", [], raising=False)
         clear_all_caches()
 
-        assert should_skip_observability("/admin") is False
+        assert should_skip_observability("/ui") is False
         assert should_skip_observability("/rpc") is True
 
         clear_all_caches()
@@ -322,3 +322,52 @@ class TestObservabilityIncludeExclude:
         assert should_skip_observability("/rpc") is True
 
         clear_all_caches()
+
+
+class TestUIBasePathObservabilitySkip:
+    """Test UI base path-based observability skip logic.
+
+    These tests isolate the dynamic UI path skip logic (line 193) by setting
+    include patterns to match all UI paths, allowing us to verify ONLY the
+    UI-specific events/observability skip behavior.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_for_ui_tests(self, monkeypatch):
+        """Mock settings to isolate UI-specific skip logic."""
+        # Include all /ui paths so they aren't filtered out by include pattern logic
+        monkeypatch.setattr(
+            "mcpgateway.middleware.path_filter.settings.observability_include_paths",
+            [r"^/ui(?:/|$)"],  # Match /ui and /ui/*
+        )
+        # No excludes
+        monkeypatch.setattr(
+            "mcpgateway.middleware.path_filter.settings.observability_exclude_paths",
+            [],
+        )
+        # Default UI base path
+        monkeypatch.setattr(
+            "mcpgateway.middleware.path_filter.settings.mcpgateway_ui_base_path",
+            "/ui",
+        )
+        clear_all_caches()
+        yield
+        clear_all_caches()
+
+    def test_ui_events_path_skipped(self):
+        """UI events path should be skipped from observability."""
+        # /ui/events is specifically skipped by line 193
+        assert should_skip_observability("/ui/events") is True
+
+    def test_ui_observability_subpath_skipped(self):
+        """UI observability subpaths should be skipped from observability."""
+        # /ui/observability/* paths are specifically skipped by line 193
+        assert should_skip_observability("/ui/observability/metrics") is True
+        assert should_skip_observability("/ui/observability/traces") is True
+
+    def test_ui_other_paths_not_skipped(self):
+        """Other UI paths should not be automatically skipped."""
+        # These are regular UI paths, not events/observability - they should NOT be skipped
+        assert should_skip_observability("/ui") is False
+        assert should_skip_observability("/ui/tools") is False
+        assert should_skip_observability("/ui/servers") is False

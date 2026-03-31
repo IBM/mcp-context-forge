@@ -47,7 +47,7 @@ class TestPromptsCRUD:
         prompts_page.page.evaluate(f"window.promptArgsEditor.setValue({json.dumps(args_json)})")
 
         # Submit the form
-        with prompts_page.page.expect_response(lambda response: "/admin/prompts" in response.url and response.request.method == "POST") as response_info:
+        with prompts_page.page.expect_response(lambda response: "/ui/prompts" in response.url and response.request.method == "POST") as response_info:
             prompts_page.submit_prompt_form()
         response = response_info.value
         assert response.status < 400
@@ -78,7 +78,7 @@ class TestPromptsCRUD:
         prompts_page.page.evaluate(f"window.promptArgsEditor.setValue({json.dumps(args_json)})")
 
         # Submit the form
-        with prompts_page.page.expect_response(lambda response: "/admin/prompts" in response.url and response.request.method == "POST"):
+        with prompts_page.page.expect_response(lambda response: "/ui/prompts" in response.url and response.request.method == "POST"):
             prompts_page.submit_prompt_form()
 
         # Verify creation
