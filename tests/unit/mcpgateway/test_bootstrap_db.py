@@ -115,25 +115,6 @@ class TestAdvisoryLock:
 
         assert conn.execute.call_count == 2
 
-    def test_mysql_lock_timeout_raises(self):
-        conn = MagicMock()
-        conn.dialect.name = "mysql"
-        conn.execute.return_value.scalar.return_value = 0
-
-        with pytest.raises(TimeoutError):
-            with advisory_lock(conn):
-                pass
-
-    def test_mysql_lock_acquire_and_release(self):
-        conn = MagicMock()
-        conn.dialect.name = "mariadb"
-        conn.execute.return_value.scalar.return_value = 1
-
-        with advisory_lock(conn):
-            pass
-
-        assert conn.execute.call_count == 2
-
 
 class TestBootstrapAdminUser:
     """Test bootstrap_admin_user function."""
@@ -1305,49 +1286,6 @@ class TestMain:
                                                         mock_command.stamp.assert_called_once_with(mock_config, "head")
                                                         mock_command.upgrade.assert_not_called()
                                                         mock_logger.info.assert_any_call("Empty DB detected - creating baseline schema")
-
-    @pytest.mark.asyncio
-    async def test_main_empty_database_mysql_applies_mariadb_mods(self, mock_settings):
-        """Empty DB + MySQL/MariaDB URL should apply compatibility modifications."""
-        mock_settings.database_url = "mysql://user:pass@localhost/db"
-
-        mock_engine = Mock()
-        mock_engine.dispose = Mock()
-        mock_conn = Mock()
-        mock_conn.commit = Mock()
-        mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = []  # Empty database
-
-        mock_config = MagicMock()
-        mock_config.attributes = {}
-
-        mock_connect_cm = Mock()
-        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
-        mock_connect_cm.__exit__ = Mock(return_value=None)
-        mock_engine.connect = Mock(return_value=mock_connect_cm)
-
-        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
-            with patch("mcpgateway.bootstrap_db.inspect", return_value=mock_inspector):
-                with patch("importlib.resources.files") as mock_files:
-                    mock_files.return_value.joinpath.return_value = "alembic.ini"
-
-                    with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
-                        with patch("mcpgateway.bootstrap_db.Base") as mock_base:
-                            with patch("mcpgateway.bootstrap_db.command") as mock_command:
-                                with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
-                                    with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
-                                            with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.alembic.env._modify_metadata_for_mariadb") as mock_mod:
-                                                        with patch("mcpgateway.alembic.env.mariadb_naming_convention", {"foo": "bar"}):
-                                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                                await main()
-
-                                                                assert mock_mod.called
-                                                                mock_logger.info.assert_any_call("Applied MariaDB compatibility modifications")
-                                                                mock_base.metadata.create_all.assert_called_once_with(bind=mock_conn)
-                                                                mock_command.stamp.assert_called_once_with(mock_config, "head")
 
     @pytest.mark.asyncio
     async def test_main_existing_database(self, mock_settings):

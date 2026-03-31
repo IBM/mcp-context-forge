@@ -35,6 +35,10 @@ from functools import lru_cache, wraps
 import hashlib
 import html
 import os as _os  # local alias to avoid collisions
+import json
+import logging
+import re
+import signal
 import sys
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -69,6 +73,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from mcpgateway import __version__, schemas
 from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams, resolve_session_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -130,6 +135,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.content_security import ContentSizeError
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.embedding_service import index_tool_fire_and_forget
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -150,6 +156,7 @@ from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
@@ -1059,6 +1066,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
+        # First-Party
+        from mcpgateway.handlers.signal_handlers import sighup_handler  # pylint: disable=import-outside-toplevel
+
+        signal.signal(signal.SIGHUP, sighup_handler)
+
         # Start cache invalidation subscriber for cross-worker cache synchronization
         # First-Party
         from mcpgateway.cache.registry_cache import get_cache_invalidation_subscriber  # pylint: disable=import-outside-toplevel
@@ -1130,6 +1142,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         raise
     finally:
+        # Restore default SIGHUP handling in case we reset signal handlers.
+        try:
+            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(f"Failed to restore default SIGHUP handler: {exc}")
+
         if aggregation_stop_event is not None:
             aggregation_stop_event.set()
         for task in (aggregation_backfill_task, aggregation_loop_task):
@@ -1357,7 +1375,7 @@ def validate_security_configuration():
     # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
     critical_issues = []
 
-    if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:  # nosec B105 - checking for default value
+    if settings.jwt_secret_key in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes") and not settings.dev_mode:  # nosec B105 - checking for default values
         critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
 
     if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
@@ -1442,7 +1460,7 @@ def log_security_recommendations(security_status: settings.SecurityStatus):
         logger.info("📋 SECURITY RECOMMENDATIONS:")
         logger.info("=" * 60)
 
-        if settings.jwt_secret_key == "my-test-key":  # nosec B105 - checking for default value
+        if settings.jwt_secret_key in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"):  # nosec B105 - checking for default value
             logger.info("  • Generate a strong JWT secret:")
             logger.info("    python3 -c 'import secrets; print(secrets.token_urlsafe(32))'")
 
@@ -1568,6 +1586,63 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
         True
     """
     return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
+
+
+@app.exception_handler(ContentSizeError)
+async def content_size_exception_handler(_request: Request, exc: ContentSizeError):
+    """Handle content size limit violations globally.
+
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The ContentSizeError with actual_size, max_size, and content_type.
+
+    Returns:
+        ORJSONResponse: A 413 Payload Too Large response with structured error details.
+    """
+    return ORJSONResponse(status_code=413, content={"detail": {"error": f"{exc.content_type} size limit exceeded", "message": str(exc), "actual_size": exc.actual_size, "max_size": exc.max_size}})
+
+
+# RFC 9110 §5.6.2 'token' pattern for header field names:
+#   token = 1*tchar
+#   tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*"
+#           / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
+#           / DIGIT / ALPHA
+_RFC9110_TOKEN_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
+def _validate_http_headers(headers: dict[str, str]) -> Optional[dict[str, str]]:
+    """Validate headers according to RFC 9110.
+
+    Args:
+        headers: dict of headers
+
+    Returns:
+        Optional[dict[str, str]]: dictionary of valid headers
+
+    Rules enforced:
+      - Header name must match RFC 9110 'token'.
+      - No whitespace before colon (enforced by dictionary usage).
+      - Header value must not contain CTL characters (0x00–0x1F, 0x7F),
+        except SP (0x20) and HTAB (0x09) which are allowed.
+    """
+    validated: dict[str, str] = {}
+    for key, value in headers.items():
+        # Validate header name (RFC 9110 token)
+        if not _RFC9110_TOKEN_RE.match(key):
+            logger.warning(f"Invalid header name: {key}")
+            continue
+        # RFC 9110: Reject CTLs (0x00–0x1F, 0x7F). Allow SP (0x20) and HTAB (0x09).
+        valid = True
+        for ch in value:
+            code = ord(ch)
+            if (0 <= code <= 31 or code == 127) and code not in (9, 32):
+                valid = False
+                break
+        if not valid:
+            logger.warning(f"Header value contains invalid characters: {key}")
+            continue
+        validated[key] = value
+    return validated if validated else None
 
 
 @app.exception_handler(PluginViolationError)
@@ -1908,6 +1983,16 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         except Exception as revoke_error:
                             logger.warning(f"Token revocation check failed: {revoke_error}")
                             # Continue - don't fail auth if revocation check fails
+
+                    # SECURITY: Apply token scope semantics for admin paths.
+                    # Use the same token_use-aware resolution as auth.py.
+                    token_use = payload.get("token_use")
+                    if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                        is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+                        token_teams = await resolve_session_teams(payload, username, {"is_admin": is_admin})
+                    else:
+                        # API token or legacy path: embedded teams claim semantics
+                        token_teams = normalize_token_teams(payload)
                 except Exception:
                     # JWT validation failed, try API token
                     token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
@@ -1962,6 +2047,17 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                     # This allows granular admin access for users with specific admin permissions
                     permission_service = PermissionService(db)
                     has_admin_access = await permission_service.has_admin_permission(username)
+                    request_team_id = request.query_params.get("team_id")
+                    # Normalize to hex so hyphenated UUIDs match DB-stored hex IDs.
+                    # Fall back to raw value for non-UUID team IDs (e.g. from legacy tokens).
+                    if request_team_id:
+                        try:
+                            request_team_id = uuid.UUID(request_team_id).hex
+                        except (ValueError, AttributeError):
+                            pass  # keep raw value for non-UUID token_teams
+                    # Only trust team_id if it is in the user's DB-resolved teams
+                    validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
+                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id, token_teams=token_teams)
                     if not has_admin_access:
                         logger.warning(f"Admin access denied for user without admin permissions: {username}")
                         return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
@@ -2113,6 +2209,24 @@ class MCPPathRewriteMiddleware:
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not original_path.startswith("/.well-known/"):
             if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+                # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
+                # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
+                # /mcp/ as that would expose the global MCP transport under
+                # undocumented aliases, broadening the externally reachable
+                # route surface.
+                if original_path.startswith("/servers/"):
+                    # Validate that a non-empty server_id segment is present.
+                    # Without this check, paths like /servers//mcp (empty ID)
+                    # would be rewritten and silently fall through (#3891).
+                    _srv_match = re.match(r"/servers/([^/]+)/mcp", original_path)
+                    if not _srv_match:
+                        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+                        await response(scope, receive, send)
+                        return
+                else:
+                    # Not a /servers/ path — do not rewrite, pass through
+                    await self.application(scope, receive, send)
+                    return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 scope["path"] = "/mcp/"
                 await self.application(scope, receive, send)
@@ -2357,6 +2471,20 @@ def get_db():
     """
     Dependency function to provide a database session.
 
+    When observability is enabled, this reuses the session created by
+    ObservabilityMiddleware (stored in request.state.db) to avoid duplicate
+    session creation. When observability is disabled or the middleware hasn't
+    created a session, this creates its own session.
+
+    **Transaction Control**: This function ALWAYS controls transaction boundaries
+    (commit/rollback) regardless of whether it creates the session or reuses one
+    from middleware. This ensures predictable transaction semantics for route
+    handlers and maintains data integrity.
+
+    **Session Lifecycle**: Middleware manages session lifecycle (create/close)
+    while this function manages transactions (commit/rollback). This separation
+    of concerns prevents the transaction management violation described in #3731.
+
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.
 
@@ -2373,7 +2501,10 @@ def get_db():
         Exception: Re-raises any exception after rolling back the transaction.
 
     Ensures:
-        The database session is closed after the request completes, even in the case of an exception.
+        - Transaction is committed on success (for both owned and reused sessions)
+        - Transaction is rolled back on error (for both owned and reused sessions)
+        - Session is closed only if created by this function (not if reused from middleware)
+        - Broken connections are invalidated to prevent pool corruption
 
     Examples:
         >>> # Test that get_db returns a generator
@@ -2391,6 +2522,41 @@ def get_db():
         ...         pass  # Expected - generator cleanup
         'ResilientSession'
     """
+    # Check if ObservabilityMiddleware already created a request-scoped session
+    # This eliminates duplicate session creation when observability is enabled (Issue #3467)
+    if request is not None and hasattr(request, "state") and hasattr(request.state, "db"):
+        db = request.state.db
+        if db is not None:
+            logger.debug(f"[GET_DB] Reusing session from middleware: {id(db)}")
+            # Yield the middleware's session. We control transactions, middleware controls lifecycle.
+            try:
+                yield db
+                # Commit on successful completion (only if transaction still active)
+                # The transaction can become inactive if an exception occurred during
+                # async context manager cleanup (e.g., CancelledError during MCP session teardown).
+                if db.is_active:
+                    db.commit()
+            except Exception:
+                try:
+                    # Always call rollback() in exception handler.
+                    # rollback() is safe to call even when is_active=False - it succeeds and
+                    # restores the session to a usable state. When is_active=False (e.g., after
+                    # IntegrityError), rollback() is actually REQUIRED to clear the failed state.
+                    # Skipping rollback when is_active=False would leave the session unusable.
+                    db.rollback()
+                except Exception:
+                    # Connection is broken - invalidate to remove from pool
+                    # This handles cases like PgBouncer query_wait_timeout where
+                    # the connection is dead and rollback itself fails
+                    try:
+                        db.invalidate()
+                    except Exception:
+                        pass  # nosec B110 - Best effort cleanup on connection failure
+                raise
+            # Don't close - middleware owns the session lifecycle
+            return
+
+    # Fallback: Create our own session (observability disabled or middleware didn't create one)
     db = SessionLocal()
     try:
         yield db
@@ -2418,6 +2584,32 @@ def get_db():
         raise
     finally:
         db.close()
+
+
+async def require_valid_server(server_id: str, db: Session = Depends(get_db)) -> str:
+    """FastAPI dependency that validates a server_id exists in the database.
+
+    Provides a reusable, fail-closed guard for any server-scoped endpoint.
+    Uses the lightweight ``entity_exists()`` check — no eager loading.
+
+    Args:
+        server_id: Path parameter extracted by FastAPI.
+        db: Database session from the ``get_db`` dependency.
+
+    Returns:
+        The validated server_id string.
+
+    Raises:
+        HTTPException: 404 if the server does not exist, 503 on database errors.
+    """
+    try:
+        if not await server_service.entity_exists(db, server_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server not found")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Service unavailable — unable to verify server")
+    return server_id
 
 
 async def _read_request_json(request: Request) -> Any:
@@ -3209,6 +3401,13 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
+        # Capture passthrough headers from the original SSE request for loopback /rpc calls.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        user_with_token["_passthrough_headers"] = safe_extract_headers_for_loopback(dict(request.headers), "SSE")
+
         # Defensive cleanup callback - runs immediately on client disconnect
         async def on_disconnect_cleanup() -> None:
             """Clean up session when SSE client disconnects."""
@@ -3254,7 +3453,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
 @server_router.post("/{server_id}/message")
 @require_permission("servers.use")
-async def message_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
+async def message_endpoint(request: Request, server_id: str = Depends(require_valid_server), user=Depends(get_current_user_with_permissions)):
     """
     Handles incoming messages for a specific server.
 
@@ -4716,6 +4915,7 @@ async def list_resources(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -4731,6 +4931,7 @@ async def list_resources(
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
+        gateway_id (Optional[str]): Filter by gateway ID. Use 'null' for resources without a gateway.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -4773,12 +4974,16 @@ async def list_resources(
     # Use unified list_resources() with token-based team filtering
     # Always apply visibility filtering based on token scope
     logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    logger.debug(
+        f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}, gateway_id={gateway_id}"
+    )
     data, next_cursor = await resource_service.list_resources(
         db=db,
         cursor=cursor,
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
+        gateway_id=gateway_id,
         user_email=user_email,
         team_id=team_id,
         visibility=visibility,
@@ -4880,6 +5085,9 @@ async def create_resource(
     except IntegrityError as e:
         logger.error(f"Integrity error while creating resource: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
+    except ContentSizeError as e:
+        logger.error(f"Content size exceeded in creating resource: {e}")
+        raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
 
 
 @resource_router.get("/{resource_id}")
@@ -5055,6 +5263,9 @@ async def update_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ContentSizeError as e:
+        logger.error(f"Content size exceeded in updating resource: {e}")
+        raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
     db.commit()
     db.close()
     await invalidate_resource_cache(resource_id)
@@ -5199,6 +5410,7 @@ async def list_prompts(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5214,6 +5426,7 @@ async def list_prompts(
         tags: Comma-separated list of tags to filter by.
         team_id: Filter by specific team ID.
         visibility: Filter by visibility (private, team, public).
+        gateway_id: Filter by gateway ID. Use 'null' for prompts without a gateway.
         db: Database session.
         user: Authenticated user.
 
@@ -5256,12 +5469,16 @@ async def list_prompts(
     # Use consolidated prompt listing with token-based team filtering
     # Always apply visibility filtering based on token scope
     logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+    logger.debug(
+        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}, gateway_id={gateway_id}"
+    )
     data, next_cursor = await prompt_service.list_prompts(
         db=db,
         cursor=cursor,
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
+        gateway_id=gateway_id,
         user_email=user_email,
         team_id=team_id,
         visibility=visibility,
@@ -5369,6 +5586,9 @@ async def create_prompt(
             # If there is an integrity error, return a 409 Conflict error
             logger.error(f"Integrity error while creating prompt: {e}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
+        if isinstance(e, ContentSizeError):
+            logger.error(f"Content size exceeded in creating prompt: {e}")
+            raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while creating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
@@ -5561,6 +5781,9 @@ async def update_prompt(
         if isinstance(e, PromptError):
             # If there is a general prompt error, return a 400 Bad Request error
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        if isinstance(e, ContentSizeError):
+            logger.error(f"Content size exceeded in updating prompt: {e}")
+            raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
         # For any other unexpected errors, return a 500 Internal Server Error
         logger.error(f"Unexpected error while updating prompt: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")
@@ -7098,11 +7321,18 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.close(code=1008, reason="Invalid authentication")
                     return
 
+        # Capture passthrough headers from the WebSocket handshake request.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import filter_loopback_skip_headers, safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        ws_passthrough_headers = safe_extract_headers_for_loopback(dict(websocket.headers), "WebSocket")
+
         await websocket.accept()
         while True:
             try:
                 data = await websocket.receive_text()
-                client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
+                client_args = {"timeout": settings.federation_timeout, "verify": internal_loopback_verify()}
 
                 # Build headers for /rpc request - forward auth credentials
                 rpc_headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -7110,10 +7340,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     rpc_headers["Authorization"] = f"Bearer {auth_token}"
                 if proxy_user:
                     rpc_headers[settings.proxy_user_header] = proxy_user
+                # Forward passthrough headers captured from the WebSocket handshake (see #3640).
+                # Defense-in-depth: filter via filter_loopback_skip_headers() so passthrough
+                # can never override the gateway's internal auth, content-type, or session/routing headers.
+                if ws_passthrough_headers:
+                    rpc_headers.update(filter_loopback_skip_headers(ws_passthrough_headers))
 
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
-                        f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
+                        f"{internal_loopback_base_url()}{settings.app_root_path}/rpc",
                         json=orjson.loads(data),
                         headers=rpc_headers,
                     )
@@ -7209,6 +7444,13 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["auth_token"] = auth_token
         user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
+
+        # Capture passthrough headers from the original SSE request for loopback /rpc calls.
+        # Without this, headers like X-Upstream-Authorization are silently dropped. See #3640.
+        # First-Party
+        from mcpgateway.utils.passthrough_headers import safe_extract_headers_for_loopback  # pylint: disable=import-outside-toplevel
+
+        user_with_token["_passthrough_headers"] = safe_extract_headers_for_loopback(dict(request.headers), "SSE")
 
         # Create respond task and register for cancellation on disconnect
         respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id))
@@ -8150,6 +8392,12 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
     app.include_router(admin_router)  # Admin routes imported from admin.py
+
+    # Validate section-to-permission mapping consistency at startup
+    # First-Party
+    from mcpgateway.admin import validate_section_permissions
+
+    validate_section_permissions(admin_router)
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")
 

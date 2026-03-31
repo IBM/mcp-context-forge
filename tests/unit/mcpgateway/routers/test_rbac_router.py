@@ -442,3 +442,35 @@ async def test_my_permissions_errors(monkeypatch):
     with pytest.raises(rbac_router.HTTPException) as excinfo:
         await rbac_router.get_my_permissions(team_id=None, user={"email": "user@example.com"}, db=MagicMock())
     assert excinfo.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_my_permissions_forwards_token_teams(monkeypatch):
+    """get_my_permissions forwards token_teams from user context to get_user_permissions."""
+    perm_service = MagicMock()
+    perm_service.get_user_permissions = AsyncMock(return_value={"tools.read"})
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
+
+    user = {"email": "user@example.com", "token_teams": ["team-a"]}
+    result = await rbac_router.get_my_permissions(team_id=None, user=user, db=MagicMock())
+
+    assert result == ["tools.read"]
+    perm_service.get_user_permissions.assert_called_once_with(
+        user_email="user@example.com", team_id=None, token_teams=["team-a"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_my_permissions_forwards_empty_token_teams(monkeypatch):
+    """get_my_permissions forwards token_teams=[] (public-only) to get_user_permissions."""
+    perm_service = MagicMock()
+    perm_service.get_user_permissions = AsyncMock(return_value=set())
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
+
+    user = {"email": "user@example.com", "token_teams": []}
+    result = await rbac_router.get_my_permissions(team_id=None, user=user, db=MagicMock())
+
+    assert result == []
+    perm_service.get_user_permissions.assert_called_once_with(
+        user_email="user@example.com", team_id=None, token_teams=[]
+    )

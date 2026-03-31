@@ -183,6 +183,20 @@ A2A agents provide comprehensive metrics:
 - **Last Interaction**: Timestamp of most recent call
 - **Error Tracking**: Failed call details and error messages
 
+## Lifecycle Management
+
+### Agent-Tool State Cascade
+
+When an A2A agent is registered, a corresponding MCP tool is automatically created (with `integration_type: "A2A"`). The agent and its tool share a linked lifecycle:
+
+- **Deactivating an agent** automatically deactivates its associated tool, removing it from virtual server tool listings. (Invocation of disabled A2A tools was already rejected; this fix ensures the tool's own `enabled` flag stays in sync so it no longer *appears* as available.)
+- **Reactivating an agent** automatically reactivates its associated tool, restoring it to virtual server tool listings.
+
+This mirrors how MCP server (gateway) deactivation cascades to all child tools, prompts, and resources. Since each A2A agent creates a single tool, the cascade updates exactly one tool record.
+
+!!! note
+    If the tool is already in the desired state (e.g., already disabled when the agent is deactivated), no redundant database update occurs.
+
 ## Virtual Server Integration
 
 Associate A2A agents with virtual servers to:
@@ -244,7 +258,7 @@ The demo agent supports these query formats:
 ```bash
 # Get a token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 60 --secret my-test-key)
+  --username admin@example.com --exp 60 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Invoke the agent
 curl -X POST "http://localhost:8000/a2a/demo-calculator-agent/invoke" \
@@ -265,7 +279,7 @@ uv run python __main__.py  # Starts on port 9999
 
 # Register with ContextForge (in another terminal)
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 60 --secret my-test-key)
+  --username admin@example.com --exp 60 --secret my-test-key-but-now-longer-than-32-bytes)
 
 curl -X POST "http://localhost:8000/a2a" \
   -H "Authorization: Bearer $TOKEN" \

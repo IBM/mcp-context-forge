@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -109,7 +109,7 @@ elif backend == "sqlite":
     # Allow pooled connections to hop across threads.
     connect_args["check_same_thread"] = False
 
-# 4. Other backends (MySQL, MSSQL, etc.) leave `connect_args` empty.
+# 4. Other backends leave `connect_args` empty.
 
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
@@ -132,6 +132,9 @@ def build_engine() -> Engine:
 
     Returns:
         SQLAlchemy Engine instance configured for the specified database.
+
+    Raises:
+        ValueError: If the database backend is not postgresql or sqlite.
     """
     if _sqlalchemy_echo:
         logger.info("SQLALCHEMY_ECHO enabled - all SQL queries will be logged")
@@ -160,22 +163,8 @@ def build_engine() -> Engine:
             echo=_sqlalchemy_echo,
         )
 
-    if backend in ("mysql", "mariadb"):
-        # MariaDB/MySQL specific configuration
-        logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
-
-        return create_engine(
-            settings.database_url,
-            pool_pre_ping=True,
-            pool_size=settings.db_pool_size,
-            max_overflow=settings.db_max_overflow,
-            pool_timeout=settings.db_pool_timeout,
-            pool_recycle=settings.db_pool_recycle,
-            connect_args=connect_args,
-            isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
-            # Log all SQL queries when SQLALCHEMY_ECHO=true (useful for N+1 detection)
-            echo=_sqlalchemy_echo,
-        )
+    if backend != "postgresql":
+        raise ValueError(f"Unsupported database backend: '{backend}'. Only 'postgresql' and 'sqlite' are supported.")
 
     # Determine if PgBouncer is in use (detected via URL or explicit config)
     is_pgbouncer = "pgbouncer" in settings.database_url.lower()
@@ -1117,7 +1106,7 @@ def _compute_metrics_summary(
 class Base(DeclarativeBase):
     """Base class for all models."""
 
-    # MariaDB-compatible naming convention for foreign keys
+    # Naming convention for foreign keys
     metadata = MetaData(
         naming_convention={
             "fk": "fk_%(table_name)s_%(column_0_name)s",
@@ -1994,6 +1983,7 @@ class EmailTeamMember(Base):
         joined_at (datetime): When the user joined the team
         invited_by (str): Email of the user who invited this member
         is_active (bool): Whether the membership is active
+        grant_source (str): Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = EmailTeamMember(
@@ -2020,6 +2010,7 @@ class EmailTeamMember(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     invited_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     team: Mapped["EmailTeam"] = relationship("EmailTeam", back_populates="members")
@@ -4605,6 +4596,10 @@ class Gateway(Base):
     ca_certificate_sig: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     signing_algorithm: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="ed25519")  # e.g., "sha256"
 
+    # mTLS client certificate/key for upstream gateway authentication
+    client_cert: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    client_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Relationship with local tools this gateway provides
     tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan", passive_deletes=True)
 
@@ -5770,25 +5765,6 @@ def get_for_update(
 fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
-def patch_string_columns_for_mariadb(base, engine_) -> None:
-    """
-    MariaDB requires VARCHAR to have an explicit length.
-    Auto-assign VARCHAR(255) to any String() columns without a length.
-
-    Args:
-        base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
-        engine_ (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
-    """
-    if engine_.dialect.name != "mariadb":
-        return
-
-    for table in base.metadata.tables.values():
-        for column in table.columns:
-            if isinstance(column.type, String) and column.type.length is None:
-                # Replace with VARCHAR(255)
-                column.type = VARCHAR(255)
-
-
 def extract_json_field(column, json_path: str, dialect_name: Optional[str] = None):
     """Extract a JSON field in a database-agnostic way.
 
@@ -5833,9 +5809,6 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
-        # Apply MariaDB compatibility fix
-        patch_string_columns_for_mariadb(Base, engine)
-
         # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:
@@ -6101,12 +6074,12 @@ class LLMProviderType:
                 "description": "Anthropic Claude models",
             },
             cls.OLLAMA: {
-                "api_base": "http://localhost:11434/v1",
+                "api_base": "http://localhost:11434",
                 "default_model": "llama3.2",
                 "supports_model_list": True,
-                "models_endpoint": "/models",
+                "models_endpoint": "/api/tags",
                 "requires_api_key": False,
-                "description": "Local Ollama server (OpenAI-compatible)",
+                "description": "Local Ollama server",
             },
             cls.OPENAI_COMPATIBLE: {
                 "api_base": "http://localhost:8080/v1",

@@ -7,6 +7,13 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use serde::{Deserialize, Serialize};
 
+const MAX_TEXT_BYTES_LIMIT: usize = 100 * 1024 * 1024;
+const MAX_NESTED_DEPTH_LIMIT: usize = 1000;
+const MAX_COLLECTION_ITEMS_LIMIT: usize = 1_000_000;
+const DEFAULT_MAX_TEXT_BYTES: usize = 10 * 1024 * 1024;
+const DEFAULT_MAX_NESTED_DEPTH: usize = 32;
+const DEFAULT_MAX_COLLECTION_ITEMS: usize = 4096;
+
 /// PII types that can be detected
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,8 +29,6 @@ pub enum PIIType {
     DriverLicense,
     BankAccount,
     MedicalRecord,
-    AwsKey,
-    ApiKey,
     Custom,
 }
 
@@ -42,8 +47,6 @@ impl PIIType {
             PIIType::DriverLicense => "driver_license",
             PIIType::BankAccount => "bank_account",
             PIIType::MedicalRecord => "medical_record",
-            PIIType::AwsKey => "aws_key",
-            PIIType::ApiKey => "api_key",
             PIIType::Custom => "custom",
         }
     }
@@ -90,8 +93,6 @@ pub struct PIIConfig {
     pub detect_driver_license: bool,
     pub detect_bank_account: bool,
     pub detect_medical_record: bool,
-    pub detect_aws_keys: bool,
-    pub detect_api_keys: bool,
 
     // Masking configuration
     pub default_mask_strategy: MaskingStrategy,
@@ -101,6 +102,11 @@ pub struct PIIConfig {
     pub block_on_detection: bool,
     pub log_detections: bool,
     pub include_detection_details: bool,
+
+    // Resource limits
+    pub max_text_bytes: usize,
+    pub max_nested_depth: usize,
+    pub max_collection_items: usize,
 
     // Custom patterns
     #[serde(default)]
@@ -125,8 +131,6 @@ impl Default for PIIConfig {
             detect_driver_license: true,
             detect_bank_account: true,
             detect_medical_record: true,
-            detect_aws_keys: true,
-            detect_api_keys: true,
 
             // Default masking
             default_mask_strategy: MaskingStrategy::Redact,
@@ -136,6 +140,11 @@ impl Default for PIIConfig {
             block_on_detection: false,
             log_detections: true,
             include_detection_details: true,
+
+            // Default resource limits
+            max_text_bytes: DEFAULT_MAX_TEXT_BYTES,
+            max_nested_depth: DEFAULT_MAX_NESTED_DEPTH,
+            max_collection_items: DEFAULT_MAX_COLLECTION_ITEMS,
 
             // Custom patterns
             custom_patterns: Vec::new(),
@@ -186,11 +195,53 @@ impl PIIConfig {
         extract_bool!(detect_driver_license);
         extract_bool!(detect_bank_account);
         extract_bool!(detect_medical_record);
-        extract_bool!(detect_aws_keys);
-        extract_bool!(detect_api_keys);
         extract_bool!(block_on_detection);
         extract_bool!(log_detections);
         extract_bool!(include_detection_details);
+
+        if let Some(value) = dict.get_item("max_text_bytes")? {
+            config.max_text_bytes = value.extract()?;
+        }
+        if let Some(value) = dict.get_item("max_nested_depth")? {
+            config.max_nested_depth = value.extract()?;
+        }
+        if let Some(value) = dict.get_item("max_collection_items")? {
+            config.max_collection_items = value.extract()?;
+        }
+
+        if config.max_text_bytes == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_text_bytes must be greater than 0",
+            ));
+        }
+        if config.max_text_bytes > MAX_TEXT_BYTES_LIMIT {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "max_text_bytes must be less than or equal to {}",
+                MAX_TEXT_BYTES_LIMIT
+            )));
+        }
+        if config.max_nested_depth == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_nested_depth must be greater than 0",
+            ));
+        }
+        if config.max_nested_depth > MAX_NESTED_DEPTH_LIMIT {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "max_nested_depth must be less than or equal to {}",
+                MAX_NESTED_DEPTH_LIMIT
+            )));
+        }
+        if config.max_collection_items == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "max_collection_items must be greater than 0",
+            ));
+        }
+        if config.max_collection_items > MAX_COLLECTION_ITEMS_LIMIT {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "max_collection_items must be less than or equal to {}",
+                MAX_COLLECTION_ITEMS_LIMIT
+            )));
+        }
 
         // Extract string values
         if let Some(value) = dict.get_item("redaction_text")? {
@@ -268,6 +319,7 @@ impl PIIConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::types::PyDict;
 
     #[test]
     fn test_pii_type_as_str() {
@@ -283,5 +335,47 @@ mod tests {
         assert!(config.detect_email);
         assert_eq!(config.redaction_text, "[REDACTED]");
         assert_eq!(config.default_mask_strategy, MaskingStrategy::Redact);
+        assert_eq!(config.max_text_bytes, DEFAULT_MAX_TEXT_BYTES);
+        assert_eq!(config.max_nested_depth, DEFAULT_MAX_NESTED_DEPTH);
+        assert_eq!(config.max_collection_items, DEFAULT_MAX_COLLECTION_ITEMS);
+    }
+
+    #[test]
+    fn test_from_py_dict_rejects_excessive_resource_limits() {
+        Python::initialize();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("max_text_bytes", 100 * 1024 * 1024 + 1)
+                .unwrap();
+
+            let err = PIIConfig::from_py_dict(&dict).unwrap_err();
+            assert!(err.to_string().contains("max_text_bytes"));
+        });
+    }
+
+    #[test]
+    fn test_from_py_dict_rejects_excessive_nested_depth() {
+        Python::initialize();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("max_nested_depth", MAX_NESTED_DEPTH_LIMIT + 1)
+                .unwrap();
+
+            let err = PIIConfig::from_py_dict(&dict).unwrap_err();
+            assert!(err.to_string().contains("max_nested_depth"));
+        });
+    }
+
+    #[test]
+    fn test_from_py_dict_rejects_excessive_collection_items() {
+        Python::initialize();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("max_collection_items", MAX_COLLECTION_ITEMS_LIMIT + 1)
+                .unwrap();
+
+            let err = PIIConfig::from_py_dict(&dict).unwrap_err();
+            assert!(err.to_string().contains("max_collection_items"));
+        });
     }
 }

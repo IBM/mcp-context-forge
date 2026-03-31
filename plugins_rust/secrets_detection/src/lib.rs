@@ -2,8 +2,10 @@ mod config;
 mod patterns;
 mod scanner;
 
+use std::collections::HashMap;
 use std::fmt;
 
+use log::{LevelFilter, debug, error, info, warn};
 use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
@@ -23,46 +25,61 @@ fn py_scan_container<'py>(
     container: Bound<'py, PyAny>,
     config: Bound<'py, PyAny>,
 ) -> PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> {
-    // Extract config from Pydantic model (only once)
-    let cfg = SecretsDetectionConfig::try_from(&config)?;
+    let container_kind = describe_python_type(&container);
+    debug!(
+        "Starting Rust secrets scan for container_type={} at top level",
+        container_kind
+    );
 
-    // Fast path: check type once and dispatch
-    let (count, redacted, findings) = if container.is_instance_of::<PyString>() {
-        // String: direct extraction (fastest path)
-        let text = container.extract::<String>()?;
-        let (fs, redacted_str) = detect_and_redact(&text, &cfg);
+    let result = (|| {
+        let cfg = SecretsDetectionConfig::try_from(&config)?;
 
-        let findings_list = PyList::empty(py);
-        for finding in &fs {
-            let finding_dict = PyDict::new(py);
-            finding_dict.set_item("type", &finding.pii_type)?;
-            finding_dict.set_item("match", &finding.preview)?;
-            findings_list.append(finding_dict)?;
-        }
+        let (count, redacted, findings) = if container.is_instance_of::<PyString>() {
+            let text = container.extract::<String>()?;
+            let (fs, redacted_str) = detect_and_redact(&text, &cfg);
 
-        (
-            fs.len(),
-            PyString::new(py, &redacted_str).into_any(),
-            findings_list,
-        )
-    } else if container.is_instance_of::<PyDict>() {
-        // Dict: use specialized scanner
-        scan_container(py, &container, &cfg)?
-    } else if container.is_instance_of::<PyList>() {
-        // List: use specialized scanner
-        scan_container(py, &container, &cfg)?
-    } else {
-        // Other types: no processing
-        let findings = PyList::empty(py);
-        (0, container.clone(), findings)
-    };
+            let findings_list = PyList::empty(py);
+            for finding in &fs {
+                let finding_dict = PyDict::new(py);
+                finding_dict.set_item("type", &finding.pii_type)?;
+                finding_dict.set_item("match", &finding.preview)?;
+                findings_list.append(finding_dict)?;
+            }
 
-    Ok((count, redacted, findings))
+            (
+                fs.len(),
+                PyString::new(py, &redacted_str).into_any(),
+                findings_list,
+            )
+        } else if container.is_instance_of::<PyDict>() || container.is_instance_of::<PyList>() {
+            scan_container(py, &container, &cfg)?
+        } else {
+            let findings = PyList::empty(py);
+            (0, container.clone(), findings)
+        };
+
+        debug!(
+            "Rust secrets scan finished for container_type={} with findings_count={}",
+            container_kind, count
+        );
+        Ok((count, redacted, findings))
+    })();
+
+    if let Err(err) = &result {
+        error!(
+            "Rust secrets scan failed for container_type={}: {}",
+            container_kind, err
+        );
+    }
+
+    result
 }
 
 #[pymodule]
 fn secrets_detection_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    init_python_logging(m.py())?;
     m.add_function(wrap_pyfunction!(py_scan_container, m)?)?;
+    info!("secrets_detection_rust module initialized");
     Ok(())
 }
 
@@ -80,6 +97,7 @@ where
 {
     obj.getattr(attr_name)
         .map_err(|_| -> PyErr {
+            error!("Missing required config attribute '{}'", attr_name);
             AttributeError::Missing {
                 attr_name: attr_name.to_string(),
             }
@@ -87,6 +105,10 @@ where
         })
         .and_then(|attr| {
             attr.extract().map_err(|_| -> PyErr {
+                error!(
+                    "Invalid type for config attribute '{}'; expected {}",
+                    attr_name, expected_type
+                );
                 AttributeError::InvalidType {
                     attr_name: attr_name.to_string(),
                     expected_type: expected_type.to_string(),
@@ -101,12 +123,19 @@ impl<'py> TryFrom<&Bound<'py, PyAny>> for SecretsDetectionConfig {
     type Error = PyErr;
 
     fn try_from(obj: &Bound<'py, PyAny>) -> PyResult<Self> {
-        // Extract required attributes from Pydantic model using helper function
-        let enabled = extract_attr(obj, "enabled", "Dict[str, bool]")?;
+        let enabled: HashMap<String, bool> = extract_attr(obj, "enabled", "Dict[str, bool]")?;
         let redact = extract_attr(obj, "redact", "bool")?;
         let redaction_text = extract_attr(obj, "redaction_text", "str")?;
         let block_on_detection = extract_attr(obj, "block_on_detection", "bool")?;
         let min_findings_to_block = extract_attr(obj, "min_findings_to_block", "int")?;
+
+        debug!(
+            "Loaded Rust secrets detection config: enabled_patterns={}, redact={}, block_on_detection={}, min_findings_to_block={}",
+            enabled.len(),
+            redact,
+            block_on_detection,
+            min_findings_to_block
+        );
 
         Ok(SecretsDetectionConfig {
             enabled,
@@ -115,6 +144,38 @@ impl<'py> TryFrom<&Bound<'py, PyAny>> for SecretsDetectionConfig {
             block_on_detection,
             min_findings_to_block,
         })
+    }
+}
+
+fn init_python_logging(py: Python<'_>) -> PyResult<()> {
+    let logger = pyo3_log::Logger::new(py, pyo3_log::Caching::Nothing)?
+        .filter(LevelFilter::Trace)
+        .filter_target("pyo3".to_string(), LevelFilter::Info);
+
+    match logger.install() {
+        Ok(_handle) => {
+            info!("Initialized PyO3 log bridge for secrets_detection_rust");
+            Ok(())
+        }
+        Err(err) => {
+            warn!(
+                "PyO3 log bridge for secrets_detection_rust already initialized or unavailable: {}",
+                err
+            );
+            Ok(())
+        }
+    }
+}
+
+fn describe_python_type(container: &Bound<'_, PyAny>) -> &'static str {
+    if container.is_instance_of::<PyString>() {
+        "str"
+    } else if container.is_instance_of::<PyDict>() {
+        "dict"
+    } else if container.is_instance_of::<PyList>() {
+        "list"
+    } else {
+        "other"
     }
 }
 

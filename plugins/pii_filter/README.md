@@ -18,14 +18,14 @@ A plugin for detecting and masking Personally Identifiable Information (PII) in 
 - **Driver's License Numbers** - US state formats
 - **Bank Account Numbers** - Including IBAN
 - **Medical Record Numbers** - MRN formats
-- **AWS Access Keys** - AKIA prefixed keys and secrets
-- **API Keys** - Generic API key patterns
 - **Custom Patterns** - Define your own PII patterns
+
+Secret-style credentials such as AWS keys and generic API tokens are handled by the `secrets_detection` plugin, not the PII filter.
 
 ### Masking Strategies
 - **REDACT** - Complete replacement with `[REDACTED]` or custom text
 - **PARTIAL** - Show partial info (e.g., `***-**-1234` for SSN, `j***e@example.com` for email)
-- **HASH** - Replace with hash value for consistency
+- **HASH** - Replace with a deterministic SHA-256-derived placeholder such as `[HASH:8f434346648f6b96]`
 - **TOKENIZE** - Replace with unique token for reversibility
 - **REMOVE** - Complete removal of PII
 
@@ -62,8 +62,6 @@ plugins:
       detect_email: true
       detect_phone: true
       detect_ip_address: true
-      detect_aws_keys: true
-      detect_api_keys: true
       # Masking Settings
       default_mask_strategy: "partial"
       redaction_text: "[PII_REDACTED]"
@@ -102,49 +100,65 @@ config:
   # ... enable all detection types
 ```
 
-### API Keys Only
+### PII Only
 ```yaml
 config:
   detect_ssn: false
   detect_credit_card: false
   detect_email: false
   detect_phone: false
-  detect_aws_keys: true  # Only detect API keys
-  detect_api_keys: true
-  block_on_detection: true  # Always block if keys detected
+  detect_ip_address: true
+  block_on_detection: true
   default_mask_strategy: "redact"
 ```
+
+## SSN Detection Notes
+
+- SSNs do not have a public checksum comparable to Luhn. Local pattern checks can only determine whether a value looks like an SSN, not whether it is assigned to a real person.
+- Authoritative SSN verification requires identity-aware SSA-backed verification, not standalone checksum validation.
+- The current Rust detector may classify bare 9-digit values as SSNs. This can create false positives for other 9-digit identifiers when `detect_ssn` is enabled.
+- A future hardening pass should keep broad compact-SSN support but reject structurally impossible SSNs instead of requiring an `SSN` label.
+
+### Structural Validation Limits
+
+The planned structural hardening should reject values that violate SSA invalid-number rules:
+
+- The first three digits cannot be `000`, `666`, or `900-999`
+- The middle two digits cannot be `00`
+- The last four digits cannot be `0000`
+
+These checks reduce false positives, but they still cannot prove a value is a real SSN.
 
 ## Testing
 
 ### Run All Tests
 ```bash
 # Run all PII filter tests
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -v
 
 # Run with coverage
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py --cov=plugins.pii_filter --cov-report=term-missing
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py --cov=plugins.pii_filter --cov-report=term-missing
 ```
 
 ### Run Specific Test Classes
 ```bash
 # Test only the detector functionality
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector -v
 
 # Test only the plugin integration
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin -v
 ```
 
 ### Run Individual Tests
 ```bash
 # Test SSN detection
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_ssn_detection -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_ssn_detection -v
 
 # Test masking strategies
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_masking_strategies -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIDetector::test_masking_strategies -v
 
 # Test blocking mode
-pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin::test_prompt_pre_fetch_blocking -v
+pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py::TestPIIFilterPlugin::test_prompt_pre_fetch_blocking -v
 ```
 
 ### Manual Testing with the Gateway
@@ -154,7 +168,8 @@ pytest tests/unit/mcpgateway/plugins/pii_filter/test_pii_filter.py::TestPIIFilte
 PLUGINS_ENABLED=true
 ```
 
-2. Start the gateway:
+2. Start the gateway.
+   Direct app port defaults to `http://localhost:4444`; the compose stack is typically exposed through nginx at `http://localhost:8080`.
 ```bash
 python -m mcpgateway.main
 ```
@@ -162,10 +177,10 @@ python -m mcpgateway.main
 3. Test with curl:
 ```bash
 # Test PII detection in prompt arguments
-curl -X POST http://localhost:8000/prompts/test_prompt \
+curl -X POST http://localhost:4444/prompts/test_prompt \
   -H "Content-Type: application/json" \
   -d '{
-    "args": {
+    "arguments": {
       "user_input": "My SSN is 123-45-6789 and email is john@example.com"
     }
   }'
@@ -186,6 +201,15 @@ config:
       mask_strategy: "redact"
       enabled: true
 ```
+
+**Custom Pattern Complexity Limits (DoS Prevention):**
+
+To prevent Regular Expression Denial of Service (ReDoS) attacks, custom patterns are subject to the following limits:
+- **Maximum pattern length:** 256 characters
+- **Maximum alternations (`|`):** 16
+- **Maximum quantifiers (`*`, `+`, `?`, `{}`):** 24
+
+Custom patterns are expected to be written by trusted operators in plugin configuration, not supplied by end users at request time. The Rust detector uses the `regex` crate's linear-time matching engine, and these limits add extra guardrails for maintainability and compilation cost. Patterns exceeding these limits will be rejected during configuration validation.
 
 Test the custom pattern:
 ```python
@@ -309,10 +333,10 @@ DOB: 01/15/1985
 ## CURL Command to Test
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Then test with a prompt containing various PII
-curl -X GET "http://localhost:4444/prompts/test_prompt" \
+curl -X POST "http://localhost:4444/prompts/test_prompt" \
   -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

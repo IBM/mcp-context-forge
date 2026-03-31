@@ -23,6 +23,7 @@ from mcpgateway.services.mcp_session_pool import (
     TransportType,
     _get_cleanup_timeout,
     close_mcp_session_pool,
+    drain_mcp_session_pool,
     get_mcp_session_pool,
     init_mcp_session_pool,
     register_gateway_capabilities_for_notifications,
@@ -1241,6 +1242,97 @@ class TestCloseAllRpcListener:
 
 
 # ---------------------------------------------------------------------------
+# drain_all: close sessions without marking pool as closed
+# ---------------------------------------------------------------------------
+class TestDrainAll:
+    """Cover MCPSessionPool.drain_all() and module-level drain_mcp_session_pool()."""
+
+    @pytest.mark.asyncio
+    async def test_drain_all_closes_pooled_sessions(self):
+        """drain_all should close pooled sessions but keep pool operational."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        pool._pools[pool_key] = asyncio.Queue(maxsize=2)
+        pool._active[pool_key] = set()
+
+        s1 = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url=url, identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+        pool._pools[pool_key].put_nowait(s1)
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock):
+            await pool.drain_all()
+
+        # Pool should be operational (not closed)
+        assert pool._closed is False
+        assert len(pool._pools) == 0
+
+    @pytest.mark.asyncio
+    async def test_drain_all_closes_active_sessions(self):
+        """drain_all should close active sessions."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        pool._pools[pool_key] = asyncio.Queue(maxsize=2)
+        pool._active[pool_key] = set()
+
+        active_s = MagicMock()
+        pool._active[pool_key].add(active_s)
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
+            await pool.drain_all()
+
+        mock_close.assert_awaited()
+        assert pool._closed is False
+
+    @pytest.mark.asyncio
+    async def test_drain_all_handles_queue_empty_race(self):
+        """drain_all handles QueueEmpty if queue empties between empty() and get_nowait()."""
+        pool = MCPSessionPool()
+        pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
+
+        fake_queue = MagicMock()
+        fake_queue.empty = MagicMock(side_effect=[False, True])
+        fake_queue.get_nowait = MagicMock(side_effect=asyncio.QueueEmpty())
+
+        pool._pools[pool_key] = fake_queue
+        pool._active[pool_key] = set()
+
+        await pool.drain_all()
+        assert pool._closed is False
+
+    @pytest.mark.asyncio
+    async def test_drain_mcp_session_pool_calls_drain_all(self):
+        """Module-level drain_mcp_session_pool() calls drain_all on the singleton."""
+        import mcpgateway.services.mcp_session_pool as pool_mod
+
+        mock_pool = MagicMock()
+        mock_pool.drain_all = AsyncMock()
+        original = pool_mod._mcp_session_pool
+        try:
+            pool_mod._mcp_session_pool = mock_pool
+            await drain_mcp_session_pool()
+            mock_pool.drain_all.assert_awaited_once()
+        finally:
+            pool_mod._mcp_session_pool = original
+
+    @pytest.mark.asyncio
+    async def test_drain_mcp_session_pool_noop_when_no_pool(self):
+        """Module-level drain_mcp_session_pool() is a no-op when pool is None."""
+        import mcpgateway.services.mcp_session_pool as pool_mod
+
+        original = pool_mod._mcp_session_pool
+        try:
+            pool_mod._mcp_session_pool = None
+            await drain_mcp_session_pool()  # Should not raise
+        finally:
+            pool_mod._mcp_session_pool = original
+
+
+# ---------------------------------------------------------------------------
 # Lines 1308-1342: register_pool_session_owner
 # ---------------------------------------------------------------------------
 class TestRegisterPoolSessionOwner:
@@ -1658,6 +1750,126 @@ class TestExecuteForwardedRequest:
 
         assert result["error"]["code"] == -32603
         assert result["error"]["message"] == "Internal request timeout"
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_non_2xx_jsonrpc_error(self):
+        """Non-2xx with JSON-RPC error body should propagate the error."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 403
+                self.is_success = False
+            def json(self):
+                return {"error": {"code": -32003, "message": "Token not authorized"}}
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                return DummyResponse()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
+
+        assert result == {"error": {"code": -32003, "message": "Token not authorized"}}
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_non_2xx_non_jsonrpc(self):
+        """Non-2xx with non-JSON-RPC body should map to a JSON-RPC error."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 401
+                self.is_success = False
+                self.text = '{"detail": "Authorization token required"}'
+            def json(self):
+                return {"detail": "Authorization token required"}
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                return DummyResponse()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
+
+        assert result["error"]["code"] == -32603
+        assert "401" in result["error"]["message"]
+        assert "Authorization token required" in result["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_non_2xx_unparseable_body(self):
+        """Non-2xx with unparseable JSON body should fall back to response text."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 502
+                self.is_success = False
+                self.text = "Bad Gateway"
+            def json(self):
+                raise ValueError("No JSON")
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                return DummyResponse()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
+
+        assert result["error"]["code"] == -32603
+        assert "502" in result["error"]["message"]
+        assert "Bad Gateway" in result["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_non_2xx_null_json_body(self):
+        """Non-2xx with JSON null body should not crash (response_data becomes None)."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 500
+                self.is_success = False
+                self.text = "null"
+            def json(self):
+                return None
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                return DummyResponse()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
+
+        assert result["error"]["code"] == -32603
+        assert "500" in result["error"]["message"]
 
 
 # ---------------------------------------------------------------------------

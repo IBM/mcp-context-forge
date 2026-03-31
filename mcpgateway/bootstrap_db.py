@@ -103,7 +103,6 @@ def advisory_lock(conn: Connection):
 
     Behavior depends on the database backend:
     - Postgres: Uses `pg_advisory_lock` (blocking)
-    - MySQL: Uses `GET_LOCK` (blocking with timeout)
     - SQLite: Fallback to local `FileLock`
 
     Args:
@@ -116,7 +115,6 @@ def advisory_lock(conn: Connection):
         TimeoutError: If the lock cannot be acquired within the timeout period
     """
     dialect = conn.dialect.name
-    lock_id = "mcpgateway_migration"
     # Postgres requires a BIGINT lock ID (arbitrary hash of the string)
     pg_lock_id = 42424242424242
 
@@ -128,18 +126,6 @@ def advisory_lock(conn: Connection):
         finally:
             logger.info("Releasing Postgres advisory lock...")
             conn.execute(text(f"SELECT pg_advisory_unlock({pg_lock_id})"))
-
-    elif dialect in ["mysql", "mariadb"]:
-        logger.info("Acquiring MySQL advisory lock...")
-        # GET_LOCK returns 1 if successful, 0 if timed out, NULL on error
-        result = conn.execute(text(f"SELECT GET_LOCK('{lock_id}', {_MIGRATION_LOCK_TIMEOUT})")).scalar()
-        if result != 1:
-            raise TimeoutError(f"Could not acquire MySQL lock '{lock_id}' within {_MIGRATION_LOCK_TIMEOUT}s")
-        try:
-            yield
-        finally:
-            logger.info("Releasing MySQL advisory lock...")
-            conn.execute(text(f"SELECT RELEASE_LOCK('{lock_id}')"))
 
     else:
         # Fallback for SQLite (single-host/container) or other DBs
@@ -604,7 +590,7 @@ async def main() -> None:
     executes `alembic upgrade head`, leaving application data intact.
     Also creates the platform admin user if email authentication is enabled.
 
-    Uses distributed advisory locks (PG/MySQL) or file locking (SQLite)
+    Uses distributed advisory locks (PG) or file locking (SQLite)
     to prevent race conditions when multiple workers start simultaneously.
 
     Args:
@@ -640,16 +626,6 @@ async def main() -> None:
 
                 if "gateways" not in table_names:
                     logger.info("Empty DB detected - creating baseline schema")
-                    # Apply MariaDB compatibility fixes if needed
-                    if settings.database_url.startswith(("mariadb", "mysql")):
-                        # pylint: disable=import-outside-toplevel
-                        # First-Party
-                        from mcpgateway.alembic.env import _modify_metadata_for_mariadb, mariadb_naming_convention
-
-                        _modify_metadata_for_mariadb()
-                        Base.metadata.naming_convention = mariadb_naming_convention
-                        logger.info("Applied MariaDB compatibility modifications")
-
                     Base.metadata.create_all(bind=conn)
                     command.stamp(cfg, "head")
                 else:

@@ -52,6 +52,7 @@ import orjson
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 # JSON-RPC standard error code for method not found
@@ -1399,6 +1400,33 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         logger.info("All sessions closed")
 
+    async def drain_all(self) -> None:
+        """Close all pooled and active sessions without marking the pool as closed.
+
+        Unlike ``close_all()``, the pool remains operational after draining.
+        New sessions will be created on demand with fresh TLS state.
+        Use this for certificate rotation (SIGHUP).
+        """
+        logger.info("Draining all pooled sessions for TLS rotation...")
+
+        async with self._global_lock:
+            for _pool_key, pool in list(self._pools.items()):
+                while not pool.empty():
+                    try:
+                        pooled = pool.get_nowait()
+                        await self._close_session(pooled)
+                    except asyncio.QueueEmpty:
+                        break
+
+            for _pool_key, active_set in list(self._active.items()):
+                for pooled in list(active_set):
+                    await self._close_session(pooled)
+
+            self._pools.clear()
+            self._active.clear()
+
+        logger.info("All pooled sessions drained; pool remains operational")
+
     async def register_pool_session_owner(self, mcp_session_id: str) -> None:
         """Register this worker as owner of a pool session in Redis.
 
@@ -1652,29 +1680,47 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
             logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
 
-            # Make internal HTTP call to local /rpc endpoint
-            # This reuses ALL existing method handling logic without duplication
-            async with httpx.AsyncClient() as client:
+            # Make internal HTTP/HTTPS call to local /rpc endpoint.
+            # This reuses ALL existing method handling logic without duplication.
+            internal_base_url = internal_loopback_base_url()
+            async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                 # Build headers for internal request - forward original headers
-                # but add x-forwarded-internally to prevent infinite loops
+                # but add x-forwarded-internally to prevent infinite loops.
+                # Relies on the originating transport having already filtered
+                # passthrough headers via extract_headers_for_loopback (#3640).
                 internal_headers = dict(headers)
                 internal_headers["x-forwarded-internally"] = "true"
                 # Ensure content-type is set
                 internal_headers["content-type"] = "application/json"
 
                 response = await client.post(
-                    f"http://127.0.0.1:{settings.port}/rpc",
+                    f"{internal_base_url}/rpc",
                     json={"jsonrpc": "2.0", "method": method, "params": params, "id": req_id},
                     headers=internal_headers,
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
-                # Treat non-2xx HTTP responses as errors
+                # Gate on HTTP status first: non-2xx responses are errors
+                # even if the body parses as JSON.
                 if not response.is_success:
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
-                    return {"error": {"code": -32603, "message": f"Internal request failed with HTTP {response.status_code}"}}
+                    try:
+                        response_data = response.json()
+                    except ValueError:
+                        response_data = {}
+                    if not isinstance(response_data, dict):
+                        response_data = {}
 
-                # Parse response
+                    # If body is a JSON-RPC error ({"error": {...}}), propagate it
+                    if "error" in response_data and isinstance(response_data["error"], dict):
+                        logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error (HTTP {response.status_code})")
+                        return {"error": response_data["error"]}
+
+                    # Non-JSON-RPC error body (e.g. {"detail": "..."}): map to JSON-RPC error
+                    detail = response_data.get("detail", response.text[:200] or "Unknown error")
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution failed with HTTP {response.status_code}")
+                    return {"error": {"code": -32603, "message": f"Forwarded request failed (HTTP {response.status_code}): {detail}"}}
+
+                # Parse successful response
                 response_data = response.json()
 
                 # Extract result or error from JSON-RPC response
@@ -1727,17 +1773,19 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
             logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
 
-            # Add internal forwarding headers to prevent loops
+            # Add internal forwarding headers to prevent loops.
+            # Relies on the originating transport having already filtered
+            # passthrough headers via extract_headers_for_loopback (#3640).
             internal_headers = dict(headers)
             internal_headers["x-forwarded-internally"] = "true"
             internal_headers["x-original-worker"] = request.get("original_worker", "unknown")
 
-            # Make internal HTTP request to local endpoint
-            url = f"http://127.0.0.1:{settings.port}{path}"
+            # Make internal HTTP/HTTPS request to local endpoint
+            url = f"{internal_loopback_base_url()}{path}"
             if query_string:
                 url = f"{url}?{query_string}"
 
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(verify=internal_loopback_verify()) as client:
                 response = await client.request(
                     method=method,
                     url=url,
@@ -2095,6 +2143,17 @@ async def close_mcp_session_pool() -> None:
         await close_notification_service()
     except (ImportError, RuntimeError):
         pass  # Notification service not initialized
+
+
+async def drain_mcp_session_pool() -> None:
+    """Drain all sessions from the global pool without destroying the pool.
+
+    Sessions are closed so new ones reconnect with fresh TLS state.
+    The pool remains operational — unlike ``close_mcp_session_pool()``,
+    which shuts it down permanently.
+    """
+    if _mcp_session_pool is not None:
+        await _mcp_session_pool.drain_all()
 
 
 async def start_pool_notification_service(gateway_service: Any = None) -> None:

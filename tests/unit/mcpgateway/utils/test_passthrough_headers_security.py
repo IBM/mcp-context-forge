@@ -250,8 +250,8 @@ class TestHeaderSecurity:
         # Authorization should be blocked
         assert "Authorization" not in result
 
-        # Should log security warning
-        assert any("Skipping Authorization header passthrough" in record.message for record in caplog.records)
+        # Should log security warning with gateway name
+        assert any("Skipping Authorization header passthrough due to basic auth configuration on gateway secure-gateway" in record.message for record in caplog.records)
 
     def test_case_sensitivity_security(self):
         """Test that case sensitivity doesn't create security bypasses."""

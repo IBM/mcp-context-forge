@@ -41,7 +41,7 @@ def _force_safe_test_db_defaults() -> None:
     configured = []
 
     db_env = os.getenv("DB")
-    if db_env and db_env.strip().lower() in {"postgres", "mariadb"}:
+    if db_env and db_env.strip().lower() in {"postgres"}:
         configured.append(f"DB={db_env}")
 
     database_url_env = os.getenv("DATABASE_URL")
@@ -114,10 +114,6 @@ def resolve_test_db_url():
         # Matches GitHub Service container
         return "postgresql://postgres:test@localhost:5432/test"
 
-    if db == "mariadb":
-        # Matches gitHub service container + compatible driver
-        return "mysql+pymysql://root:test@localhost:3306/test"
-
     raise ValueError(f"Unsupported test DB type: {db}")
 
 
@@ -171,7 +167,7 @@ def test_settings():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def app():
     """Create a FastAPI test application with proper database setup."""
     # Use the existing app_with_temp_db fixture logic which works correctly

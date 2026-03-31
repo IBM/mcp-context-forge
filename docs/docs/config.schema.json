@@ -37,7 +37,7 @@
     },
     "database_url": {
       "default": "sqlite:///./mcp.db",
-      "description": "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. For PostgreSQL with custom schema, use the 'options' query parameter: postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name (See Issue #1535 for details)",
+      "description": "Database connection URL. Supports SQLite and PostgreSQL. For PostgreSQL with custom schema, use the 'options' query parameter: postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name (See Issue #1535 for details)",
       "title": "Database Url",
       "type": "string"
     },
@@ -340,6 +340,25 @@
       "default": null,
       "description": "Okta issuer URL",
       "title": "Sso Okta Issuer"
+    },
+    "sso_okta_scope": {
+      "default": "openid profile email",
+      "description": "Okta OIDC scopes (space-separated)",
+      "title": "Sso Okta Scope",
+      "type": "string"
+    },
+    "okta_group_mapping": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "JSON mapping of Okta group names to team UUIDs",
+      "title": "Okta Group Mapping"
     },
     "sso_keycloak_enabled": {
       "default": false,
@@ -1327,7 +1346,7 @@
     },
     "max_members_per_team": {
       "default": 100,
-      "description": "Maximum number of members per team",
+      "description": "Default maximum members per team, resolved at check time. Teams without an explicit per-team override use this value.",
       "title": "Max Members Per Team",
       "type": "integer"
     },
@@ -3122,7 +3141,7 @@
       "type": "array"
     },
     "db_driver": {
-      "default": "mariadb+mariadbconnector",
+      "default": "postgresql+psycopg",
       "title": "Db Driver",
       "type": "string"
     },

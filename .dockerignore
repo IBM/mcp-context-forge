@@ -251,6 +251,11 @@ mcpgateway/test_migration.db
 *.log
 logs/
 log/
+reports/
+coverage/
+artifacts/
+.tmp/
+tmp/
 
 # Certificates and secrets
 certs/
@@ -297,6 +302,7 @@ docs/build/
 
 # PyBuilder
 target/
+**/target/
 
 # Jupyter Notebook
 .ipynb_checkpoints

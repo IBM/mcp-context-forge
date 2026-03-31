@@ -38,6 +38,7 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
@@ -47,6 +48,7 @@ from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, Plug
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.content_security import ContentSizeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -214,6 +216,36 @@ class PromptLockConflictError(PromptError):
         PromptLockConflictError: When attempting to modify a prompt that is
             currently locked by another concurrent request.
     """
+
+
+def _validate_prompt_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+    """Validate team assignment for prompt updates.
+
+    Args:
+        db: Database session used for membership checks.
+        user_email: Requesting user email. When omitted, ownership checks are skipped.
+        target_team_id: Team identifier to validate.
+
+    Raises:
+        ValueError: If team does not exist or caller lacks ownership.
+    """
+    if not target_team_id:
+        raise ValueError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
+    if not team:
+        raise ValueError(f"Team {target_team_id} not found")
+
+    if not user_email:
+        return
+
+    membership = (
+        db.query(DbEmailTeamMember)
+        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+        .first()
+    )
+    if not membership:
+        raise ValueError("User membership in team not sufficient for this update.")
 
 
 class PromptService(BaseService):
@@ -542,6 +574,7 @@ class PromptService(BaseService):
             "custom_name": custom_name,
             "custom_name_slug": custom_name_slug,
             "display_name": display_name,
+            "gateway_id": getattr(db_prompt, "gateway_id", None),
             "gateway_slug": getattr(db_prompt, "gateway_slug", None),
             "description": db_prompt.description,
             "template": db_prompt.template,
@@ -636,6 +669,7 @@ class PromptService(BaseService):
             IntegrityError: If a database integrity error occurs.
             PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other prompt registration errors
+            ContentSizeError: For template size exceed
 
         Examples:
             >>> import logging
@@ -664,6 +698,14 @@ class PromptService(BaseService):
             >>> logging.disable(logging.NOTSET)
         """
         try:
+            content_security = get_content_security_service()
+            content_security.validate_prompt_size(
+                template=prompt.template,
+                name=prompt.name,
+                user_email=created_by or owner_email,
+                ip_address=created_from_ip,
+            )
+
             # Validate template syntax
             self._validate_template(prompt.template)
 
@@ -831,6 +873,19 @@ class PromptService(BaseService):
                 custom_fields={"prompt_name": prompt.name, "visibility": visibility},
             )
             raise se
+        except ContentSizeError as cse:
+            db.rollback()
+
+            structured_logger.log(
+                level="ERROR",
+                message=f"Prompt template size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
+                event_type="prompt_size_exceed",
+                component="prompt_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={"prompt_name": prompt.name, "visibility": visibility},
+            )
+            raise cse
         except Exception as e:
             db.rollback()
 
@@ -976,6 +1031,10 @@ class PromptService(BaseService):
 
                 for prompt in chunk:
                     try:
+                        # Validate template size BEFORE any processing
+                        content_security = get_content_security_service()
+                        content_security.validate_prompt_size(template=prompt.template, name=prompt.name, user_email=created_by, ip_address=created_from_ip)
+
                         # Validate template syntax
                         self._validate_template(prompt.template)
 
@@ -1184,6 +1243,7 @@ class PromptService(BaseService):
         include_inactive: bool = False,
         cursor: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        gateway_id: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
@@ -1206,6 +1266,7 @@ class PromptService(BaseService):
             cursor (Optional[str], optional): An opaque cursor token for pagination.
                 Opaque base64-encoded string containing last item's ID and created_at.
             tags (Optional[List[str]]): Filter prompts by tags. If provided, only prompts with at least one matching tag will be returned.
+            gateway_id (Optional[str]): Filter prompts by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
             limit (Optional[int]): Maximum number of prompts to return. Use 0 for all prompts (no limit).
                 If not specified, uses pagination_default_page_size.
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
@@ -1242,7 +1303,7 @@ class PromptService(BaseService):
         # This prevents cache poisoning where admin results could leak to public-only requests
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit, visibility=visibility)
             cached = await cache.get("prompts", filters_hash)
             if cached is not None:
                 # Reconstruct PromptRead objects from cached dicts
@@ -1259,6 +1320,13 @@ class PromptService(BaseService):
 
         if visibility:
             query = query.where(DbPrompt.visibility == visibility)
+
+        # Add gateway_id filtering if provided
+        if gateway_id:
+            if gateway_id.lower() == "null":
+                query = query.where(DbPrompt.gateway_id.is_(None))
+            else:
+                query = query.where(DbPrompt.gateway_id == gateway_id)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -2004,6 +2072,7 @@ class PromptService(BaseService):
             IntegrityError: If a database integrity error occurs.
             PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other update errors
+            ContentSizeError: For template size exceed
 
         Examples:
             >>> import logging
@@ -2093,6 +2162,14 @@ class PromptService(BaseService):
             if prompt_update.description is not None:
                 prompt.description = prompt_update.description
             if prompt_update.template is not None:
+                # Validate template size before updating
+                content_security = get_content_security_service()
+                content_security.validate_prompt_size(
+                    template=prompt_update.template,
+                    name=prompt.name,
+                    user_email=modified_by or user_email,
+                    ip_address=modified_from_ip,
+                )
                 prompt.template = prompt_update.template
                 self._validate_template(prompt.template)
                 # Clear template cache to reduce memory growth
@@ -2112,11 +2189,21 @@ class PromptService(BaseService):
                 prompt.argument_schema = argument_schema
 
             if prompt_update.visibility is not None:
+                # Validate visibility transitions
+                if prompt_update.visibility == "team":
+                    target_team_id = prompt_update.team_id if prompt_update.team_id is not None else prompt.team_id
+                    _validate_prompt_team_assignment(db, user_email, target_team_id)
                 prompt.visibility = prompt_update.visibility
 
             # Update tags if provided
             if prompt_update.tags is not None:
                 prompt.tags = prompt_update.tags
+
+            # Update team assignment if provided, validating ownership
+            if prompt_update.team_id is not None:
+                if prompt_update.team_id != prompt.team_id:
+                    _validate_prompt_team_assignment(db, user_email, prompt_update.team_id)
+                prompt.team_id = prompt_update.team_id
 
             # Update metadata fields
             prompt.updated_at = datetime.now(timezone.utc)
@@ -2239,6 +2326,20 @@ class PromptService(BaseService):
                 error=pnce,
             )
             raise pnce
+        except ContentSizeError as cse:
+            db.rollback()
+            logger.error(f"Prompt template size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)")
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt update failed - Template size exceeded",
+                event_type="prompt_update_failed",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=cse,
+            )
+            raise cse
         except Exception as e:
             db.rollback()
 

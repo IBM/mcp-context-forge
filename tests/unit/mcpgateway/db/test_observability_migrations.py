@@ -300,17 +300,6 @@ class TestObservabilitySavedQueries:
 class TestCrossDatabaseCompatibility:
     """Test cross-database compatibility concerns."""
 
-    def test_no_mysql_specific_if_not_exists(self):
-        """Test that migrations don't use MySQL < 8.0.13 incompatible IF NOT EXISTS."""
-        for migration_info in OBSERVABILITY_MIGRATIONS:
-            module = importlib.import_module(migration_info["module"])
-            upgrade_source = pyinspect.getsource(module.upgrade)
-            downgrade_source = pyinspect.getsource(module.downgrade)
-
-            # Should not use raw SQL with IF NOT EXISTS / IF EXISTS
-            assert "IF NOT EXISTS" not in upgrade_source, f"{migration_info['module']} uses IF NOT EXISTS (MySQL < 8.0.13 incompatible)"
-            assert "IF EXISTS" not in downgrade_source, f"{migration_info['module']} uses IF EXISTS (MySQL < 8.0.13 incompatible)"
-
     def test_uses_sqlalchemy_types_not_raw_sql_types(self):
         """Test that migrations use SQLAlchemy types (sa.*) not raw SQL types."""
         for migration_info in OBSERVABILITY_MIGRATIONS:

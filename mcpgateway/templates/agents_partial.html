@@ -63,7 +63,7 @@
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
           {% if agent.tags %}
             {% for tag in agent.tags %}
-            <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 mr-1">
+            <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 mr-1" data-tag="{% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}">
               {% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}
             </span>
             {% endfor %}

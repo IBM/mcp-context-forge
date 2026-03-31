@@ -32,7 +32,13 @@ make dev
 # Run quality checks before committing
 make autoflake isort black pre-commit
 make doctest test htmlcov flake8 pylint verify
+
+# If you changed Rust code (plugins_rust/ or tools_rust/):
+make rust-check    # fmt-check, clippy -D warnings, cargo test
 ```
+
+Note that if the pre-commit check fails on detect secrets you need to identify if any secrets are in the code and remove them if necessary.
+If these are fake secrets for testing, you can attest to the fact that they are not in-fact secrets by executing `make detect-secrets-scan` followed by `make detect-secrets-audit` which will bring you through the `detect-secrets` interface for acknowledging/rejecting secrets - you will need to commit the `.secrets.baseline file as part of your PR.
 
 ## Development Setup
 
@@ -43,7 +49,7 @@ make doctest test htmlcov flake8 pylint verify
 - **Make** for automation
 - **Docker/Podman** (optional, for container development)
 - **Node.js 18+** (for UI development and MCP Inspector)
-- **PostgreSQL/MySQL** (optional, for production database testing)
+- **PostgreSQL** (optional, for production database testing)
 
 ### Environment Setup
 
@@ -141,7 +147,7 @@ mcp-context-forge/
 - **Admin UI**: HTMX + Alpine.js
 - **Testing**: Pytest + Playwright
 - **Package Management**: uv (or pip)
-- **Database**: SQLite (dev), PostgreSQL/MySQL (production)
+- **Database**: SQLite (dev), PostgreSQL (production)
 - **Caching**: Redis (optional)
 - **Observability**: OpenTelemetry
 
@@ -200,6 +206,9 @@ make lint-watch
 
 # Fix common issues automatically
 make lint-fix
+
+# Rust plugins (plugins_rust/ or tools_rust/) — run before committing Rust changes
+make rust-check    # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
 ```
 
 ### Pre-commit Workflow
@@ -215,6 +224,9 @@ make pre-commit
 make autoflake isort black pre-commit
 make doctest test htmlcov smoketest
 make flake8 bandit interrogate pylint verify
+
+# If Rust code was changed:
+make rust-check
 ```
 
 ### Nginx Cache Management
@@ -317,7 +329,6 @@ alembic downgrade base && alembic upgrade head
 # Different database backends
 DATABASE_URL=sqlite:///./dev.db make dev           # SQLite
 DATABASE_URL=postgresql://localhost/mcp make dev   # PostgreSQL
-DATABASE_URL=mysql+pymysql://localhost/mcp make dev # MySQL
 
 # Database utilities
 python3 -m mcpgateway.cli db upgrade    # Apply migrations
@@ -473,7 +484,7 @@ make dev
 # Setup environment
 export MCP_GATEWAY_BASE_URL=http://localhost:4444
 export MCP_SERVER_URL=http://localhost:4444/servers/UUID/mcp
-export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)"
+export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key-but-now-longer-than-32-bytes)"
 
 # Launch Inspector with SSE (direct)
 npx @modelcontextprotocol/inspector

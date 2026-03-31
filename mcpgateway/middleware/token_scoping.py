@@ -25,7 +25,7 @@ from fastapi.security import HTTPBearer
 from sqlalchemy import and_, func, select
 
 # First-Party
-from mcpgateway.auth import normalize_token_teams
+from mcpgateway.auth import normalize_token_teams, resolve_session_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
@@ -1248,12 +1248,9 @@ class TokenScopingMiddleware:
                 # Session token: resolve teams from DB/cache directly
                 # Cannot rely on request.state.token_teams — AuthContextMiddleware
                 # is gated by security_logging_enabled (defaults to False)
-                # First-Party
-                from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
-
                 is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
                 user_info = {"is_admin": is_admin}
-                token_teams = await _resolve_teams_from_db(user_email, user_info)
+                token_teams = await resolve_session_teams(payload, user_email, user_info)
             else:
                 # API token or legacy: use embedded teams with normalize_token_teams
                 token_teams = normalize_token_teams(payload)
@@ -1271,8 +1268,15 @@ class TokenScopingMiddleware:
 
                 db = next(get_db())
                 try:
-                    # Check team membership with shared session
-                    if not self._check_team_membership(payload, db=db):
+                    # Check team membership — only for API/legacy tokens whose teams
+                    # come from JWT claims and may be stale.  Session tokens skip this
+                    # because resolve_session_teams() already resolved membership from
+                    # the DB; re-checking the raw JWT claim here would conflict with
+                    # the intersection semantics (stale JWT teams would cause a 403
+                    # even though the user has valid DB teams).
+                    # NOTE: session-token membership staleness is bounded by the
+                    # auth_cache TTL (see _resolve_teams_from_db).
+                    if token_use != "session" and not self._check_team_membership(payload, db=db):  # nosec B105 - Not a password; token_use is a JWT claim type
                         logger.warning("Token rejected: User no longer member of associated team(s)")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
@@ -1287,8 +1291,11 @@ class TokenScopingMiddleware:
                     finally:
                         db.close()
             else:
-                # Public-only token: no team membership check needed, but still check resource ownership
-                if not self._check_team_membership(payload):
+                # Public-only token (or session token with empty intersection):
+                # skip _check_team_membership for session tokens — the empty
+                # intersection already means no team-scoped access.
+                # Membership staleness bounded by auth_cache TTL.
+                if token_use != "session" and not self._check_team_membership(payload):  # nosec B105 - Not a password; token_use is a JWT claim type
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 

@@ -6,14 +6,10 @@
 
 <!-- === CI / Security / Build Badges === -->
 [![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
-[![CodeQL](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml)&nbsp;
 [![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
 [![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
 [![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
 [![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
-
-<!-- === Container Build & Deploy === -->
-[![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
 
 <!-- === Package / Container === -->
 [![Async](https://img.shields.io/badge/async-await-green.svg)](https://docs.python.org/3/library/asyncio.html)
@@ -93,7 +89,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 <summary><strong>🔌 Gateway Layer with Protocol Flexibility</strong></summary>
 
 * Federates any MCP server or REST API
-* Lets you choose your MCP protocol version (e.g., `2025-06-18`)
+* Lets you choose your MCP protocol version (e.g., `2025-11-25`)
 * Exposes a single, unified interface for diverse backends
 
 </details>
@@ -135,7 +131,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 * Real-time log viewer with filtering, search, and export capabilities
 * Auth: Basic, JWT, or custom schemes
 * Structured logs, health endpoints, metrics
-* 400+ tests, Makefile targets, live reload, pre-commit hooks
+* 7,000+ tests, Makefile targets, live reload, pre-commit hooks
 
 </details>
 
@@ -183,7 +179,7 @@ uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 <details>
 <summary><strong>📋 Prerequisites</strong></summary>
 
-* **Python ≥ 3.10** (3.11 recommended)
+* **Python ≥ 3.11**
 * **curl + jq** - only for the last smoke-test step
 
 </details>
@@ -210,12 +206,12 @@ export PLATFORM_ADMIN_EMAIL=admin@example.com
 export PLATFORM_ADMIN_PASSWORD=changeme
 export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
 
-BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
+BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
 
 # 3️⃣  Generate a bearer token & smoke-test the API
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
@@ -241,7 +237,7 @@ Copy-Item .env.example .env
 $Env:MCPGATEWAY_UI_ENABLED        = "true"
 $Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
 # Note: Basic auth for API is disabled by default (API_ALLOW_BASIC_AUTH=false)
-$Env:JWT_SECRET_KEY               = "my-test-key"
+$Env:JWT_SECRET_KEY               = "my-test-key-but-now-longer-than-32-bytes"
 $Env:PLATFORM_ADMIN_EMAIL         = "admin@example.com"
 $Env:PLATFORM_ADMIN_PASSWORD      = "changeme"
 $Env:PLATFORM_ADMIN_FULL_NAME     = "Platform Administrator"
@@ -254,7 +250,7 @@ mcpgateway.exe --host 0.0.0.0 --port 4444
 
 # 4️⃣  Bearer token and smoke-test
 $Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-    --username admin@example.com --exp 10080 --secret my-test-key
+    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 
 curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
      http://127.0.0.1:4444/version | jq
@@ -400,19 +396,15 @@ Please note: Currently, arm64 is not supported on production. If you are e.g. ru
 
 ### 🚀 Quick Start - Docker Compose
 
-Get a full stack running with MariaDB and Redis in under 30 seconds:
+Get a full stack running with PostgreSQL and Redis in under 30 seconds:
 
 ```bash
 # Clone and start the stack
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge
 
-# Start with MariaDB (recommended for production)
+# Start with PostgreSQL (recommended for production)
 docker compose up -d
-
-# Or start with PostgreSQL
-# Uncomment postgres in docker-compose.yml and comment mariadb section
-# docker compose up -d
 
 # Check status
 docker compose ps
@@ -420,18 +412,18 @@ docker compose ps
 # View logs
 docker compose logs -f gateway
 
-# Access Admin UI: http://localhost:4444/admin (login with PLATFORM_ADMIN_EMAIL/PASSWORD)
+# Access Admin UI: http://localhost:8080/admin (login with PLATFORM_ADMIN_EMAIL/PASSWORD)
 # Generate API token
 docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key
+  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 **What you get:**
-- 🗄️ **MariaDB 10.6** - Production-ready database with 36+ tables
+- 🗄️ **PostgreSQL** - Production-ready database with 55+ tables
 - 🚀 **ContextForge** - Full-featured gateway with Admin UI
 - 📊 **Redis** - High-performance caching and session storage
 - 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
-- 🌐 **Nginx Proxy** - Caching reverse proxy (optional)
+- 🌐 **Nginx Proxy** - Caching reverse proxy on port 8080
 
 **Enable HTTPS (optional):**
 ```bash
@@ -466,15 +458,7 @@ Deploy to Kubernetes with enterprise-grade features:
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge/charts/mcp-stack
 
-# Install with MariaDB
-helm install mcp-gateway . \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
-  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key \
-  --set postgres.enabled=false \
-  --set mariadb.enabled=true
-
-# Or install with PostgreSQL (default)
+# Install with PostgreSQL (default)
 helm install mcp-gateway . \
   --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
   --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
@@ -501,7 +485,7 @@ kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
 
 **Enterprise Features:**
 - 🔄 **Auto-scaling** - HPA with CPU/memory targets
-- 🗄️ **Database Choice** - PostgreSQL, MariaDB, or MySQL
+- 🗄️ **Database Choice** - PostgreSQL (prod), SQLite (dev)
 - 📊 **Observability** - Prometheus metrics, OpenTelemetry tracing
 - 🔒 **Security** - RBAC, network policies, secret management
 - 🚀 **High Availability** - Multi-replica deployments with Redis clustering
@@ -517,7 +501,7 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_UI_ENABLED=true \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-test-key \
+  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
@@ -529,7 +513,7 @@ docker run -d --name mcpgateway \
 # Tail logs and generate API key
 docker logs -f mcpgateway
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
@@ -544,7 +528,7 @@ docker run -d --name mcpgateway --restart unless-stopped \
   -p 4444:4444 -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
-  -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key \
+  -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=changeme \
   ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
 ```
@@ -562,7 +546,7 @@ docker run -d --name mcpgateway --network=host \
 docker build -f Containerfile.lite -t mcpgateway:airgapped .
 docker run -d --name mcpgateway -p 4444:4444 \
   -e MCPGATEWAY_UI_AIRGAPPED=true -e MCPGATEWAY_UI_ENABLED=true \
-  -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key \
+  -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   mcpgateway:airgapped
 ```
 
@@ -609,7 +593,7 @@ podman run -d --name mcpgateway --network=host \
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
-  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
   ```
 * **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
 
@@ -640,7 +624,7 @@ The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while ke
 
 ```bash
 # Set environment variables
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
 export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
 export MCP_TOOL_CALL_TIMEOUT=120
@@ -742,7 +726,7 @@ These variables have insecure defaults and **must be changed** before production
 
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
-| `JWT_SECRET_KEY` | Secret key for signing JWT tokens (32+ chars) | `my-test-key` | Generate with `openssl rand -hex 32` |
+| `JWT_SECRET_KEY` | Secret key for signing JWT tokens (32+ chars) | `my-test-key-but-now-longer-than-32-bytes` | Generate with `openssl rand -hex 32` |
 | `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `my-test-salt` | Generate with `openssl rand -hex 32` |
 | `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
 | `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
@@ -760,6 +744,17 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
 
+### 🛡️ Content Security
+
+Content size limits prevent DoS attacks and ensure system stability:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONTENT_MAX_RESOURCE_SIZE` | Maximum resource content size (bytes) | `102400` (100KB) |
+| `CONTENT_MAX_PROMPT_SIZE` | Maximum prompt template size (bytes) | `10240` (10KB) |
+
+**Note:** Size limits apply only to new create/update operations. Existing content is not retroactively validated.
+
 ### ⚙️ Project Defaults (Dev Setup)
 
 These values differ from code defaults to provide a working local/dev setup:
@@ -770,7 +765,7 @@ These values differ from code defaults to provide a working local/dev setup:
 | `MCPGATEWAY_UI_ENABLED` | Enable Admin UI dashboard | `true` |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable Admin API endpoints | `true` |
 | `DATABASE_URL` | SQLAlchemy connection URL | `sqlite:///./mcp.db` |
-| `SECURE_COOKIES` | Set `false` for HTTP (non-HTTPS) dev | `true` |
+| `SECURE_COOKIES` | Set `false` for HTTP (non-HTTPS) dev | `false` |
 
 ### 📚 Full Configuration Reference
 
@@ -864,7 +859,7 @@ Interactive API documentation is available when the server is running:
 ```bash
 # Generate a JWT token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key)
+  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Test API access
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/health
@@ -900,7 +895,7 @@ mcpgateway/          # Core FastAPI application
 ├── middleware/      # Cross-cutting concerns
 └── transports/      # SSE, WebSocket, stdio, streamable HTTP
 
-tests/               # Test suite (400+ tests)
+tests/               # Test suite (7,000+ tests)
 docs/docs/           # Full documentation (MkDocs)
 charts/              # Kubernetes/Helm charts
 plugins/             # Plugin framework and implementations
@@ -933,7 +928,7 @@ make lint            # Run all linters
 make coverage        # Generate coverage report
 ```
 
-Run `make` to see all 75+ available targets.
+Run `make` to see all available targets.
 
 For development workflows, see:
 - **[Developer Workstation Setup](https://ibm.github.io/mcp-context-forge/development/developer-workstation/)**
