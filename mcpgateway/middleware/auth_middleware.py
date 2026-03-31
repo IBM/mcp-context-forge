@@ -80,6 +80,12 @@ def _get_or_create_session(request: Request) -> tuple[Session, bool]:
             - session: SQLAlchemy Session object
             - owned: bool, True if we created the session (caller must close it)
 
+    Note:
+        When creating a new session (owned=True), it is NOT stored in
+        request.state.db. This prevents downstream code (e.g., get_db()
+        in route handlers) from reusing a session that auth middleware
+        will close after logging.
+
     Examples:
         >>> from unittest.mock import Mock
         >>> mock_request = Mock()
@@ -93,11 +99,12 @@ def _get_or_create_session(request: Request) -> tuple[Session, bool]:
         logger.debug(f"[AUTH] Reusing session from middleware: {id(db)}")
         return db, False
 
-    # Fallback: create session if no middleware provided one
-    # (e.g., when observability is disabled)
+    # Fallback: create a temporary session for auth logging only
+    # (e.g., when observability is disabled).
+    # Do NOT store in request.state.db — this session will be closed after
+    # logging; downstream get_db() should create its own session.
     logger.debug("[AUTH] Creating new session (no middleware session available)")
     db = SessionLocal()
-    request.state.db = db
     return db, True
 
 
@@ -270,8 +277,10 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         failure_reason=str(e),
                         db=db,
                     )
-                    # Note: Transaction commit is managed by get_db() in main.py (PR #3813)
-                    # Middleware only uses the session, doesn't control transactions
+                    # Commit immediately to persist logs even if exception occurs later
+                    # When owned=True, session is closed after this block, so commit is required
+                    # When owned=False, get_db() may commit again (no-op if no new changes)
+                    db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log auth failure: {log_error}")
                 finally:

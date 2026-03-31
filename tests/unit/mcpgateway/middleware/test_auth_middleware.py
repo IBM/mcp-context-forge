@@ -612,8 +612,9 @@ def test_get_or_create_session_creates_when_none_exists():
         assert db is mock_new_session
         assert owned is True
         mock_session_local.assert_called_once()
-        # Verify the new session was stored in request.state.db
-        assert mock_request.state.db is mock_new_session
+        # Owned sessions are NOT stored in request.state.db to prevent
+        # downstream code from reusing a session that will be closed
+        assert mock_request.state.db is None
 
 
 @pytest.mark.asyncio
