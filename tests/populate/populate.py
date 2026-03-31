@@ -254,11 +254,11 @@ Examples:
   # REST API mode (default) - full validation and RBAC
   python -m tests.populate --profile small
   python -m tests.populate --profile medium --base-url http://gateway:4444
-  
+
   # Bulk mode - direct database inserts for performance (200-1000x faster)
   python -m tests.populate --profile medium --mode bulk
   python -m tests.populate --profile large --mode bulk
-  
+
   # Dry run
   python -m tests.populate --profile small --dry-run
         """,
@@ -310,7 +310,7 @@ Examples:
             config = yaml.safe_load(f)
     else:
         config = load_config(args.profile)
-    
+
     # Set bulk mode flag in config
     config["use_bulk_mode"] = args.mode == "bulk"
 

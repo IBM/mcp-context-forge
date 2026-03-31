@@ -137,12 +137,12 @@ class UserPopulator(BasePopulator):
         # Build user mappings
         mappings = []
         emails = []
-        
+
         for i in range(count):
             email = f"user{i + 1}@{self.email_domain}"
             is_admin = i < admin_count
             full_name = self.faker.name()
-            
+
             mappings.append({
                 "email": email,
                 "password_hash": password_hash,

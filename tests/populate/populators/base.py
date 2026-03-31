@@ -25,7 +25,7 @@ class BasePopulator(ABC):
     Each populator creates entities via HTTP POST to the actual gateway
     endpoints, exercising the full write path including validation,
     auth middleware, RBAC, and side effects.
-    
+
     Supports two modes:
     - REST API mode: Full integration testing with validation/RBAC (default)
     - Bulk DB mode: Direct SQLAlchemy inserts for performance (use_bulk_mode=True)
@@ -216,24 +216,24 @@ class BasePopulator(ABC):
                 # Process in batches to avoid memory issues
                 for i in range(0, total, self.bulk_batch_size):
                     batch = mappings[i : i + self.bulk_batch_size]
-                    
+
                     try:
                         # Use bulk_insert_mappings for maximum performance
                         session.bulk_insert_mappings(model_class, batch)
                         session.commit()
-                        
+
                         batch_created = len(batch)
                         created += batch_created
-                        
+
                         # Extract IDs if requested
                         if return_id_field:
                             ids.extend([m[return_id_field] for m in batch if return_id_field in m])
-                        
+
                         # Update progress
                         if self.progress_tracker:
                             self.progress_tracker.update(self.get_name(), batch_created, errors=0)
                             self.progress_tracker.refresh()
-                            
+
                     except Exception as exc:
                         session.rollback()
                         errors += len(batch)

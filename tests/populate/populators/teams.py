@@ -125,15 +125,15 @@ class TeamPopulator(BasePopulator):
             owner_email = team_owners.get(team_id)
             if not owner_email:
                 return  # Skip if we don't know the owner
-            
+
             owner_token = self.client.user_tokens.get(owner_email, self.client.admin_token)
-            
+
             num_members = random.randint(members_min, min(members_max, len(user_emails)))
             # Don't invite the owner to their own team
             available_invitees = [e for e in user_emails if e != owner_email]
             if not available_invitees:
                 return
-            
+
             invitees = random.sample(available_invitees, min(num_members, len(available_invitees)))
 
             for invitee_email in invitees:

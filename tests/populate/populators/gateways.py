@@ -51,16 +51,16 @@ class GatewayPopulator(BasePopulator):
     async def _populate_bulk(self, count: int) -> Dict[str, Any]:
         """Bulk insert gateways directly into database for performance."""
         import uuid
-        
+
         # Build gateway mappings
         mappings = []
         ids: List[str] = []
-        
+
         for i in range(count):
             name = f"{self.faker.company()}-mcp-{i + 1}".lower().replace(" ", "-").replace(",", "").replace(".", "")[:60]
             gateway_id = uuid.uuid4().hex
             transport = random.choice(["SSE", "STDIO", "HTTP", "STREAMABLEHTTP"])
-            
+
             mappings.append({
                 "id": gateway_id,
                 "name": name,
