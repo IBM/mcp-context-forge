@@ -1,8 +1,14 @@
 # All files in the repo
 * @crivetimihai
+/.github/workflows/ @crivetimihai
 
 # Plugin framework
 /mcpgateway/plugins @araujof @terylt @jonpspri
+
+# Rust projects
+/plugins_rust/ @lucarlig @dima-zakharov
+/tools_rust/ @lucarlig @dima-zakharov
+/mcp-servers/rust/ @lucarlig @dima-zakharov
 
 # Ownership for all tests
 /tests/ @crivetimihai @kevalmahajan @madhav165

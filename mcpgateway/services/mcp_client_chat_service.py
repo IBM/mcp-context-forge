@@ -2379,6 +2379,7 @@ class MCPChatService:
         conversational agent. Must be called before using chat functionality.
 
         Raises:
+            ImportError: If LLM chat dependencies are missing.
             ConnectionError: If MCP server connection fails.
             Exception: If initialization fails.
 
@@ -2404,6 +2405,9 @@ class MCPChatService:
         if self._initialized:
             logger.warning("Chat service already initialized")
             return
+
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
 
         try:
             logger.info("Initializing chat service...")
@@ -3048,6 +3052,7 @@ class MCPChatService:
 
         Raises:
             RuntimeError: If service not initialized.
+            ImportError: If LLM chat dependencies are missing.
             Exception: If tool reloading or agent recreation fails.
 
         Examples:
@@ -3062,6 +3067,9 @@ class MCPChatService:
         """
         if not self._initialized:
             raise RuntimeError("Chat service not initialized")
+
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LLM chat dependencies are missing. Install them with: pip install '.[llmchat]'")
 
         try:
             logger.info("Reloading tools from MCP server...")

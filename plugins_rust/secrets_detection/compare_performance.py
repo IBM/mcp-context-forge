@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import logging
 import statistics
 import sys
 import time
@@ -23,6 +24,19 @@ from typing import Any, Dict, List, Tuple
 
 # Add plugins directory to path to import Python implementation
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "plugins" / "secrets_detection"))
+
+
+def configure_benchmark_logging() -> None:
+    """Keep benchmark output focused on timings by surfacing only errors."""
+    logging.getLogger().setLevel(logging.ERROR)
+    for logger_name in [
+        "plugins.secrets_detection.secrets_detection",
+        "secrets_detection",
+        "secrets_detection_rust",
+        "secrets_detection_rust.secrets_detection_rust",
+    ]:
+        logging.getLogger(logger_name).setLevel(logging.ERROR)
+
 
 from secrets_detection import SecretsDetectionConfig, _scan_container  # noqa: E402
 
@@ -153,6 +167,7 @@ def main():
     parser.add_argument("--iterations", type=int, default=10000, help="Iterations per scenario")
     parser.add_argument("--warmup", type=int, default=100, help="Warmup iterations")
     args = parser.parse_args()
+    configure_benchmark_logging()
 
     print("🔍 Secrets Detection Performance (Native Python Objects)")
     print(f"Iterations: {args.iterations} (+ {args.warmup} warmup)")

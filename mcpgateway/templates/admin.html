@@ -573,12 +573,12 @@
           </div>
 
           <!-- Agents Section -->
-          {% if ('agents' not in hidden_sections) and (a2a_enabled or grpc_enabled) %}
+          {% if (a2a_enabled and 'agents' not in hidden_sections) or (grpc_enabled and 'grpc-services' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Agents</span>
           </div>
           <div class="space-y-1 px-2">
-            {% if a2a_enabled %}
+            {% if a2a_enabled and 'agents' not in hidden_sections %}
             <a href="#a2a-agents" id="tab-a2a-agents" data-testid="a2a-agents-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -587,7 +587,7 @@
               <span x-show="!sidebarCollapsed">Agents (A2A)</span>
             </a>
             {% endif %}
-            {% if grpc_enabled %}
+            {% if grpc_enabled and 'grpc-services' not in hidden_sections %}
             <a href="#grpc-services" id="tab-grpc-services" data-testid="grpc-services-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -626,7 +626,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and ('metrics' not in hidden_sections or performance_enabled or observability_enabled) %}
+          {% if 'metrics' not in hidden_sections or performance_enabled or observability_enabled %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
@@ -641,7 +641,7 @@
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
             {% endif %}
-            {% if performance_enabled %}
+            {% if performance_enabled and is_admin %}
             <a href="#performance" id="tab-performance" data-testid="performance-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -650,7 +650,7 @@
               <span x-show="!sidebarCollapsed">Performance</span>
             </a>
             {% endif %}
-            {% if observability_enabled %}
+            {% if observability_enabled and is_admin %}
             <a href="#observability" id="tab-observability" data-testid="observability-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -662,7 +662,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and 'plugins' not in hidden_sections %}
+          {% if 'plugins' not in hidden_sections %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
@@ -681,7 +681,7 @@
           {% endif %}
 
           <!-- Organization Section -->
-          {% if email_auth_enabled and ('teams' not in hidden_sections or ('users' not in hidden_sections and is_admin) or 'tokens' not in hidden_sections) %}
+          {% if email_auth_enabled and ('teams' not in hidden_sections or 'users' not in hidden_sections or 'tokens' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Organization</span>
           </div>
@@ -695,7 +695,7 @@
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
             {% endif %}
-            {% if is_admin and 'users' not in hidden_sections %}
+            {% if 'users' not in hidden_sections %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -716,7 +716,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and ('export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections) %}
+          {% if 'export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
@@ -1005,7 +1005,7 @@
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
-      {% if is_admin and 'logs' not in hidden_sections %}
+      {% if 'logs' not in hidden_sections %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1226,7 +1226,7 @@
       </div>
       {% endif %}
 
-      {% if is_admin and 'export-import' not in hidden_sections %}
+      {% if 'export-import' not in hidden_sections %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1658,17 +1658,17 @@
       </div>
       {% endif %}
 
-      {% if is_admin and 'version-info' not in hidden_sections %}
+      {% if 'version-info' not in hidden_sections %}
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin and 'maintenance' not in hidden_sections %}
+      {% if 'maintenance' not in hidden_sections %}
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin and 'plugins' not in hidden_sections %}
+      {% if 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
       {% endif %}
@@ -2202,7 +2202,7 @@
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
             <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMModelModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+            <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-visible shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
               <form id="llm-model-form" onsubmit="saveLLMModel(event)">
                 <input type="hidden" id="llm-model-id" name="model_id" value="">
                 <div class="bg-white dark:bg-gray-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
@@ -2219,14 +2219,16 @@
                       </div>
                       <div>
                         <label for="llm-model-model-id" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Model ID *</label>
-                        <div class="flex mt-1">
-                          <input type="text" id="llm-model-model-id" name="model_id" required list="llm-model-suggestions" class="px-3 py-2 block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first...">
-                          <datalist id="llm-model-suggestions"></datalist>
-                          <button type="button" onclick="fetchModelsForModelModal()" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-gray-600 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-500" title="Fetch available models">
-                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                          </button>
+                        <div class="relative" id="llm-model-combobox-container">
+                          <div class="flex mt-1">
+                            <input type="text" id="llm-model-model-id" name="model_id" required autocomplete="off" role="combobox" aria-expanded="false" aria-controls="llm-model-dropdown" aria-autocomplete="list" class="px-3 py-2 block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first..." oninput="llmModelComboboxFilter(this.value)" onfocus="llmModelComboboxOpen()" onclick="llmModelComboboxOpen()" onblur="setTimeout(llmModelComboboxClose, 150)" onkeydown="llmModelComboboxKeydown(event)">
+                            <button type="button" onclick="fetchModelsForModelModal()" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-gray-600 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-500" title="Fetch available models">
+                              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                            </button>
+                          </div>
+                          <ul id="llm-model-dropdown" role="listbox" class="hidden absolute z-50 mt-1 w-full max-h-48 overflow-y-auto bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-lg text-sm"></ul>
                         </div>
                         <p id="llm-model-fetch-status" class="mt-1 text-xs text-gray-400 hidden"></p>
                       </div>
@@ -2846,6 +2848,7 @@
             </table>
           </div>
         </div>
+        {% if user_permissions.can_create_server %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New Server
@@ -3385,6 +3388,7 @@
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
 
 
@@ -3536,6 +3540,7 @@
             {% include 'pagination_controls.html' %}
           </div>
         </div>
+        {% if user_permissions.can_create_tool %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <div class="flex justify-between items-center mb-4">
             <div>
@@ -4182,6 +4187,7 @@
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
       {% if toolops_enabled %}
       <div id="tool-ops-panel" class="tab-panel hidden">
@@ -4516,6 +4522,7 @@
           <div id="resources-pagination-controls"></div>
         </div>
 
+        {% if user_permissions.can_create_resource %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New Resource
@@ -4530,6 +4537,7 @@
                 <input
                   type="text"
                   name="uri"
+                  id="resource-uri"
                   required
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
@@ -4567,9 +4575,14 @@
                 <input
                   type="text"
                   name="mimeType"
+                  id="resource-mime-type"
+                  aria-describedby="resource-mime-helper"
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   placeholder="text/plain"
                 />
+                <p id="resource-mime-helper" class="mt-1 text-xs text-gray-500 dark:text-gray-400 hidden">
+                  For interactive MCP Apps use: text/html;profile=mcp-app
+                </p>
               </div>
               <div>
                 <label
@@ -4670,6 +4683,7 @@
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
 
       {% endif %}
@@ -4761,7 +4775,7 @@
         </div>
 
 
-
+        {% if user_permissions.can_create_prompt %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New Prompt
@@ -4940,6 +4954,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
 
       {% endif %}
@@ -5413,6 +5428,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
+        {% if user_permissions.can_create_gateway %}
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800 mt-8">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
             Add New MCP Server or Gateway
@@ -6068,6 +6084,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </form>
         </div>
+        {% endif %}
       </div>
 
       {% endif %}
@@ -6084,6 +6101,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Teams you own, are a member of, and can join
               </p>
             </div>
+            {% if user_permissions.can_create_team %}
             <button
               id="create-team-btn"
               onclick="openCreateTeamModal()"
@@ -6104,6 +6122,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </svg>
               Create New Team
             </button>
+            {% endif %}
           </div>
 
           <!-- Search/Filter Bar -->
@@ -6179,7 +6198,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled and is_admin and 'users' not in hidden_sections %}
+      {% if email_auth_enabled and 'users' not in hidden_sections %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -6189,6 +6208,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <!-- Create User Form -->
+         {% if user_permissions.can_create_user %}
         <div class="bg-white shadow rounded-lg mb-6 dark:bg-gray-800">
           <div class="px-4 py-5 sm:p-6">
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -6383,6 +6403,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </form>
           </div>
         </div>
+        {% endif %}
 
         <!-- Users List -->
         <div class="bg-white shadow rounded-lg dark:bg-gray-800">
@@ -6454,6 +6475,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <!-- Create Token Form -->
+         {% if user_permissions.can_create_token %}
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
             Create New API Token
@@ -6542,14 +6564,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                                 </div>
                                 <div class="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
                                     <p class="mb-1">
-                                        Tokens created without selecting a team will have access to <span class="font-semibold">public resources only</span>.
+                                        Tokens created without selecting a team are <span class="font-semibold">not scoped to any team</span>.
+                                        Admin users retain full access; non-admin users can only see <span class="font-semibold">public resources</span>.
                                     </p>
                                     <p class="mb-1"><span class="font-semibold">✅ This token CAN access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
                                         <li>Public servers (virtual servers marked as public)</li>
                                         <li>Public tools, resources, and prompts</li>
+                                        <li>All resources (admin users only)</li>
                                     </ul>
-                                    <p class="mt-2 mb-1"><span class="font-semibold">❌ This token CANNOT access:</span></p>
+                                    <p class="mt-2 mb-1"><span class="font-semibold">❌ Non-admin tokens CANNOT access:</span></p>
                                     <ul class="list-disc list-inside ml-4 space-y-1">
                                         <li>Your own private or team-scoped resources</li>
                                         <li>Team-scoped servers, tools, resources, and prompts</li>
@@ -6652,6 +6676,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div id="token-creation-messages" class="mt-3" role="alert" aria-live="polite"></div>
           </form>
         </div>
+        {% endif %}
 
         <!-- Tokens List -->
         <div class="bg-white shadow rounded-lg dark:bg-gray-800">
@@ -6899,6 +6924,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
+        {% if user_permissions.can_create_agent %}
         <!-- A2A Agent Add Form -->
         <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800 mt-8">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
@@ -7535,13 +7561,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </form>
         </div>
+        {% endif %}
 
 
       </div>
       {% endif %}
 
       <!-- gRPC Services Panel -->
-      {% if grpc_enabled and 'agents' not in hidden_sections %}
+      {% if grpc_enabled and 'grpc-services' not in hidden_sections %}
       <div id="grpc-services-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -7989,7 +8016,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
       {% endif %}
 
-      {% if is_admin and 'metrics' not in hidden_sections %}
+      {% if 'metrics' not in hidden_sections %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->
@@ -9092,8 +9119,12 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         type="text"
                         name="mimeType"
                         id="edit-resource-mime-type"
+                        aria-describedby="edit-resource-mime-helper"
                         class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       />
+                      <p id="edit-resource-mime-helper" class="mt-1 text-xs text-gray-500 dark:text-gray-400 hidden">
+                        For interactive MCP Apps use: text/html;profile=mcp-app
+                      </p>
                     </div>
                     <!-- Removing Content form Edit Form -->
                     <!-- Remove required attribute to avoid browser validation issues -->
@@ -14614,12 +14645,15 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     name="max_members"
                     id="team-max-members"
                     min="1"
-                    max="1000"
-                    value="50"
+                    {% if not is_admin %}max="{{ max_members_per_team }}"{% endif %}
                     class="block w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                   />
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Optional, defaults to 50
+                    {% if is_admin %}
+                    Optional. Leave empty to use global default ({{ max_members_per_team }}). Admins can set any limit.
+                    {% else %}
+                    Optional. Leave empty to use global default ({{ max_members_per_team }}).
+                    {% endif %}
                   </p>
                 </div>
               </div>
@@ -14983,6 +15017,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function editTeamSafe(button) {
         const teamId = button.getAttribute('data-team-id');
+        // Clear stale modal content before fetching fresh data to prevent
+        // race conditions with the delayed closeTeamEditModal timer.
+        var mc = document.getElementById('team-edit-modal-content');
+        if (mc) mc.innerHTML = '';
         // Load edit modal content via HTMX
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/edit', {
           target: '#team-edit-modal-content',
@@ -14998,7 +15036,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       }
 
       function loadTeamMembersView(teamId) {
-        // Load team members management modal
+        var mc = document.getElementById('team-edit-modal-content');
+        if (mc) mc.innerHTML = '';
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'
@@ -15008,7 +15047,8 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       }
 
       function loadAddMembersView(teamId) {
-        // Load add members interface
+        var mc = document.getElementById('team-edit-modal-content');
+        if (mc) mc.innerHTML = '';
         htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/' + teamId + '/members/add', {
           target: '#team-edit-modal-content',
           swap: 'innerHTML'

@@ -90,6 +90,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
+        "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -116,6 +117,41 @@ _normalize_env_list_vars()
 
 # Default content type for outgoing requests to Forge
 FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
+
+# UI embedding / visibility controls
+UI_HIDABLE_SECTIONS = frozenset(
+    {
+        "overview",
+        "servers",
+        "gateways",
+        "tools",
+        "prompts",
+        "resources",
+        "roots",
+        "mcp-registry",
+        "metrics",
+        "plugins",
+        "export-import",
+        "logs",
+        "version-info",
+        "maintenance",
+        "teams",
+        "users",
+        "agents",
+        "grpc-services",
+        "tokens",
+        "settings",
+    }
+)
+UI_HIDABLE_HEADER_ITEMS = frozenset({"logout", "team_selector", "user_identity", "theme_toggle"})
+UI_HIDE_SECTION_ALIASES = {
+    "catalog": "servers",
+    "virtual_servers": "servers",
+    "a2a-agents": "agents",
+    "a2a": "agents",
+    "api_tokens": "tokens",
+    "llm-settings": "settings",
+}
 
 
 class Settings(BaseSettings):
@@ -246,6 +282,8 @@ class Settings(BaseSettings):
     sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")
     sso_okta_client_secret: Optional[SecretStr] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
+    sso_okta_scope: str = Field(default="openid profile email", description="Okta OIDC scopes (space-separated)")
+    okta_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of Okta group names to team UUIDs")
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
     sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")
@@ -278,6 +316,11 @@ class Settings(BaseSettings):
             r"[\x00-\x1f\x7f-\x9f]",  # Control characters
         ],
         description="Regex patterns for dangerous input",
+    )
+    tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
+    tool_description_forbidden_patterns: List[str] = Field(
+        default_factory=lambda: ["&&", "||", "$(", "> ", "< "],
+        description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&","||"]\'.',
     )
 
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
@@ -993,6 +1036,8 @@ class Settings(BaseSettings):
 
         return {
             "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
+            "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
+            not in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"),  # nosec B105 - checking for default values
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -1517,6 +1562,9 @@ class Settings(BaseSettings):
     recommendation_context_cache_ttl: int = Field(default=300, description="TTL in seconds for conversation context cache (5 min)")
     recommendation_pattern_cache_ttl: int = Field(default=86400, description="TTL in seconds for workflow pattern cache (24 hr)")
     recommendation_min_cooccurrence: int = Field(default=3, description="Minimum co-occurrence count for a workflow pair to be considered")
+    # Content Security - Size Limits
+    content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
+    content_max_prompt_size: int = Field(default=10240, ge=512, le=1048576, description="Maximum size in bytes for prompt templates (default: 10KB)")  # 10KB  # Minimum 512 bytes  # Maximum 1MB
 
     # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
     # Disabled by default for safety. Enable explicitly in production after testing.
@@ -1871,6 +1919,9 @@ Disallow: /
         "sso_github_admin_orgs",
         "sso_google_admin_domains",
         "insecure_queryparam_auth_allowed_hosts",
+        "mcpgateway_ui_hide_sections",
+        "mcpgateway_ui_hide_header_items",
+        "tool_description_forbidden_patterns",
         mode="before",
     )
     @classmethod
@@ -1906,6 +1957,74 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    @field_validator("tool_description_forbidden_patterns", mode="after")
+    @classmethod
+    def _filter_empty_forbidden_patterns(cls, value: list[str]) -> list[str]:
+        """Strip empty/blank entries that would match every description.
+
+        Args:
+            value: List of forbidden pattern strings.
+
+        Returns:
+            list[str]: Filtered list with empty/blank entries removed.
+        """
+        return [p for p in value if p and p.strip()]
+
+    @field_validator("mcpgateway_ui_hide_sections", mode="after")
+    @classmethod
+    def _validate_ui_hide_sections(cls, value: list[str]) -> list[str]:
+        """Normalize and filter hidable UI sections.
+
+        Args:
+            value: Candidate section identifiers from environment/config.
+
+        Returns:
+            list[str]: Normalized unique section identifiers.
+        """
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            candidate = str(item).strip().lower()
+            if not candidate:
+                continue
+            candidate = UI_HIDE_SECTION_ALIASES.get(candidate, candidate)
+            if candidate not in UI_HIDABLE_SECTIONS:
+                logger.warning("Ignoring invalid MCPGATEWAY_UI_HIDE_SECTIONS item: %s", item)
+                continue
+            if candidate not in seen:
+                seen.add(candidate)
+                normalized.append(candidate)
+
+        return normalized
+
+    @field_validator("mcpgateway_ui_hide_header_items", mode="after")
+    @classmethod
+    def _validate_ui_hide_header_items(cls, value: list[str]) -> list[str]:
+        """Normalize and filter hidable header items.
+
+        Args:
+            value: Candidate header identifiers from environment/config.
+
+        Returns:
+            list[str]: Normalized unique header identifiers.
+        """
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            candidate = str(item).strip().lower()
+            if not candidate:
+                continue
+            if candidate not in UI_HIDABLE_HEADER_ITEMS:
+                logger.warning("Ignoring invalid MCPGATEWAY_UI_HIDE_HEADER_ITEMS item: %s", item)
+                continue
+            if candidate not in seen:
+                seen.add(candidate)
+                normalized.append(candidate)
+
+        return normalized
 
     @property
     def api_key(self) -> str:

@@ -141,6 +141,69 @@ class TeamMemberAddError(TeamManagementError):
     """
 
 
+class _Unset:
+    """Sentinel type: distinguishes 'caller omitted the argument' from 'caller passed None'."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Return string representation of the unset sentinel.
+
+        Returns:
+            str: The literal string 'UNSET'.
+        """
+        return "UNSET"
+
+    def __bool__(self) -> bool:
+        """Return False so UNSET is falsy.
+
+        Returns:
+            bool: Always False.
+        """
+        return False
+
+
+UNSET = _Unset()
+
+
+def get_effective_max_members(team: "EmailTeam") -> int:
+    """Return the effective member limit for a team.
+
+    If the team has an explicit ``max_members`` value stored in the DB, that
+    value is used.  Otherwise the global ``MAX_MEMBERS_PER_TEAM`` setting is
+    returned so that changing the environment variable takes effect for all
+    teams that have not been individually overridden.
+
+    Args:
+        team: The team whose effective member limit should be resolved.
+
+    Returns:
+        The member limit (always an int; 0 means unlimited).
+    """
+    if team.max_members is not None:
+        return team.max_members
+    return settings.max_members_per_team
+
+
+def check_team_member_capacity(db: "Session", team: "EmailTeam", *, extra_count: int = 0) -> None:
+    """Raise if the team is at or over its member capacity.
+
+    Args:
+        db: Database session for querying active member count.
+        team: The team to check.
+        extra_count: Additional slots to reserve (e.g. pending invitations).
+
+    Raises:
+        TeamMemberLimitExceededError: If the team is at capacity.
+    """
+    effective_max = get_effective_max_members(team)
+    if effective_max <= 0:
+        return
+    member_count = db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id, EmailTeamMember.is_active.is_(True)).count()
+    if (member_count + extra_count) >= effective_max:
+        raise TeamMemberLimitExceededError(f"Team has reached maximum member limit of {effective_max}")
+
+
 class TeamManagementService:
     """Service for team management operations.
 
@@ -268,6 +331,67 @@ class TeamManagementService:
         self.db.add(history)
         self.db.commit()
 
+    async def _assign_team_rbac_role(self, user_email: str, team_id: str, membership_role: str, granted_by: Optional[str] = None) -> None:
+        """Assign a team-scoped RBAC role matching the membership role.
+
+        Looks up the configured RBAC role name for *membership_role* (owner
+        or member) and assigns it if the user does not already have an
+        active assignment.  Errors are logged but do not propagate.
+
+        Args:
+            user_email: Email of the user to assign the role to.
+            team_id: Team ID for the scoped assignment.
+            membership_role: Team membership role (``"owner"`` or ``"member"``).
+            granted_by: Email of the user who triggered the assignment.
+        """
+        try:
+            rbac_role_name = self._get_rbac_role_name(membership_role)
+            team_rbac_role = await self.role_service.get_role_by_name(rbac_role_name, scope="team")
+            if team_rbac_role:
+                existing = await self.role_service.get_user_role_assignment(user_email=user_email, role_id=team_rbac_role.id, scope="team", scope_id=team_id)
+                if not existing or not existing.is_active:
+                    await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_rbac_role.id, scope="team", scope_id=team_id, granted_by=granted_by or user_email)
+                    logger.info(f"Assigned {rbac_role_name} role to {SecurityValidator.sanitize_log_message(user_email)} for team {SecurityValidator.sanitize_log_message(team_id)}")
+                else:
+                    logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} already has active {rbac_role_name} role for team {SecurityValidator.sanitize_log_message(team_id)}")
+            else:
+                logger.warning(f"Role '{rbac_role_name}' not found. User {SecurityValidator.sanitize_log_message(user_email)} added without RBAC role.")
+        except Exception as role_error:
+            logger.warning(f"Failed to assign role to {SecurityValidator.sanitize_log_message(user_email)}: {role_error}")
+
+    def _invalidate_membership_caches(self, user_email: str, team_id: str, *, include_admin_stats: bool = True) -> None:
+        """Invalidate auth and admin caches after a membership change.
+
+        Errors are logged at debug level but do not propagate.
+
+        Args:
+            user_email: Email of the affected user.
+            team_id: Team ID whose caches should be invalidated.
+            include_admin_stats: Whether to also invalidate admin stats (skip on removal).
+        """
+        try:
+            self._fire_and_forget(auth_cache.invalidate_team(user_email))
+            self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
+            self._fire_and_forget(auth_cache.invalidate_user_teams(user_email))
+            self._fire_and_forget(auth_cache.invalidate_team_membership(user_email))
+            if include_admin_stats:
+                self._fire_and_forget(admin_stats_cache.invalidate_teams())
+        except Exception as cache_error:
+            logger.debug(f"Failed to invalidate membership caches for {SecurityValidator.sanitize_log_message(user_email)}: {cache_error}")
+
+    def _check_user_team_limit(self, user_email: str) -> None:
+        """Raise if the user has reached the maximum team membership limit.
+
+        Args:
+            user_email: Email of the user to check.
+
+        Raises:
+            TeamManagementError: If the user is at the configured limit.
+        """
+        max_teams = getattr(settings, "max_teams_per_user", 50)
+        if self._get_user_team_count(user_email) >= max_teams:
+            raise TeamManagementError(f"User has reached the maximum team limit of {max_teams}")
+
     async def create_team(
         self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None, skip_limits: bool = False
     ) -> EmailTeam:
@@ -349,13 +473,13 @@ class TeamManagementService:
 
             # Enforce max_members cap for non-admins (only when explicitly provided)
             if not skip_limits and max_members is not None:
-                max_limit = getattr(settings, "max_members_per_team", 100)
+                max_limit = settings.max_members_per_team
                 if max_members > max_limit:
                     raise ValueError(f"max_members cannot exceed the configured limit of {max_limit}")
 
-            # Apply default max members from settings
-            if max_members is None:
-                max_members = getattr(settings, "max_members_per_team", 100)
+            # If max_members is not explicitly provided, leave it as None in the DB.
+            # The effective limit will be resolved at check time from settings.max_members_per_team,
+            # so changing the env var affects all teams that don't have an explicit override.
 
             # Check for existing inactive team with same name
 
@@ -480,7 +604,7 @@ class TeamManagementService:
         name: Optional[str] = None,
         description: Optional[str] = None,
         visibility: Optional[str] = None,
-        max_members: Optional[int] = None,
+        max_members: Union[int, None, _Unset] = UNSET,
         updated_by: Optional[str] = None,
         skip_limits: bool = False,
     ) -> bool:
@@ -491,7 +615,9 @@ class TeamManagementService:
             name: New team name
             description: New team description
             visibility: New visibility setting
-            max_members: New maximum member limit
+            max_members: New maximum member limit. Pass ``None`` to clear an
+                explicit per-team override (reverts to global default).  Omit
+                (or pass ``UNSET``) to leave the current value unchanged.
             updated_by: Email of user making the update
             skip_limits: Skip the max_members_per_team cap check (platform admins only)
 
@@ -533,9 +659,12 @@ class TeamManagementService:
                     raise ValueError(f"Invalid visibility. Must be one of: {', '.join(valid_visibilities)}")
                 team.visibility = visibility
 
-            if max_members is not None:
-                if not skip_limits:
-                    max_limit = getattr(settings, "max_members_per_team", 100)
+            # UNSET means "not provided" — leave unchanged.
+            # None means "explicitly clear the per-team override" — store NULL.
+            # An int means "set an explicit per-team limit".
+            if max_members is not UNSET:
+                if max_members is not None and not skip_limits:
+                    max_limit = settings.max_members_per_team
                     if max_members > max_limit:
                         raise ValueError(f"max_members cannot exceed the configured limit of {max_limit}")
                 team.max_members = max_members
@@ -620,7 +749,7 @@ class TeamManagementService:
             logger.error(f"Failed to delete team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
             return False
 
-    async def add_member_to_team(self, team_id: str, user_email: str, role: str = "member", invited_by: Optional[str] = None) -> EmailTeamMember:
+    async def add_member_to_team(self, team_id: str, user_email: str, role: str = "member", invited_by: Optional[str] = None, grant_source: Optional[str] = None) -> EmailTeamMember:
         """Add a member to a team.
 
         Args:
@@ -628,6 +757,7 @@ class TeamManagementService:
             user_email: Email of the user to add
             role: Role to assign (owner, member)
             invited_by: Email of user who added this member
+            grant_source: Origin of grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
         Returns:
             EmailTeamMember: The created or reactivated team member object
@@ -672,10 +802,7 @@ class TeamManagementService:
             logger.warning(f"User {SecurityValidator.sanitize_log_message(user_email)} not found")
             raise UserNotFoundError("User not found")
 
-        # Check max teams per user
-        max_teams = getattr(settings, "max_teams_per_user", 50)
-        if self._get_user_team_count(user_email) >= max_teams:
-            raise TeamManagementError(f"User has reached the maximum team limit of {max_teams}")
+        self._check_user_team_limit(user_email)
 
         # Check if user is already a member
         existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
@@ -684,13 +811,8 @@ class TeamManagementService:
             logger.warning(f"User {SecurityValidator.sanitize_log_message(user_email)} is already a member of team {SecurityValidator.sanitize_log_message(team_id)}")
             raise MemberAlreadyExistsError("User is already a member of this team")
 
-        # Check team member limit
-        if team.max_members:
-            current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
-
-            if current_member_count >= team.max_members:
-                logger.warning(f"Team {SecurityValidator.sanitize_log_message(team_id)} has reached maximum member limit of {team.max_members}")
-                raise TeamMemberLimitExceededError(f"Team has reached maximum member limit of {team.max_members}")
+        # Check team member limit (explicit per-team value or global default)
+        check_team_member_capacity(self.db, team)
 
         # Add or reactivate membership
         try:
@@ -699,43 +821,20 @@ class TeamManagementService:
                 existing_membership.role = role
                 existing_membership.joined_at = utc_now()
                 existing_membership.invited_by = invited_by
+                if grant_source is not None:
+                    existing_membership.grant_source = grant_source
                 self.db.commit()
                 self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
                 member = existing_membership
             else:
-                membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, is_active=True)
+                membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, grant_source=grant_source, is_active=True)
                 self.db.add(membership)
                 self.db.commit()
                 self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
                 member = membership
 
-            # Assign team-scoped RBAC role matching the membership role (owner or member)
-            try:
-                rbac_role_name = self._get_rbac_role_name(role)
-                team_rbac_role = await self.role_service.get_role_by_name(rbac_role_name, scope="team")
-                if team_rbac_role:
-                    existing = await self.role_service.get_user_role_assignment(user_email=user_email, role_id=team_rbac_role.id, scope="team", scope_id=team_id)
-                    if not existing or not existing.is_active:
-                        await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_rbac_role.id, scope="team", scope_id=team_id, granted_by=invited_by or user_email)
-                        logger.info(f"Assigned {rbac_role_name} role to {SecurityValidator.sanitize_log_message(user_email)} for team {SecurityValidator.sanitize_log_message(team_id)}")
-                    else:
-                        logger.debug(f"User {SecurityValidator.sanitize_log_message(user_email)} already has active {rbac_role_name} role for team {SecurityValidator.sanitize_log_message(team_id)}")
-                else:
-                    logger.warning(f"Role '{rbac_role_name}' not found. User {SecurityValidator.sanitize_log_message(user_email)} added without RBAC role.")
-            except Exception as role_error:
-                logger.warning(f"Failed to assign role to {SecurityValidator.sanitize_log_message(user_email)}: {role_error}")
-
-            # Invalidate auth cache for user's team membership and role
-            try:
-                self._fire_and_forget(auth_cache.invalidate_team(user_email))
-                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
-                self._fire_and_forget(auth_cache.invalidate_user_teams(user_email))
-                self._fire_and_forget(auth_cache.invalidate_team_membership(user_email))
-                self._fire_and_forget(admin_stats_cache.invalidate_teams())
-            except Exception as cache_error:
-                logger.debug(f"Failed to invalidate cache on team add: {cache_error}")
-
-            # Invalidate member count cache for this team
+            await self._assign_team_rbac_role(user_email, team_id, role, granted_by=invited_by)
+            self._invalidate_membership_caches(user_email, team_id)
             await self.invalidate_team_member_count_cache(str(team_id))
 
             logger.info(f"Added {SecurityValidator.sanitize_log_message(user_email)} to team {SecurityValidator.sanitize_log_message(team_id)} with role {role}")
@@ -807,16 +906,7 @@ class TeamManagementService:
             except Exception as role_error:
                 logger.warning(f"Failed to revoke roles from {SecurityValidator.sanitize_log_message(user_email)}: {role_error}")
 
-            # Invalidate auth cache for user's team membership and role
-            try:
-                self._fire_and_forget(auth_cache.invalidate_team(user_email))
-                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
-                self._fire_and_forget(auth_cache.invalidate_user_teams(user_email))
-                self._fire_and_forget(auth_cache.invalidate_team_membership(user_email))
-            except Exception as cache_error:
-                logger.debug(f"Failed to invalidate cache on team remove: {cache_error}")
-
-            # Invalidate member count cache for this team
+            self._invalidate_membership_caches(user_email, team_id, include_admin_stats=False)
             await self.invalidate_team_member_count_cache(str(team_id))
 
             logger.info(f"Removed {SecurityValidator.sanitize_log_message(user_email)} from team {SecurityValidator.sanitize_log_message(team_id)} by {removed_by}")
@@ -1052,7 +1142,7 @@ class TeamManagementService:
                     return []
         except Exception as e:
             self.db.rollback()
-            print(f"An error occurred: {e}")
+            logger.error(f"Failed to verify team for user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
             if not team_id:
                 team_id = None
 
@@ -1302,6 +1392,57 @@ class TeamManagementService:
             logger.error(f"Failed to get role for {SecurityValidator.sanitize_log_message(user_email)} in team {SecurityValidator.sanitize_log_message(team_id)}: {e}")
             return None
 
+    @staticmethod
+    def _apply_team_list_filters(
+        query: Any,
+        *,
+        include_personal: bool = False,
+        include_inactive: bool = False,
+        visibility_filter: Optional[str] = None,
+        search_query: Optional[str] = None,
+        personal_owner_email: Optional[str] = None,
+        search_description: bool = False,
+    ) -> Any:
+        """Apply common filter predicates to a team list query.
+
+        Args:
+            query: SQLAlchemy select statement to filter.
+            include_personal: Whether to include personal teams.
+            include_inactive: Whether to include inactive teams.
+            visibility_filter: Filter by visibility (private, public).
+            search_query: Optional search term for name/slug (and description if *search_description*).
+            personal_owner_email: When set (and *include_personal* is False), include this user's personal team.
+            search_description: Whether to include ``EmailTeam.description`` in the search predicate.
+
+        Returns:
+            The filtered query.
+        """
+        if not include_personal:
+            if personal_owner_email:
+                query = query.where(
+                    or_(
+                        EmailTeam.is_personal.is_(False),
+                        and_(EmailTeam.is_personal.is_(True), EmailTeam.created_by == personal_owner_email),
+                    )
+                )
+            else:
+                query = query.where(EmailTeam.is_personal.is_(False))
+
+        if not include_inactive:
+            query = query.where(EmailTeam.is_active.is_(True))
+
+        if visibility_filter:
+            query = query.where(EmailTeam.visibility == visibility_filter)
+
+        if search_query:
+            search_term = f"%{search_query}%"
+            predicates = [EmailTeam.name.ilike(search_term), EmailTeam.slug.ilike(search_term)]
+            if search_description:
+                predicates.append(EmailTeam.description.ilike(search_term))
+            query = query.where(or_(*predicates))
+
+        return query
+
     async def list_teams(
         self,
         # Unified pagination params
@@ -1337,34 +1478,15 @@ class TeamManagementService:
                 - Tuple (teams, next_cursor) if cursor/offset based
                 - Dict {data, pagination, links} if page based
         """
-        query = select(EmailTeam)
-
-        if not include_personal:
-            if personal_owner_email:
-                query = query.where(
-                    or_(
-                        EmailTeam.is_personal.is_(False),
-                        and_(EmailTeam.is_personal.is_(True), EmailTeam.created_by == personal_owner_email),
-                    )
-                )
-            else:
-                query = query.where(EmailTeam.is_personal.is_(False))
-
-        if not include_inactive:
-            query = query.where(EmailTeam.is_active.is_(True))
-
-        if visibility_filter:
-            query = query.where(EmailTeam.visibility == visibility_filter)
-
-        if search_query:
-            search_term = f"%{search_query}%"
-            query = query.where(
-                or_(
-                    EmailTeam.name.ilike(search_term),
-                    EmailTeam.slug.ilike(search_term),
-                    EmailTeam.description.ilike(search_term),
-                )
-            )
+        query = self._apply_team_list_filters(
+            select(EmailTeam),
+            include_personal=include_personal,
+            include_inactive=include_inactive,
+            visibility_filter=visibility_filter,
+            search_query=search_query,
+            personal_owner_email=personal_owner_email,
+            search_description=True,
+        )
 
         # Choose ordering based on pagination mode:
         # - Page-based (UI): alphabetical by name for user-friendly display
@@ -1414,33 +1536,14 @@ class TeamManagementService:
         Returns:
             List[int]: List of team IDs
         """
-        query = select(EmailTeam.id)
-
-        if not include_personal:
-            if personal_owner_email:
-                query = query.where(
-                    or_(
-                        EmailTeam.is_personal.is_(False),
-                        and_(EmailTeam.is_personal.is_(True), EmailTeam.created_by == personal_owner_email),
-                    )
-                )
-            else:
-                query = query.where(EmailTeam.is_personal.is_(False))
-
-        if not include_inactive:
-            query = query.where(EmailTeam.is_active.is_(True))
-
-        if visibility_filter:
-            query = query.where(EmailTeam.visibility == visibility_filter)
-
-        if search_query:
-            search_term = f"%{search_query}%"
-            query = query.where(
-                or_(
-                    EmailTeam.name.ilike(search_term),
-                    EmailTeam.slug.ilike(search_term),
-                )
-            )
+        query = self._apply_team_list_filters(
+            select(EmailTeam.id),
+            include_personal=include_personal,
+            include_inactive=include_inactive,
+            visibility_filter=visibility_filter,
+            search_query=search_query,
+            personal_owner_email=personal_owner_email,
+        )
 
         result = self.db.execute(query)
         team_ids = [row[0] for row in result.all()]
@@ -1453,6 +1556,7 @@ class TeamManagementService:
         visibility_filter: Optional[str] = None,
         include_personal: bool = False,
         search_query: Optional[str] = None,
+        personal_owner_email: Optional[str] = None,
     ) -> int:
         """Get total count of teams matching criteria.
 
@@ -1461,29 +1565,19 @@ class TeamManagementService:
             visibility_filter: Filter by visibility (private, team, public)
             include_personal: Whether to include personal teams
             search_query: Search term for name/slug
+            personal_owner_email: When set (and include_personal=False), includes this user's personal team in the count
 
         Returns:
             int: Total count of matching teams
         """
-        query = select(func.count(EmailTeam.id))  # pylint: disable=not-callable
-
-        if not include_personal:
-            query = query.where(EmailTeam.is_personal.is_(False))
-
-        if not include_inactive:
-            query = query.where(EmailTeam.is_active.is_(True))
-
-        if visibility_filter:
-            query = query.where(EmailTeam.visibility == visibility_filter)
-
-        if search_query:
-            search_term = f"%{search_query}%"
-            query = query.where(
-                or_(
-                    EmailTeam.name.ilike(search_term),
-                    EmailTeam.slug.ilike(search_term),
-                )
-            )
+        query = self._apply_team_list_filters(
+            select(func.count(EmailTeam.id)),  # pylint: disable=not-callable
+            include_personal=include_personal,
+            include_inactive=include_inactive,
+            visibility_filter=visibility_filter,
+            search_query=search_query,
+            personal_owner_email=personal_owner_email,
+        )
 
         result = self.db.execute(query)
         count = result.scalar() or 0
@@ -1640,12 +1734,11 @@ class TeamManagementService:
             if self._get_user_team_count(join_request.user_email) >= max_teams:
                 raise ValueError(f"User has reached the maximum team limit of {max_teams}")
 
-            # Check team member capacity
+            # Check team member limit
             team = await self.get_team_by_id(join_request.team_id)
-            if team and team.max_members:
-                current_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == join_request.team_id, EmailTeamMember.is_active.is_(True)).count()
-                if current_count >= team.max_members:
-                    raise ValueError(f"Team has reached its maximum member limit of {team.max_members}")
+            if not team:
+                raise ValueError(f"Team {join_request.team_id} not found or inactive")
+            check_team_member_capacity(self.db, team)
 
             # Add user to team
             member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
@@ -1661,33 +1754,8 @@ class TeamManagementService:
 
             self.db.refresh(member)
 
-            # Assign team-scoped RBAC role matching the membership role
-            try:
-                rbac_role_name = self._get_rbac_role_name(member.role)
-                team_rbac_role = await self.role_service.get_role_by_name(rbac_role_name, scope="team")
-                if team_rbac_role:
-                    existing = await self.role_service.get_user_role_assignment(user_email=join_request.user_email, role_id=team_rbac_role.id, scope="team", scope_id=join_request.team_id)
-                    if not existing or not existing.is_active:
-                        await self.role_service.assign_role_to_user(user_email=join_request.user_email, role_id=team_rbac_role.id, scope="team", scope_id=join_request.team_id, granted_by=approved_by)
-                        logger.info(f"Assigned {rbac_role_name} role to {join_request.user_email} for team {join_request.team_id}")
-                    else:
-                        logger.debug(f"User {join_request.user_email} already has active {rbac_role_name} role for team {join_request.team_id}")
-                else:
-                    logger.warning(f"Role '{rbac_role_name}' not found. User {join_request.user_email} added without RBAC role.")
-            except Exception as role_error:
-                logger.warning(f"Failed to assign role to {join_request.user_email}: {role_error}")
-
-            # Invalidate auth cache for user's team membership and role
-            try:
-                self._fire_and_forget(auth_cache.invalidate_team(join_request.user_email))
-                self._fire_and_forget(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
-                self._fire_and_forget(auth_cache.invalidate_user_teams(join_request.user_email))
-                self._fire_and_forget(auth_cache.invalidate_team_membership(join_request.user_email))
-                self._fire_and_forget(admin_stats_cache.invalidate_teams())
-            except Exception as cache_error:
-                logger.debug(f"Failed to invalidate caches on join approval: {cache_error}")
-
-            # Invalidate member count cache for this team
+            await self._assign_team_rbac_role(join_request.user_email, join_request.team_id, member.role, granted_by=approved_by)
+            self._invalidate_membership_caches(join_request.user_email, join_request.team_id)
             await self.invalidate_team_member_count_cache(str(join_request.team_id))
 
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")

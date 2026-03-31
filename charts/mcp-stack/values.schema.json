@@ -1306,6 +1306,12 @@
             "VALIDATION_MAX_REQUESTS_PER_MINUTE": {
               "type": "string"
             },
+            "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED": {
+              "type": "string"
+            },
+            "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS": {
+              "type": "string"
+            },
             "VALIDATION_MIDDLEWARE_ENABLED": {
               "type": "string"
             },
@@ -1905,7 +1911,7 @@
             "JWT_SECRET_KEY": {
               "type": "string",
               "description": "JWT secret key",
-              "default": "my-test-key"
+              "default": "my-test-key-but-now-longer-than-32-bytes"
             },
             "MAX_FAILED_LOGIN_ATTEMPTS": {
               "type": "string"

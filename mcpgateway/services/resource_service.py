@@ -48,7 +48,9 @@ from sqlalchemy.orm import joinedload, selectinload, Session
 from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, fresh_db_session
+from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Resource as DbResource
@@ -59,6 +61,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
+from mcpgateway.services.content_security import ContentSizeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -155,6 +158,36 @@ class ResourceLockConflictError(ResourceError):
         ResourceLockConflictError: When attempting to modify a resource that is
             currently locked by another concurrent request.
     """
+
+
+def _validate_resource_team_assignment(db: Session, user_email: Optional[str], target_team_id: Optional[str]) -> None:
+    """Validate team assignment for resource updates.
+
+    Args:
+        db: Database session used for membership checks.
+        user_email: Requesting user email. When omitted, ownership checks are skipped.
+        target_team_id: Team identifier to validate.
+
+    Raises:
+        ValueError: If team does not exist or caller lacks ownership.
+    """
+    if not target_team_id:
+        raise ValueError("Cannot set visibility to 'team' without a team_id")
+
+    team = db.query(EmailTeam).filter(EmailTeam.id == target_team_id).first()
+    if not team:
+        raise ValueError(f"Team {target_team_id} not found")
+
+    if not user_email:
+        return
+
+    membership = (
+        db.query(DbEmailTeamMember)
+        .filter(DbEmailTeamMember.team_id == target_team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+        .first()
+    )
+    if not membership:
+        raise ValueError("User membership in team not sufficient for this update.")
 
 
 class ResourceService(BaseService):
@@ -347,6 +380,7 @@ class ResourceService(BaseService):
         resource_dict["created_at"] = getattr(resource, "created_at", None)
         resource_dict["updated_at"] = getattr(resource, "updated_at", None)
         resource_dict["version"] = getattr(resource, "version", None)
+        resource_dict["gateway_id"] = getattr(resource, "gateway_id", None)
         return ResourceRead.model_validate(resource_dict)
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
@@ -401,6 +435,7 @@ class ResourceService(BaseService):
             IntegrityError: If a database integrity error occurs.
             ResourceURIConflictError: If a resource with the same URI already exists.
             ResourceError: For other resource registration errors
+            ContentSizeError: For content size exceed
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -422,6 +457,22 @@ class ResourceService(BaseService):
         """
         try:
             logger.info(f"Registering resource: {resource.uri}")
+
+            # Validate content size BEFORE any database operations
+            content_security = get_content_security_service()
+            content_to_validate = ""
+
+            # Extract content from resource for validation
+            # Use raw bytes for accurate size measurement to prevent bypass via non-UTF-8 content
+            if hasattr(resource, "content") and resource.content:
+                if isinstance(resource.content, bytes):
+                    # Validate using raw bytes to get accurate size
+                    content_to_validate = resource.content
+                else:
+                    # Convert string to bytes for consistent size measurement
+                    content_to_validate = str(resource.content)
+
+            content_security.validate_resource_size(content=content_to_validate, uri=resource.uri, user_email=created_by, ip_address=created_from_ip)
 
             # Extract gateway_id from resource if present
             gateway_id = getattr(resource, "gateway_id", None)
@@ -564,6 +615,21 @@ class ResourceService(BaseService):
                 },
             )
             raise rce
+        except ContentSizeError as cse:
+            db.rollback()
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
+                event_type="resource_size_exceed",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "visibility": visibility,
+                },
+            )
+            raise cse
         except Exception as e:
             db.rollback()
 
@@ -677,6 +743,16 @@ class ResourceService(BaseService):
 
                 for resource in chunk:
                     try:
+                        # Validate content size before processing
+                        if hasattr(resource, "content") and resource.content:
+                            content_security = get_content_security_service()
+                            content_security.validate_resource_size(
+                                content=resource.content,
+                                uri=resource.uri,
+                                user_email=created_by,
+                                ip_address=created_from_ip,
+                            )
+
                         # Use provided parameters or schema values
                         resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
                         resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
@@ -916,6 +992,7 @@ class ResourceService(BaseService):
         include_inactive: bool = False,
         cursor: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        gateway_id: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
@@ -938,6 +1015,7 @@ class ResourceService(BaseService):
             cursor (Optional[str], optional): An opaque cursor token for pagination.
                 Opaque base64-encoded string containing last item's ID and created_at.
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            gateway_id (Optional[str]): Filter resources by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
             limit (Optional[int]): Maximum number of resources to return. Use 0 for all resources (no limit).
                 If not specified, uses pagination_default_page_size.
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
@@ -984,7 +1062,7 @@ class ResourceService(BaseService):
         # This prevents cache poisoning where admin results could leak to public-only requests
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, limit=limit, visibility=visibility)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit, visibility=visibility)
             cached = await cache.get("resources", filters_hash)
             if cached is not None:
                 # Reconstruct ResourceRead objects from cached dicts
@@ -1002,6 +1080,13 @@ class ResourceService(BaseService):
 
         if visibility:
             query = query.where(DbResource.visibility == visibility)
+
+        # Add gateway_id filtering if provided
+        if gateway_id:
+            if gateway_id.lower() == "null":
+                query = query.where(DbResource.gateway_id.is_(None))
+            else:
+                query = query.where(DbResource.gateway_id == gateway_id)
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
@@ -2699,6 +2784,7 @@ class ResourceService(BaseService):
             ResourceError: For other update errors
             IntegrityError: If a database integrity error occurs.
             Exception: For unexpected errors
+            ContentSizeError: For content size exceed
 
         Example:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -2761,10 +2847,23 @@ class ResourceService(BaseService):
             if resource_update.uri_template is not None:
                 resource.uri_template = resource_update.uri_template
             if resource_update.visibility is not None:
+                # Validate visibility transitions
+                if resource_update.visibility == "team":
+                    target_team_id = resource_update.team_id if resource_update.team_id is not None else resource.team_id
+                    _validate_resource_team_assignment(db, user_email, target_team_id)
                 resource.visibility = resource_update.visibility
 
             # Update content if provided
             if resource_update.content is not None:
+                # Validate content size before updating
+                content_security = get_content_security_service()
+                content_security.validate_resource_size(
+                    content=resource_update.content,
+                    uri=resource_update.uri or resource.uri,
+                    user_email=modified_by or user_email,
+                    ip_address=modified_from_ip,
+                )
+
                 # Determine content storage
                 is_text = resource.mime_type and resource.mime_type.startswith("text/") or isinstance(resource_update.content, str)
 
@@ -2777,6 +2876,12 @@ class ResourceService(BaseService):
             # Update tags if provided
             if resource_update.tags is not None:
                 resource.tags = resource_update.tags
+
+            # Update team assignment if provided, validating ownership
+            if resource_update.team_id is not None:
+                if resource_update.team_id != resource.team_id:
+                    _validate_resource_team_assignment(db, user_email, resource_update.team_id)
+                resource.team_id = resource_update.team_id
 
             # Update metadata fields
             resource.updated_at = datetime.now(timezone.utc)
@@ -2895,6 +3000,20 @@ class ResourceService(BaseService):
                 error=ie,
             )
             raise ie
+        except ContentSizeError as cse:
+            db.rollback()
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
+                event_type="resource_content_size_exceed",
+                component="resource_service",
+                resource_type="resource",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_id=str(resource_id),
+                error=cse,
+            )
+            raise cse
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
 

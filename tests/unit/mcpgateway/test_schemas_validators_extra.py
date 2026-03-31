@@ -17,6 +17,7 @@ from mcpgateway.common.models import ResourceContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.schemas import (
+    _coerce_visibility,
     _mask_oauth_config,
     A2AAgentCreate,
     A2AAgentInvocation,
@@ -29,11 +30,14 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayUpdate,
     GrpcServiceCreate,
+    GrpcServiceRead,
     GrpcServiceUpdate,
     PromptCreate,
+    PromptRead,
     PromptUpdate,
     ResourceCreate,
     ResourceNotification,
+    ResourceRead,
     ResourceUpdate,
     RPCRequest,
     ServerCreate,
@@ -43,9 +47,16 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
     TokenScopeRequest,
     ToolCreate,
+    ToolRead,
     ToolUpdate,
 )
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+
+
+def _fake_pem_key(body: str = "FAKE") -> str:
+    """Build a dummy PEM private key that won't trigger secret scanners."""
+    tag = "PRIVATE KEY"
+    return f"-----BEGIN {tag}-----\n{body}\n-----END {tag}-----"
 
 
 def test_tool_create_display_name_and_auth_assembly():
@@ -136,24 +147,34 @@ class TestToolUpdateDescriptionValidationStrict:
     """
 
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
-        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+        for pat in ["&&", "||", "$(", "> ", "< "]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolUpdate.validate_description(f"Valid prefix {pat} suffix")
+
+    def test_single_pipe_allowed_in_strict_mode(self, monkeypatch):
+        """Single pipe is allowed because it is valid in LogQL, PromQL, regex, and Markdown tables."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("pipe | grep")
+        assert result is not None
+
+    def test_semicolon_allowed_in_strict_mode(self, monkeypatch):
+        """Semicolons are allowed because they appear in natural-language tool descriptions."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("Use this tool remotely; do not use it for local file operations")
+        assert result is not None
 
     @pytest.mark.parametrize(
         "description",
         [
             "run cmd1 && cmd2",
-            "end statement;",
             "try this || that",
             "expand $(cmd)",
-            "pipe | grep",
             "Search docs > results",
             "read < file",
         ],
-        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+        ids=["ampersand", "or", "subshell", "redirect_out", "redirect_in"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -169,7 +190,7 @@ class TestToolUpdateDescriptionValidationStrict:
         monkeypatch.setattr(settings, "validation_strict", False)
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
-            result = ToolUpdate.validate_description("foo && bar | baz > qux")
+            result = ToolUpdate.validate_description("foo && bar > qux")
         assert result is not None
         unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
         assert len(unsafe_warnings) == 1
@@ -190,7 +211,7 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_forbidden_patterns_match_tool_create(self, monkeypatch):
         """Ensure ToolCreate and ToolUpdate reject the exact same set of forbidden patterns in strict mode."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
+        forbidden_patterns = ["&&", "||", "$(", "> ", "< "]
         for pat in forbidden_patterns:
             payload = f"test {pat} injection"
             with pytest.raises(ValueError, match="unsafe characters"):
@@ -201,6 +222,21 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_empty_string_accepted(self):
         """Empty string is a valid description (not None, not forbidden)."""
         assert ToolUpdate.validate_description("") == ""
+
+    def test_disabled_allows_any_description(self, monkeypatch):
+        """Disabling forbidden patterns on ToolUpdate allows descriptions with any content."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", False)
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("run; rm -rf / && $(evil)")
+        assert result is not None
+
+    def test_empty_pattern_skipped(self, monkeypatch):
+        """Empty patterns in ToolUpdate are skipped and do not match everything."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["", "  "])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("perfectly safe description")
+        assert result is not None
 
     def test_forbidden_pattern_at_start(self, monkeypatch):
         """Forbidden pattern at the very start of a description is still caught."""
@@ -226,12 +262,14 @@ def test_resource_update_content_and_description():
     truncated = ResourceUpdate.validate_description(long_desc)
     assert len(truncated) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
-    with pytest.raises(ValueError):
-        ResourceUpdate.validate_content("x" * (SecurityValidator.MAX_CONTENT_LENGTH + 1))
+    # Size validation is now done at service layer, not schema layer
+    # Schema layer only validates encoding and dangerous patterns
 
+    # Test UTF-8 encoding validation
     with pytest.raises(ValueError):
         ResourceUpdate.validate_content(b"\xff\xfe\xfd")
 
+    # Test dangerous HTML pattern detection
     with pytest.raises(ValueError):
         ResourceUpdate.validate_content("<script>alert(1)</script>")
 
@@ -608,8 +646,8 @@ def test_rpc_and_event_admin_and_server_validators(caplog):
     assert len(ServerUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert any("Description too long" in rec.message for rec in caplog.records)
 
-    with pytest.raises(ValueError):
-        ServerCreate.validate_visibility("invalid")
+    with pytest.raises(ValidationError):
+        ServerCreate(name="srv", visibility="invalid")
 
     assert ServerCreate.validate_team_id("550e8400-e29b-41d4-a716-446655440000")
 
@@ -637,10 +675,10 @@ def test_a2a_agent_create_and_update_more_branches(monkeypatch, caplog):
     assert len(A2AAgentCreate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
     assert len(A2AAgentUpdate.validate_description(long_desc)) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
-    with pytest.raises(ValueError):
-        A2AAgentCreate.validate_visibility("invalid")
-    with pytest.raises(ValueError):
-        A2AAgentUpdate.validate_visibility("invalid")
+    with pytest.raises((ValueError, ValidationError)):
+        A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", visibility="invalid")
+    with pytest.raises((ValueError, ValidationError)):
+        A2AAgentUpdate(visibility="invalid")
 
     with pytest.raises((ValidationError, ValueError)):
         A2AAgentCreate(name="agent", endpoint_url="http://agent.example.com", auth_type="basic", auth_username="u")
@@ -837,6 +875,79 @@ def test_password_team_token_and_grpc_validators(monkeypatch):
     assert len(GrpcServiceUpdate.validate_description("x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1))) == SecurityValidator.MAX_DESCRIPTION_LENGTH
 
 
+class TestToolDescriptionForbiddenPatterns:
+    """Tests for configurable forbidden pattern validation on tool descriptions."""
+
+    def test_default_patterns_block_forbidden_chars(self, monkeypatch):
+        """Default forbidden patterns reject known unsafe substrings in strict mode."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";", "||", "$(", "> ", "< "])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        for pat in ["&&", ";", "||", "$(", "> ", "< "]:
+            with pytest.raises(ValueError, match="unsafe characters"):
+                ToolCreate.validate_description(f"description with {pat} inside")
+
+    def test_non_strict_mode_warns_instead_of_rejecting(self, monkeypatch):
+        """When VALIDATION_STRICT=false, forbidden patterns produce a warning, not an error."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";"])
+        monkeypatch.setattr(settings, "validation_strict", False)
+        result = ToolCreate.validate_description("run && something")
+        assert result is not None
+
+    def test_disabled_allows_any_description(self, monkeypatch):
+        """Disabling forbidden patterns allows descriptions with any content."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", False)
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolCreate.validate_description("run; rm -rf / && $(evil)")
+        assert result is not None
+
+    def test_custom_patterns_override_defaults(self, monkeypatch):
+        """Custom pattern list replaces the default list entirely."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["EVIL"])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        # Default patterns like ";" are no longer blocked
+        result = ToolCreate.validate_description("run; something")
+        assert ";" in result
+        # Custom pattern is blocked
+        with pytest.raises(ValueError, match="unsafe characters"):
+            ToolCreate.validate_description("contains EVIL word")
+
+    def test_none_description_bypasses_check(self, monkeypatch):
+        """None descriptions are passed through without pattern checking."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", ["&&", ";"])
+        assert ToolCreate.validate_description(None) is None
+
+    def test_empty_pattern_in_list_does_not_match_everything(self, monkeypatch):
+        """Empty string patterns are filtered out and do not reject all descriptions."""
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns_enabled", True)
+        monkeypatch.setattr(settings, "tool_description_forbidden_patterns", [""])
+        monkeypatch.setattr(settings, "validation_strict", True)
+        # Empty pattern would match everything via `'' in v`; must be filtered
+        result = ToolCreate.validate_description("perfectly safe description")
+        assert result is not None
+
+
+class TestToolDescriptionForbiddenPatternsConfig:
+    """Tests for forbidden pattern config parsing and normalization."""
+
+    def test_filter_empty_forbidden_patterns(self):
+        """Empty/blank patterns are stripped from the config at validation time."""
+        from mcpgateway.config import Settings
+
+        s = Settings._filter_empty_forbidden_patterns(["&&", "", "  ", ";"])
+        assert s == ["&&", ";"]
+
+    def test_filter_preserves_valid_patterns(self):
+        """Non-empty patterns are preserved unchanged."""
+        from mcpgateway.config import Settings
+
+        patterns = ["&&", ";", "||", "$("]
+        assert Settings._filter_empty_forbidden_patterns(patterns) == patterns
+
+
 class TestMaskOauthConfig:
     """Tests for the _mask_oauth_config() helper function."""
 
@@ -907,6 +1018,28 @@ class TestMaskOauthConfig:
         assert masked.oauth_config["client_secret"] == settings.masked_auth_value
         assert masked.oauth_config["token_url"] == "https://auth.example.com/token"
 
+    def test_gateway_read_masked_hides_client_key(self):
+        """GatewayRead.masked() masks client_key (mTLS private key)."""
+        gw = GatewayRead(
+            name="test-gw",
+            url="http://example.com",
+            client_cert="/path/to/cert.pem",
+            client_key=_fake_pem_key("SECRETKEY"),
+        )
+        masked = gw.masked()
+        assert masked.client_key == settings.masked_auth_value
+        assert masked.client_cert == "/path/to/cert.pem"
+
+    def test_gateway_read_masked_preserves_none_client_key(self):
+        """GatewayRead.masked() preserves None client_key."""
+        gw = GatewayRead(
+            name="test-gw",
+            url="http://example.com",
+            client_key=None,
+        )
+        masked = gw.masked()
+        assert masked.client_key is None
+
     def test_a2a_agent_read_masked_includes_oauth(self):
         """A2AAgentRead.masked() masks oauth_config sensitive keys."""
         now = datetime.now(timezone.utc)
@@ -960,24 +1093,34 @@ class TestToolCreateDescriptionValidationStrict:
     """
 
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
-        """Descriptions with shell/pipe metacharacters raise ValueError when VALIDATION_STRICT=true."""
+        """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "|", "> ", "< "]:
+        for pat in ["&&", "||", "$(", "> ", "< "]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"Valid prefix {pat} suffix")
+
+    def test_single_pipe_allowed_in_strict_mode(self, monkeypatch):
+        """Single pipe is allowed because it is valid in LogQL, PromQL, regex, and Markdown tables."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolCreate.validate_description("pipe | grep")
+        assert result is not None
+
+    def test_semicolon_allowed_in_strict_mode(self, monkeypatch):
+        """Semicolons are allowed because they appear in natural-language tool descriptions."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolCreate.validate_description("Use this tool remotely; do not use it for local file operations")
+        assert result is not None
 
     @pytest.mark.parametrize(
         "description",
         [
             "run cmd1 && cmd2",
-            "end statement;",
             "try this || that",
             "expand $(cmd)",
-            "pipe | grep",
             "Search docs > results",
             "read < file",
         ],
-        ids=["ampersand", "semicolon", "or", "subshell", "pipe", "redirect_out", "redirect_in"],
+        ids=["ampersand", "or", "subshell", "redirect_out", "redirect_in"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -993,7 +1136,7 @@ class TestToolCreateDescriptionValidationStrict:
         monkeypatch.setattr(settings, "validation_strict", False)
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.schemas"):
-            result = ToolCreate.validate_description("foo && bar | baz > qux")
+            result = ToolCreate.validate_description("foo && bar > qux")
         assert result is not None
         unsafe_warnings = [r for r in caplog.records if "potentially unsafe" in r.message]
         assert len(unsafe_warnings) == 1
@@ -1214,3 +1357,147 @@ def test_a2a_agent_read_masked_preserves_empty_header_values():
     # Non-empty value should be masked
     secret_header = next(h for h in masked_agent.auth_headers if h["key"] == "X-Secret")
     assert secret_header["value"] == settings.masked_auth_value
+
+
+def test_visibility_literal_enum_validation():
+    """Schemas with Literal visibility reject invalid values and accept valid ones (issue #3525)."""
+    valid_values = ["private", "team", "public"]
+    invalid_values = ["invalid_value", "", "PUBLIC", "PRIVATE", "admin", "internal"]
+
+    # GatewayUpdate — the primary schema from the issue
+    for v in valid_values:
+        obj = GatewayUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GatewayUpdate(visibility=v)
+    assert GatewayUpdate().visibility is None  # default is None (optional)
+
+    # GatewayCreate
+    for v in valid_values:
+        assert GatewayCreate(name="gw", url="http://localhost:9000", visibility=v).visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GatewayCreate(name="gw", url="http://localhost:9000", visibility=v)
+
+    # ToolUpdate
+    for v in valid_values:
+        obj = ToolUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ToolUpdate(visibility=v)
+
+    # ToolCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST", visibility=v)
+    assert ToolCreate(name="t", url="http://localhost:9000/tool", integration_type="REST", request_type="POST").visibility is None
+
+    # ResourceUpdate
+    for v in valid_values:
+        obj = ResourceUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ResourceUpdate(visibility=v)
+
+    # PromptUpdate
+    for v in valid_values:
+        obj = PromptUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            PromptUpdate(visibility=v)
+
+    # GrpcServiceUpdate
+    for v in valid_values:
+        obj = GrpcServiceUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GrpcServiceUpdate(visibility=v)
+
+    # GrpcServiceCreate — required fields: name, target
+    for v in valid_values:
+        obj = GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            GrpcServiceCreate(name="svc", target="localhost:50051", visibility=v)
+
+    # ResourceCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data", visibility=v)
+    assert ResourceCreate(uri="file:///tmp/r.txt", name="r", content="data").visibility is None
+
+    # PromptCreate — default is None (inherits from gateway during MCP discovery)
+    for v in valid_values:
+        obj = PromptCreate(name="p", template="hello", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            PromptCreate(name="p", template="hello", visibility=v)
+    assert PromptCreate(name="p", template="hello").visibility is None
+
+    # ServerCreate — required field: name
+    for v in valid_values:
+        obj = ServerCreate(name="srv", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ServerCreate(name="srv", visibility=v)
+    assert ServerCreate(name="srv", visibility=None).visibility is None
+
+    # ServerUpdate — all fields optional
+    for v in valid_values:
+        obj = ServerUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            ServerUpdate(visibility=v)
+    assert ServerUpdate().visibility is None
+
+    # A2AAgentCreate — required fields: name, endpoint_url
+    for v in valid_values:
+        obj = A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=v)
+    assert A2AAgentCreate(name="agent", endpoint_url="http://localhost:8080", visibility=None).visibility is None
+
+    # A2AAgentUpdate — all fields optional
+    for v in valid_values:
+        obj = A2AAgentUpdate(visibility=v)
+        assert obj.visibility == v
+    for v in invalid_values:
+        with pytest.raises(ValidationError):
+            A2AAgentUpdate(visibility=v)
+    assert A2AAgentUpdate().visibility is None
+
+
+def test_coerce_visibility_normalizes_invalid_values():
+    """_coerce_visibility must normalize invalid legacy values to 'public' instead of raising."""
+    assert _coerce_visibility("bogus") == "public"
+    assert _coerce_visibility("") == "public"
+    assert _coerce_visibility("PUBLIC") == "public"
+    assert _coerce_visibility("PRIVATE") == "public"
+    # Valid values pass through unchanged
+    assert _coerce_visibility("private") == "private"
+    assert _coerce_visibility("team") == "team"
+    assert _coerce_visibility("public") == "public"
+    assert _coerce_visibility(None) is None
+
+
+def test_read_schemas_have_visibility_coercion_wired():
+    """All Read schemas must have _normalize_visibility wired so legacy DB rows don't crash reads."""
+    for schema_cls in [ToolRead, ResourceRead, PromptRead, GatewayRead, ServerRead, A2AAgentRead, GrpcServiceRead]:
+        assert hasattr(schema_cls, "_normalize_visibility"), f"{schema_cls.__name__} missing _normalize_visibility"

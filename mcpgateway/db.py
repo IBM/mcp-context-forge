@@ -1645,6 +1645,7 @@ class EmailTeamMember(Base):
         joined_at (datetime): When the user joined the team
         invited_by (str): Email of the user who invited this member
         is_active (bool): Whether the membership is active
+        grant_source (str): Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = EmailTeamMember(
@@ -1671,6 +1672,7 @@ class EmailTeamMember(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     invited_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     team: Mapped["EmailTeam"] = relationship("EmailTeam", back_populates="members")
@@ -4746,6 +4748,10 @@ class Gateway(Base):
     ca_certificate: Mapped[Optional[bytes]] = mapped_column(Text, nullable=True)
     ca_certificate_sig: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     signing_algorithm: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="ed25519")  # e.g., "sha256"
+
+    # mTLS client certificate/key for upstream gateway authentication
+    client_cert: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    client_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationship with local tools this gateway provides
     tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan", passive_deletes=True)

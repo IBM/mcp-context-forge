@@ -77,8 +77,6 @@ plugins:
       detect_email: true
       detect_phone: false
       detect_ip_address: false  # Disabled for development
-      detect_aws_keys: true
-      detect_api_keys: true
       # Masking Settings
       default_mask_strategy: "partial"  # redact | partial | hash | tokenize | remove
       redaction_text: "[PII_REDACTED]"
@@ -320,15 +318,15 @@ plugins:
       allowed_mime_types: ["text/plain", "text/markdown", "text/html", "application/json"]
       allowed_extensions: [".md", ".txt", ".html", ".json"]
 
-  # Retry policy annotations
+  # Retry with exponential backoff — triggers real gateway re-invocation
   - name: "RetryWithBackoffPlugin"
     kind: "plugins.retry_with_backoff.retry_with_backoff.RetryWithBackoffPlugin"
-    description: "Annotates retry/backoff policy in metadata"
+    description: "Detects transient failures and asks the gateway to re-invoke the tool after a jittered exponential backoff delay"
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["tool_post_invoke", "resource_post_fetch"]
-    tags: ["reliability", "retry"]
-    mode: "disabled"
+    hooks: ["tool_post_invoke"]
+    tags: ["retry", "backoff", "resilience"]
+    mode: "permissive"
     priority: 170
     conditions: []
     config:
@@ -336,6 +334,9 @@ plugins:
       backoff_base_ms: 200
       max_backoff_ms: 5000
       retry_on_status: [429, 500, 502, 503, 504]
+      jitter: true
+      check_text_content: false
+      tool_overrides: {}
 
   # Markdown cleaner
   - name: "MarkdownCleanerPlugin"
@@ -647,7 +648,6 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
-    # mode: "enforce"
     mode: "disabled"
     priority: 51
     conditions: []
@@ -660,19 +660,19 @@ plugins:
         private_key_block: true
         jwt_like: true
         hex_secret_32: true
-        base64_24: true
+        base64_24: false  # Broad intrinsic-shape heuristic; keep opt-in because it can block ordinary 24+ char IDs and tokens
       redact: false
       redaction_text: "***REDACTED***"
       block_on_detection: true
       min_findings_to_block: 1
 
-  # Encoded Exfil Detector - detect suspicious encoded payloads in prompts/tool outputs
+  # Encoded Exfil Detector - detect suspicious encoded payloads in prompts, tool outputs, and resources
   - name: "EncodedExfilDetector"
     kind: "plugins.encoded_exfil_detection.encoded_exfil_detector.EncodedExfilDetectorPlugin"
-    description: "Detects suspicious encoded exfiltration patterns in prompt args and tool outputs"
-    version: "0.1.0"
+    description: "Detects suspicious encoded exfiltration patterns in prompts, tool outputs, and resources"
+    version: "0.2.0"
     author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch", "tool_post_invoke"]
+    hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "exfiltration", "dlp", "encoding"]
     # mode: "enforce"
     mode: "disabled"
@@ -697,6 +697,12 @@ plugins:
       block_on_detection: true
       min_findings_to_block: 1
       include_detection_details: true
+      allowlist_patterns: []
+      extra_sensitive_keywords: []
+      extra_egress_hints: []
+      max_decode_depth: 2
+      max_recursion_depth: 32
+      log_detections: true
 
   # Header Injector - add custom headers for resource fetch
   - name: "HeaderInjector"
@@ -846,15 +852,15 @@ plugins:
     conditions: []
     config:
       webhooks:
-        # Webhook.site for testing - UPDATE WITH YOUR UNIQUE URL
-        - url: "https://webhook.site/38df7ac1-672a-4e49-9b55-3c0ed469e9d0"
+        # Example placeholder only. Replace with your own endpoint before enabling.
+        - url: "https://example.invalid/webhook"
           events: ["violation", "tool_success", "tool_error", "rate_limit_exceeded", "pii_detected"]
           authentication:
             type: "none"
           retry_attempts: 2
           retry_delay: 1000
           timeout: 10
-          enabled: true
+          enabled: false
 
       # Simple default template
       default_template: |
@@ -977,7 +983,7 @@ plugins:
     priority: 200  # Run late to capture all context
     conditions: []  # Apply to all tools
     config:
-      export_full_payload: true
+      export_full_payload: false  # opt in only if you explicitly want result content in telemetry
       max_payload_bytes_size: 10000
 
   # TOON Encoder - Convert JSON to TOON format for token efficiency

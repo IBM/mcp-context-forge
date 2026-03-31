@@ -17,6 +17,7 @@ from functools import wraps
 import logging
 from typing import Callable, Generator, List, Optional
 import uuid
+import warnings
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -39,14 +40,23 @@ _ACCESS_DENIED_MSG = "Access denied"
 security = HTTPBearer(auto_error=False)
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_db(request: Request = None) -> Generator[Session, None, None]:
     """Get database session for dependency injection.
 
-    DEPRECATED: Use fresh_db_session() context manager instead to avoid session accumulation.
-    This function is kept for backwards compatibility with endpoints that still use Depends(get_db).
+    DEPRECATED: This function is deprecated and will be removed in a future version.
+    New code should use the request-scoped session from request.state.db or
+    get_db() from main.py.
 
-    Commits the transaction on successful completion to avoid implicit rollbacks
-    for read-only operations. Rolls back explicitly on exception.
+    For backwards compatibility, this function now reuses the middleware session
+    when available, eliminating duplicate session creation (Issue #3622).
+
+    **Migration Path**:
+    - Route handlers: Use `db: Session = Depends(get_db)` from main.py
+    - RBAC checks: Access request.state.db directly in middleware context
+
+    Args:
+        request: Optional FastAPI request object (automatically injected by FastAPI
+                 dependency system when used with Depends())
 
     Yields:
         Session: SQLAlchemy database session
@@ -54,19 +64,47 @@ def get_db() -> Generator[Session, None, None]:
     Raises:
         Exception: Re-raises any exception after rolling back the transaction.
 
+    Note:
+        When used as a FastAPI dependency via Depends(get_db), the request parameter
+        is automatically provided by FastAPI's dependency injection system.
+
     Examples:
         >>> gen = get_db()
         >>> db = next(gen)
         >>> hasattr(db, 'query')
         True
     """
-    db = SessionLocal()
+    warnings.warn(
+        "rbac.get_db() is deprecated. Use request.state.db or get_db() from main.py",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    # Check if middleware already created a request-scoped session
+    # This matches the pattern from main.py:get_db() (line 3089)
+    db = None
+    owned = False
+
+    if request is not None:
+        db = getattr(request.state, "db", None)
+        if db is not None:
+            logger.debug(f"[RBAC] Reusing session from middleware: {id(db)}")
+
+    # Fallback: create own session (legacy behavior)
+    if db is None:
+        logger.debug("[RBAC] Creating new session (no middleware session available)")
+        db = SessionLocal()
+        owned = True
+
     try:
         yield db
-        db.commit()
+        # Only commit if we own the session (backwards compatibility)
+        if owned:
+            db.commit()
     except Exception:
         try:
-            db.rollback()
+            if owned:
+                db.rollback()
         except Exception:
             try:
                 db.invalidate()
@@ -74,7 +112,8 @@ def get_db() -> Generator[Session, None, None]:
                 pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
-        db.close()
+        if owned:
+            db.close()
 
 
 async def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
@@ -711,6 +750,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
 
+        # Store permission metadata as function attributes for introspection
+        # This enables validation tools to extract permissions without fragile closure inspection
+        # Using setattr() to avoid pylint protected-access warnings
+        setattr(wrapper, "_required_permission", permission)
+        setattr(wrapper, "_resource_type", resource_type)
+        setattr(wrapper, "_allow_admin_bypass", allow_admin_bypass)
+
         return wrapper
 
     return decorator
@@ -732,7 +778,7 @@ def require_admin_permission():
         >>> class DummyPS:
         ...     def __init__(self, db):
         ...         pass
-        ...     async def check_admin_permission(self, email):
+        ...     async def check_admin_permission(self, email, token_teams=None):
         ...         return True
         >>> @require_admin_permission()
         ... async def demo(user=None):
@@ -774,15 +820,16 @@ def require_admin_permission():
 
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
             db_session = kwargs.get("db") or user_context.get("db")
+            token_teams = user_context.get("token_teams")  # Forward token scope
             if db_session:
                 # Use existing session from endpoint or user_context
                 permission_service = PermissionService(db_session)
-                has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
+                has_admin_permission = await permission_service.check_admin_permission(user_context["email"], token_teams=token_teams)
             else:
                 # Create fresh db session for permission check
                 with fresh_db_session() as db:
                     permission_service = PermissionService(db)
-                    has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
+                    has_admin_permission = await permission_service.check_admin_permission(user_context["email"], token_teams=token_teams)
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
@@ -1005,14 +1052,15 @@ class PermissionChecker:
         Returns:
             bool: True if user has admin permissions
         """
+        token_teams = self.user_context.get("token_teams")
         if self.db_session:
             # Use existing session
             permission_service = PermissionService(self.db_session)
-            return await permission_service.check_admin_permission(self.user_context["email"])
+            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
         # Create fresh db session
         with fresh_db_session() as db:
             permission_service = PermissionService(db)
-            return await permission_service.check_admin_permission(self.user_context["email"])
+            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
 
     async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has any of the specified permissions.

@@ -46,7 +46,7 @@ mcpContextForge:
     # Dev credentials (match previous deployment)
     BASIC_AUTH_USER: admin
     BASIC_AUTH_PASSWORD: changeme
-    JWT_SECRET_KEY: my-test-key
+    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes
     AUTH_ENCRYPTION_SECRET: my-test-salt
     AUTH_REQUIRED: "true"
     MCP_REQUIRE_AUTH: "true"
@@ -121,7 +121,7 @@ testing:
       tag: "1.0.0-RC-2"
       pullPolicy: Never
     jwt:
-      secret: my-test-key
+      secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret
   fastTime:
     register:
       enabled: true

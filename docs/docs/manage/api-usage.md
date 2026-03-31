@@ -27,7 +27,7 @@ Before using the API, you need to:
     export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
       --username admin@example.com \
       --exp 10080 \
-      --secret my-test-key 2>/dev/null | head -1)
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
 
     # Verify token was generated
     echo "Token: ${TOKEN:0:50}..."
@@ -41,7 +41,7 @@ Before using the API, you need to:
       --admin \
       --full-name "Admin User" \
       --exp 10080 \
-      --secret my-test-key 2>/dev/null | head -1)
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
     ```
 
     **Team-Scoped Token (⚠️ DEV/TEST ONLY):**
@@ -52,7 +52,7 @@ Before using the API, you need to:
       --teams team-123,team-456 \
       --full-name "Team User" \
       --exp 10080 \
-      --secret my-test-key 2>/dev/null | head -1)
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
     ```
 
     !!! tip "Token Expiration"
@@ -779,6 +779,7 @@ The `/resources` endpoint supports several query parameters for filtering and pa
 
 | Parameter | Description |
 |-----------|-------------|
+| `gateway_id` | Filter by gateway ID. Use `null` to match resources without a gateway. |
 | `tags` | Comma-separated list of tags to filter by (matches any). |
 | `visibility` | Filter by visibility: `private`, `team`, or `public`. |
 | `team_id` | Filter by team ID. |
@@ -790,6 +791,14 @@ The `/resources` endpoint supports several query parameters for filtering and pa
 **Examples:**
 
 ```bash
+# Filter by gateway (all resources from a specific gateway)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?gateway_id=<gateway-id>" | jq '.'
+
+# Get resources not associated with any gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?gateway_id=null" | jq '.'
+
 # Filter by visibility
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/resources?visibility=public" | jq '.'
@@ -938,6 +947,7 @@ The `/prompts` endpoint supports several query parameters for filtering and pagi
 
 | Parameter | Description |
 |-----------|-------------|
+| `gateway_id` | Filter by gateway ID. Use `null` to match prompts without a gateway. |
 | `tags` | Comma-separated list of tags to filter by (matches any). |
 | `visibility` | Filter by visibility: `private`, `team`, or `public`. |
 | `team_id` | Filter by team ID. |
@@ -949,6 +959,14 @@ The `/prompts` endpoint supports several query parameters for filtering and pagi
 **Examples:**
 
 ```bash
+# Filter by gateway (all prompts from a specific gateway)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?gateway_id=<gateway-id>" | jq '.'
+
+# Get prompts not associated with any gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?gateway_id=null" | jq '.'
+
 # Filter by visibility
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/prompts?visibility=public" | jq '.'
@@ -1253,6 +1271,21 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/a2a/$A2A_ID | jq '.'
 ```
 
+### Enable/Disable A2A Agent
+
+```bash
+# Deactivate an A2A agent (also deactivates its associated tool)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/a2a/$A2A_ID/state?activate=false | jq '.'
+
+# Reactivate an A2A agent (also reactivates its associated tool)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/a2a/$A2A_ID/state?activate=true | jq '.'
+```
+
+!!! note "State Cascade"
+    Toggling an A2A agent's state automatically cascades to its associated MCP tool. Deactivating an agent removes its tool from virtual server listings; reactivating restores it. This is consistent with gateway deactivation, which cascades to all child tools, prompts, and resources.
+
 ### Delete A2A Agent
 
 ```bash
@@ -1306,7 +1339,7 @@ export BASE_URL="http://localhost:4444"
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
-  --secret my-test-key 2>/dev/null | head -1)
+  --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
 
 echo "=== ContextForge E2E Test ==="
 echo

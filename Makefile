@@ -64,7 +64,7 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 	$(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
 	.depsorter_cache.json .depupdate.* \
-	grype-results.sarif devskim-results.sarif \
+	devskim-results.sarif \
 	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb \
 	*.log mcpgateway.sbom.xml
 
@@ -119,7 +119,7 @@ help:
 # 🔧 SYSTEM-LEVEL DEPENDENCIES
 # -----------------------------------------------------------------------------
 # help: 🔧 SYSTEM-LEVEL DEPENDENCIES (DEV BUILD ONLY)
-# help: os-deps              - Install Graphviz, Pandoc, Trivy, SCC used for dev docs generation and security scan
+# help: os-deps              - Install Graphviz, Pandoc, SCC used for dev docs generation
 OS_DEPS_SCRIPT := ./os_deps.sh
 
 .PHONY: os-deps
@@ -146,8 +146,8 @@ endef
 define ensure_pip_package
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip show $(1) >/dev/null 2>&1 || \
-		uv pip install -q $(1)"
+		$(UV_BIN) pip show $(1) >/dev/null 2>&1 || \
+		$(UV_BIN) pip install -q $(1)"
 endef
 
 # =============================================================================
@@ -164,18 +164,21 @@ endef
 .PHONY: uv
 uv:
 	@if ! type uv >/dev/null 2>&1 && ! test -x "$(HOME)/.local/bin/uv"; then \
-		echo "🔧 'uv' not found - installing..."; \
+		echo "❌ 'uv' not found."; \
 		if type brew >/dev/null 2>&1; then \
-			echo "🍺 Installing 'uv' via Homebrew..."; \
-			brew install uv; \
+			echo "💡 Install 'uv' via Homebrew or another trusted package manager:"; \
+			echo "   brew install uv"; \
+			exit 1; \
 		else \
-			echo "🐍 Installing 'uv' via local install script..."; \
-			curl -LsSf https://astral.sh/uv/install.sh | sh ; \
+			echo "💡 Install uv from a trusted package manager or pinned release:"; \
+			echo "   https://docs.astral.sh/uv/getting-started/installation/"; \
+			exit 1; \
 		fi; \
 	fi
 
 # UV_BIN: prefer uv in PATH, fallback to ~/.local/bin/uv
 UV_BIN := $(shell type -p uv 2>/dev/null || echo "$(HOME)/.local/bin/uv")
+export UV_BIN
 
 .PHONY: venv
 venv: uv
@@ -190,15 +193,15 @@ activate:
 
 .PHONY: install
 install: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install ."
 
 .PHONY: install-db
 install-db: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install .[redis,postgres]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install .[redis,postgres]"
 
 .PHONY: install-dev
 install-dev: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --group dev ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev ."
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"; \
@@ -209,7 +212,7 @@ install-dev: venv
 .PHONY: update
 update:
 	@echo "⬆️   Updating installed dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -U --group dev ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -U --group dev ."
 
 # help: check-env            - Verify all required env vars in .env are present
 .PHONY: check-env check-env-dev
@@ -777,7 +780,7 @@ coverage-pytest: install-dev
 		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
 		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
+			--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
 			--durations=120 --cov-report=term --cov=mcpgateway \
 			$(PYTEST_IGNORE_FLAGS) tests/ || true"
 
@@ -791,7 +794,7 @@ coverage: coverage-pytest install-dev
 		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
 		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
-			--dist loadgroup -n auto -rA --cov-append --capture=fd -v \
+			--dist loadgroup -n auto -rfE --cov-append --capture=fd -v \
 			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
 			--cov=mcpgateway mcpgateway/ || true"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
@@ -1432,7 +1435,7 @@ inspector-up:                              ## Start MCP Inspector (interactive M
 	@echo ""
 	@echo "   Generate a JWT token:"
 	@echo "      python -m mcpgateway.utils.create_jwt_token \\"
-	@echo "        --username admin@example.com --exp 10080 --secret my-test-key --algo HS256"
+	@echo "        --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes --algo HS256"
 	@echo ""
 
 inspector-down:                            ## Stop MCP Inspector
@@ -1551,6 +1554,8 @@ demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 # help: resilience-logs        - Show resilience stack logs
 # help: resilience-locust      - Run Locust load test against slow-time-server (10 users, 120s)
 # help: resilience-locust-ui   - Start Locust web UI for slow-time-server
+# help: test-secrets-detection-plugin - Validate the secrets detection plugin end to end
+# help: test-pii-filter-plugin        - Validate the PII filter plugin changes
 # help: resilience-jmeter      - Run JMeter baseline test against slow-time-server (20 threads, 5min)
 
 RESILIENCE_HOST ?= http://localhost:8889
@@ -1865,6 +1870,20 @@ LOADTEST_UI_PORT ?= 8090
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
+
+# Secrets Detection Benchmark Configuration
+# These values are tuned for focused plugin performance comparison
+SECRET_DETECTION_LOCUSTFILE := tests/loadtest/locustfile_secret_detection.py
+SECRET_DETECTION_LOADTEST_HOST ?= http://localhost:8080
+SECRET_DETECTION_LOADTEST_USERS ?= 100          # Moderate load to isolate plugin overhead
+SECRET_DETECTION_LOADTEST_SPAWN_RATE ?= 10      # Gradual ramp-up for stable measurements
+SECRET_DETECTION_LOADTEST_RUN_TIME ?= 60s       # 1 minute per phase (Rust + Python)
+SECRET_DETECTION_BENCH_GATEWAY_REPLICAS ?= 1    # Single replica for consistent comparison
+SECRET_DETECTION_BENCH_GUNICORN_WORKERS ?= 2    # Minimal workers to highlight plugin impact
+SECRET_DETECTION_BENCH_CPU_LIMIT ?= 1           # 1 core limit to amplify performance differences
+SECRET_DETECTION_BENCH_CPU_RESERVATION ?= 0.5   # Reserve half core for baseline
+SECRET_DETECTION_BENCH_MEM_LIMIT ?= 3G          # Generous memory to avoid OOM
+SECRET_DETECTION_BENCH_MEM_RESERVATION ?= 1G    # Reserve 1GB baseline
 # Auto-detect c-ares resolver availability (empty string if unavailable)
 LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
@@ -2152,6 +2171,45 @@ load-test-fasttime:                        ## Load test fast_time MCP tools (50 
 			FastTimeUser \
 			--only-summary"
 	@echo "✅ Report: reports/loadtest_fasttime.html"
+
+.PHONY: test-secrets-detection-plugin
+test-secrets-detection-plugin: rust-ensure-deps ## Validate the secrets detection plugin end to end
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@echo "🧪 Validating secrets detection plugin..."
+	@cd plugins_rust/secrets_detection && cargo test
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path plugins_rust/secrets_detection/Cargo.toml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pytest tests/unit/plugins/test_secrets_detection.py -q"
+
+.PHONY: test-pii-filter-plugin
+test-pii-filter-plugin: rust-ensure-deps ## Validate the PII filter plugin changes
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@echo "🧪 Validating PII filter plugin..."
+	@cd plugins_rust/pii_filter && cargo test
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && maturin develop --manifest-path plugins_rust/pii_filter/Cargo.toml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python -m pytest tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py -q -k 'secret_like_values_are_not_pii or prompt_post_fetch'"
+
+.PHONY: load-test-secret-detection-compare
+load-test-secret-detection-compare:        ## Focused secrets-detection benchmark: Rust run first, then forced Python fallback
+	@echo "🔐 Running focused secrets-detection benchmark..."
+	@echo "   Host: $(SECRET_DETECTION_LOADTEST_HOST)"
+	@echo "   Users: $(SECRET_DETECTION_LOADTEST_USERS)"
+	@echo "   Spawn rate: $(SECRET_DETECTION_LOADTEST_SPAWN_RATE)/s"
+	@echo "   Duration: $(SECRET_DETECTION_LOADTEST_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@VENV_DIR="$(VENV_DIR)" \
+	COMPOSE_CMD="$(COMPOSE_CMD)" \
+	IMAGE_LOCAL_NAME="$(call get_image_name)" \
+	SECRET_DETECTION_LOADTEST_HOST="$(SECRET_DETECTION_LOADTEST_HOST)" \
+	SECRET_DETECTION_LOADTEST_USERS="$(SECRET_DETECTION_LOADTEST_USERS)" \
+	SECRET_DETECTION_LOADTEST_SPAWN_RATE="$(SECRET_DETECTION_LOADTEST_SPAWN_RATE)" \
+	SECRET_DETECTION_LOADTEST_RUN_TIME="$(SECRET_DETECTION_LOADTEST_RUN_TIME)" \
+	SECRET_DETECTION_BENCH_GATEWAY_REPLICAS="$(SECRET_DETECTION_BENCH_GATEWAY_REPLICAS)" \
+	SECRET_DETECTION_BENCH_GUNICORN_WORKERS="$(SECRET_DETECTION_BENCH_GUNICORN_WORKERS)" \
+	SECRET_DETECTION_BENCH_CPU_LIMIT="$(SECRET_DETECTION_BENCH_CPU_LIMIT)" \
+	SECRET_DETECTION_BENCH_CPU_RESERVATION="$(SECRET_DETECTION_BENCH_CPU_RESERVATION)" \
+	SECRET_DETECTION_BENCH_MEM_LIMIT="$(SECRET_DETECTION_BENCH_MEM_LIMIT)" \
+	SECRET_DETECTION_BENCH_MEM_RESERVATION="$(SECRET_DETECTION_BENCH_MEM_RESERVATION)" \
+	bash tests/loadtest/run_secret_detection_compare.sh
 
 load-test-1000:                            ## High-load test (1000 users, 120s) - requires tuned compose
 	@echo "🔥 Running HIGH LOAD test (1000 users, ~1000 RPS)..."
@@ -2557,7 +2615,7 @@ JMETER_RENDERED_DIR := $(CURDIR)/.jmeter/rendered
 JMETER_RENDER := python3 $(JMETER_DIR)/render_fragments.py --out $(JMETER_RENDERED_DIR)
 JMETER_GATEWAY_URL ?= http://localhost:8080
 export JMETER_OPTS ?= -Djava.util.prefs.userRoot=/tmp/jmeter-prefs -Djava.util.prefs.systemRoot=/tmp/jmeter-prefs
-JMETER_JWT_SECRET ?= $(or $(JWT_SECRET_KEY),my-test-key)
+JMETER_JWT_SECRET ?= $(or $(JWT_SECRET_KEY),my-test-key-but-now-longer-than-32-bytes)
 JMETER_TOKEN ?= $(shell python3 -m mcpgateway.utils.create_jwt_token --data '{"sub":"admin@example.com","is_admin":true,"teams":null}' --exp 10080 --secret $(JMETER_JWT_SECRET) 2>/dev/null || echo "")
 JMETER_SERVER_ID ?=
 JMETER_FAST_TIME_URL ?= http://localhost:8888
@@ -2930,7 +2988,7 @@ mutmut-clean:
 .PHONY: ensure-pip-licenses pip-licenses license-check scc scc-report
 
 ensure-pip-licenses:
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q pip-licenses"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q pip-licenses"
 
 pip-licenses: ensure-pip-licenses
 	@mkdir -p $(dir $(LICENSES_MD))
@@ -3079,7 +3137,6 @@ images:
 # help: pyright              - Static type-checking with Pyright
 # help: radon                - Code complexity & maintainability metrics
 # help: pyroma               - Validate packaging metadata
-# help: importchecker        - Detect orphaned imports
 # help: spellcheck           - Spell-check the codebase
 # help: fawltydeps           - Detect undeclared / unused deps
 # help: wily                 - Maintainability report
@@ -3093,7 +3150,6 @@ images:
 # help: sbom                 - Produce a CycloneDX SBOM and vulnerability scan
 # help: pytype               - Flow-sensitive type checker
 # help: check-manifest       - Verify sdist/wheel completeness
-# help: unimport             - Unused import detection
 # help: vulture              - Dead code detection
 # help: linting-workflow-actionlint  - Lint GitHub Actions workflows (actionlint; shellcheck disabled)
 # help: linting-workflow-zizmor      - Security-focused linting of GitHub Actions workflows
@@ -3133,12 +3189,12 @@ endif
 
 # List of individual lint targets
 LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle \
-	ruff ty pyright radon pyroma pyrefly spellcheck importchecker \
-		pytype check-manifest markdownlint vulture unimport
+	ruff ty pyright radon pyroma pyrefly spellcheck \
+		pytype check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
 FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
-	pycodestyle ruff pyright vulture unimport markdownlint
+	pycodestyle ruff pyright vulture markdownlint
 
 .PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
@@ -3294,7 +3350,7 @@ LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
 LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
 LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
 LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
-LINT_GO_TOOLCHAIN ?= go1.25.7
+LINT_GO_TOOLCHAIN ?= go1.25.8
 
 # Tool target defaults
 LINT_ZIZMOR_TARGET ?= .github/workflows
@@ -3742,9 +3798,6 @@ radon:                              ## 📈  Complexity / MI metrics
 pyroma:                             ## 📦  Packaging metadata check
 	@$(VENV_DIR)/bin/pyroma -d .
 
-importchecker:                      ## 🧐  Orphaned import detector
-	@$(VENV_DIR)/bin/importchecker .
-
 spellcheck:                         ## 🔤  Spell-check
 	@$(VENV_DIR)/bin/pyspelling || true
 
@@ -3813,9 +3866,9 @@ tox:                                ## 🧪  Multi-Python tox matrix (uv)
 sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report..."
 	@rm -Rf "$(VENV_DIR).sbom"
-	@uv venv "$(VENV_DIR).sbom"
-	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && uv pip install .[dev]"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q cyclonedx-bom sbom2doc"
+	@$(UV_BIN) venv "$(VENV_DIR).sbom"
+	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && $(UV_BIN) pip install .[dev]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q cyclonedx-bom sbom2doc"
 	@echo "🔍  Generating SBOM from environment..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m cyclonedx_py environment \
@@ -3828,17 +3881,10 @@ sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "📋  Converting SBOM to markdown..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		sbom2doc -i $(PROJECT_NAME).sbom.xml -f markdown -o $(DOCS_DIR)/docs/test/sbom.md"
-	@echo "🔒  Running security scans..."
-	@/bin/bash -c "if command -v trivy >/dev/null 2>&1; then \
-		echo '## Trivy Vulnerability Scan' >> $(DOCS_DIR)/docs/test/sbom.md; \
-		echo '' >> $(DOCS_DIR)/docs/test/sbom.md; \
-		trivy sbom $(PROJECT_NAME).sbom.xml | tee -a $(DOCS_DIR)/docs/test/sbom.md; \
-	else \
-		echo '⚠️  trivy not found, skipping vulnerability scan'; \
-		echo '## Security Scan' >> $(DOCS_DIR)/docs/test/sbom.md; \
-		echo '' >> $(DOCS_DIR)/docs/test/sbom.md; \
-		echo 'Trivy not available - install with: brew install trivy' >> $(DOCS_DIR)/docs/test/sbom.md; \
-	fi"
+	@echo "🔒  Recording local scan guidance..."
+	@echo '## Security Scan' >> $(DOCS_DIR)/docs/test/sbom.md
+	@echo '' >> $(DOCS_DIR)/docs/test/sbom.md
+	@echo 'Review the generated SBOM separately before publishing the image.' >> $(DOCS_DIR)/docs/test/sbom.md
 	@echo "📊  Checking for outdated packages..."
 	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && \
 		echo '## Outdated Packages' >> $(DOCS_DIR)/docs/test/sbom.md && \
@@ -3856,9 +3902,6 @@ pytype:								## 🧠  Pytype static type analysis
 check-manifest:						## 📦  Verify MANIFEST.in completeness
 	@echo "📦  Verifying MANIFEST.in completeness..."
 	@$(VENV_DIR)/bin/check-manifest
-
-unimport:                           ## 📦  Unused import detection
-	@echo "📦  unimport $(TARGET)…" && $(VENV_DIR)/bin/unimport --check --diff $(TARGET)
 
 vulture:                            ## 🧹  Dead code detection
 	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
@@ -4213,42 +4256,14 @@ lint-complexity:						## 📈 Analyze code complexity
 		$(VENV_DIR)/bin/radon mi $(TARGET) -s"
 
 # -----------------------------------------------------------------------------
-# 📑 GRYPE SECURITY/VULNERABILITY SCANNING
+# 📑 CONTAINER SECURITY REVIEW
 # -----------------------------------------------------------------------------
-# help: grype-install        - Install Grype
-# help: grype-scan           - Scan all files using grype
-# help: grype-sarif          - Generate SARIF report
-# help: security-scan        - Run Trivy and Grype security-scan
-.PHONY: grype-install grype-scan grype-sarif security-scan
+# help: security-scan        - Show current local container review guidance
+.PHONY: security-scan
 
-grype-install:
-	@echo "📥 Installing Grype CLI..."
-	@curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sudo sh -s -- -b /usr/local/bin
-
-grype-scan:
-	@command -v grype >/dev/null 2>&1 || { \
-		echo "❌ grype not installed."; \
-		echo "💡 Install with:"; \
-		echo "   • curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin"; \
-		echo "   • Or run: make grype-install"; \
-		exit 1; \
-	}
-	@echo "🔍 Grype vulnerability scan..."
-	@grype $(IMG) --scope all-layers
-
-grype-sarif:
-	@command -v grype >/dev/null 2>&1 || { \
-		echo "❌ grype not installed."; \
-		echo "💡 Install with:"; \
-		echo "   • curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin"; \
-		echo "   • Or run: make grype-install"; \
-		exit 1; \
-	}
-	@echo "📄 Generating Grype SARIF report..."
-	@grype $(IMG) --scope all-layers --output sarif --file grype-results.sarif
-
-security-scan: trivy grype-scan
-	@echo "✅ Multi-engine security scan complete"
+security-scan:
+	@echo "ℹ️  No repo-managed local container vulnerability scanner is configured."
+	@echo "ℹ️  Review the generated SBOM and use your preferred pinned scanner separately."
 
 # -----------------------------------------------------------------------------
 # 📑 YAML / JSON / TOML LINTERS
@@ -4555,29 +4570,6 @@ sonar-info:
 # 🛡️  SECURITY & PACKAGE SCANNING
 # =============================================================================
 # help: 🛡️ SECURITY & PACKAGE SCANNING
-# help: trivy-install        - Install Trivy
-# help: trivy                - Scan container image for CVEs (HIGH/CRIT). Needs podman socket enabled
-.PHONY: trivy-install trivy
-
-trivy-install:
-	@echo "📥 Installing Trivy..."
-	@curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-
-trivy:
-	@command -v trivy >/dev/null 2>&1 || { \
-		echo "❌ trivy not installed."; \
-		echo "💡 Install with:"; \
-		echo "   • macOS: brew install trivy"; \
-		echo "   • Linux: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"; \
-		echo "   • Or run: make trivy-install"; \
-		exit 1; \
-	}
-	@if command -v systemctl >/dev/null 2>&1; then \
-		systemctl --user enable --now podman.socket 2>/dev/null || true; \
-	fi
-	@echo "🔎  trivy vulnerability scan..."
-	@trivy --format table --severity HIGH,CRITICAL image $(IMG)
-
 # help: dockle               - Lint the built container image via tarball (no daemon/socket needed)
 .PHONY: dockle
 DOCKLE_IMAGE ?= $(IMG)         # mcpgateway/mcpgateway:latest
@@ -5873,19 +5865,31 @@ ibmcloud-check-env:
 		fi'
 
 ibmcloud-cli-install:
-	@echo "☁️  Detecting OS and installing IBM Cloud CLI..."
+	@echo "☁️  Detecting OS and preparing IBM Cloud CLI install guidance..."
 	@if grep -qi microsoft /proc/version 2>/dev/null; then \
 		echo "🔧 Detected WSL2"; \
-		curl -fsSL https://clis.cloud.ibm.com/install/linux | sh; \
+		echo "❌ Refusing to install IBM Cloud CLI via curl | sh."; \
+		echo "💡 Install from IBM's official packaged distribution instead:"; \
+		echo "   https://cloud.ibm.com/docs/cli?topic=cli-getting-started"; \
+		exit 1; \
 	elif [ "$$(uname)" = "Darwin" ]; then \
 		echo "🍏 Detected macOS"; \
-		curl -fsSL https://clis.cloud.ibm.com/install/osx | sh; \
+		echo "❌ Refusing to install IBM Cloud CLI via curl | sh."; \
+		echo "💡 Install from IBM's official packaged distribution instead:"; \
+		echo "   https://cloud.ibm.com/docs/cli?topic=cli-getting-started"; \
+		exit 1; \
 	elif [ "$$(uname)" = "Linux" ]; then \
 		echo "🐧 Detected Linux"; \
-		curl -fsSL https://clis.cloud.ibm.com/install/linux | sh; \
+		echo "❌ Refusing to install IBM Cloud CLI via curl | sh."; \
+		echo "💡 Install from IBM's official packaged distribution instead:"; \
+		echo "   https://cloud.ibm.com/docs/cli?topic=cli-getting-started"; \
+		exit 1; \
 	elif command -v powershell.exe >/dev/null; then \
 		echo "🪟 Detected Windows"; \
-		powershell.exe -Command "iex (New-Object Net.WebClient).DownloadString('https://clis.cloud.ibm.com/install/powershell')"; \
+		echo "❌ Refusing to install IBM Cloud CLI via remote PowerShell script."; \
+		echo "💡 Install from IBM's official packaged distribution instead:"; \
+		echo "   https://cloud.ibm.com/docs/cli?topic=cli-getting-started"; \
+		exit 1; \
 	else \
 		echo "❌ Unsupported OS"; exit 1; \
 	fi
@@ -6183,7 +6187,10 @@ helm-install:
 	@if [ "$(shell uname)" = "Darwin" ]; then \
 	  brew install helm; \
 	elif [ "$(shell uname)" = "Linux" ]; then \
-	  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash; \
+	  echo "❌ Refusing to install Helm via curl | bash."; \
+	  echo "💡 Install Helm from a trusted package manager or pinned release:"; \
+	  echo "   https://helm.sh/docs/intro/install/"; \
+	  exit 1; \
 	elif command -v powershell.exe >/dev/null; then \
 	  powershell.exe -NoProfile -Command "choco install -y kubernetes-helm"; \
 	else \
@@ -6311,7 +6318,7 @@ LOCAL_PYPI_AUTH := $(LOCAL_PYPI_DIR)/.htpasswd
 
 local-pypi-install:
 	@echo "📦  Installing pypiserver..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install 'pypiserver>=2.3.0' passlib"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install 'pypiserver>=2.3.0' passlib"
 	@mkdir -p $(LOCAL_PYPI_DIR)
 
 local-pypi-start: local-pypi-install local-pypi-stop
@@ -6403,7 +6410,7 @@ local-pypi-test:
 local-pypi-clean: clean dist local-pypi-start-auth local-pypi-upload-auth local-pypi-test
 	@echo "🎉  Full local PyPI cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip show $(PROJECT_NAME)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip show $(PROJECT_NAME)"
 
 # Convenience target to restart server
 local-pypi-restart: local-pypi-stop local-pypi-start
@@ -6581,7 +6588,7 @@ devpi-test:
 devpi-clean: clean dist devpi-upload devpi-test
 	@echo "🎉  Full devpi cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip show mcp-contextforge-gateway"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip show mcp-contextforge-gateway"
 
 .PHONY: devpi-status
 devpi-status:
@@ -6750,7 +6757,7 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
 	  echo "🛠  Installing bashate (into venv)..." ; \
 	  test -d "$(VENV_DIR)" || $(MAKE) venv ; \
-	  /bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q bashate" ; \
+	  /bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q bashate" ; \
 	fi
 	@echo "✅  Shell linters ready."
 
@@ -6817,7 +6824,7 @@ ALEMBIC_CONFIG = mcpgateway/alembic.ini
 
 alembic-install:
 	@echo "➜ Installing Alembic ..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q alembic sqlalchemy"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q alembic sqlalchemy"
 
 .PHONY: db-init
 db-init: ## Initialize alembic migrations
@@ -7140,6 +7147,8 @@ test-full: coverage test-js test-ui-report
 # help: pip-audit           - Audit Python dependencies for published CVEs
 # help: gitleaks-install    - Install gitleaks secret scanner
 # help: gitleaks            - Scan git history for secrets
+# help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
+# help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
 # help: sri-generate        - Generate SRI hashes for CDN resources
 # help: sri-verify          - Verify SRI hashes match current CDN content
@@ -7358,6 +7367,22 @@ gitleaks:                           ## 🔍 Scan for secrets in git history
 	@echo "🔍 Scanning for secrets with gitleaks..."
 	@gitleaks detect --source . -v || true
 	@echo "💡 To scan git history: gitleaks detect --source . --log-opts='--all'"
+
+.PHONY: detect-secrets-scan
+detect-secrets-scan: install-dev             ## 🔍  detect-secrets scan for secrets in repository
+	@echo "🔍 Running detect-secrets scan..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets scan --update .secrets.baseline --use-all-plugins"
+
+.PHONY: detect-secrets-audit
+detect-secrets-audit: install-dev            ## 🔎  detect-secrets audit for reviewing findings
+	@echo "🔎 Running detect-secrets audit..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets audit .secrets.baseline"
+
+.PHONY: detect-secrets-hook
+detect-secrets-hook: install-dev              ## 🔎  detect-secrets pre-commit hook equivalent
+	@echo "🔎 Running detect-secrets-hook pre-commit hook equivalent..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && detect-secrets-hook --baseline .secrets.baseline --use-all-plugins --fail-on-unaudited"
+
 
 ## --------------------------------------------------------------------------- ##
 ##  DevSkim (.NET-based security patterns scanner)
@@ -8107,6 +8132,7 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-test-integration                 - Run Rust integration tests
 # help: rust-test-all                         - Run all Rust and Python integration tests
 # help: rust-bench                            - Run Rust plugin benchmarks
+# help: rust-bench-build                      - Compile Rust plugin benchmarks without running them
 # help: rust-bench-compare                    - Compare Rust vs Python performance (with benchmarks)
 # help: rust-compare                          - Run compare_performance.py only (skip benchmarks)
 # help: rust-check                            - Run all Rust checks (format, lint, test)
@@ -8125,17 +8151,17 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 # help: rust-mcp-runtime-test                 - Run tests for the experimental Rust MCP runtime
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 
-.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
+.PHONY: rust-build rust-dev rust-test rust-test-integration rust-python-test rust-test-all rust-bench rust-bench-build rust-bench-compare rust-compare rust-check rust-clean rust-verify rust-verify-stubs
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
 rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and all plugins are installed
 	@if ! command -v rustup > /dev/null 2>&1; then \
-		echo "🦀 Rust not found. Installing Rust toolchain..."; \
-		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
-		echo "✅ Rust installed successfully."; \
-		echo "⚠️  Please run 'source \"$$HOME/.cargo/env\"' or restart your shell, then run 'make' again."; \
+		echo "🦀 Rust not found."; \
+		echo "❌ Refusing to install Rust via remote shell bootstrapper."; \
+		echo "💡 Install rustup from a trusted package manager or pinned release:"; \
+		echo "   https://rustup.rs/"; \
 		exit 1; \
 	fi
 	@if ! command -v cargo > /dev/null 2>&1; then \
@@ -8146,7 +8172,7 @@ rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and a
 	@if ! command -v maturin > /dev/null 2>&1; then \
 		if [ -f "$(VENV_DIR)/bin/activate" ]; then \
 			echo "📦 Installing maturin into venv..."; \
-			/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
+			/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install maturin"; \
 		elif command -v pip > /dev/null 2>&1; then \
 			echo "📦 Installing maturin globally (venv not found)..."; \
 			pip install maturin; \
@@ -8175,6 +8201,9 @@ rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
 
 rust-bench: rust-ensure-deps            ## Run Rust benchmarks
 	@$(MAKE) -C plugins_rust bench
+
+rust-bench-build: rust-ensure-deps      ## Compile Rust plugin benchmarks without running them
+	@$(MAKE) -C plugins_rust bench-build
 
 rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
 	@$(MAKE) -C plugins_rust bench-compare

@@ -700,9 +700,13 @@ class TestSecurityValidation:
                 print(f"❌ Valid content rejected: type={type(content).__name__}, length={len(content)} -> {err}")
                 raise
 
-        # Invalid content - too large
-        logger.debug("Testing content that exceeds max length")
-        must_fail("x" * (SecurityValidator.MAX_CONTENT_LENGTH + 1), "Content too large")
+        # Content size validation is enforced at the service layer (returns 413),
+        # not at the Pydantic schema level. Schema only validates encoding and
+        # dangerous patterns. Verify oversized content passes schema validation.
+        logger.debug("Testing content exceeding max length passes schema (validated at service layer)")
+        oversized = "x" * (SecurityValidator.MAX_CONTENT_LENGTH + 1)
+        resource = ResourceCreate(uri="test://uri", name="Resource", content=oversized)
+        assert resource.content == oversized
 
         # Invalid content - HTML tags
         for i, payload in enumerate(self.XSS_PAYLOADS[:5]):
@@ -791,11 +795,11 @@ class TestSecurityValidation:
                 PromptCreate(name="test_prompt", template=payload)
             logger.debug(f"Validation error: {exc_info.value}")
 
-        # Invalid templates - too long
-        logger.debug("Testing template that exceeds max length")
-        with pytest.raises(ValidationError) as exc_info:
-            PromptCreate(name="test_prompt", template="x" * (SecurityValidator.MAX_TEMPLATE_LENGTH + 1))
-        logger.debug(f"Validation error: {exc_info.value}")
+        # Template size validation is enforced at the service layer (returns 413),
+        # not at the Pydantic schema level. Verify oversized template passes schema.
+        logger.debug("Testing template exceeding max length passes schema (validated at service layer)")
+        oversized = PromptCreate(name="test_prompt", template="x" * (SecurityValidator.MAX_TEMPLATE_LENGTH + 1))
+        assert len(oversized.template) == SecurityValidator.MAX_TEMPLATE_LENGTH + 1
 
     def test_prompt_argument_validation(self):
         """Test prompt argument validation."""
@@ -992,7 +996,7 @@ class TestSecurityValidation:
         start = time.time()
         try:
             ToolCreate(name="short", url=self.VALID_URL)
-        except:
+        except Exception:
             pass
         short_time = time.time() - start
 
@@ -1000,7 +1004,7 @@ class TestSecurityValidation:
         start = time.time()
         try:
             ToolCreate(name="a" * 50, url=self.VALID_URL)
-        except:
+        except Exception:
             pass
         long_time = time.time() - start
 
@@ -1582,11 +1586,11 @@ class TestSpecificAttackVectors:
         resource = ResourceCreate(uri="test.txt", name="Large Resource", content=zip_bomb_content)
         assert len(resource.content) == 1000000
 
-        # But prevent extremely large content
-        logger.debug("Testing content exceeding max length")
-        with pytest.raises(ValidationError) as exc_info:
-            ResourceCreate(uri="test.txt", name="Too Large Resource", content="A" * (SecurityValidator.MAX_CONTENT_LENGTH + 1))
-        logger.debug(f"Validation error: {exc_info.value}")
+        # Content size is now enforced at the service layer (returns 413),
+        # not at the Pydantic schema level. Verify schema accepts oversized content.
+        logger.debug("Testing oversized content passes schema (validated at service layer)")
+        oversized_resource = ResourceCreate(uri="test.txt", name="Too Large Resource", content="A" * (SecurityValidator.MAX_CONTENT_LENGTH + 1))
+        assert len(oversized_resource.content) == SecurityValidator.MAX_CONTENT_LENGTH + 1
 
     def test_cache_poisoning_prevention(self):
         """Test cache poisoning attack prevention."""
@@ -2085,14 +2089,14 @@ class TestSecurityBestPractices:
             start = time.time()
             try:
                 ToolCreate(name="valid_name", url="https://example.com")
-            except:
+            except Exception:
                 pass
             valid_times.append(time.perf_counter() - start)
 
             start = time.perf_counter()
             try:
                 ToolCreate(name="<script>alert('XSS')</script>", url="https://example.com")
-            except:
+            except Exception:
                 pass
             invalid_times.append(time.perf_counter() - start)
 
