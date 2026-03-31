@@ -44,6 +44,7 @@ Examples:
 # Standard
 import asyncio
 import binascii
+from contextlib import suppress
 from datetime import datetime, timezone
 import logging
 import mimetypes
@@ -648,7 +649,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 logger.warning(f"Failed to release Redis leader key on shutdown: {e}")
 
-        if hasattr(self, '_follower_election_task') and self._follower_election_task:
+        if hasattr(self, "_follower_election_task") and self._follower_election_task:
             self._follower_election_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._follower_election_task
@@ -3935,7 +3936,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if current_leader != self._instance_id:
                     logger.info("Lost Redis leadership, stopping heartbeat")
                     # Start follower election to try to reclaim leadership
-                    if not hasattr(self, '_follower_election_task') or self._follower_election_task is None or self._follower_election_task.done():
+                    if not hasattr(self, "_follower_election_task") or self._follower_election_task is None or self._follower_election_task.done():
                         self._follower_election_task = asyncio.create_task(self._run_follower_election(settings.platform_admin_email))
                     return
 
@@ -3952,18 +3953,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.error("Too many consecutive heartbeat failures, attempting re-election")
                     # Try to re-acquire leadership after Redis recovery
                     try:
-                        is_leader = await self._redis_client.set(
-                            self._leader_key, 
-                            self._instance_id, 
-                            ex=self._leader_ttl, 
-                            nx=True
-                        )
+                        is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
                         if is_leader:
                             logger.info("Re-acquired leadership after Redis recovery")
                             consecutive_failures = 0
                         else:
                             logger.info("Could not re-acquire leadership, starting follower election")
-                            if not hasattr(self, '_follower_election_task') or self._follower_election_task is None or self._follower_election_task.done():
+                            if not hasattr(self, "_follower_election_task") or self._follower_election_task is None or self._follower_election_task.done():
                                 self._follower_election_task = asyncio.create_task(self._run_follower_election(settings.platform_admin_email))
                             return
                     except Exception as retry_error:
@@ -3975,24 +3971,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         This runs on follower instances and polls Redis to claim leadership
         when the current leader key expires or becomes available.
+
+        Args:
+            user_email: Email of the user for OAuth token lookup
         """
         retry_interval = max(1, self._leader_ttl // 3)  # Poll at 1/3 of TTL
 
         while True:
             try:
                 await asyncio.sleep(retry_interval)
-                
+
                 if not self._redis_client:
                     logger.warning("Redis client unavailable, cannot attempt election.")
                     continue
 
                 # Attempt to acquire leadership
-                is_leader = await self._redis_client.set(
-                    self._leader_key, 
-                    self._instance_id, 
-                    ex=self._leader_ttl, 
-                    nx=True
-                )
+                is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
 
                 if is_leader:
                     logger.info("Acquired Redis leadership via follower election. Starting health check and heartbeat.")
