@@ -109,6 +109,7 @@ Scan results are accessible via the admin API (requires authentication):
 | `GET /container-scanner/health` | Liveness check and result count |
 | `GET /container-scanner/scans` | All results, most recent first |
 | `GET /container-scanner/scans/{image_ref}` | Result for a specific image ref or digest |
+| `POST /scan` | Manually trigger a scan; body: `{"image_ref": "...", "image_digest": null}` |
 
 Each result includes a `vulnerabilities` array with full CVE detail:
 
@@ -139,7 +140,19 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ## Admin UI
 
-When `PLUGINS_ENABLED=true` and the plugin is configured, scan results appear in the gateway Admin UI under the **Container Scanner** tab.
+The container scanner ships its own self-contained dashboard, served by the plugin's MCP server on a dedicated port.
+
+### Starting the server
+
+```bash
+# Default port (8000)
+python -m plugins.container_scanner.server
+
+# Custom port
+PLUGINS_SERVER_PORT=8100 python -m plugins.container_scanner.server
+```
+
+Then open **`http://localhost:8000/`** (or the port you set) in a browser.
 
 ### Summary table
 
