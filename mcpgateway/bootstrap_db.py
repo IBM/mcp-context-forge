@@ -36,7 +36,9 @@ from importlib.resources import files
 import json
 import os
 from pathlib import Path
+import random
 import tempfile
+import time
 from typing import cast
 
 # Third-Party
@@ -138,13 +140,10 @@ def advisory_lock(conn: Connection):
 
             # Exponential backoff with jitter
             delay = min(base_delay * (1.5**attempt), max_delay)
-            jitter = delay * 0.1 * (2 * (attempt % 2) - 1)  # ±10% jitter
+            jitter = delay * random.uniform(-0.1, 0.1)  # nosec B311  # noqa: DUO102
             sleep_time = delay + jitter
 
             logger.info(f"Lock held by another instance, retrying in {sleep_time:.1f}s (attempt {attempt + 1}/{max_retries})")
-            # Standard
-            import time
-
             time.sleep(sleep_time)
 
         if not acquired:
