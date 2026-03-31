@@ -10,6 +10,7 @@ This module tests Issue #840 features:
 These tests use the official a2a-sdk to create proper A2A servers and clients,
 ensuring compatibility with the A2A protocol specification.
 """
+
 import socket
 from contextlib import closing
 from unittest.mock import MagicMock

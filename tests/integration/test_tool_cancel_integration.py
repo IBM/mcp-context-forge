@@ -209,7 +209,6 @@ async def test_cancel_endpoint_handles_broadcast_errors(auth_headers, monkeypatc
         assert status["cancelled"] is True
 
 
-
 # Tests for feature disabled state
 #
 # TEST GAP ACKNOWLEDGMENT:

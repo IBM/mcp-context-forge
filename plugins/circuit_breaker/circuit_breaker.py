@@ -281,6 +281,7 @@ class CircuitBreakerPlugin(Plugin):
                 st.open_until = now + max(1, int(cfg.cooldown_seconds))
                 try:
                     from mcpgateway.services.metrics import circuit_breaker_open_counter
+
                     circuit_breaker_open_counter.labels(tool_name=tool).inc()
                 except Exception:
                     pass
@@ -310,6 +311,7 @@ class CircuitBreakerPlugin(Plugin):
                 st.open_until = now + max(1, int(cfg.cooldown_seconds))
                 try:
                     from mcpgateway.services.metrics import circuit_breaker_open_counter
+
                     circuit_breaker_open_counter.labels(tool_name=tool).inc()
                 except Exception:
                     pass

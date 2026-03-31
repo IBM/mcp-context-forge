@@ -24,6 +24,7 @@ class DummyElicitResult:
 # SERVICE INITIALIZATION AND CLEANUP
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_service_start_and_shutdown(monkeypatch):
     service = svc.ElicitationService(default_timeout=0.1, max_concurrent=2, cleanup_interval=1)
@@ -58,9 +59,7 @@ async def test_create_elicitation_and_complete(monkeypatch):
         service.complete_elicitation(req_id, result)
 
     schema = {"type": "object", "properties": {"x": {"type": "string"}}}
-    task = asyncio.create_task(
-        service.create_elicitation("u", "d", "msg", schema, timeout=0.5)
-    )
+    task = asyncio.create_task(service.create_elicitation("u", "d", "msg", schema, timeout=0.5))
 
     # give coroutine time to execute and create _pending
     for _ in range(30):
@@ -112,6 +111,7 @@ def test_complete_get_and_count(monkeypatch):
 # CLEANUP LOOP AND EXPIRED CLEANUP
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.asyncio
 async def test_cleanup_expired(monkeypatch):
     service = svc.ElicitationService()
@@ -135,6 +135,7 @@ async def test_cleanup_loop_cancel(monkeypatch):
 # --------------------------------------------------------------------------- #
 # SCHEMA VALIDATION TESTS
 # --------------------------------------------------------------------------- #
+
 
 def test_validate_schema_success(monkeypatch):
     s = svc.ElicitationService()
@@ -177,6 +178,7 @@ def test_validate_schema_warns(monkeypatch, caplog):
 # --------------------------------------------------------------------------- #
 # GLOBAL SINGLETON TESTS
 # --------------------------------------------------------------------------- #
+
 
 def test_global_singleton(monkeypatch):
     s1 = svc.get_elicitation_service()

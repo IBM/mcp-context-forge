@@ -381,8 +381,6 @@ class TestGatewayUpdateErrorHandlers:
             assert response.status_code == 500
 
 
-
-
 # --------------------------------------------------------------------------- #
 # A2A Agent Error Handler Tests                                                #
 # --------------------------------------------------------------------------- #

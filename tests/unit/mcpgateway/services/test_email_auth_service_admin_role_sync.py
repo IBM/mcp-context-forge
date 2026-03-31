@@ -280,14 +280,7 @@ async def test_create_platform_admin_new_user_assigns_role(mock_db):
             result = await service.create_platform_admin(email="newadmin@example.com", password="newpass", full_name="New Admin")
 
             # Verify create_user was called with is_admin=True
-            mock_create_user.assert_called_once_with(
-                email="newadmin@example.com",
-                password="newpass",
-                full_name="New Admin",
-                is_admin=True,
-                auth_provider="local",
-                skip_password_validation=True
-            )
+            mock_create_user.assert_called_once_with(email="newadmin@example.com", password="newpass", full_name="New Admin", is_admin=True, auth_provider="local", skip_password_validation=True)
 
             # Verify the returned user has admin status
             assert result.is_admin is True
@@ -328,14 +321,10 @@ async def test_create_platform_admin_existing_user_assigns_role(mock_db):
                     mock_role_service.get_role_by_name.assert_called_once_with("platform_admin", "global")
 
                     # Verify role assignment was checked
-                    mock_role_service.get_user_role_assignment.assert_called_once_with(
-                        user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None
-                    )
+                    mock_role_service.get_user_role_assignment.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None)
 
                     # Verify platform_admin role was assigned
-                    mock_role_service.assign_role_to_user.assert_called_once_with(
-                        user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, granted_by="test@example.com"
-                    )
+                    mock_role_service.assign_role_to_user.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, granted_by="test@example.com")
 
 
 @pytest.mark.asyncio
@@ -441,9 +430,7 @@ async def test_create_platform_admin_existing_user_inactive_assignment(mock_db):
                 assert result.is_admin is True
 
                 # Verify role was assigned (because existing assignment was inactive)
-                mock_role_service.assign_role_to_user.assert_called_once_with(
-                    user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, granted_by="test@example.com"
-                )
+                mock_role_service.assign_role_to_user.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None, granted_by="test@example.com")
 
 
 @pytest.mark.asyncio

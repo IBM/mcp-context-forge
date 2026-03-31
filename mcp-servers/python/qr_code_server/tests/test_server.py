@@ -165,9 +165,7 @@ async def test_validate_qr_data_fails():
 async def test_generate_qr_code_runtime_error(tmp_path):
     """Test that RuntimeError from request slot acquisition is handled"""
     with patch("qr_code_server.server._acquire_request_slot") as mock_acquire:
-        mock_acquire.return_value.__aenter__.side_effect = RuntimeError(
-            "Server overloaded. Max queue size (30) exceeded."
-        )
+        mock_acquire.return_value.__aenter__.side_effect = RuntimeError("Server overloaded. Max queue size (30) exceeded.")
         request = QRGenerationRequest(data="test", save_path=str(tmp_path)).model_dump()
 
         async with Client(mcp) as client:
@@ -179,12 +177,8 @@ async def test_generate_qr_code_runtime_error(tmp_path):
 async def test_generate_batch_qr_codes_runtime_error(tmp_path):
     """Test that RuntimeError from request slot acquisition is handled"""
     with patch("qr_code_server.server._acquire_request_slot") as mock_acquire:
-        mock_acquire.return_value.__aenter__.side_effect = RuntimeError(
-            "Server overloaded. Max queue size (30) exceeded."
-        )
-        request = BatchQRGenerationRequest(
-            data_list=["test1", "test2"], output_directory=str(tmp_path)
-        ).model_dump()
+        mock_acquire.return_value.__aenter__.side_effect = RuntimeError("Server overloaded. Max queue size (30) exceeded.")
+        request = BatchQRGenerationRequest(data_list=["test1", "test2"], output_directory=str(tmp_path)).model_dump()
 
         async with Client(mcp) as client:
             response = await client.call_tool(name="generate_batch_qr_codes", arguments=request)
@@ -196,12 +190,8 @@ async def test_generate_batch_qr_codes_runtime_error(tmp_path):
 async def test_decode_qr_code_runtime_error():
     """Test that RuntimeError from request slot acquisition is handled"""
     with patch("qr_code_server.server._acquire_request_slot") as mock_acquire:
-        mock_acquire.return_value.__aenter__.side_effect = RuntimeError(
-            "Server overloaded. Max queue size (30) exceeded."
-        )
-        request = QRDecodingRequest(
-            image_data="base64_encoded_data", image_format="png"
-        ).model_dump()
+        mock_acquire.return_value.__aenter__.side_effect = RuntimeError("Server overloaded. Max queue size (30) exceeded.")
+        request = QRDecodingRequest(image_data="base64_encoded_data", image_format="png").model_dump()
 
         async with Client(mcp) as client:
             response = await client.call_tool(name="decode_qr_code", arguments=request)
@@ -213,9 +203,7 @@ async def test_decode_qr_code_runtime_error():
 async def test_validate_qr_data_runtime_error():
     """Test that RuntimeError from request slot acquisition is handled"""
     with patch("qr_code_server.server._acquire_request_slot") as mock_acquire:
-        mock_acquire.return_value.__aenter__.side_effect = RuntimeError(
-            "Server overloaded. Max queue size (30) exceeded."
-        )
+        mock_acquire.return_value.__aenter__.side_effect = RuntimeError("Server overloaded. Max queue size (30) exceeded.")
         request = QRValidationRequest(data="test data", error_correction="M").model_dump()
 
         async with Client(mcp) as client:

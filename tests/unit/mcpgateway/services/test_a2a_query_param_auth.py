@@ -79,8 +79,7 @@ def _bypass_a2aagentread_validation(monkeypatch):
 @pytest.fixture(autouse=True)
 def mock_all_settings():
     """Mock settings in schemas, a2a_service, and config modules."""
-    with patch("mcpgateway.schemas.settings") as schema_settings, \
-         patch("mcpgateway.config.settings") as config_settings:
+    with patch("mcpgateway.schemas.settings") as schema_settings, patch("mcpgateway.config.settings") as config_settings:
         # Configure schema settings
         schema_settings.insecure_allow_queryparam_auth = True
         schema_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
@@ -97,8 +96,7 @@ def mock_all_settings():
 @pytest.fixture(autouse=True)
 def mock_cache_invalidation():
     """Mock cache invalidation to avoid side effects."""
-    with patch("mcpgateway.services.a2a_service.a2a_stats_cache") as mock_stats, \
-         patch("mcpgateway.services.a2a_service._get_registry_cache") as mock_registry:
+    with patch("mcpgateway.services.a2a_service.a2a_stats_cache") as mock_stats, patch("mcpgateway.services.a2a_service._get_registry_cache") as mock_registry:
         mock_stats.invalidate = MagicMock()
         mock_cache = AsyncMock()
         mock_registry.return_value = mock_cache

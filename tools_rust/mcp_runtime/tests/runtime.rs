@@ -15,10 +15,14 @@ use redis::AsyncCommands;
 use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use uuid::Uuid;
+
+#[cfg(feature = "runtime-telemetry")]
+use std::{fs, net::TcpStream};
 
 type ObservedBackendCall = (String, Option<String>, Option<String>);
 
@@ -96,8 +100,22 @@ fn test_runtime_config() -> RuntimeConfig {
         redis_url: None,
         db_pool_max_size: 20,
         log_filter: "error".to_string(),
+        telemetry_enabled: false,
+        telemetry_path: PathBuf::from("/tmp/contextforge-mcp-runtime/telemetry/trace.bin"),
+        telemetry_rotate_bytes: 8 * 1024 * 1024,
+        telemetry_max_bytes: 64 * 1024 * 1024,
+        tokio_console_enabled: false,
+        tokio_console_bind: "127.0.0.1:6669".to_string(),
         exit_after_startup_ms: None,
     }
+}
+
+#[cfg(feature = "runtime-telemetry")]
+fn unique_temp_path(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "contextforge-mcp-runtime-{label}-{}",
+        Uuid::new_v4()
+    ))
 }
 
 async fn redis_is_available(redis_url: &str) -> bool {
@@ -234,6 +252,153 @@ async fn ping_is_handled_locally() {
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"], json!({}));
     assert!(observation.calls.lock().expect("lock").is_empty());
+}
+
+#[cfg(not(feature = "runtime-telemetry"))]
+#[tokio::test]
+async fn run_rejects_telemetry_flags_without_runtime_telemetry_feature() {
+    let mut config = test_runtime_config();
+    config.telemetry_enabled = true;
+
+    let error = tokio::task::spawn_blocking(move || contextforge_mcp_runtime::run_cli(config))
+        .await
+        .expect("join")
+        .expect_err("telemetry should fail without feature");
+
+    match error {
+        contextforge_mcp_runtime::RuntimeError::Config(message) => {
+            assert!(message.contains("runtime-telemetry"));
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+}
+
+#[cfg(feature = "runtime-telemetry")]
+#[tokio::test]
+async fn telemetry_disabled_does_not_write_trace_artifacts() {
+    let temp_dir = unique_temp_path("telemetry-off");
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let mut config = test_runtime_config();
+    config.listen_http = "127.0.0.1:38087".to_string();
+    config.exit_after_startup_ms = Some(750);
+    config.telemetry_path = temp_dir.join("trace.bin");
+
+    let runtime_task =
+        tokio::task::spawn_blocking(move || contextforge_mcp_runtime::run_cli(config));
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let response = reqwest::Client::new()
+        .get("http://127.0.0.1:38087/health")
+        .send()
+        .await
+        .expect("health response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    runtime_task.await.expect("join").expect("runtime");
+
+    assert!(
+        !temp_dir.join("trace.bin").exists(),
+        "trace artifacts should not exist when telemetry is disabled"
+    );
+}
+
+#[cfg(feature = "runtime-telemetry")]
+#[tokio::test]
+async fn telemetry_enabled_writes_trace_artifacts() {
+    let temp_dir = unique_temp_path("telemetry-on");
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let mut config = test_runtime_config();
+    config.listen_http = "127.0.0.1:38088".to_string();
+    config.exit_after_startup_ms = Some(900);
+    config.telemetry_enabled = true;
+    config.telemetry_path = temp_dir.join("trace.bin");
+    config.telemetry_rotate_bytes = 4096;
+    config.telemetry_max_bytes = 16384;
+
+    let runtime_task =
+        tokio::task::spawn_blocking(move || contextforge_mcp_runtime::run_cli(config));
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let response = reqwest::Client::new()
+        .get("http://127.0.0.1:38088/health")
+        .send()
+        .await
+        .expect("health response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    runtime_task.await.expect("join").expect("runtime");
+
+    let has_trace = fs::read_dir(&temp_dir)
+        .expect("read telemetry dir")
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().contains("trace"));
+    assert!(
+        has_trace,
+        "expected dial9 trace artifacts in {}",
+        temp_dir.display()
+    );
+}
+
+#[cfg(feature = "runtime-telemetry")]
+#[tokio::test]
+async fn tokio_console_enabled_binds_configured_port() {
+    let mut config = test_runtime_config();
+    config.listen_http = "127.0.0.1:38089".to_string();
+    config.exit_after_startup_ms = Some(900);
+    config.tokio_console_enabled = true;
+    config.tokio_console_bind = "127.0.0.1:38189".to_string();
+
+    let runtime_task =
+        tokio::task::spawn_blocking(move || contextforge_mcp_runtime::run_cli(config));
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let _connection =
+        TcpStream::connect("127.0.0.1:38189").expect("tokio console should bind configured port");
+
+    runtime_task.await.expect("join").expect("runtime");
+}
+
+#[cfg(feature = "runtime-telemetry")]
+#[tokio::test]
+async fn telemetry_and_tokio_console_can_run_together() {
+    let temp_dir = unique_temp_path("telemetry-console");
+    fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let mut config = test_runtime_config();
+    config.listen_http = "127.0.0.1:38090".to_string();
+    config.exit_after_startup_ms = Some(1000);
+    config.telemetry_enabled = true;
+    config.telemetry_path = temp_dir.join("trace.bin");
+    config.tokio_console_enabled = true;
+    config.tokio_console_bind = "127.0.0.1:38190".to_string();
+
+    let runtime_task =
+        tokio::task::spawn_blocking(move || contextforge_mcp_runtime::run_cli(config));
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let _connection =
+        TcpStream::connect("127.0.0.1:38190").expect("tokio console should bind configured port");
+
+    let response = reqwest::Client::new()
+        .get("http://127.0.0.1:38090/health")
+        .send()
+        .await
+        .expect("health response");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    runtime_task.await.expect("join").expect("runtime");
+
+    let has_trace = fs::read_dir(&temp_dir)
+        .expect("read telemetry dir")
+        .flatten()
+        .any(|entry| entry.file_name().to_string_lossy().contains("trace"));
+    assert!(
+        has_trace,
+        "expected dial9 trace artifacts in {}",
+        temp_dir.display()
+    );
 }
 
 #[tokio::test]

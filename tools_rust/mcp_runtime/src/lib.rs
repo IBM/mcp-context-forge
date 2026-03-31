@@ -9,6 +9,7 @@
 //! still delegating authentication and RBAC authority to Python.
 
 pub mod config;
+pub mod telemetry;
 
 use axum::{
     Json, Router,
@@ -73,6 +74,7 @@ use rmcp::{
 };
 
 use crate::config::{ListenTarget, RuntimeConfig};
+pub use crate::telemetry::run_cli;
 
 const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_HEADER: &str = "x-contextforge-mcp-runtime";
@@ -1253,6 +1255,9 @@ fn build_public_router(state: AppState) -> Router {
 /// Returns an error when configuration parsing fails, listener startup fails, or a listener
 /// exits with an application-level runtime error.
 pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
+    config
+        .validate_telemetry_config()
+        .map_err(RuntimeError::Config)?;
     let state = AppState::new(&config)?;
     spawn_local_cache_sweeper(state.clone());
     let app = build_router(state.clone());
@@ -1334,6 +1339,7 @@ async fn serve_uds(
     Ok(())
 }
 
+#[tracing::instrument(skip(state), fields(runtime = RUNTIME_NAME))]
 async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
     let active_sessions = active_runtime_session_count(&state).await;
     Json(HealthResponse {
@@ -1354,6 +1360,7 @@ async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
     })
 }
 
+#[tracing::instrument(fields(runtime = RUNTIME_NAME))]
 async fn public_healthz() -> Json<PublicHealthResponse> {
     Json(PublicHealthResponse {
         status: "ok",
@@ -1399,6 +1406,7 @@ async fn transport_delete_server_scoped(
     transport_delete_inner(state, peer_addr.0, headers, uri, Some(server_id)).await
 }
 
+#[tracing::instrument(skip(state, headers), fields(method = "GET", server_id = ?server_id))]
 async fn transport_get_inner(
     state: AppState,
     peer_addr: Option<SocketAddr>,
@@ -1422,6 +1430,7 @@ async fn transport_get_inner(
     forward_transport_request(&state, reqwest::Method::GET, headers, path, uri).await
 }
 
+#[tracing::instrument(skip(state, headers), fields(method = "DELETE", server_id = ?server_id))]
 async fn transport_delete_inner(
     state: AppState,
     peer_addr: Option<SocketAddr>,
@@ -1522,6 +1531,7 @@ async fn rpc_server_scoped(
     rpc_inner(state, peer_addr.0, headers, uri, body, Some(server_id)).await
 }
 
+#[tracing::instrument(skip(state, headers, body), fields(method = "POST", server_id = ?server_id))]
 async fn rpc_inner(
     state: AppState,
     peer_addr: Option<SocketAddr>,
@@ -1725,7 +1735,7 @@ async fn rpc_inner(
     } else {
         "backend-forward"
     };
-    info!("rust_mcp_runtime method={} mode={}", request.method, mode);
+    tracing::info!(method = %request.method, mode, "routing MCP request");
 
     if specialized_initialized_notification {
         return forward_initialized_notification_to_backend(&state, effective_headers, body).await;
@@ -1908,6 +1918,7 @@ async fn rpc_inner(
     }
 
     if request.method == "ping" {
+        tracing::debug!("handling ping request locally");
         return json_response(
             StatusCode::OK,
             json!({
@@ -2523,10 +2534,15 @@ async fn authenticate_public_request_if_needed(
 }
 
 #[allow(clippy::result_large_err)]
+#[tracing::instrument(skip(body), fields(body_len = body.len()))]
 fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
-    let parsed: Value = serde_json::from_slice(body).map_err(|_| parse_error_response())?;
+    let parsed: Value = serde_json::from_slice(body).map_err(|_| {
+        tracing::warn!("failed to parse JSON-RPC request");
+        parse_error_response()
+    })?;
 
     if parsed.is_array() {
+        tracing::warn!("batch requests are not supported");
         return Err(batch_rejected_response());
     }
 
@@ -2555,6 +2571,7 @@ fn decode_request(body: &[u8]) -> Result<JsonRpcRequest, Response> {
 }
 
 #[allow(clippy::result_large_err)]
+#[tracing::instrument(skip(state, headers))]
 fn validate_protocol_version(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
     let protocol_version = headers
         .get(MCP_PROTOCOL_VERSION_HEADER)
@@ -2566,10 +2583,12 @@ fn validate_protocol_version(state: &AppState, headers: &HeaderMap) -> Result<()
         .iter()
         .any(|supported| supported == protocol_version)
     {
+        tracing::debug!(protocol_version, "protocol version validated");
         return Ok(());
     }
 
     let supported = state.supported_protocol_versions().join(", ");
+    tracing::warn!(protocol_version, supported, "unsupported protocol version");
     Err(json_response(
         StatusCode::BAD_REQUEST,
         json!({
@@ -7798,6 +7817,14 @@ mod unit_tests {
             redis_url: None,
             db_pool_max_size: 7,
             log_filter: "error".to_string(),
+            telemetry_enabled: false,
+            telemetry_path: std::path::PathBuf::from(
+                "/tmp/contextforge-mcp-runtime/telemetry/trace.bin",
+            ),
+            telemetry_rotate_bytes: 8 * 1024 * 1024,
+            telemetry_max_bytes: 64 * 1024 * 1024,
+            tokio_console_enabled: false,
+            tokio_console_bind: "127.0.0.1:6669".to_string(),
             exit_after_startup_ms: None,
         }
     }

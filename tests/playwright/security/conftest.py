@@ -99,8 +99,7 @@ def iframe_host(page: Page, base_url: str):
     page.route(admin_pattern, _strip_headers)
 
     admin_url = f"{base_url}/admin/"
-    page.set_content(
-        f"""<!DOCTYPE html>
+    page.set_content(f"""<!DOCTYPE html>
 <html><head><title>iframe host</title></head>
 <body style="margin:0;padding:0">
 <iframe id="admin-frame"
@@ -108,8 +107,7 @@ def iframe_host(page: Page, base_url: str):
         style="width:100%;height:100vh;border:none"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
 </iframe>
-</body></html>"""
-    )
+</body></html>""")
 
     frame = page.frame_locator("#admin-frame")
     try:

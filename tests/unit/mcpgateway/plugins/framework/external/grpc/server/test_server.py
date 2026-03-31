@@ -447,9 +447,7 @@ class TestGrpcPluginServicerExceptionHandling:
             plugin_name="TestPlugin",
             code="MODEL_ERROR",
         )
-        mock_plugin_server.invoke_hook = AsyncMock(
-            return_value={"error": error_model}
-        )
+        mock_plugin_server.invoke_hook = AsyncMock(return_value={"error": error_model})
 
         request = plugin_service_pb2.InvokeHookRequest()
         request.hook_type = "tool_pre_invoke"

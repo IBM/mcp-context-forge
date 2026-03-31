@@ -263,6 +263,7 @@ def test_discover_keycloak_endpoints_sync_incomplete(monkeypatch: pytest.MonkeyP
 
 def test_discover_keycloak_endpoints_sync_unexpected(monkeypatch: pytest.MonkeyPatch):
     """Sync discovery should handle unexpected exceptions gracefully."""
+
     def boom(*args, **kwargs):  # noqa: ANN001
         raise RuntimeError("fail")
 

@@ -13,7 +13,7 @@ import pytest
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError
-from mcpgateway.plugins.framework import PromptHookType, ToolHookType,  HttpHeaderPayload,  PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework import PromptHookType, ToolHookType, HttpHeaderPayload, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig
 
 
@@ -380,6 +380,7 @@ async def test_plugin_manager_thread_safety():
 
     # Track config loads by wrapping ConfigLoader
     from mcpgateway.plugins.framework.loader.config import ConfigLoader
+
     original_load = ConfigLoader.load_config
     load_count = {"value": 0}
 

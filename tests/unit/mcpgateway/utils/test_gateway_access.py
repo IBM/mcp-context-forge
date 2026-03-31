@@ -406,6 +406,7 @@ class TestCheckGatewayAccess:
         result = await check_gateway_access(db, gateway, "user@example.com", ["team1"])
         assert result is False
 
+
 from mcpgateway.utils.gateway_access import extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 
 

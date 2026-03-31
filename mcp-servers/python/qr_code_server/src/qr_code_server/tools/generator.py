@@ -177,9 +177,7 @@ def create_qr_code(request: QRGenerationRequest) -> QRCodeResult:
             message=f"QR code image saved at {save_path}",
         )
     except Exception as e:
-        logger.error(
-            "Failed to save QR code image: path=%s format=%s error=%s", save_path, request.format, e
-        )
+        logger.error("Failed to save QR code image: path=%s format=%s error=%s", save_path, request.format, e)
         return QRCodeResult(success=False, error=str(e))
 
 

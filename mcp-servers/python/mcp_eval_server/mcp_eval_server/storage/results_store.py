@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import orjson
 
+
 class ResultsStore:
     """SQLite-based storage for evaluation results."""
 
@@ -30,8 +31,7 @@ class ResultsStore:
     def _init_database(self):
         """Initialize database schema."""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS evaluation_results (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     results_id TEXT UNIQUE NOT NULL,
@@ -45,11 +45,9 @@ class ResultsStore:
                     detailed_results TEXT,
                     metadata TEXT
                 )
-            """
-            )
+            """)
 
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS evaluation_steps (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     results_id TEXT NOT NULL,
@@ -62,11 +60,9 @@ class ResultsStore:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (results_id) REFERENCES evaluation_results (results_id)
                 )
-            """
-            )
+            """)
 
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS judge_evaluations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     judge_model TEXT NOT NULL,
@@ -79,26 +75,19 @@ class ResultsStore:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     execution_time REAL
                 )
-            """
-            )
+            """)
 
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_results_suite ON evaluation_results(suite_id);
-            """
-            )
+            """)
 
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_steps_results ON evaluation_steps(results_id);
-            """
-            )
+            """)
 
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_judge_model ON judge_evaluations(judge_model);
-            """
-            )
+            """)
 
     async def store_evaluation_result(self, result: Dict[str, Any]) -> str:
         """Store complete evaluation result.
@@ -282,8 +271,7 @@ class ResultsStore:
             Statistics dictionary
         """
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                """
+            cursor = conn.execute("""
                 SELECT
                     COUNT(*) as total_evaluations,
                     AVG(overall_score) as avg_score,
@@ -292,14 +280,12 @@ class ResultsStore:
                     MIN(created_at) as first_evaluation,
                     MAX(created_at) as last_evaluation
                 FROM evaluation_results
-            """
-            )
+            """)
 
             stats = dict(cursor.fetchone())
 
             # Get suite statistics
-            cursor = conn.execute(
-                """
+            cursor = conn.execute("""
                 SELECT
                     suite_name,
                     COUNT(*) as count,
@@ -309,8 +295,7 @@ class ResultsStore:
                 GROUP BY suite_name
                 ORDER BY count DESC
                 LIMIT 10
-            """
-            )
+            """)
 
             stats["top_suites"] = [dict(row) for row in cursor.fetchall()]
 
@@ -326,12 +311,10 @@ class ResultsStore:
             Number of results removed
         """
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                f"""
+            cursor = conn.execute(f"""
                 DELETE FROM evaluation_results
                 WHERE created_at < datetime('now', '-{days_old} days')
-            """
-            )
+            """)
 
             # Steps are deleted automatically due to foreign key constraint
 

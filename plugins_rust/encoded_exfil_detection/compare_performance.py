@@ -93,6 +93,7 @@ def _percentile(values: Sequence[float], pct: float) -> float:
 # Payload factories
 # ---------------------------------------------------------------------------
 
+
 def _make_small_base64() -> dict[str, Any]:
     """Single base64-encoded credential with egress context."""
     encoded = base64.b64encode(b"authorization: bearer super-secret-token-value").decode()
@@ -113,10 +114,12 @@ def _make_large_mixed() -> dict[str, Any]:
     """20+ encoded segments in a nested structure."""
     items: list[dict[str, str]] = []
     for i in range(10):
-        items.append({
-            "b64": f"send {base64.b64encode(f'token=secret-value-{i:03d}-long-enough'.encode()).decode()} webhook",
-            "hex": f"upload {f'password=credential-{i:03d}-long-enough'.encode().hex()}",
-        })
+        items.append(
+            {
+                "b64": f"send {base64.b64encode(f'token=secret-value-{i:03d}-long-enough'.encode()).decode()} webhook",
+                "hex": f"upload {f'password=credential-{i:03d}-long-enough'.encode().hex()}",
+            }
+        )
     return {"content": items}
 
 
@@ -160,6 +163,7 @@ SCENARIOS: list[Scenario] = [
 # ---------------------------------------------------------------------------
 # Plugin construction
 # ---------------------------------------------------------------------------
+
 
 def _make_plugin(use_rust: bool) -> EncodedExfilDetectorPlugin:
     """Create plugin and force implementation path."""
@@ -218,6 +222,7 @@ async def _invoke(plugin: EncodedExfilDetectorPlugin, hook: str, payload_data: d
 # Parity check
 # ---------------------------------------------------------------------------
 
+
 async def _parity_check(scenario: Scenario) -> None:
     """Verify Python and Rust produce identical finding counts."""
     payload_data = PAYLOAD_FACTORIES[scenario.payload_factory]()
@@ -240,6 +245,7 @@ async def _parity_check(scenario: Scenario) -> None:
 # ---------------------------------------------------------------------------
 # Latency benchmark
 # ---------------------------------------------------------------------------
+
 
 async def _bench_latency(scenario: Scenario, iterations: int, warmup: int) -> tuple[BenchmarkResult, BenchmarkResult]:
     """Run latency benchmark for one scenario, return (python_result, rust_result)."""
@@ -269,6 +275,7 @@ async def _bench_latency(scenario: Scenario, iterations: int, warmup: int) -> tu
 # Throughput benchmark
 # ---------------------------------------------------------------------------
 
+
 async def _bench_throughput(scenario: Scenario, concurrency_levels: list[int], ops_per_task: int) -> list[ThroughputResult]:
     """Run throughput benchmark at various concurrency levels."""
     payload_data = PAYLOAD_FACTORIES[scenario.payload_factory]()
@@ -289,13 +296,15 @@ async def _bench_throughput(scenario: Scenario, concurrency_levels: list[int], o
             elapsed = time.perf_counter() - start
             total_ops = sum(counts)
 
-            all_results.append(ThroughputResult(
-                implementation=impl_name,
-                tasks=num_tasks,
-                ops_per_sec=total_ops / elapsed if elapsed > 0 else 0,
-                total_ops=total_ops,
-                duration_sec=round(elapsed, 3),
-            ))
+            all_results.append(
+                ThroughputResult(
+                    implementation=impl_name,
+                    tasks=num_tasks,
+                    ops_per_sec=total_ops / elapsed if elapsed > 0 else 0,
+                    total_ops=total_ops,
+                    duration_sec=round(elapsed, 3),
+                )
+            )
             _restore_rust(plugin)
 
     return all_results
@@ -304,6 +313,7 @@ async def _bench_throughput(scenario: Scenario, concurrency_levels: list[int], o
 # ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
+
 
 def _print_latency_table(scenario: Scenario, py: BenchmarkResult, rs: BenchmarkResult) -> None:
     """Print latency comparison table for one scenario."""
@@ -333,6 +343,7 @@ def _print_throughput_table(scenario: Scenario, results: list[ThroughputResult])
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 async def main() -> None:
     """Run the benchmark."""

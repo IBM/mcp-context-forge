@@ -383,9 +383,7 @@ async def test_require_admin_permission_forwards_token_teams(monkeypatch):
         await dummy_endpoint(user=user_ctx)
 
     assert exc_info.value.status_code == 403
-    mock_perm_service.check_admin_permission.assert_called_once_with(
-        "user@example.com", token_teams=[]
-    )
+    mock_perm_service.check_admin_permission.assert_called_once_with("user@example.com", token_teams=[])
 
 
 # ============================================================================

@@ -37,10 +37,7 @@ pytestmark = [
     skip_no_gateway,
     pytest.mark.skipif(
         not EXPECTED_RUNTIME,
-        reason=(
-            "requires the dedicated plugin parity stack; run via "
-            "MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=<python|rust> make test-mcp-plugin-parity"
-        ),
+        reason=("requires the dedicated plugin parity stack; run via " "MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=<python|rust> make test-mcp-plugin-parity"),
     ),
 ]
 
@@ -118,9 +115,7 @@ def _request_json(
         Parsed JSON response body, or `None` for an empty body.
     """
     response = client.request(method, path, **kwargs)
-    assert response.status_code in expected, (
-        f"{method} {path} expected {expected}, got {response.status_code}: {response.text}"
-    )
+    assert response.status_code in expected, f"{method} {path} expected {expected}, got {response.status_code}: {response.text}"
     return response.json() if response.content else None
 
 

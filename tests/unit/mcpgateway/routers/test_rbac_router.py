@@ -455,9 +455,7 @@ async def test_my_permissions_forwards_token_teams(monkeypatch):
     result = await rbac_router.get_my_permissions(team_id=None, user=user, db=MagicMock())
 
     assert result == ["tools.read"]
-    perm_service.get_user_permissions.assert_called_once_with(
-        user_email="user@example.com", team_id=None, token_teams=["team-a"]
-    )
+    perm_service.get_user_permissions.assert_called_once_with(user_email="user@example.com", team_id=None, token_teams=["team-a"])
 
 
 @pytest.mark.asyncio
@@ -471,6 +469,4 @@ async def test_my_permissions_forwards_empty_token_teams(monkeypatch):
     result = await rbac_router.get_my_permissions(team_id=None, user=user, db=MagicMock())
 
     assert result == []
-    perm_service.get_user_permissions.assert_called_once_with(
-        user_email="user@example.com", team_id=None, token_teams=[]
-    )
+    perm_service.get_user_permissions.assert_called_once_with(user_email="user@example.com", team_id=None, token_teams=[])

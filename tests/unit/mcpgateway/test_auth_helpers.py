@@ -155,6 +155,7 @@ async def test_resolve_teams_from_db_async_cache_miss_sets_cache(monkeypatch):
     assert await auth._resolve_teams_from_db("user@example.com", {"is_admin": False}) == ["t1"]
     dummy_cache.set_user_teams.assert_awaited_once()
 
+
 @pytest.mark.asyncio
 async def test_get_team_from_token_variants(monkeypatch):
     # Teams with dict format

@@ -101,8 +101,7 @@ class WebhookNotificationConfig(BaseModel):
 
     webhooks: List[WebhookConfig] = Field(default_factory=list)
     payload_templates: Dict[str, str] = Field(default_factory=dict)
-    default_template: str = Field(
-        default="""{
+    default_template: str = Field(default="""{
     "event": "{{event}}",
     "plugin": "{{plugin_name}}",
     "timestamp": "{{timestamp}}",
@@ -112,8 +111,7 @@ class WebhookNotificationConfig(BaseModel):
     "server_id": "{{server_id}}",
     "violation": {{violation}},
     "metadata": {{metadata}}
-}"""
-    )
+}""")
     include_payload_data: bool = Field(default=False, description="Include request payload in notifications")
     max_payload_size: int = Field(default=1000, description="Max payload size to include in notifications")
 

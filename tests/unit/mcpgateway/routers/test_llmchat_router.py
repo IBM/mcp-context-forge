@@ -167,15 +167,11 @@ def test_deserialize_user_config_rejects_invalid_payload(caplog: pytest.LogCaptu
 def test_deserialize_user_config_rejects_missing_or_invalid_encrypted_payload(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
     caplog.set_level("WARNING")
 
-    missing_payload = llmchat_router.orjson.dumps(
-        {llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: ""}
-    )
+    missing_payload = llmchat_router.orjson.dumps({llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: ""})
     assert llmchat_router._deserialize_user_config_from_storage(missing_payload) is None
 
     monkeypatch.setattr(llmchat_router, "decode_auth", lambda *_args, **_kwargs: ["invalid"])
-    invalid_decoded = llmchat_router.orjson.dumps(
-        {llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: "ciphertext"}
-    )
+    invalid_decoded = llmchat_router.orjson.dumps({llmchat_router._ENCRYPTED_CONFIG_PAYLOAD_KEY: "ciphertext"})
     assert llmchat_router._deserialize_user_config_from_storage(invalid_decoded) is None
     assert "Decoded encrypted LLM chat config is invalid" in caplog.text
 
@@ -1213,12 +1209,14 @@ def test_build_llm_config_with_temperature():
 
 
 def test_build_config_with_server():
-    config = llmchat_router.build_config(ConnectInput(
-        user_id="u1",
-        llm=LLMInput(model="gpt"),
-        server=ServerInput(url="http://custom/mcp", transport="sse", auth_token="token"),
-        streaming=True,
-    ))
+    config = llmchat_router.build_config(
+        ConnectInput(
+            user_id="u1",
+            llm=LLMInput(model="gpt"),
+            server=ServerInput(url="http://custom/mcp", transport="sse", auth_token="token"),
+            streaming=True,
+        )
+    )
     assert config.mcp_server.url == "http://custom/mcp"
     assert config.mcp_server.transport == "sse"
     assert config.mcp_server.auth_token == "token"

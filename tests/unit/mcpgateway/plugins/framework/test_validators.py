@@ -265,10 +265,7 @@ class TestSecurityValidatorParity:
 
         # Strip inline flags like (?i) for comparison — both compile with IGNORECASE
         gw_pattern = re.sub(r"^\(\?[aiLmsux]+\)", "", gw_settings.validation_dangerous_html_pattern)
-        assert _DANGEROUS_HTML_PATTERN.pattern == gw_pattern, (
-            f"Framework HTML pattern differs from gateway: "
-            f"{_DANGEROUS_HTML_PATTERN.pattern!r} vs {gw_pattern!r}"
-        )
+        assert _DANGEROUS_HTML_PATTERN.pattern == gw_pattern, f"Framework HTML pattern differs from gateway: " f"{_DANGEROUS_HTML_PATTERN.pattern!r} vs {gw_pattern!r}"
 
     def test_dangerous_js_pattern_parity(self):
         """Framework JS/event-handler pattern must match the gateway's pattern (ignoring inline flags)."""
@@ -279,10 +276,7 @@ class TestSecurityValidatorParity:
 
         # Strip inline flags like (?i) for comparison — both compile with IGNORECASE
         gw_pattern = re.sub(r"^\(\?[aiLmsux]+\)", "", gw_settings.validation_dangerous_js_pattern)
-        assert _DANGEROUS_JS_PATTERN.pattern == gw_pattern, (
-            f"Framework JS pattern differs from gateway: "
-            f"{_DANGEROUS_JS_PATTERN.pattern!r} vs {gw_pattern!r}"
-        )
+        assert _DANGEROUS_JS_PATTERN.pattern == gw_pattern, f"Framework JS pattern differs from gateway: " f"{_DANGEROUS_JS_PATTERN.pattern!r} vs {gw_pattern!r}"
 
     def test_blocked_networks_cover_standard_private_ranges(self):
         """Framework SSRF blocked networks must include standard private/reserved ranges."""
@@ -345,8 +339,8 @@ class TestDangerousPatternDetection:
         [
             "javascript:alert(1)",
             "vbscript:MsgBox",
-            ' onclick=alert(1)',
-            ' onload=evil()',
+            " onclick=alert(1)",
+            " onload=evil()",
             '<script src="x">',
         ],
     )

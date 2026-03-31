@@ -23,9 +23,7 @@ def test_decode_qr_code_with_positions(tmp_path):
     gen_result = create_qr_code(gen_req)
     assert gen_result.success is True
 
-    dec_req = QRDecodingRequest(
-        image_data=str(gen_path), multiple_codes=False, return_positions=True, preprocessing=False
-    )
+    dec_req = QRDecodingRequest(image_data=str(gen_path), multiple_codes=False, return_positions=True, preprocessing=False)
     result = qr_decode(dec_req)
 
     assert result.success is True

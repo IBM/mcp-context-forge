@@ -526,7 +526,7 @@ class BaseUser(FastHttpUser):
 
     # Connection settings optimized for high load
     connection_timeout = 10.0  # Allow more time for connection under load
-    network_timeout = 15.0     # Allow more time for response under load
+    network_timeout = 15.0  # Allow more time for response under load
 
     # Increase connection pool to handle high concurrency
     pool_manager_class = None  # Use default pool manager
@@ -1366,11 +1366,11 @@ class SpinDetectorShape(LoadTestShape):
     #
     # Pattern: 4K → 6K → 8K → 10K → 10K (repeat forever)
     cycles = [
-        (4000, 30, 10),    # Wave 1: 4K users, 30s sustain, 10s pause
-        (6000, 45, 15),    # Wave 2: 6K users, 45s sustain, 15s pause
-        (8000, 60, 20),    # Wave 3: 8K users, 60s sustain, 20s pause
-        (10000, 75, 30),   # Wave 4: 10K users, 75s sustain, 30s pause
-        (10000, 90, 30),   # Wave 5: 10K users, 90s sustain, 30s pause
+        (4000, 30, 10),  # Wave 1: 4K users, 30s sustain, 10s pause
+        (6000, 45, 15),  # Wave 2: 6K users, 45s sustain, 15s pause
+        (8000, 60, 20),  # Wave 3: 8K users, 60s sustain, 20s pause
+        (10000, 75, 30),  # Wave 4: 10K users, 75s sustain, 30s pause
+        (10000, 90, 30),  # Wave 5: 10K users, 90s sustain, 30s pause
     ]
 
     spawn_rate = 1000  # Always 1000/s spawn rate
@@ -1451,8 +1451,7 @@ class SpinDetectorShape(LoadTestShape):
             Colors.CYAN,
         )
 
-        log(
-            f"""
+        log(f"""
 {Colors.BOLD}PURPOSE:{Colors.RESET}
   Detect CPU spin loop bug caused by orphaned asyncio tasks.
 
@@ -1473,8 +1472,7 @@ class SpinDetectorShape(LoadTestShape):
 
 {Colors.BOLD}CONFIGURATION:{Colors.RESET}
   Workers:  {Colors.CYAN}{WORKER_COUNT}{Colors.RESET} (processes spawning users)
-"""
-        )
+""")
 
         _log_auth_mode()
 
@@ -1487,11 +1485,11 @@ class SpinDetectorShape(LoadTestShape):
         """Log phase transitions with docker stats."""
         # Use total cycles for display (1-indexed)
         cycle_num = self._total_cycles + 1
-        cycle_letter = chr(ord('A') + (self._current_cycle % len(self.cycles)))
+        cycle_letter = chr(ord("A") + (self._current_cycle % len(self.cycles)))
 
         stats_output, cpu_values = get_docker_stats()
         # Only flag high CPU as a problem during pause phases (spin loop detection)
-        is_pause = (phase == "pause")
+        is_pause = phase == "pause"
         cpu_status = format_cpu_status(cpu_values, is_pause_phase=is_pause)
 
         if phase == "ramp":

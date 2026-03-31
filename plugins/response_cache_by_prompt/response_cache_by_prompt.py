@@ -284,7 +284,7 @@ class ResponseCacheByPromptPlugin(Plugin):
 
         # Cap size if needed
         if len(valid_entries) > self._cfg.max_entries:
-            valid_entries = valid_entries[-self._cfg.max_entries:]
+            valid_entries = valid_entries[-self._cfg.max_entries :]
 
         # Rebuild bucket and index if we removed or modified entries
         if len(valid_entries) != len(bucket):

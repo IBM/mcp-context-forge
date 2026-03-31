@@ -250,7 +250,7 @@ class TestSupportBundleService:
         log_file = "mcpgateway.log"
         log_path = tmp_path / log_file
         log_path.write_text(
-            "line0\nline1\nline2\npassword: \"secret123\"\n",
+            'line0\nline1\nline2\npassword: "secret123"\n',
             encoding="utf-8",
         )
 

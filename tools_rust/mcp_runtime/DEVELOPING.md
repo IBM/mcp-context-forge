@@ -53,6 +53,8 @@ make -C tools_rust/mcp_runtime clippy
 make -C tools_rust/mcp_runtime clippy-all
 make -C tools_rust/mcp_runtime test
 make -C tools_rust/mcp_runtime test-rmcp
+make -C tools_rust/mcp_runtime check-telemetry
+make -C tools_rust/mcp_runtime test-telemetry
 ```
 
 What these cover:
@@ -63,12 +65,15 @@ What these cover:
 - `clippy-all`: all-targets, all-features lint pass
 - `test`: default Rust tests
 - `test-rmcp`: upstream RMCP client feature coverage
+- `check-telemetry` / `test-telemetry`: telemetry-enabled build path using the
+  crate-local `runtime-telemetry` feature and `tokio_unstable` cfg
 
 Use these when:
 
 - editing `src/lib.rs`, `src/config.rs`, `src/main.rs`
 - changing request routing, auth/session logic, direct DB paths, or helpers
 - touching the optional RMCP path
+- touching Dial9 or Tokio console bootstrap/config
 
 ## Repo-Wide Hygiene
 

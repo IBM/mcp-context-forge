@@ -301,6 +301,7 @@ class TestRPCServerIdScoping:
 
         async def mock_body():
             import orjson  # noqa: PLC0415
+
             return orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 10})
 
         mock_request.body = mock_body

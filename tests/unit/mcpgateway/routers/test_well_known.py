@@ -16,7 +16,6 @@ from mcpgateway.routers.well_known import (
     validate_security_txt,
 )
 
-
 # ---------- get_base_url_with_protocol ----------
 
 

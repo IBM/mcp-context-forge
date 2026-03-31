@@ -157,7 +157,7 @@ class TestValidateSession:
             with original_fail_after(delay, *args, **kwargs):
                 yield
 
-        with patch('mcpgateway.services.mcp_session_pool.anyio.fail_after', side_effect=capture_fail_after):
+        with patch("mcpgateway.services.mcp_session_pool.anyio.fail_after", side_effect=capture_fail_after):
             result = await pool._validate_session(pooled)
 
         # Should have used the configurable health check timeout (3.0), not hardcoded 5.0
@@ -352,14 +352,18 @@ class TestIdentityHashing:
 
     def test_identity_hash_with_multiple_headers(self, pool):
         """Multiple identity headers should be combined."""
-        hash1 = pool._compute_identity_hash({
-            "Authorization": "Bearer token",
-            "X-Tenant-ID": "tenant-1",
-        })
-        hash2 = pool._compute_identity_hash({
-            "Authorization": "Bearer token",
-            "X-Tenant-ID": "tenant-2",
-        })
+        hash1 = pool._compute_identity_hash(
+            {
+                "Authorization": "Bearer token",
+                "X-Tenant-ID": "tenant-1",
+            }
+        )
+        hash2 = pool._compute_identity_hash(
+            {
+                "Authorization": "Bearer token",
+                "X-Tenant-ID": "tenant-2",
+            }
+        )
 
         assert hash1 != hash2
         assert hash1 != "anonymous"
@@ -367,14 +371,18 @@ class TestIdentityHashing:
     def test_tenant_header_isolation(self, pool):
         """X-Tenant-ID creates separate identity hashes (tenant isolation)."""
         # Same auth but different tenant
-        tenant_a_hash = pool._compute_identity_hash({
-            "Authorization": "Bearer shared-token",
-            "X-Tenant-ID": "tenant-a",
-        })
-        tenant_b_hash = pool._compute_identity_hash({
-            "Authorization": "Bearer shared-token",
-            "X-Tenant-ID": "tenant-b",
-        })
+        tenant_a_hash = pool._compute_identity_hash(
+            {
+                "Authorization": "Bearer shared-token",
+                "X-Tenant-ID": "tenant-a",
+            }
+        )
+        tenant_b_hash = pool._compute_identity_hash(
+            {
+                "Authorization": "Bearer shared-token",
+                "X-Tenant-ID": "tenant-b",
+            }
+        )
 
         assert tenant_a_hash != tenant_b_hash
         assert tenant_a_hash != "anonymous"
@@ -382,23 +390,29 @@ class TestIdentityHashing:
 
     def test_combined_identity_headers(self, pool):
         """Auth + Tenant + User combined correctly for isolation."""
-        full_identity = pool._compute_identity_hash({
-            "Authorization": "Bearer token",
-            "X-Tenant-ID": "tenant-1",
-            "X-User-ID": "user-123",
-        })
+        full_identity = pool._compute_identity_hash(
+            {
+                "Authorization": "Bearer token",
+                "X-Tenant-ID": "tenant-1",
+                "X-User-ID": "user-123",
+            }
+        )
         # Same auth, same tenant, different user
-        diff_user = pool._compute_identity_hash({
-            "Authorization": "Bearer token",
-            "X-Tenant-ID": "tenant-1",
-            "X-User-ID": "user-456",
-        })
+        diff_user = pool._compute_identity_hash(
+            {
+                "Authorization": "Bearer token",
+                "X-Tenant-ID": "tenant-1",
+                "X-User-ID": "user-456",
+            }
+        )
         # Same auth, different tenant, same user
-        diff_tenant = pool._compute_identity_hash({
-            "Authorization": "Bearer token",
-            "X-Tenant-ID": "tenant-2",
-            "X-User-ID": "user-123",
-        })
+        diff_tenant = pool._compute_identity_hash(
+            {
+                "Authorization": "Bearer token",
+                "X-Tenant-ID": "tenant-2",
+                "X-User-ID": "user-123",
+            }
+        )
 
         assert full_identity != diff_user
         assert full_identity != diff_tenant
@@ -572,6 +586,7 @@ class TestIdentityExtractor:
 
     def test_identity_extractor_used_when_provided(self):
         """Identity extractor should be used when provided."""
+
         def extract_user_id(headers: dict) -> str:
             return "user-123"
 
@@ -586,6 +601,7 @@ class TestIdentityExtractor:
 
     def test_identity_extractor_fallback_on_failure(self):
         """Should fall back to header hash if extractor fails."""
+
         def failing_extractor(headers: dict) -> str:
             raise ValueError("Failed to extract")
 
@@ -597,6 +613,7 @@ class TestIdentityExtractor:
 
     def test_identity_extractor_fallback_on_none(self):
         """Should fall back to header hash if extractor returns None."""
+
         def none_extractor(headers: dict) -> str | None:
             return None
 
@@ -642,12 +659,7 @@ class TestPoolKeyGeneration:
         # Expect full SHA-256 hash (64 hex chars) for collision resistance
         expected_hash = hashlib.sha256(user_id.encode()).hexdigest()
 
-        key = pool._make_pool_key(
-            "http://server:8080",
-            {},
-            TransportType.STREAMABLE_HTTP,
-            user_identity=user_id
-        )
+        key = pool._make_pool_key("http://server:8080", {}, TransportType.STREAMABLE_HTTP, user_identity=user_id)
 
         assert key[0] == expected_hash
         assert len(key[0]) == 64  # Full SHA-256 hash
@@ -836,7 +848,7 @@ class TestAcquireAndRelease:
     @pytest.mark.asyncio
     async def test_acquire_creates_new_session(self, pool):
         """First acquire should create a new session."""
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
             mock_session = PooledSession(
                 session=MagicMock(),
                 transport_context=MagicMock(),
@@ -859,8 +871,8 @@ class TestAcquireAndRelease:
     @pytest.mark.asyncio
     async def test_release_and_reacquire_reuses_session(self, pool):
         """Released session should be reused on next acquire."""
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-            with patch.object(pool, '_validate_session', new_callable=AsyncMock) as mock_validate:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+            with patch.object(pool, "_validate_session", new_callable=AsyncMock) as mock_validate:
                 mock_validate.return_value = True
                 mock_session = PooledSession(
                     session=MagicMock(),
@@ -906,6 +918,7 @@ class TestAcquireAndRelease:
     @pytest.mark.asyncio
     async def test_acquire_timeout_when_semaphore_returns_false(self, pool):
         """Acquire should raise when semaphore acquisition returns False."""
+
         async def fake_wait_for(coro, timeout=None, **_kwargs):
             coro.close()
             return False
@@ -1144,8 +1157,8 @@ class TestIdlePoolEviction:
         pool = MCPSessionPool(idle_pool_eviction_seconds=0.05, session_ttl_seconds=0.01)
         pool._eviction_run_interval = 0
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
-            with patch.object(pool, '_close_session', new_callable=AsyncMock) as mock_close:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
+            with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
                 mock_session = PooledSession(
                     session=MagicMock(),
                     transport_context=MagicMock(),
@@ -1197,7 +1210,7 @@ class TestIdlePoolEviction:
         )
         pool._eviction_run_interval = 1000  # Also disable throttled eviction
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
             mock_session = PooledSession(
                 session=MagicMock(),
                 transport_context=MagicMock(),
@@ -1383,6 +1396,7 @@ class TestCloseSession:
     @pytest.mark.asyncio
     async def test_close_session_handles_errors_and_timeouts(self):
         """Close should log errors and timeouts without raising."""
+
         # Standard
         class DummyScope:
             def __init__(self, cancelled):
@@ -1414,6 +1428,7 @@ class TestCloseSession:
         mock_logger.debug.assert_any_call("Error closing transport: transport boom")
         assert mock_logger.warning.call_count == 2
 
+
 class TestContextManager:
     """Tests for async context manager."""
 
@@ -1430,7 +1445,7 @@ class TestContextManager:
         """Test session context manager."""
         pool = MCPSessionPool()
 
-        with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+        with patch.object(pool, "_create_session", new_callable=AsyncMock) as mock_create:
             mock_session = PooledSession(
                 session=MagicMock(),
                 transport_context=MagicMock(),

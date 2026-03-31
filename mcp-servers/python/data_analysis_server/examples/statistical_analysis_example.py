@@ -45,9 +45,7 @@ async def main():
     # Step 1: Load customer data
     print("\n📈 Step 1: Loading customer behavior data...")
 
-    customer_data_path = (
-        Path(__file__).parent.parent / "sample_data" / "customer_data.json"
-    )
+    customer_data_path = Path(__file__).parent.parent / "sample_data" / "customer_data.json"
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -92,10 +90,7 @@ async def main():
             print("\n🔍 Key Correlations:")
             if "strong_correlations" in correlations:
                 for corr in correlations["strong_correlations"][:3]:
-                    print(
-                        f"   • {corr['feature_1']} ↔ {corr['feature_2']}: "
-                        f"{corr['correlation']:.3f} (p={corr.get('p_value', 'N/A')})"
-                    )
+                    print(f"   • {corr['feature_1']} ↔ {corr['feature_2']}: " f"{corr['correlation']:.3f} (p={corr.get('p_value', 'N/A')})")
 
         # Show outliers
         if "outliers" in analysis:
@@ -107,9 +102,7 @@ async def main():
 
     # Step 3: T-test analysis
     print("\n📊 Step 3: Performing t-test analysis...")
-    print(
-        "   Note: T-test requires exactly 2 groups, but dataset has 3 segments (Basic, Premium, Standard)"
-    )
+    print("   Note: T-test requires exactly 2 groups, but dataset has 3 segments (Basic, Premium, Standard)")
 
     ttest_result = await client.call_tool(
         "statistical_test",
@@ -157,10 +150,7 @@ async def main():
         if "degrees_of_freedom" in test_result:
             dof = test_result["degrees_of_freedom"]
             if isinstance(dof, dict):
-                print(
-                    f"   • Degrees of freedom: Between={dof.get('between', 'N/A')}, "
-                    f"Within={dof.get('within', 'N/A')}"
-                )
+                print(f"   • Degrees of freedom: Between={dof.get('between', 'N/A')}, " f"Within={dof.get('within', 'N/A')}")
             else:
                 print(f"   • Degrees of freedom: {dof}")
         print(f"   • Interpretation: {test_result.get('interpretation', 'N/A')}")
@@ -186,9 +176,7 @@ async def main():
         print("✅ Chi-square test completed:")
         print(f"   • Chi-square statistic: {test_result.get('statistic', 'N/A'):.4f}")
         print(f"   • P-value: {test_result.get('p_value', 'N/A'):.4f}")
-        print(
-            f"   • Degrees of freedom: {test_result.get('degrees_of_freedom', 'N/A')}"
-        )
+        print(f"   • Degrees of freedom: {test_result.get('degrees_of_freedom', 'N/A')}")
         print(f"   • Effect size (Cramér's V): {test_result.get('effect_size', 'N/A')}")
         print(f"   • Conclusion: {test_result.get('conclusion', 'N/A')}")
     else:
@@ -212,9 +200,7 @@ async def main():
         print(f"✅ Created correlation heatmap: {viz_info.get('filename', 'N/A')}")
         if "metadata" in viz_info:
             metadata = viz_info["metadata"]
-            print(
-                f"   • Size: {metadata.get('width', 'N/A')}x{metadata.get('height', 'N/A')}"
-            )
+            print(f"   • Size: {metadata.get('width', 'N/A')}x{metadata.get('height', 'N/A')}")
     else:
         print(f"❌ Correlation visualization failed: {correlation_viz.get('error')}")
 

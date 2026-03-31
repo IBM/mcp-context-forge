@@ -24,7 +24,6 @@ from playwright.sync_api import APIRequestContext, expect, Page, TimeoutError as
 # Local
 from .conftest import _ensure_admin_logged_in
 
-
 # A placeholder team_id value; tests use it as a URL param and verify it survives
 # mutations.  In a real team-scoped deployment this would be a valid UUID.
 # NOTE: This value intentionally fails UUID validation, which causes tests with
@@ -35,10 +34,7 @@ _TEAM_PARAM = "test-team-placeholder"
 
 _PROXY_PREFIX = "/proxy/mcp"
 
-_ADD_GATEWAY_BTN_SELECTOR = (
-    "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, "
-    "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
-)
+_ADD_GATEWAY_BTN_SELECTOR = "button[onclick*='handleGatewayFormSubmit'], #add-gateway-btn, " "button[type='submit'][form*='gateway'], button:has-text('Add Gateway')"
 
 
 # ===================================================================
@@ -251,9 +247,7 @@ class TestAdminUrlContextPreservation:
     # Add/Edit redirect (issue #3324): _navigateAdmin() preserves team_id
     # ------------------------------------------------------------------
 
-    def test_add_gateway_success_preserves_gateways_fragment(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_add_gateway_success_preserves_gateways_fragment(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After adding a gateway, URL fragment stays on #gateways and team_id is kept."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-urlctx-{uuid.uuid4().hex[:8]}"
@@ -269,9 +263,7 @@ class TestAdminUrlContextPreservation:
 
         _assert_url_params(page.url, team_id=True, include_inactive=False)
 
-    def test_add_server_success_preserves_catalog_fragment(
-        self, page: Page, base_url: str
-    ):
+    def test_add_server_success_preserves_catalog_fragment(self, page: Page, base_url: str):
         """After adding a virtual server, URL fragment stays on #catalog and team_id is kept."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-srv-urlctx-{uuid.uuid4().hex[:8]}"
@@ -287,16 +279,11 @@ class TestAdminUrlContextPreservation:
         name_input.fill(unique_name)
 
         with page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
-            page.locator(
-                "button[onclick*='handleServerFormSubmit'], #add-server-btn, "
-                "button[type='submit'][form*='server'], button:has-text('Add Server')"
-            ).first.click()
+            page.locator("button[onclick*='handleServerFormSubmit'], #add-server-btn, " "button[type='submit'][form*='server'], button:has-text('Add Server')").first.click()
 
         _assert_url_params(page.url, team_id=True, include_inactive=False, fragment="catalog")
 
-    def test_edit_gateway_preserves_gateways_fragment_and_team_id(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_edit_gateway_preserves_gateways_fragment_and_team_id(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After editing a gateway, URL fragment stays on #gateways and team_id is kept."""
         _ensure_admin_logged_in(page, base_url)
         gw_id = _create_gateway_api(api_request_context, "test-gw-edit")
@@ -332,9 +319,7 @@ class TestAdminUrlContextPreservation:
     # Delete/Toggle (issue #3321): fetch() preserves proxy URL context
     # ------------------------------------------------------------------
 
-    def test_toggle_server_preserves_catalog_tab_and_team_id(
-        self, page: Page, base_url: str
-    ):
+    def test_toggle_server_preserves_catalog_tab_and_team_id(self, page: Page, base_url: str):
         """After toggling a server's active state, URL stays on #catalog and team_id survives."""
         _ensure_admin_logged_in(page, base_url)
         page.goto(_admin_url(base_url, team_id=True, fragment="catalog"))
@@ -350,9 +335,7 @@ class TestAdminUrlContextPreservation:
 
         _assert_url_params(page.url, team_id=True, include_inactive=False, fragment="catalog")
 
-    def test_delete_gateway_preserves_gateways_tab_and_team_id(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_delete_gateway_preserves_gateways_tab_and_team_id(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After deleting a gateway via the UI, URL stays on #gateways and team_id survives."""
         _ensure_admin_logged_in(page, base_url)
         gw_id = _create_gateway_api(api_request_context, "test-gw-del")
@@ -373,9 +356,7 @@ class TestAdminUrlContextPreservation:
         finally:
             api_request_context.delete(f"/gateways/{gw_id}")
 
-    def test_add_gateway_preserves_both_params(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_add_gateway_preserves_both_params(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After adding a gateway, both team_id AND include_inactive survive in URL."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-both-{uuid.uuid4().hex[:8]}"
@@ -394,9 +375,7 @@ class TestAdminUrlContextPreservation:
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
-    def test_delete_gateway_preserves_both_params(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_delete_gateway_preserves_both_params(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After deleting a gateway, both team_id AND include_inactive survive in URL."""
         _ensure_admin_logged_in(page, base_url)
         gw_id = _create_gateway_api(api_request_context, "test-gw-delboth")
@@ -453,8 +432,7 @@ class TestAdminUrlContextPreservation:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
 
         # Verify checkbox was initialized from the URL parameter.
-        assert page.evaluate("document.getElementById('show-inactive-gateways')?.checked") is True, \
-            "show-inactive-gateways checkbox should be checked from include_inactive=true URL param"
+        assert page.evaluate("document.getElementById('show-inactive-gateways')?.checked") is True, "show-inactive-gateways checkbox should be checked from include_inactive=true URL param"
 
         # Verify _navigateAdmin builds a URL that preserves include_inactive
         # from the checkbox state and does NOT include team_id.
@@ -485,9 +463,7 @@ class TestAdminProxyUrlContext:
         """Intercept /proxy/mcp/** and serve real content from /**."""
 
         def handle_route(route):
-            url = route.request.url.replace(
-                base_url.rstrip("/") + _PROXY_PREFIX, base_url.rstrip("/"), 1
-            )
+            url = route.request.url.replace(base_url.rstrip("/") + _PROXY_PREFIX, base_url.rstrip("/"), 1)
             response = route.fetch(url=url)
             route.fulfill(response=response)
 
@@ -500,9 +476,7 @@ class TestAdminProxyUrlContext:
     # Both-params mutations
     # ------------------------------------------------------------------
 
-    def test_proxy_add_gateway_preserves_fragment_and_params(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_proxy_add_gateway_preserves_fragment_and_params(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After adding a gateway via proxy URL, fragment + both params survive."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-prxadd-{uuid.uuid4().hex[:8]}"
@@ -521,9 +495,7 @@ class TestAdminProxyUrlContext:
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
-    def test_proxy_edit_gateway_preserves_fragment_and_params(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_proxy_edit_gateway_preserves_fragment_and_params(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After editing a gateway via proxy URL, fragment + both params survive."""
         _ensure_admin_logged_in(page, base_url)
         gw_id = _create_gateway_api(api_request_context, "test-gw-prxedit")
@@ -558,9 +530,7 @@ class TestAdminProxyUrlContext:
         finally:
             api_request_context.delete(f"/gateways/{gw_id}")
 
-    def test_proxy_toggle_server_preserves_catalog_tab(
-        self, page: Page, base_url: str
-    ):
+    def test_proxy_toggle_server_preserves_catalog_tab(self, page: Page, base_url: str):
         """After toggling a server state via proxy URL, #catalog + both params survive."""
         _ensure_admin_logged_in(page, base_url)
         page.goto(_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True, fragment="catalog"))
@@ -576,9 +546,7 @@ class TestAdminProxyUrlContext:
 
         _assert_url_params(page.url, proxy_prefix=True, team_id=True, include_inactive=True, fragment="catalog")
 
-    def test_proxy_delete_gateway_preserves_tab_and_params(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_proxy_delete_gateway_preserves_tab_and_params(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """After deleting a gateway via proxy URL, fragment + both params survive."""
         _ensure_admin_logged_in(page, base_url)
         gw_id = _create_gateway_api(api_request_context, "test-gw-prxdel")
@@ -603,9 +571,7 @@ class TestAdminProxyUrlContext:
     # Single-param (negative) tests
     # ------------------------------------------------------------------
 
-    def test_proxy_add_preserves_team_id_only(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_proxy_add_preserves_team_id_only(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Proxy: starting with only team_id — include_inactive must not appear post-mutation."""
         _ensure_admin_logged_in(page, base_url)
         unique_name = f"test-gw-prxtid-{uuid.uuid4().hex[:8]}"
@@ -624,9 +590,7 @@ class TestAdminProxyUrlContext:
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
-    def test_proxy_add_preserves_include_inactive_only(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_proxy_add_preserves_include_inactive_only(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Proxy: starting with only include_inactive — team_id must not appear post-mutation.
 
         Regression test for #3324 in proxy context.
@@ -638,8 +602,7 @@ class TestAdminProxyUrlContext:
         page.wait_for_load_state("domcontentloaded")
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
 
-        assert page.evaluate("document.getElementById('show-inactive-gateways')?.checked") is True, \
-            "show-inactive-gateways checkbox should be checked from include_inactive=true URL param"
+        assert page.evaluate("document.getElementById('show-inactive-gateways')?.checked") is True, "show-inactive-gateways checkbox should be checked from include_inactive=true URL param"
 
         # Verify _navigateAdmin builds a URL that preserves include_inactive
         # and proxy prefix, without team_id.
@@ -650,9 +613,7 @@ class TestAdminProxyUrlContext:
     # Same-URL reload regression (#3351, root cause of #3324)
     # ------------------------------------------------------------------
 
-    def test_proxy_navigate_admin_reloads_when_url_unchanged(
-        self, page: Page, base_url: str
-    ):
+    def test_proxy_navigate_admin_reloads_when_url_unchanged(self, page: Page, base_url: str):
         """_navigateAdmin must reload even when target URL equals the current URL.
 
         Regression for #3351 (root cause of #3324): in proxy/iframe mode the
@@ -683,17 +644,10 @@ class TestAdminProxyUrlContext:
             with page.expect_navigation(wait_until="domcontentloaded", timeout=10000):
                 page.evaluate("_navigateAdmin('gateways', new URLSearchParams())")
         except PlaywrightTimeoutError:
-            pytest.fail(
-                "Page did NOT reload after _navigateAdmin to same URL — "
-                "this is the #3351 bug: proxy/iframe URLs have no "
-                "trailing-slash difference to trigger a browser reload."
-            )
+            pytest.fail("Page did NOT reload after _navigateAdmin to same URL — " "this is the #3351 bug: proxy/iframe URLs have no " "trailing-slash difference to trigger a browser reload.")
 
         marker = page.evaluate("window.__reload_test_marker")
-        assert marker is None, (
-            "Navigation occurred but page was not fully reloaded — "
-            "window.__reload_test_marker survived."
-        )
+        assert marker is None, "Navigation occurred but page was not fully reloaded — " "window.__reload_test_marker survived."
 
 
 # ===================================================================
@@ -725,16 +679,12 @@ class TestAdminIframeContext:
 
         def handle_route(route):
             try:
-                url = route.request.url.replace(
-                    base_url.rstrip("/") + _PROXY_PREFIX, base_url.rstrip("/"), 1
-                )
+                url = route.request.url.replace(base_url.rstrip("/") + _PROXY_PREFIX, base_url.rstrip("/"), 1)
                 response = route.fetch(url=url)
                 headers = dict(response.headers)
                 headers.pop("x-frame-options", None)
                 if "content-security-policy" in headers:
-                    headers["content-security-policy"] = headers[
-                        "content-security-policy"
-                    ].replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+                    headers["content-security-policy"] = headers["content-security-policy"].replace("frame-ancestors 'none'", "frame-ancestors 'self'")
                 route.fulfill(
                     status=response.status,
                     headers=headers,
@@ -753,8 +703,7 @@ class TestAdminIframeContext:
         """Seed auth cookies then load a host page with the admin in an <iframe>."""
         _ensure_admin_logged_in(page, base_url)
         proxy_admin_url = _admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True)
-        page.set_content(
-            f"""<!DOCTYPE html>
+        page.set_content(f"""<!DOCTYPE html>
 <html><head><title>iframe host</title></head>
 <body style="margin:0;padding:0">
 <iframe id="admin-frame"
@@ -762,13 +711,10 @@ class TestAdminIframeContext:
         style="width:100%;height:100vh;border:none"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
 </iframe>
-</body></html>"""
-        )
+</body></html>""")
         frame = page.frame_locator("#admin-frame")
         try:
-            frame.locator('[data-testid="servers-tab"]').wait_for(
-                state="visible", timeout=30000
-            )
+            frame.locator('[data-testid="servers-tab"]').wait_for(state="visible", timeout=30000)
         except PlaywrightTimeoutError:
             pass  # Continue — some CI setups load slower
 
@@ -805,9 +751,7 @@ class TestAdminIframeContext:
     # Add / Edit / Toggle / Delete (both params)
     # ------------------------------------------------------------------
 
-    def test_iframe_add_gateway_preserves_proxy_prefix(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_iframe_add_gateway_preserves_proxy_prefix(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Adding a gateway inside the iframe: proxy prefix + both params + fragment survive."""
         frame = page.frame_locator("#admin-frame")
         frame_obj = self._frame(page)
@@ -823,9 +767,7 @@ class TestAdminIframeContext:
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
-    def test_iframe_edit_gateway_preserves_proxy_prefix(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_iframe_edit_gateway_preserves_proxy_prefix(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Editing a gateway inside the iframe: proxy prefix + both params + fragment survive."""
         gw_id = _create_gateway_api(api_request_context, "test-gw-iframeedit")
 
@@ -857,14 +799,10 @@ class TestAdminIframeContext:
         finally:
             api_request_context.delete(f"/gateways/{gw_id}")
 
-    def test_iframe_toggle_server_preserves_proxy_prefix(
-        self, page: Page, base_url: str
-    ):
+    def test_iframe_toggle_server_preserves_proxy_prefix(self, page: Page, base_url: str):
         """Toggling a server state inside the iframe: proxy prefix + params + #catalog survive."""
         frame_obj = self._frame(page)
-        frame_obj.evaluate(
-            f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True, fragment='catalog')}'"
-        )
+        frame_obj.evaluate(f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, include_inactive=True, fragment='catalog')}'")
         try:
             frame_obj.wait_for_load_state("domcontentloaded", timeout=10000)
         except PlaywrightTimeoutError:
@@ -880,9 +818,7 @@ class TestAdminIframeContext:
 
         self._assert_iframe_url(page, fragment="catalog")
 
-    def test_iframe_delete_gateway_preserves_proxy_prefix(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_iframe_delete_gateway_preserves_proxy_prefix(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Deleting a gateway inside the iframe: proxy prefix + both params + fragment survive."""
         gw_id = _create_gateway_api(api_request_context, "test-gw-iframedel")
 
@@ -904,14 +840,10 @@ class TestAdminIframeContext:
     # Single-param (negative) tests
     # ------------------------------------------------------------------
 
-    def test_iframe_add_preserves_team_id_only(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_iframe_add_preserves_team_id_only(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Iframe + proxy: team_id only start — include_inactive must NOT appear post-mutation."""
         frame_obj = self._frame(page)
-        frame_obj.evaluate(
-            f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, fragment='gateways')}'"
-        )
+        frame_obj.evaluate(f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, team_id=True, fragment='gateways')}'")
         try:
             frame_obj.wait_for_load_state("domcontentloaded", timeout=10000)
         except PlaywrightTimeoutError:
@@ -930,14 +862,10 @@ class TestAdminIframeContext:
         finally:
             _cleanup_gateway_by_name(api_request_context, unique_name)
 
-    def test_iframe_add_preserves_include_inactive_only(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_iframe_add_preserves_include_inactive_only(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Iframe + proxy: include_inactive only start — team_id must NOT appear post-mutation."""
         frame_obj = self._frame(page)
-        frame_obj.evaluate(
-            f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, include_inactive=True, fragment='gateways')}'"
-        )
+        frame_obj.evaluate(f"window.location.href = '{_admin_url(base_url, prefix=_PROXY_PREFIX, include_inactive=True, fragment='gateways')}'")
         try:
             frame_obj.wait_for_load_state("domcontentloaded", timeout=10000)
         except PlaywrightTimeoutError:
@@ -960,9 +888,7 @@ class TestAdminIframeContext:
     # Team selector dropdown inside iframe
     # ------------------------------------------------------------------
 
-    def test_iframe_team_selector_onclick_stripped_but_delegation_works(
-        self, page: Page, base_url: str, api_request_context: APIRequestContext
-    ):
+    def test_iframe_team_selector_onclick_stripped_but_delegation_works(self, page: Page, base_url: str, api_request_context: APIRequestContext):
         """Team selector click inside iframe navigates with ?team_id=.
 
         Regression: installInnerHtmlGuard() strips inline onclick from
@@ -977,9 +903,7 @@ class TestAdminIframeContext:
         # Navigate iframe to admin WITHOUT team scope so the page loads
         # properly (the autouse fixture uses a placeholder team_id that
         # causes 400 errors).
-        no_team_url = _admin_url(
-            base_url, prefix=_PROXY_PREFIX, team_id=False, fragment="gateways"
-        )
+        no_team_url = _admin_url(base_url, prefix=_PROXY_PREFIX, team_id=False, fragment="gateways")
         frame_obj.evaluate(f"window.location.href = '{no_team_url}'")
         try:
             frame_obj.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -1045,12 +969,8 @@ class TestAdminIframeContext:
                     return result;
                 }
             """)
-            assert guard_check["guardActive"], (
-                "innerHTML guard should strip onclick inside iframe"
-            )
-            assert guard_check["dataActionSurvived"], (
-                "data-action should survive innerHTML guard inside iframe"
-            )
+            assert guard_check["guardActive"], "innerHTML guard should strip onclick inside iframe"
+            assert guard_check["dataActionSurvived"], "data-action should survive innerHTML guard inside iframe"
 
             # Also verify team selector items have data-team-id (template correctness)
             onclick_check = frame_obj.evaluate("""
@@ -1064,14 +984,10 @@ class TestAdminIframeContext:
                 }
             """)
             assert onclick_check["found"], "No team-selector-item found in iframe"
-            assert onclick_check["hasDataTeamId"] is True, (
-                "data-team-id should survive innerHTML guard"
-            )
+            assert onclick_check["hasDataTeamId"] is True, "data-team-id should survive innerHTML guard"
 
             # PROOF 2: Click our team and verify navigation happens
-            team_item = frame.locator(
-                f".team-selector-item:has-text('{team_name}')"
-            )
+            team_item = frame.locator(f".team-selector-item:has-text('{team_name}')")
             try:
                 team_item.wait_for(state="visible", timeout=10000)
             except PlaywrightTimeoutError:
@@ -1082,12 +998,8 @@ class TestAdminIframeContext:
 
             # PROOF 3: iframe URL now contains team_id
             iframe_url = frame_obj.url
-            assert "team_id=" in iframe_url, (
-                f"Expected team_id in iframe URL after clicking team, got: {iframe_url}"
-            )
-            assert team_id in iframe_url, (
-                f"Expected team_id={team_id} in iframe URL, got: {iframe_url}"
-            )
+            assert "team_id=" in iframe_url, f"Expected team_id in iframe URL after clicking team, got: {iframe_url}"
+            assert team_id in iframe_url, f"Expected team_id={team_id} in iframe URL, got: {iframe_url}"
         finally:
             # Cleanup: delete the test team
             api_request_context.delete(f"/admin/teams/{team_id}")

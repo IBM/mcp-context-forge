@@ -142,18 +142,14 @@ def migration_db():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
 
     with engine.connect() as conn:
-        conn.execute(
-            text(
-                """
+        conn.execute(text("""
                 CREATE TABLE roles (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     permissions TEXT,
                     updated_at TEXT
                 )
-                """
-            )
-        )
+                """))
         # Pre-populate roles with realistic baseline permissions BEFORE the migration.
         # developer and team_admin already include servers.use and tools.execute in bootstrap_db.py.
         roles_data = [
@@ -377,9 +373,7 @@ class TestDowngradeLogic:
             for role_name, original_perms in originals.items():
                 restored = sorted(_get_role_permissions(conn, role_name))
                 assert restored == original_perms, (
-                    f"Role '{role_name}' not restored after round-trip. "
-                    f"Lost: {set(original_perms) - set(restored)}, "
-                    f"Extra: {set(restored) - set(original_perms)}"
+                    f"Role '{role_name}' not restored after round-trip. " f"Lost: {set(original_perms) - set(restored)}, " f"Extra: {set(restored) - set(original_perms)}"
                 )
 
     def test_downgrade_idempotent(self, migration_db, migration_module):
@@ -537,8 +531,4 @@ class TestEdgeCases:
 
             for role_name, original_perms in originals.items():
                 restored = sorted(_get_role_permissions(conn, role_name))
-                assert restored == original_perms, (
-                    f"downgrade() did not restore '{role_name}'. "
-                    f"Lost: {set(original_perms) - set(restored)}, "
-                    f"Extra: {set(restored) - set(original_perms)}"
-                )
+                assert restored == original_perms, f"downgrade() did not restore '{role_name}'. " f"Lost: {set(original_perms) - set(restored)}, " f"Extra: {set(restored) - set(original_perms)}"

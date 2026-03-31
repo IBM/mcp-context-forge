@@ -863,8 +863,8 @@ class TestEditServerSelectionBugs:
             servers_page.open_edit_modal(server_name)
 
             # Wait for HTMX to finish loading the resources panel (spinner disappears after swap)
-            servers_page.page.wait_for_selector('#edit-server-resources', state="attached", timeout=10000)
-            servers_page.page.locator('#edit-server-resources .animate-spin').wait_for(state="hidden", timeout=10000)
+            servers_page.page.wait_for_selector("#edit-server-resources", state="attached", timeout=10000)
+            servers_page.page.locator("#edit-server-resources .animate-spin").wait_for(state="hidden", timeout=10000)
             res_count = servers_page.edit_resources_container.locator('input[name="associatedResources"]').count()
             if res_count == 0:
                 pytest.skip("No resources available to test Select All")
@@ -906,8 +906,8 @@ class TestEditServerSelectionBugs:
             servers_page.open_edit_modal(server_name)
 
             # Wait for HTMX to finish loading the prompts panel (spinner disappears after swap)
-            servers_page.page.wait_for_selector('#edit-server-prompts', state="attached", timeout=10000)
-            servers_page.page.locator('#edit-server-prompts .animate-spin').wait_for(state="hidden", timeout=10000)
+            servers_page.page.wait_for_selector("#edit-server-prompts", state="attached", timeout=10000)
+            servers_page.page.locator("#edit-server-prompts .animate-spin").wait_for(state="hidden", timeout=10000)
             prompt_count = servers_page.edit_prompts_container.locator('input[name="associatedPrompts"]').count()
             if prompt_count == 0:
                 pytest.skip("No prompts available to test Select All")

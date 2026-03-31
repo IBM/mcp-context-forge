@@ -46,9 +46,7 @@ async def main():
     # Step 1: Load retail transaction data
     print("\n📊 Step 1: Loading retail transaction data...")
 
-    retail_data_path = (
-        Path(__file__).parent.parent / "sample_data" / "retail_transactions.csv"
-    )
+    retail_data_path = Path(__file__).parent.parent / "sample_data" / "retail_transactions.csv"
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -86,12 +84,7 @@ async def main():
         print("✅ Basic SELECT query (first 10 rows):")
         if "data" in query_data:
             for i, row in enumerate(query_data["data"][:3]):  # Show first 3
-                print(
-                    f"   {i + 1}. Customer: {row.get('customer_id', 'N/A')}, "
-                    f"Product: {row.get('product_name', 'N/A')}, "
-                    f"Qty: {row.get('quantity', 0)}, "
-                    f"Price: ${row.get('price', 0):.2f}"
-                )
+                print(f"   {i + 1}. Customer: {row.get('customer_id', 'N/A')}, " f"Product: {row.get('product_name', 'N/A')}, " f"Qty: {row.get('quantity', 0)}, " f"Price: ${row.get('price', 0):.2f}")
     else:
         print(f"❌ Basic query failed: {basic_query.get('error')}")
 
@@ -127,9 +120,7 @@ async def main():
         print("✅ Mid-range products ($100-$500):")
         if "data" in query_data:
             for row in query_data["data"][:3]:
-                print(
-                    f"   • {row.get('product_name', 'N/A')}: ${row.get('price', 0):.2f}"
-                )
+                print(f"   • {row.get('product_name', 'N/A')}: ${row.get('price', 0):.2f}")
 
     # Query with IN condition
     where_query3 = await client.call_tool(
@@ -146,9 +137,7 @@ async def main():
         print("✅ Product counts by major categories:")
         if "data" in query_data:
             for row in query_data["data"]:
-                print(
-                    f"   • {row.get('category', 'N/A')}: {row.get('count', 0)} products"
-                )
+                print(f"   • {row.get('category', 'N/A')}: {row.get('count', 0)} products")
 
     # Step 4: Aggregation functions
     print("\n📊 Step 4: Aggregation queries...")
@@ -205,9 +194,7 @@ async def main():
         if "data" in query_data and len(query_data["data"]) > 0:
             print("✅ Products containing 'Phone':")
             for row in query_data["data"]:
-                print(
-                    f"   • {row.get('product_name', 'N/A')}: ${row.get('price', 0):.2f}"
-                )
+                print(f"   • {row.get('product_name', 'N/A')}: ${row.get('price', 0):.2f}")
         else:
             print("ℹ️  No products containing 'Phone' found")
 
@@ -261,12 +248,7 @@ async def main():
         print("✅ Top customers by spending (>3 purchases):")
         if "data" in query_data:
             for i, row in enumerate(query_data["data"][:5], 1):
-                print(
-                    f"   {i}. Customer {row.get('customer_id', 'N/A')}: "
-                    f"${row.get('total_spent', 0):,.0f} "
-                    f"({row.get('purchase_count', 0)} purchases, "
-                    f"{row.get('total_items', 0)} items)"
-                )
+                print(f"   {i}. Customer {row.get('customer_id', 'N/A')}: " f"${row.get('total_spent', 0):,.0f} " f"({row.get('purchase_count', 0)} purchases, " f"{row.get('total_items', 0)} items)")
 
     # Step 7: Time-based queries (if date columns exist)
     print("\n📅 Step 7: Product popularity queries...")

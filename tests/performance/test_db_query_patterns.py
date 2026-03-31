@@ -232,12 +232,7 @@ class TestFilteredQueryPatterns:
 
         with query_counter(print_summary=True) as counter:
             # Get enabled tools with their gateways
-            tools = (
-                test_db.query(Tool)
-                .options(joinedload(Tool.gateway))
-                .filter(Tool.enabled == True)  # noqa: E712
-                .all()
-            )
+            tools = test_db.query(Tool).options(joinedload(Tool.gateway)).filter(Tool.enabled == True).all()  # noqa: E712
 
             # Access gateway for each tool
             for tool in tools:
@@ -693,9 +688,7 @@ class TestBatchOperationPatterns:
 
         with query_counter(print_summary=True) as counter:
             # Bulk update all gateways
-            test_db.query(Gateway).filter(Gateway.slug.like("bulk-update-%")).update(
-                {"enabled": False}, synchronize_session=False
-            )
+            test_db.query(Gateway).filter(Gateway.slug.like("bulk-update-%")).update({"enabled": False}, synchronize_session=False)
             test_db.commit()
 
         # Bulk update should be single UPDATE statement
@@ -775,12 +768,7 @@ class TestLazyLoadingDetection:
         from sqlalchemy.orm import joinedload
 
         with query_counter(print_summary=True) as counter:
-            tools = (
-                test_db.query(Tool)
-                .options(joinedload(Tool.gateway))
-                .filter(Tool.original_name.like("lazy-tool-%"))
-                .all()
-            )
+            tools = test_db.query(Tool).options(joinedload(Tool.gateway)).filter(Tool.original_name.like("lazy-tool-%")).all()
 
             # This should NOT trigger additional queries
             gateway_names = []
@@ -848,12 +836,7 @@ class TestComplexJoinPatterns:
         from sqlalchemy.orm import joinedload
 
         with query_counter(print_summary=True) as counter:
-            tools = (
-                test_db.query(Tool)
-                .options(joinedload(Tool.gateway))
-                .filter(Tool.original_name.like("complex-tool-%"))
-                .all()
-            )
+            tools = test_db.query(Tool).options(joinedload(Tool.gateway)).filter(Tool.original_name.like("complex-tool-%")).all()
 
             for tool in tools:
                 _ = tool.gateway.name if tool.gateway else None
@@ -865,12 +848,7 @@ class TestComplexJoinPatterns:
         from sqlalchemy.orm import joinedload
 
         with query_counter(print_summary=True) as counter:
-            tools = (
-                test_db.query(Tool)
-                .options(joinedload(Tool.gateway))
-                .filter(Tool.original_name.like("complex-tool-%"))
-                .all()
-            )
+            tools = test_db.query(Tool).options(joinedload(Tool.gateway)).filter(Tool.original_name.like("complex-tool-%")).all()
 
             # Access gateway properties
             for tool in tools:
@@ -1199,10 +1177,6 @@ class TestDistinctAndGroupByPatterns:
         from sqlalchemy import func
 
         with query_counter(print_summary=True) as counter:
-            results = (
-                test_db.query(Tool.description, func.count(Tool.id))
-                .group_by(Tool.description)
-                .all()
-            )
+            results = test_db.query(Tool.description, func.count(Tool.id)).group_by(Tool.description).all()
 
         assert counter.count == 1, f"GROUP BY should be 1 query, got {counter.count}"

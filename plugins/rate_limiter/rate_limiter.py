@@ -139,10 +139,7 @@ class MemoryBackend:
         """Remove all entries whose fixed window has expired."""
         now = int(time.time())
         async with self._lock:
-            expired = [
-                k for k, w in self._store.items()
-                if now - w.window_start >= int(k.rsplit(":", 1)[-1])
-            ]
+            expired = [k for k, w in self._store.items() if now - w.window_start >= int(k.rsplit(":", 1)[-1])]
             for k in expired:
                 del self._store[k]
 
@@ -239,6 +236,7 @@ return {current, ttl}
             return self._client
         if self._real_client is None:
             import redis.asyncio as aioredis  # noqa: PLC0415
+
             self._real_client = aioredis.from_url(self._url, decode_responses=False)
         return self._real_client
 
@@ -310,9 +308,7 @@ def _make_headers(limit: int, remaining: int, reset_timestamp: int, retry_after:
     return headers
 
 
-def _select_most_restrictive(
-    results: list[tuple[bool, int, int, dict[str, Any]]]
-) -> tuple[bool, int, int, int, dict[str, Any]]:
+def _select_most_restrictive(results: list[tuple[bool, int, int, dict[str, Any]]]) -> tuple[bool, int, int, int, dict[str, Any]]:
     """Select the most restrictive rate limit from multiple dimensions.
 
     Args:
@@ -353,7 +349,7 @@ def _select_most_restrictive(
             "dimensions": {
                 "violated": [m for _, _, _, m in violated],
                 "allowed": [m for _, _, _, m in allowed_dims],
-            }
+            },
         }
         return False, limit, remaining, reset_ts, aggregated_meta
 

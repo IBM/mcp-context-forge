@@ -275,9 +275,7 @@ class TestInitializeGatewayPreAuthHeaders:
         """Test that pre_auth_headers bypass OAuth token fetch."""
         pre_auth_headers = {"Authorization": "Bearer pre-fetched-token"}
 
-        with (
-            patch.object(gateway_service, "connect_to_sse_server", new_callable=AsyncMock) as mock_connect,
-        ):
+        with (patch.object(gateway_service, "connect_to_sse_server", new_callable=AsyncMock) as mock_connect,):
             mock_connect.return_value = ({}, [], [], [])
 
             await gateway_service._initialize_gateway(

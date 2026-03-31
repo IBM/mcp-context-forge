@@ -153,7 +153,7 @@ class TestGatewayTestModal:
         # Button should become disabled with "Testing..." text
         try:
             gateways_page.page.wait_for_selector(
-                '#gateway-test-submit:disabled',
+                "#gateway-test-submit:disabled",
                 timeout=3000,
             )
         except PlaywrightTimeoutError:
@@ -225,14 +225,12 @@ class TestGatewayTestModal:
 
         # Open test modal for first gateway and inject fake result content
         gateways_page.open_test_modal(0)
-        gateways_page.page.evaluate(
-            """() => {
+        gateways_page.page.evaluate("""() => {
                 const resultDiv = document.getElementById('gateway-test-result');
                 const responseDiv = document.getElementById('gateway-test-response-json');
                 if (resultDiv) resultDiv.classList.remove('hidden');
                 if (responseDiv) responseDiv.textContent = 'STALE_GATEWAY_RESULT_MARKER';
-            }"""
-        )
+            }""")
         gateways_page.close_test_modal()
 
         # Open test modal for second gateway
@@ -243,9 +241,7 @@ class TestGatewayTestModal:
 
         # Also verify the response text is cleared
         response_text = gateways_page.test_modal_response_json.text_content().strip()
-        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, (
-            "Gateway test result should not contain stale data from previous gateway"
-        )
+        assert "STALE_GATEWAY_RESULT_MARKER" not in response_text, "Gateway test result should not contain stale data from previous gateway"
 
         gateways_page.close_test_modal()
 
@@ -853,13 +849,11 @@ class TestCustomHeadersAuth:
         assert count_before >= 1, "Expected at least 1 header row"
 
         # Get the last header row's ID and call removeAuthHeader directly
-        last_header_id = gateways_page.page.evaluate(
-            """() => {
+        last_header_id = gateways_page.page.evaluate("""() => {
                 const container = document.getElementById('auth-headers-container-gw');
                 const rows = container.querySelectorAll('[id^="auth-header-"]');
                 return rows.length > 0 ? rows[rows.length - 1].id : null;
-            }"""
-        )
+            }""")
         assert last_header_id is not None, "Could not find a header row to remove"
 
         gateways_page.page.evaluate(
@@ -1496,12 +1490,12 @@ class TestGatewayAddFormAdvanced:
     def test_panel_description_text(self, gateways_page: GatewaysPage):
         """Test that the panel description text is correct."""
         gateways_page.navigate_to_gateways_tab()
-        description = gateways_page.page.locator('text=Register external MCP Servers (SSE/HTTP) to retrieve their tools/resources/prompts')
+        description = gateways_page.page.locator("text=Register external MCP Servers (SSE/HTTP) to retrieve their tools/resources/prompts")
         expect(description).to_be_visible()
 
     def test_tags_help_text(self, gateways_page: GatewaysPage):
         """Test that tags field has help text about normalization."""
         gateways_page.navigate_to_gateways_tab()
         # Scope to the add form to avoid matching the edit modal's tags help text
-        help_text = gateways_page.add_gateway_form.locator('text=Tags will be automatically normalized')
+        help_text = gateways_page.add_gateway_form.locator("text=Tags will be automatically normalized")
         expect(help_text).to_be_visible()

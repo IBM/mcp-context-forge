@@ -73,7 +73,7 @@ class SQLSanitizerConfig(BaseModel):
     require_parameterization: bool = False
     block_on_violation: bool = True
 
-    @field_validator('blocked_statements', mode='before')
+    @field_validator("blocked_statements", mode="before")
     @classmethod
     def compile_patterns(cls, v: Any) -> list[Pattern[str]]:
         """Compile string patterns to regex Pattern objects.

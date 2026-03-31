@@ -576,9 +576,11 @@ class TestPerformanceTrackerExtraCoverage:
         operation = "database_query"
         tracker.performance_thresholds[operation] = 0.0  # Force threshold_exceeded
 
-        with patch("mcpgateway.services.performance_tracker.get_correlation_id", return_value="cid"), patch("mcpgateway.services.performance_tracker.time.time", side_effect=[0.0, 1.0]), patch(
-            "mcpgateway.services.performance_tracker.logger.warning"
-        ) as warn:
+        with (
+            patch("mcpgateway.services.performance_tracker.get_correlation_id", return_value="cid"),
+            patch("mcpgateway.services.performance_tracker.time.time", side_effect=[0.0, 1.0]),
+            patch("mcpgateway.services.performance_tracker.logger.warning") as warn,
+        ):
             with tracker.track_operation(operation, component="svc", extra_context={"foo": "bar"}):
                 pass
 

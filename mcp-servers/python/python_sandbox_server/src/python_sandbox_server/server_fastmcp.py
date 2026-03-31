@@ -470,9 +470,7 @@ class PythonSandbox:
                     )
                 ):
                     # Also check it's not an assignment (simple check)
-                    if "=" not in last_line or any(
-                        op in last_line for op in ["==", "!=", "<=", ">=", " in ", " is "]
-                    ):
+                    if "=" not in last_line or any(op in last_line for op in ["==", "!=", "<=", ">=", " in ", " is "]):
                         try:
                             # Try to compile just the last line as an expression
                             compile(last_line, "<sandbox>", "eval")
@@ -538,9 +536,7 @@ class PythonSandbox:
                     safe_globals["_getitem_"] = lambda obj, key: obj[key]
 
                 # Merge builtins (ours + RestrictedPython's)
-                if "__builtins__" in rp_safe_globals and isinstance(
-                    rp_safe_globals["__builtins__"], dict
-                ):
+                if "__builtins__" in rp_safe_globals and isinstance(rp_safe_globals["__builtins__"], dict):
                     merged_builtins = dict(rp_safe_globals["__builtins__"])
                     merged_builtins.update(our_builtins)
                     safe_globals["__builtins__"] = merged_builtins

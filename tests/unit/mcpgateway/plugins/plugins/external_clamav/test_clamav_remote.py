@@ -22,7 +22,6 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 
 from plugins.external.clamav_server.clamav_plugin import ClamAVRemotePlugin
 
-
 EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
 

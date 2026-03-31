@@ -28,9 +28,7 @@ class OutputConfig(BaseModel):
 class DecodingConfig(BaseModel):
     preprocessing_enabled: bool = Field(default=True)
     max_image_size: str = Field(default="10MB")
-    supported_image_formats: list[str] = Field(
-        default_factory=lambda: ["png", "jpg", "jpeg", "gif", "bmp", "tiff"]
-    )
+    supported_image_formats: list[str] = Field(default_factory=lambda: ["png", "jpg", "jpeg", "gif", "bmp", "tiff"])
 
 
 class PerformanceConfig(BaseModel):

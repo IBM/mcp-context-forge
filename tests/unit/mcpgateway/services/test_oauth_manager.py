@@ -100,9 +100,7 @@ async def test_client_credentials_flow_success_json(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager._client_credentials_flow(
-            {"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"}
-        )
+        result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
     assert result == "json-tok"
 
 
@@ -116,9 +114,7 @@ async def test_client_credentials_flow_success_form_encoded(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager._client_credentials_flow(
-            {"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"}
-        )
+        result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
     assert result == "form-tok"
 
 
@@ -132,9 +128,7 @@ async def test_client_credentials_flow_with_scopes(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager._client_credentials_flow(
-            {"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token", "scopes": ["read", "write"]}
-        )
+        result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token", "scopes": ["read", "write"]})
     assert result == "scoped-tok"
 
 
@@ -158,9 +152,7 @@ async def test_client_credentials_flow_decrypt_secret(oauth_manager):
         mock_gs.return_value = MagicMock(auth_encryption_secret="key")
         # Secret longer than 50 chars triggers decryption
         long_secret = "x" * 60
-        result = await oauth_manager._client_credentials_flow(
-            {"client_id": "cid", "client_secret": long_secret, "token_url": "https://auth/token"}
-        )
+        result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": long_secret, "token_url": "https://auth/token"})
     assert result == "dec-tok"
 
 
@@ -182,9 +174,7 @@ async def test_client_credentials_flow_decrypt_returns_none(oauth_manager):
         patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
     ):
         mock_gs.return_value = MagicMock(auth_encryption_secret="key")
-        result = await oauth_manager._client_credentials_flow(
-            {"client_id": "cid", "client_secret": "x" * 60, "token_url": "https://auth/token"}
-        )
+        result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "x" * 60, "token_url": "https://auth/token"})
     assert result == "tok"
 
 
@@ -204,9 +194,7 @@ async def test_client_credentials_flow_decrypt_exception(oauth_manager):
         patch("mcpgateway.services.oauth_manager.get_encryption_service", side_effect=RuntimeError("enc fail")),
     ):
         mock_gs.return_value = MagicMock(auth_encryption_secret="key")
-        result = await oauth_manager._client_credentials_flow(
-            {"client_id": "cid", "client_secret": "x" * 60, "token_url": "https://auth/token"}
-        )
+        result = await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "x" * 60, "token_url": "https://auth/token"})
     assert result == "tok"
 
 
@@ -221,9 +209,7 @@ async def test_client_credentials_flow_no_access_token(oauth_manager):
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         with pytest.raises(OAuthError, match="No access_token"):
-            await oauth_manager._client_credentials_flow(
-                {"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"}
-            )
+            await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
 
 
 @pytest.mark.asyncio
@@ -232,9 +218,7 @@ async def test_client_credentials_flow_http_error(oauth_manager):
     mock_client.post.side_effect = httpx.HTTPError("connection failed")
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         with pytest.raises(OAuthError, match="Failed to obtain access token"):
-            await oauth_manager._client_credentials_flow(
-                {"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"}
-            )
+            await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
 
 
 @pytest.mark.asyncio
@@ -249,9 +233,7 @@ async def test_client_credentials_flow_json_parse_failure(oauth_manager):
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         with pytest.raises(OAuthError, match="No access_token"):
-            await oauth_manager._client_credentials_flow(
-                {"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"}
-            )
+            await oauth_manager._client_credentials_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token"})
 
 
 # ---------- _password_flow ----------
@@ -267,9 +249,7 @@ async def test_password_flow_success(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager._password_flow(
-            {"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token", "username": "user", "password": "pass"}
-        )
+        result = await oauth_manager._password_flow({"client_id": "cid", "client_secret": "short", "token_url": "https://auth/token", "username": "user", "password": "pass"})
     assert result == "pwd-tok"
 
 
@@ -291,9 +271,7 @@ async def test_password_flow_form_encoded(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager._password_flow(
-            {"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "pass", "scopes": ["openid"]}
-        )
+        result = await oauth_manager._password_flow({"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "pass", "scopes": ["openid"]})
     assert result == "form-pwd-tok"
 
 
@@ -315,9 +293,7 @@ async def test_password_flow_decrypt_secret(oauth_manager):
         patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
     ):
         mock_gs.return_value = MagicMock(auth_encryption_secret="key")
-        result = await oauth_manager._password_flow(
-            {"client_id": "cid", "client_secret": "x" * 60, "token_url": "https://auth/token", "username": "user", "password": "pass"}
-        )
+        result = await oauth_manager._password_flow({"client_id": "cid", "client_secret": "x" * 60, "token_url": "https://auth/token", "username": "user", "password": "pass"})
     assert result == "tok"
 
 
@@ -341,9 +317,7 @@ async def test_password_flow_decrypts_encrypted_password(oauth_manager):
         patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
     ):
         mock_gs.return_value = MagicMock(auth_encryption_secret="key")
-        result = await oauth_manager._password_flow(
-            {"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"}
-        )
+        result = await oauth_manager._password_flow({"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"})
 
     assert result == "tok"
     posted_data = mock_client.post.await_args.kwargs["data"]
@@ -370,9 +344,7 @@ async def test_password_flow_encrypted_password_decrypt_returns_none(oauth_manag
         patch("mcpgateway.services.oauth_manager.get_encryption_service", return_value=mock_enc),
     ):
         mock_gs.return_value = MagicMock(auth_encryption_secret="key")
-        result = await oauth_manager._password_flow(
-            {"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"}
-        )
+        result = await oauth_manager._password_flow({"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"})
 
     assert result == "tok"
     posted_data = mock_client.post.await_args.kwargs["data"]
@@ -395,9 +367,7 @@ async def test_password_flow_encrypted_password_decrypt_exception(oauth_manager)
         patch("mcpgateway.services.oauth_manager.get_encryption_service", side_effect=RuntimeError("enc fail")),
     ):
         mock_gs.return_value = MagicMock(auth_encryption_secret="key")
-        result = await oauth_manager._password_flow(
-            {"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"}
-        )
+        result = await oauth_manager._password_flow({"client_id": "cid", "token_url": "https://auth/token", "username": "user", "password": "enc-password"})
 
     assert result == "tok"
 
@@ -454,9 +424,7 @@ async def test_refresh_token_success(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager.refresh_token(
-            "old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"}
-        )
+        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "client_secret": "sec", "token_url": "https://auth/token"})
     assert result["access_token"] == "new-tok"
 
 
@@ -569,9 +537,7 @@ async def test_refresh_token_400_error(oauth_manager):
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         with pytest.raises(OAuthError, match="Refresh token invalid"):
-            await oauth_manager.refresh_token(
-                "old-rt", {"client_id": "cid", "token_url": "https://auth/token"}
-            )
+            await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token"})
 
 
 @pytest.mark.asyncio
@@ -584,9 +550,7 @@ async def test_refresh_token_401_error(oauth_manager):
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         with pytest.raises(OAuthError, match="Refresh token invalid"):
-            await oauth_manager.refresh_token(
-                "old-rt", {"client_id": "cid", "token_url": "https://auth/token"}
-            )
+            await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token"})
 
 
 @pytest.mark.asyncio
@@ -599,9 +563,7 @@ async def test_refresh_token_no_access_token_in_response(oauth_manager):
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         with pytest.raises(OAuthError, match="No access_token"):
-            await oauth_manager.refresh_token(
-                "old-rt", {"client_id": "cid", "token_url": "https://auth/token"}
-            )
+            await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token"})
 
 
 @pytest.mark.asyncio
@@ -610,9 +572,7 @@ async def test_refresh_token_http_error(oauth_manager):
     mock_client.post.side_effect = httpx.HTTPError("timeout")
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
         with pytest.raises(OAuthError, match="Failed to refresh token"):
-            await oauth_manager.refresh_token(
-                "old-rt", {"client_id": "cid", "token_url": "https://auth/token"}
-            )
+            await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token"})
 
 
 @pytest.mark.asyncio
@@ -641,9 +601,7 @@ async def test_refresh_token_with_resource_string(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager.refresh_token(
-            "old-rt", {"client_id": "cid", "token_url": "https://auth/token", "resource": "https://mcp.example.com"}
-        )
+        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token", "resource": "https://mcp.example.com"})
     assert result["access_token"] == "new-tok"
 
 
@@ -656,9 +614,7 @@ async def test_refresh_token_with_resource_list(oauth_manager):
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
     with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
-        result = await oauth_manager.refresh_token(
-            "old-rt", {"client_id": "cid", "token_url": "https://auth/token", "resource": ["https://a.com", "https://b.com"]}
-        )
+        result = await oauth_manager.refresh_token("old-rt", {"client_id": "cid", "token_url": "https://auth/token", "resource": ["https://a.com", "https://b.com"]})
     assert result["access_token"] == "new-tok"
 
 

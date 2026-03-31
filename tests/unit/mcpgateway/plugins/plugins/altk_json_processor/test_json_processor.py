@@ -39,7 +39,10 @@ except ModuleNotFoundError:
 async def test_threshold():
     plugin = ALTKJsonProcessor(  # type: ignore
         PluginConfig(
-            name="jsonprocessor", kind="plugins.altk_json_processor.json_processor.ALTKJsonProcessor", hooks=[ToolHookType.TOOL_POST_INVOKE], config={"llm_provider": "pytestmock", "length_threshold": 50}
+            name="jsonprocessor",
+            kind="plugins.altk_json_processor.json_processor.ALTKJsonProcessor",
+            hooks=[ToolHookType.TOOL_POST_INVOKE],
+            config={"llm_provider": "pytestmock", "length_threshold": 50},
         )
     )
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))

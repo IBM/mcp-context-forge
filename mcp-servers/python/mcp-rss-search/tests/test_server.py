@@ -144,15 +144,11 @@ class TestRSSParser:
         assert results[0]["title"] == "Episode 2: Advanced Topics"
 
         # Case-insensitive search
-        results = rss_parser.search_entries(
-            feed_data, "INTRODUCTION", fields=["title"], case_sensitive=False
-        )
+        results = rss_parser.search_entries(feed_data, "INTRODUCTION", fields=["title"], case_sensitive=False)
         assert len(results) == 1
 
         # Case-sensitive search (should fail)
-        results = rss_parser.search_entries(
-            feed_data, "INTRODUCTION", fields=["title"], case_sensitive=True
-        )
+        results = rss_parser.search_entries(feed_data, "INTRODUCTION", fields=["title"], case_sensitive=True)
         assert len(results) == 0
 
     @pytest.mark.asyncio
@@ -170,15 +166,11 @@ class TestRSSParser:
         feed_data = await rss_parser.fetch_feed("https://example.com/feed.rss", use_cache=False)
 
         # Search for episodes with numbers
-        results = rss_parser.search_entries(
-            feed_data, r"Episode \d+:", fields=["title"], regex=True
-        )
+        results = rss_parser.search_entries(feed_data, r"Episode \d+:", fields=["title"], regex=True)
         assert len(results) == 3
 
         # Search for specific episode number
-        results = rss_parser.search_entries(
-            feed_data, r"Episode 2:", fields=["title"], regex=True
-        )
+        results = rss_parser.search_entries(feed_data, r"Episode 2:", fields=["title"], regex=True)
         assert len(results) == 1
 
     @pytest.mark.asyncio
@@ -247,17 +239,13 @@ class TestRSSParser:
         # If dates are present, test filtering
         if any(dates_present):
             # Filter for all January (broad range to account for date parsing differences)
-            results = rss_parser.filter_by_date(
-                feed_data, start_date="2024-01-01", end_date="2024-02-01"
-            )
+            results = rss_parser.filter_by_date(feed_data, start_date="2024-01-01", end_date="2024-02-01")
             # Should find at least some entries with dates
             # (may not find all due to feedparser date normalization)
             assert len(results) >= 0  # At minimum, should not error
         else:
             # If no dates were parsed, filtering should return empty
-            results = rss_parser.filter_by_date(
-                feed_data, start_date="2024-01-01", end_date="2024-01-31"
-            )
+            results = rss_parser.filter_by_date(feed_data, start_date="2024-01-01", end_date="2024-01-31")
             assert isinstance(results, list)
 
     @pytest.mark.asyncio
@@ -297,9 +285,7 @@ class TestRSSParser:
             status_code=404,
         )
 
-        result = await rss_parser.fetch_feed(
-            "https://example.com/notfound.rss", use_cache=False
-        )
+        result = await rss_parser.fetch_feed("https://example.com/notfound.rss", use_cache=False)
 
         assert result["success"] is False
         assert "error" in result
@@ -329,9 +315,7 @@ class TestRSSParser:
         feed_data = await rss_parser.fetch_feed("https://example.com/feed.rss", use_cache=False)
 
         # Search for "Python" across all fields
-        results = rss_parser.search_entries(
-            feed_data, "Python", fields=["title", "description", "categories"]
-        )
+        results = rss_parser.search_entries(feed_data, "Python", fields=["title", "description", "categories"])
 
         # Should find Episode 2 (has Python in categories and description)
         assert len(results) >= 1

@@ -76,15 +76,12 @@ logger = logging.getLogger(__name__)
 # Default Test Parameters (for Web UI)
 # =============================================================================
 
+
 @events.init_command_line_parser.add_listener
 def set_defaults(parser):
     """Set default values for the Locust web UI."""
-    parser.set_defaults(
-        users=1000,
-        spawn_rate=100,
-        run_time="180s",
-        host="http://localhost:8888"
-    )
+    parser.set_defaults(users=1000, spawn_rate=100, run_time="180s", host="http://localhost:8888")
+
 
 # =============================================================================
 # Configuration
@@ -104,15 +101,25 @@ REDIS_URL = os.environ.get("BASELINE_REDIS_URL", "redis://localhost:6379/0")
 
 # Test data
 TIMEZONES = [
-    "UTC", "America/New_York", "America/Los_Angeles", "Europe/London",
-    "Europe/Paris", "Asia/Tokyo", "Asia/Shanghai", "Australia/Sydney",
-    "America/Chicago", "America/Denver", "Europe/Berlin", "Asia/Singapore"
+    "UTC",
+    "America/New_York",
+    "America/Los_Angeles",
+    "Europe/London",
+    "Europe/Paris",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Australia/Sydney",
+    "America/Chicago",
+    "America/Denver",
+    "Europe/Berlin",
+    "Asia/Singapore",
 ]
 
 
 # =============================================================================
 # Event Handlers
 # =============================================================================
+
 
 @events.test_start.add_listener
 def on_test_start(environment, **kwargs):
@@ -166,6 +173,7 @@ def on_test_stop(environment, **kwargs):
 # Fast Time Server REST API Tests
 # =============================================================================
 
+
 class FastTimeRESTUser(HttpUser):
     """Load test for Fast Time Server REST API directly (no gateway).
 
@@ -183,11 +191,7 @@ class FastTimeRESTUser(HttpUser):
     def get_current_time(self):
         """GET /api/v1/time - Get current time in random timezone."""
         tz = random.choice(TIMEZONES)
-        with self.client.get(
-            f"/api/v1/time?timezone={tz}",
-            name="/api/v1/time",
-            catch_response=True
-        ) as response:
+        with self.client.get(f"/api/v1/time?timezone={tz}", name="/api/v1/time", catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
@@ -198,11 +202,7 @@ class FastTimeRESTUser(HttpUser):
     def get_time_by_timezone(self):
         """GET /api/v1/time/{timezone} - Get time for specific timezone."""
         tz = random.choice(TIMEZONES)
-        with self.client.get(
-            f"/api/v1/time/{tz}",
-            name="/api/v1/time/{timezone}",
-            catch_response=True
-        ) as response:
+        with self.client.get(f"/api/v1/time/{tz}", name="/api/v1/time/{timezone}", catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
@@ -214,17 +214,8 @@ class FastTimeRESTUser(HttpUser):
         """POST /api/v1/convert - Convert time between timezones."""
         from_tz = random.choice(TIMEZONES)
         to_tz = random.choice([t for t in TIMEZONES if t != from_tz])
-        payload = {
-            "time": "2025-01-15T10:30:00Z",
-            "from_timezone": from_tz,
-            "to_timezone": to_tz
-        }
-        with self.client.post(
-            "/api/v1/convert",
-            json=payload,
-            name="/api/v1/convert",
-            catch_response=True
-        ) as response:
+        payload = {"time": "2025-01-15T10:30:00Z", "from_timezone": from_tz, "to_timezone": to_tz}
+        with self.client.post("/api/v1/convert", json=payload, name="/api/v1/convert", catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
@@ -234,11 +225,7 @@ class FastTimeRESTUser(HttpUser):
     @tag("fast-time", "rest", "timezones")
     def list_timezones(self):
         """GET /api/v1/timezones - List all available timezones."""
-        with self.client.get(
-            "/api/v1/timezones",
-            name="/api/v1/timezones",
-            catch_response=True
-        ) as response:
+        with self.client.get("/api/v1/timezones", name="/api/v1/timezones", catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
@@ -249,11 +236,7 @@ class FastTimeRESTUser(HttpUser):
     def get_timezone_info(self):
         """GET /api/v1/timezones/{timezone}/info - Get timezone details."""
         tz = random.choice(TIMEZONES)
-        with self.client.get(
-            f"/api/v1/timezones/{tz}/info",
-            name="/api/v1/timezones/{timezone}/info",
-            catch_response=True
-        ) as response:
+        with self.client.get(f"/api/v1/timezones/{tz}/info", name="/api/v1/timezones/{timezone}/info", catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
@@ -263,11 +246,7 @@ class FastTimeRESTUser(HttpUser):
     @tag("fast-time", "rest", "health")
     def health_check(self):
         """GET /health - Health check endpoint."""
-        with self.client.get(
-            "/health",
-            name="/health",
-            catch_response=True
-        ) as response:
+        with self.client.get("/health", name="/health", catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
@@ -277,11 +256,7 @@ class FastTimeRESTUser(HttpUser):
     @tag("fast-time", "rest", "resources")
     def list_resources(self):
         """GET /api/v1/resources - List available resources."""
-        with self.client.get(
-            "/api/v1/resources",
-            name="/api/v1/resources",
-            catch_response=True
-        ) as response:
+        with self.client.get("/api/v1/resources", name="/api/v1/resources", catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
@@ -291,11 +266,7 @@ class FastTimeRESTUser(HttpUser):
     @tag("fast-time", "rest", "prompts")
     def list_prompts(self):
         """GET /api/v1/prompts - List available prompts."""
-        with self.client.get(
-            "/api/v1/prompts",
-            name="/api/v1/prompts",
-            catch_response=True
-        ) as response:
+        with self.client.get("/api/v1/prompts", name="/api/v1/prompts", catch_response=True) as response:
             if response.status_code == 200:
                 response.success()
             else:
@@ -329,6 +300,7 @@ class FastTimeStressUser(HttpUser):
 # Fast Time Server MCP Client Tests (Streamable HTTP)
 # =============================================================================
 
+
 class FastTimeMCPUser(User):
     """Load test for Fast Time Server via MCP Streamable HTTP protocol.
 
@@ -348,6 +320,7 @@ class FastTimeMCPUser(User):
         """Initialize with requests session for MCP calls."""
         super().__init__(*args, **kwargs)
         import requests
+
         self._session = requests.Session()
         self._request_id = 0
         self._initialized = False
@@ -377,11 +350,7 @@ class FastTimeMCPUser(User):
 
     def _mcp_request(self, method: str, params: dict = None):
         """Make an MCP JSON-RPC request."""
-        payload = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "id": self._next_id()
-        }
+        payload = {"jsonrpc": "2.0", "method": method, "id": self._next_id()}
         if params:
             payload["params"] = params
 
@@ -389,12 +358,7 @@ class FastTimeMCPUser(User):
         if self._mcp_session_id:
             headers["Mcp-Session-Id"] = self._mcp_session_id
 
-        response = self._session.post(
-            MCP_URL,
-            json=payload,
-            headers=headers,
-            timeout=10
-        )
+        response = self._session.post(MCP_URL, json=payload, headers=headers, timeout=10)
 
         # Capture session ID from response header
         if "Mcp-Session-Id" in response.headers:
@@ -411,11 +375,7 @@ class FastTimeMCPUser(User):
     def _ensure_initialized(self):
         """Ensure MCP session is initialized."""
         if not self._initialized:
-            self._mcp_request("initialize", {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "locust-mcp-client", "version": "1.0"}
-            })
+            self._mcp_request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "locust-mcp-client", "version": "1.0"}})
             self._initialized = True
 
     @task(10)
@@ -426,10 +386,7 @@ class FastTimeMCPUser(User):
         start = time.perf_counter()
         try:
             self._ensure_initialized()
-            self._mcp_request("tools/call", {
-                "name": "get_system_time",
-                "arguments": {"timezone": tz}
-            })
+            self._mcp_request("tools/call", {"name": "get_system_time", "arguments": {"timezone": tz}})
             self._fire_request("get_system_time", start)
         except Exception as e:
             self._fire_request("get_system_time", start, e)
@@ -443,14 +400,7 @@ class FastTimeMCPUser(User):
         start = time.perf_counter()
         try:
             self._ensure_initialized()
-            self._mcp_request("tools/call", {
-                "name": "convert_time",
-                "arguments": {
-                    "time": "2025-01-15T10:30:00Z",
-                    "source_timezone": source_tz,
-                    "target_timezone": target_tz
-                }
-            })
+            self._mcp_request("tools/call", {"name": "convert_time", "arguments": {"time": "2025-01-15T10:30:00Z", "source_timezone": source_tz, "target_timezone": target_tz}})
             self._fire_request("convert_time", start)
         except Exception as e:
             self._fire_request("convert_time", start, e)
@@ -472,6 +422,7 @@ class FastTimeMCPUser(User):
 # Gateway MCP Tests (via virtual server)
 # =============================================================================
 
+
 def _generate_jwt_token():
     """Generate a JWT token for gateway authentication.
 
@@ -481,18 +432,12 @@ def _generate_jwt_token():
     import time as time_module
 
     now = int(time_module.time())
-    payload = {
-        "username": "admin@example.com",
-        "iat": now,
-        "iss": "mcpgateway",
-        "aud": "mcpgateway-api",
-        "sub": "admin@example.com",
-        "exp": now + 86400  # 24 hours
-    }
+    payload = {"username": "admin@example.com", "iat": now, "iss": "mcpgateway", "aud": "mcpgateway-api", "sub": "admin@example.com", "exp": now + 86400}  # 24 hours
 
     # Try PyJWT first (proper implementation)
     try:
         import jwt
+
         return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
     except ImportError:
         pass
@@ -537,6 +482,7 @@ class GatewayMCPUser(User):
         """Initialize with requests session for gateway MCP calls."""
         super().__init__(*args, **kwargs)
         import requests
+
         self._session = requests.Session()
         self._request_id = 0
         self._initialized = False
@@ -568,28 +514,15 @@ class GatewayMCPUser(User):
 
     def _mcp_request(self, method: str, params: dict = None):
         """Make an MCP JSON-RPC request through the gateway."""
-        payload = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "id": self._next_id()
-        }
+        payload = {"jsonrpc": "2.0", "method": method, "id": self._next_id()}
         if params:
             payload["params"] = params
 
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": f"Bearer {self._token}"
-        }
+        headers = {"Content-Type": "application/json", "Accept": "application/json", "Authorization": f"Bearer {self._token}"}
         if self._mcp_session_id:
             headers["Mcp-Session-Id"] = self._mcp_session_id
 
-        response = self._session.post(
-            self._mcp_url,
-            json=payload,
-            headers=headers,
-            timeout=10
-        )
+        response = self._session.post(self._mcp_url, json=payload, headers=headers, timeout=10)
 
         # Capture session ID from response header
         if "Mcp-Session-Id" in response.headers:
@@ -606,11 +539,7 @@ class GatewayMCPUser(User):
     def _ensure_initialized(self):
         """Ensure MCP session is initialized."""
         if not self._initialized:
-            self._mcp_request("initialize", {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "locust-gateway-client", "version": "1.0"}
-            })
+            self._mcp_request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "locust-gateway-client", "version": "1.0"}})
             self._initialized = True
 
     @task(10)
@@ -621,10 +550,7 @@ class GatewayMCPUser(User):
         start = time.perf_counter()
         try:
             self._ensure_initialized()
-            result = self._mcp_request("tools/call", {
-                "name": "fast-time-get-system-time",
-                "arguments": {"timezone": tz}
-            })
+            result = self._mcp_request("tools/call", {"name": "fast-time-get-system-time", "arguments": {"timezone": tz}})
             # Validate response contains time data
             content = result.get("content", [])
             if not content or "text" not in content[0]:
@@ -642,14 +568,7 @@ class GatewayMCPUser(User):
         start = time.perf_counter()
         try:
             self._ensure_initialized()
-            result = self._mcp_request("tools/call", {
-                "name": "fast-time-convert-time",
-                "arguments": {
-                    "time": "2025-01-15T10:30:00Z",
-                    "source_timezone": source_tz,
-                    "target_timezone": target_tz
-                }
-            })
+            result = self._mcp_request("tools/call", {"name": "fast-time-convert-time", "arguments": {"time": "2025-01-15T10:30:00Z", "source_timezone": source_tz, "target_timezone": target_tz}})
             # Validate response contains converted time
             content = result.get("content", [])
             if not content or "text" not in content[0]:
@@ -679,6 +598,7 @@ class GatewayMCPUser(User):
 # PostgreSQL Direct Tests (requires psycopg)
 # =============================================================================
 
+
 class PostgresUser(User):
     """Direct PostgreSQL performance testing.
 
@@ -700,13 +620,8 @@ class PostgresUser(User):
         self.conn = None
         try:
             import psycopg
-            self.conn = psycopg.connect(
-                host=POSTGRES_HOST,
-                port=POSTGRES_PORT,
-                user=POSTGRES_USER,
-                password=POSTGRES_PASSWORD,
-                dbname=POSTGRES_DB
-            )
+
+            self.conn = psycopg.connect(host=POSTGRES_HOST, port=POSTGRES_PORT, user=POSTGRES_USER, password=POSTGRES_PASSWORD, dbname=POSTGRES_DB)
             logger.info("PostgreSQL connection established")
         except ImportError:
             logger.warning("psycopg not installed - PostgreSQL tests disabled")
@@ -764,6 +679,7 @@ class PostgresUser(User):
 # Redis Direct Tests (requires redis)
 # =============================================================================
 
+
 class RedisUser(User):
     """Direct Redis performance testing.
 
@@ -785,6 +701,7 @@ class RedisUser(User):
         self.redis_client = None
         try:
             import redis
+
             self.redis_client = redis.from_url(REDIS_URL)
             self.redis_client.ping()
             logger.info("Redis connection established")

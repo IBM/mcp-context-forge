@@ -50,7 +50,7 @@ def _load_env_file() -> dict[str, str]:
                     if "=" in line:
                         key, _, value = line.partition("=")
                         key = key.strip()
-                        value = value.strip().strip('"\'')
+                        value = value.strip().strip("\"'")
                         env_vars[key] = value
             break
     return env_vars

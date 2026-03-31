@@ -15,6 +15,7 @@ from mcpgateway.plugins.framework import (
 # Try to import Rust implementation
 try:
     from url_reputation_rust import URLReputationPlugin as RustPlugin
+
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
@@ -41,7 +42,7 @@ def load_bench_config(config_path: str = "bench_config.json"):
     if not config_file.exists():
         raise FileNotFoundError(f"Benchmark config file not found: {config_file}")
 
-    with open(config_file, 'r') as f:
+    with open(config_file, "r") as f:
         return json.load(f)
 
 
@@ -51,7 +52,7 @@ def generate_payloads(size: int, urls: list[str], url_multiplier: int = 1):
     expanded_urls = urls * url_multiplier
     url_count = len(expanded_urls)
     repeated = expanded_urls * (size // url_count)
-    remaining = expanded_urls[:(size % url_count)]
+    remaining = expanded_urls[: (size % url_count)]
 
     return [Payload(url) for url in repeated + remaining]
 
@@ -64,8 +65,10 @@ async def run_benchmark(language: Literal["python", "rust"], config: PluginConfi
     if language == "python":
         try:
             import url_reputation
-            with patch.object(url_reputation, '_RUST_AVAILABLE', False):
+
+            with patch.object(url_reputation, "_RUST_AVAILABLE", False):
                 from url_reputation import URLReputationPlugin
+
                 plugin = URLReputationPlugin(config)
 
                 # Warmup phase
@@ -86,8 +89,10 @@ async def run_benchmark(language: Literal["python", "rust"], config: PluginConfi
     else:
         try:
             import url_reputation
-            with patch.object(url_reputation, '_RUST_AVAILABLE', True):
+
+            with patch.object(url_reputation, "_RUST_AVAILABLE", True):
                 from url_reputation import URLReputationPlugin
+
                 plugin = URLReputationPlugin(config)
 
                 # Warmup phase
@@ -141,12 +146,7 @@ async def run_scenario(name: str, config: PluginConfig, iterations: int, urls: l
     speedup = results["python"]["mean"] / results["rust"]["mean"] if results["rust"]["mean"] > 0 else 0
     print(f"✓ (speedup: {speedup:.2f}x)")
 
-    return {
-        "name": name,
-        "python": results["python"],
-        "rust": results["rust"],
-        "speedup": speedup
-    }
+    return {"name": name, "python": results["python"], "rust": results["rust"], "speedup": speedup}
 
 
 async def main():
@@ -195,14 +195,7 @@ async def main():
     )
 
     # Run benchmark
-    result = await run_scenario(
-        "URL Reputation Benchmark",
-        plugin_config,
-        args.iterations,
-        urls,
-        url_multiplier,
-        args.warmup
-    )
+    result = await run_scenario("URL Reputation Benchmark", plugin_config, args.iterations, urls, url_multiplier, args.warmup)
 
     # Print results
     print(f"\n{'=' * 100}")

@@ -13,7 +13,6 @@ import pytest
 from mcpgateway.plugins.framework.models import MCPServerConfig
 import mcpgateway.plugins.framework.external.mcp.server.runtime as runtime
 
-
 # ===========================================================================
 # Module-Level Tool Functions
 # ===========================================================================
@@ -380,6 +379,7 @@ class TestRunFunction:
             def tool(self, name):
                 def decorator(fn):
                     return fn
+
                 return decorator
 
             async def run_stdio_async(self):
@@ -457,6 +457,7 @@ class TestRunFunction:
             def tool(self, name):
                 def decorator(fn):
                     return fn
+
                 return decorator
 
             async def run_streamable_http_async(self):

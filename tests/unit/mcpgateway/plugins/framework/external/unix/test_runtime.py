@@ -76,6 +76,7 @@ class TestUnixRuntimeMain:
 
     def test_main_keyboard_interrupt(self):
         """Test main handles KeyboardInterrupt gracefully."""
+
         def _raise_keyboard_interrupt(awaitable):
             awaitable.close()
             raise KeyboardInterrupt()
@@ -89,6 +90,7 @@ class TestUnixRuntimeMain:
 
     def test_main_exception_exits(self):
         """Test main exits with code 1 on exception."""
+
         def _raise_runtime_error(awaitable):
             awaitable.close()
             raise RuntimeError("Server error")

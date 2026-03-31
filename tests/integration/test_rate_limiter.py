@@ -39,7 +39,6 @@ from mcpgateway.plugins.framework import (
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 from plugins.rate_limiter.rate_limiter import RateLimiterPlugin, _store
 
-
 # API Endpoints
 PROMPT_ENDPOINT = "/api/v1/prompts/"
 TOOL_INVOKE_ENDPOINT = "/api/v1/tools/invoke"
@@ -83,11 +82,7 @@ def rate_limit_plugin_2_per_second():
         kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
         hooks=["prompt_pre_fetch", "tool_pre_invoke"],
         priority=100,
-        config={
-            "by_user": "2/s",
-            "by_tenant": None,
-            "by_tool": {}
-        }
+        config={"by_user": "2/s", "by_tenant": None, "by_tool": {}},
     )
     return RateLimiterPlugin(config)
 
@@ -100,13 +95,7 @@ def rate_limit_plugin_multi_dimensional():
         kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
         hooks=["prompt_pre_fetch", "tool_pre_invoke"],
         priority=100,
-        config={
-            "by_user": "10/s",
-            "by_tenant": "5/s",
-            "by_tool": {
-                "restricted_tool": "1/s"
-            }
-        }
+        config={"by_user": "10/s", "by_tenant": "5/s", "by_tool": {"restricted_tool": "1/s"}},
     )
     return RateLimiterPlugin(config)
 
@@ -281,11 +270,7 @@ class TestMultiDimensionalRateLimiting:
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=["prompt_pre_fetch"],
             priority=100,
-            config={
-                "by_user": "10/s",
-                "by_tenant": None,  # No tenant limit
-                "by_tool": {}
-            }
+            config={"by_user": "10/s", "by_tenant": None, "by_tool": {}},  # No tenant limit
         )
         plugin = RateLimiterPlugin(config)
 
@@ -363,7 +348,7 @@ class TestMultiDimensionalRateLimiting:
             config={
                 "by_user": "10/s",  # More permissive
                 "by_tenant": "2/s",  # More restrictive
-            }
+            },
         )
         plugin = RateLimiterPlugin(config)
 

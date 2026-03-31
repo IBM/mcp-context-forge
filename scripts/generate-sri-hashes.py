@@ -10,6 +10,7 @@ Usage:
     python scripts/generate-sri-hashes.py
     make sri-generate
 """
+
 import hashlib
 import base64
 import json

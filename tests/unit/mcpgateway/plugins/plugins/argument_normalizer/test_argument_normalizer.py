@@ -51,7 +51,7 @@ async def test_whitespace_and_unicode_normalization_prompt_pre():
         }
     )
     # "e" + combining acute accent
-    raw = "  He\u006C\u006C\u006F   W\u006F\u0072\u006C\u0064  \r\n" + "Cafe\u0301"
+    raw = "  He\u006c\u006c\u006f   W\u006f\u0072\u006c\u0064  \r\n" + "Cafe\u0301"
     payload = PromptPrehookPayload(prompt_id="greet", args={"text": raw})
     ctx = PluginContext(global_context=GlobalContext(request_id="t1"))
 

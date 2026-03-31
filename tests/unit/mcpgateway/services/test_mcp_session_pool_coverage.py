@@ -48,9 +48,7 @@ class TestGetCleanupTimeout:
         """When settings raises any exception, fall back to 5.0."""
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             # Make the attribute access raise an exception
-            type(mock_settings).mcp_session_pool_cleanup_timeout = property(
-                lambda self: (_ for _ in ()).throw(RuntimeError("config error"))
-            )
+            type(mock_settings).mcp_session_pool_cleanup_timeout = property(lambda self: (_ for _ in ()).throw(RuntimeError("config error")))
             assert _get_cleanup_timeout() == 5.0
 
 
@@ -280,13 +278,15 @@ class TestAcquireSessionAffinity:
 
         import orjson
 
-        redis_data = orjson.dumps({
-            "user_hash": "anonymous",
-            "url": url,
-            "identity_hash": identity_hash,
-            "transport_type": "streamablehttp",
-            "gateway_id": gateway_id,
-        })
+        redis_data = orjson.dumps(
+            {
+                "user_hash": "anonymous",
+                "url": url,
+                "identity_hash": identity_hash,
+                "transport_type": "streamablehttp",
+                "gateway_id": gateway_id,
+            }
+        )
 
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(return_value=redis_data)
@@ -490,16 +490,22 @@ class TestReleaseEdgeCases:
         pool._pool_last_used[pool_key] = time.time()
 
         filler = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url=url, identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pool._pools[pool_key].put_nowait(filler)
 
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url=url, identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
 
         with patch.object(pool, "_close_session", new_callable=AsyncMock):
@@ -689,9 +695,12 @@ class TestEvictionBranches:
         pool._pool_last_used[pool_key] = time.time() - 1000
 
         valid_session = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url=url, identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
             created_at=time.time(),
             last_used=time.time(),
         )
@@ -778,9 +787,12 @@ class TestValidateSessionTTL:
         """Session older than TTL should be invalid."""
         pool = MCPSessionPool(session_ttl_seconds=1.0)
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
             created_at=time.time() - 100,
             last_used=time.time(),
         )
@@ -799,9 +811,12 @@ class TestHealthCheckListResources:
         """list_resources as sole check method."""
         pool = MCPSessionPool(health_check_methods=["list_resources"])
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pooled.session.list_resources = AsyncMock(return_value=[])
         result = await pool._run_health_check_chain(pooled)
@@ -812,9 +827,12 @@ class TestHealthCheckListResources:
         """Timeout on one method should continue to next."""
         pool = MCPSessionPool(health_check_methods=["ping", "skip"])
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pooled.session.send_ping = AsyncMock(side_effect=TimeoutError())
         result = await pool._run_health_check_chain(pooled)
@@ -825,9 +843,12 @@ class TestHealthCheckListResources:
         """When all methods timeout, should return False and increment failures."""
         pool = MCPSessionPool(health_check_methods=["ping"])
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pooled.session.send_ping = AsyncMock(side_effect=TimeoutError())
         result = await pool._run_health_check_chain(pooled)
@@ -1032,14 +1053,18 @@ class TestCloseSessionRedisCleanup:
         class DummyScope:
             def __init__(self):
                 self.cancelled_caught = False
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *args):
                 return False
 
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
             transport_type=TransportType.STREAMABLE_HTTP,
             headers={"x-mcp-session-id": "validid123"},
         )
@@ -1061,8 +1086,10 @@ class TestCloseSessionRedisCleanup:
         class DummyScope:
             def __init__(self):
                 self.cancelled_caught = False
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *args):
                 return False
 
@@ -1163,9 +1190,12 @@ class TestCloseAllQueueEmpty:
         pool._locks[pool_key] = asyncio.Lock()
 
         s1 = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url=url, identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pool._pools[pool_key].put_nowait(s1)
 
@@ -1257,9 +1287,12 @@ class TestDrainAll:
         pool._active[pool_key] = set()
 
         s1 = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url=url, identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pool._pools[pool_key].put_nowait(s1)
 
@@ -1664,8 +1697,10 @@ class TestExecuteForwardedRequest:
 
         class DummyResponse:
             is_success = True
+
             def __init__(self, data):
                 self._data = data
+
             def json(self):
                 return self._data
 
@@ -1673,10 +1708,13 @@ class TestExecuteForwardedRequest:
             def __init__(self, response):
                 self._response = response
                 self.post_calls = []
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def post(self, url, json, headers, timeout):
                 self.post_calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
                 return self._response
@@ -1687,9 +1725,7 @@ class TestExecuteForwardedRequest:
             mock_settings.port = 4444
             mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
             with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
-                result = await pool._execute_forwarded_request(
-                    {"method": "tools/call", "params": {"name": "t"}, "headers": {"x-test": "1"}, "req_id": 1, "mcp_session_id": "sess-123"}
-                )
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {"name": "t"}, "headers": {"x-test": "1"}, "req_id": 1, "mcp_session_id": "sess-123"})
 
         assert result == {"result": {"x": 1}}
         assert dummy_client.post_calls[0]["headers"]["x-forwarded-internally"] == "true"
@@ -1702,18 +1738,23 @@ class TestExecuteForwardedRequest:
 
         class DummyResponse:
             is_success = True
+
             def __init__(self, data):
                 self._data = data
+
             def json(self):
                 return self._data
 
         class DummyClient:
             def __init__(self, response):
                 self._response = response
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def post(self, *_args, **_kwargs):
                 return self._response
 
@@ -1737,8 +1778,10 @@ class TestExecuteForwardedRequest:
         class DummyClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def post(self, *_args, **_kwargs):
                 raise httpx.TimeoutException("timeout")
 
@@ -1760,14 +1803,17 @@ class TestExecuteForwardedRequest:
             def __init__(self):
                 self.status_code = 403
                 self.is_success = False
+
             def json(self):
                 return {"error": {"code": -32003, "message": "Token not authorized"}}
 
         class DummyClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def post(self, *_args, **_kwargs):
                 return DummyResponse()
 
@@ -1789,14 +1835,17 @@ class TestExecuteForwardedRequest:
                 self.status_code = 401
                 self.is_success = False
                 self.text = '{"detail": "Authorization token required"}'
+
             def json(self):
                 return {"detail": "Authorization token required"}
 
         class DummyClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def post(self, *_args, **_kwargs):
                 return DummyResponse()
 
@@ -1820,14 +1869,17 @@ class TestExecuteForwardedRequest:
                 self.status_code = 502
                 self.is_success = False
                 self.text = "Bad Gateway"
+
             def json(self):
                 raise ValueError("No JSON")
 
         class DummyClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def post(self, *_args, **_kwargs):
                 return DummyResponse()
 
@@ -1851,14 +1903,17 @@ class TestExecuteForwardedRequest:
                 self.status_code = 500
                 self.is_success = False
                 self.text = "null"
+
             def json(self):
                 return None
 
         class DummyClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def post(self, *_args, **_kwargs):
                 return DummyResponse()
 
@@ -1897,10 +1952,13 @@ class TestExecuteForwardedHttpRequest:
             def __init__(self, response):
                 self._response = response
                 self.request_calls = []
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def request(self, method, url, headers, content, timeout):
                 self.request_calls.append({"method": method, "url": url, "headers": headers, "content": content, "timeout": timeout})
                 return self._response
@@ -1949,8 +2007,10 @@ class TestExecuteForwardedHttpRequest:
         class DummyClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def request(self, *_args, **_kwargs):
                 raise RuntimeError("request failed")
 
@@ -1991,10 +2051,13 @@ class TestExecuteForwardedHttpRequest:
             def __init__(self, response):
                 self._response = response
                 self.request_calls = []
+
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def request(self, method, url, headers, content, timeout):
                 self.request_calls.append({"method": method, "url": url})
                 return self._response
@@ -2027,8 +2090,10 @@ class TestExecuteForwardedHttpRequest:
         class DummyClient:
             async def __aenter__(self):
                 return self
+
             async def __aexit__(self, *_exc):
                 return False
+
             async def request(self, *_args, **_kwargs):
                 raise RuntimeError("request failed")
 
@@ -2370,9 +2435,12 @@ class TestSessionContextManagerEdgeCases:
         pool = MCPSessionPool()
 
         mock_session = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
 
         with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
@@ -2390,9 +2458,12 @@ class TestSessionContextManagerEdgeCases:
         pool = MCPSessionPool()
 
         mock_session = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
 
         with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
@@ -2571,9 +2642,12 @@ class TestHealthCheckAdditional:
         """list_prompts as health check method."""
         pool = MCPSessionPool(health_check_methods=["list_prompts"])
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pooled.session.list_prompts = AsyncMock(return_value=[])
         result = await pool._run_health_check_chain(pooled)
@@ -2587,9 +2661,12 @@ class TestHealthCheckAdditional:
 
         pool = MCPSessionPool(health_check_methods=["ping", "skip"])
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         error_data = ErrorData(code=-32601, message="Method not found")
         pooled.session.send_ping = AsyncMock(side_effect=McpError(error_data))
@@ -2604,9 +2681,12 @@ class TestHealthCheckAdditional:
 
         pool = MCPSessionPool(health_check_methods=["ping"])
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         error_data = ErrorData(code=-32600, message="Invalid request")
         pooled.session.send_ping = AsyncMock(side_effect=McpError(error_data))
@@ -2619,9 +2699,12 @@ class TestHealthCheckAdditional:
         """Generic exception on health check → failure."""
         pool = MCPSessionPool(health_check_methods=["ping"])
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pooled.session.send_ping = AsyncMock(side_effect=ConnectionError("gone"))
         result = await pool._run_health_check_chain(pooled)
@@ -2633,9 +2716,12 @@ class TestHealthCheckAdditional:
         """Unknown method name → skipped, falls to all-failed."""
         pool = MCPSessionPool(health_check_methods=["nonexistent_method"])
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         result = await pool._run_health_check_chain(pooled)
         assert result is False
@@ -2659,9 +2745,12 @@ class TestEvictionExpiredSessions:
         pool._pool_last_used[pool_key] = time.time() - 1000
 
         expired_session = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url=url, identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
             created_at=time.time() - 1000,
             last_used=time.time() - 1000,
         )
@@ -2698,7 +2787,11 @@ class TestCreateSessionMessageHandler:
         with patch("mcpgateway.services.mcp_session_pool.streamablehttp_client", return_value=transport_ctx):
             with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance) as mock_cs:
                 pooled = await pool._create_session(
-                    "http://test:8080", None, TransportType.STREAMABLE_HTTP, None, gateway_id="gw-1",
+                    "http://test:8080",
+                    None,
+                    TransportType.STREAMABLE_HTTP,
+                    None,
+                    gateway_id="gw-1",
                 )
         # Verify ClientSession was called with message_handler
         mock_cs.assert_called_once()
@@ -2707,6 +2800,7 @@ class TestCreateSessionMessageHandler:
     @pytest.mark.asyncio
     async def test_create_session_message_handler_factory_failure(self):
         """Factory raising should not prevent session creation."""
+
         def bad_factory(_url, _gw):
             raise RuntimeError("factory boom")
 
@@ -2724,7 +2818,10 @@ class TestCreateSessionMessageHandler:
         with patch("mcpgateway.services.mcp_session_pool.streamablehttp_client", return_value=transport_ctx):
             with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance) as mock_cs:
                 pooled = await pool._create_session(
-                    "http://test:8080", None, TransportType.STREAMABLE_HTTP, None,
+                    "http://test:8080",
+                    None,
+                    TransportType.STREAMABLE_HTTP,
+                    None,
                 )
         # Session should still be created with message_handler=None
         mock_cs.assert_called_once()
@@ -2756,9 +2853,12 @@ class TestValidateSessionAdditional:
         """Closed session should be invalid."""
         pool = MCPSessionPool()
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
         )
         pooled.mark_closed()
         result = await pool._validate_session(pooled)
@@ -2769,9 +2869,12 @@ class TestValidateSessionAdditional:
         """Stale session triggers health check."""
         pool = MCPSessionPool(session_ttl_seconds=9999, health_check_interval_seconds=0.001)
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
             created_at=time.time(),
             last_used=time.time() - 100,
         )
@@ -2785,9 +2888,12 @@ class TestValidateSessionAdditional:
         """Fresh session passes without health check."""
         pool = MCPSessionPool(session_ttl_seconds=9999, health_check_interval_seconds=9999)
         pooled = PooledSession(
-            session=MagicMock(), transport_context=MagicMock(),
-            url="http://test:8080", identity_key="anonymous",
-            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
             created_at=time.time(),
             last_used=time.time(),
         )

@@ -78,9 +78,7 @@ def ensure_not_auth_error() -> Callable[[Any], None]:
 
     def _ensure(response: Any) -> None:
         if response.status_code in (401, 403):
-            pytest.skip(
-                "Endpoint requires auth. Set MCP_COMPLIANCE_BEARER_TOKEN for live runs."
-            )
+            pytest.skip("Endpoint requires auth. Set MCP_COMPLIANCE_BEARER_TOKEN for live runs.")
 
     return _ensure
 

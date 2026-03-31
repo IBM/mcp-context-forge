@@ -207,7 +207,9 @@ class TestTeamsRouterV2:
             result = await teams.update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
-            mock_service.update_team.assert_called_once_with(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=False)
+            mock_service.update_team.assert_called_once_with(
+                team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members, skip_limits=False
+            )
 
     @pytest.mark.asyncio
     async def test_delete_team_success(self, mock_user_context, mock_db):
@@ -248,14 +250,7 @@ class TestTeamsRouterV2:
             mock_service.get_team_members = AsyncMock(return_value=members_tuples)
             MockService.return_value = mock_service
 
-            result = await teams.list_team_members(
-                team_id=team_id,
-                cursor=None,
-                limit=None,
-                include_pagination=False,
-                current_user=mock_user_context,
-                db=mock_db
-            )
+            result = await teams.list_team_members(team_id=team_id, cursor=None, limit=None, include_pagination=False, current_user=mock_user_context, db=mock_db)
 
             assert isinstance(result, list)
             assert len(result) == 1

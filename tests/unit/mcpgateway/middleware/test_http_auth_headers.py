@@ -879,10 +879,13 @@ class TestRunPreRequestHooks:
         pm.has_hooks_for.return_value = True
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
-            return PluginResult(
-                modified_payload=HttpHeaderPayload({"authorization": "Bearer HIJACKED", "x-new": "allowed"}),
-                continue_processing=True,
-            ), {}
+            return (
+                PluginResult(
+                    modified_payload=HttpHeaderPayload({"authorization": "Bearer HIJACKED", "x-new": "allowed"}),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         pm.invoke_hook = mock_invoke_hook
 
@@ -905,10 +908,13 @@ class TestRunPreRequestHooks:
         pm.has_hooks_for.return_value = True
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
-            return PluginResult(
-                modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),
-                continue_processing=True,
-            ), {}
+            return (
+                PluginResult(
+                    modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         pm.invoke_hook = mock_invoke_hook
 
@@ -932,10 +938,13 @@ class TestRunPreRequestHooks:
         pm.has_hooks_for.return_value = True
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
-            return PluginResult(
-                modified_payload=HttpHeaderPayload({"authorization": "Bearer EXCHANGED"}),
-                continue_processing=True,
-            ), {}
+            return (
+                PluginResult(
+                    modified_payload=HttpHeaderPayload({"authorization": "Bearer EXCHANGED"}),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         pm.invoke_hook = mock_invoke_hook
 
@@ -974,10 +983,13 @@ class TestRunPreRequestHooks:
         pm.has_hooks_for.return_value = True
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
-            return PluginResult(
-                modified_payload=HttpHeaderPayload({"X-Plugin-Header": "value"}),
-                continue_processing=True,
-            ), {}
+            return (
+                PluginResult(
+                    modified_payload=HttpHeaderPayload({"X-Plugin-Header": "value"}),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         pm.invoke_hook = mock_invoke_hook
 

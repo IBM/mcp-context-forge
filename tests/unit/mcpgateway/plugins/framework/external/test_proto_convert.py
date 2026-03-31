@@ -103,9 +103,7 @@ class TestProtoGlobalContextToPydantic:
 
     def test_basic_conversion(self):
         """Test basic proto to pydantic conversion."""
-        proto = plugin_service_pb2.GlobalContext(
-            request_id="req-1", server_id="srv-1", tenant_id="tenant-1"
-        )
+        proto = plugin_service_pb2.GlobalContext(request_id="req-1", server_id="srv-1", tenant_id="tenant-1")
         ctx = proto_global_context_to_pydantic(proto)
         assert ctx.request_id == "req-1"
         assert ctx.server_id == "srv-1"

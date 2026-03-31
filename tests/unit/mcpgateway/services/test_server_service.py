@@ -2666,9 +2666,7 @@ class TestListServersTokenAccess:
 
         assert result == ["converted_server_with_metrics"]
         # Verify convert_server_to_read was called with include_metrics=True
-        mock_convert.assert_called_once_with(
-            mock_server, include_metrics=True
-        )
+        mock_convert.assert_called_once_with(mock_server, include_metrics=True)
 
     @pytest.mark.asyncio
     async def test_team_scoped_token(self, server_service, test_db):

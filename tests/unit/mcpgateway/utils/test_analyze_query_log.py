@@ -20,7 +20,7 @@ def _write_jsonl(path: Path, entries):
 
 def test_load_json_log_skips_invalid_lines(tmp_path: Path):
     log_path = tmp_path / "log.jsonl"
-    log_path.write_text("{}\ninvalid\n{\"query_count\": 1}\n\n")
+    log_path.write_text('{}\ninvalid\n{"query_count": 1}\n\n')
 
     entries = analyze_query_log.load_json_log(log_path)
 

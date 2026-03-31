@@ -41,9 +41,7 @@ def test_create_qr_saves_file_different_formats_base_64(tmp_path, file_format):
 
     file_path = tmp_path
 
-    req = QRGenerationRequest(
-        data="https://test.com", format=file_format, return_base64=True, save_path=str(file_path)
-    )
+    req = QRGenerationRequest(data="https://test.com", format=file_format, return_base64=True, save_path=str(file_path))
 
     result = create_qr_code(req)
 
@@ -115,9 +113,7 @@ def test_create_qr_invalid_error_correction():
 def test_resolve_output_path_fail():
     """Test that create_qr handles resolve output path errors gracefully."""
     req = QRGenerationRequest(data="https://test.com", save_path="/invalid_path/qr_code.png")
-    with patch(
-        "qr_code_server.tools.generator.resolve_output_path", side_effect=Exception("path error")
-    ):
+    with patch("qr_code_server.tools.generator.resolve_output_path", side_effect=Exception("path error")):
         result = create_qr_code(req)
     assert result.success is False
     assert result.error == "path error"
@@ -211,9 +207,7 @@ def test_create_batch_qr_codes_fail_add_to_zip(tmp_path):
     """Test that create_batch_qr_codes handles zip file errors gracefully."""
     output_dir = tmp_path
 
-    req = BatchQRGenerationRequest(
-        data_list=["test1", "test2"], output_directory=str(output_dir), zip_output=True
-    )
+    req = BatchQRGenerationRequest(data_list=["test1", "test2"], output_directory=str(output_dir), zip_output=True)
     dummy_img = MagicMock()
     with patch("qr_code_server.utils.image_utils.create_qr_image", return_value=dummy_img):
         with patch("zipfile.ZipFile.writestr", side_effect=OSError("zip error")):
@@ -229,9 +223,7 @@ def test_batch_generator_unziped_valid_png_images(tmp_path):
     output_dir = tmp_path
     unziped_path = Path(tmp_path / "extracted")
 
-    req = BatchQRGenerationRequest(
-        data_list=["test1", "test2"], output_directory=str(output_dir), format="png"
-    )
+    req = BatchQRGenerationRequest(data_list=["test1", "test2"], output_directory=str(output_dir), format="png")
     _ = create_batch_qr_codes(req)
     with zipfile.ZipFile(Path(tmp_path / "qr.zip"), "r") as zip:
         zip.extractall(unziped_path)

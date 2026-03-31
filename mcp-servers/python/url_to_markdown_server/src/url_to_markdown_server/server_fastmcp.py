@@ -233,17 +233,11 @@ class UrlToMarkdownConverter:
         """Convert HTML content to markdown using specified engine."""
         try:
             if engine == "html2text" and self.html_engines.get("html2text"):
-                return await self._convert_with_html2text(
-                    html_content, base_url, include_images, include_links
-                )
+                return await self._convert_with_html2text(html_content, base_url, include_images, include_links)
             elif engine == "markdownify" and self.html_engines.get("markdownify"):
-                return await self._convert_with_markdownify(
-                    html_content, include_images, include_links
-                )
+                return await self._convert_with_markdownify(html_content, include_images, include_links)
             elif engine == "beautifulsoup" and self.html_engines.get("beautifulsoup"):
-                return await self._convert_with_beautifulsoup(
-                    html_content, base_url, include_images
-                )
+                return await self._convert_with_beautifulsoup(html_content, base_url, include_images)
             elif engine == "readability" and self.html_engines.get("readability"):
                 return await self._convert_with_readability(html_content, base_url)
             else:
@@ -254,9 +248,7 @@ class UrlToMarkdownConverter:
             logger.error(f"Error converting HTML to markdown: {e}")
             return {"success": False, "error": f"Conversion failed: {str(e)}"}
 
-    async def _convert_with_html2text(
-        self, html_content: str, base_url: str, include_images: bool, include_links: bool
-    ) -> dict[str, Any]:
+    async def _convert_with_html2text(self, html_content: str, base_url: str, include_images: bool, include_links: bool) -> dict[str, Any]:
         """Convert using html2text library."""
         import html2text
 
@@ -279,9 +271,7 @@ class UrlToMarkdownConverter:
             "length": len(markdown),
         }
 
-    async def _convert_with_markdownify(
-        self, html_content: str, include_images: bool, include_links: bool
-    ) -> dict[str, Any]:
+    async def _convert_with_markdownify(self, html_content: str, include_images: bool, include_links: bool) -> dict[str, Any]:
         """Convert using markdownify library."""
         import markdownify
 
@@ -323,9 +313,7 @@ class UrlToMarkdownConverter:
             "length": len(markdown),
         }
 
-    async def _convert_with_beautifulsoup(
-        self, html_content: str, base_url: str, include_images: bool
-    ) -> dict[str, Any]:
+    async def _convert_with_beautifulsoup(self, html_content: str, base_url: str, include_images: bool) -> dict[str, Any]:
         """Convert using BeautifulSoup for parsing + custom markdown generation."""
         from bs4 import BeautifulSoup
 
@@ -392,12 +380,8 @@ class UrlToMarkdownConverter:
     def _html_to_markdown_basic(self, html_content: str) -> str:
         """Basic HTML to markdown conversion."""
         # Remove script and style tags
-        html_content = re.sub(
-            r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL | re.IGNORECASE
-        )
-        html_content = re.sub(
-            r"<style[^>]*>.*?</style>", "", html_content, flags=re.DOTALL | re.IGNORECASE
-        )
+        html_content = re.sub(r"<script[^>]*>.*?</script>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
+        html_content = re.sub(r"<style[^>]*>.*?</style>", "", html_content, flags=re.DOTALL | re.IGNORECASE)
 
         # Convert headings
         for i in range(1, 7):
@@ -409,9 +393,7 @@ class UrlToMarkdownConverter:
             )
 
         # Convert paragraphs
-        html_content = re.sub(
-            r"<p[^>]*>(.*?)</p>", r"\1\n\n", html_content, flags=re.DOTALL | re.IGNORECASE
-        )
+        html_content = re.sub(r"<p[^>]*>(.*?)</p>", r"\1\n\n", html_content, flags=re.DOTALL | re.IGNORECASE)
 
         # Convert line breaks
         html_content = re.sub(r"<br[^>]*/?>", "\n", html_content, flags=re.IGNORECASE)
@@ -425,17 +407,11 @@ class UrlToMarkdownConverter:
         )
 
         # Convert bold and italic
-        html_content = re.sub(
-            r"<(strong|b)[^>]*>(.*?)</\1>", r"**\2**", html_content, flags=re.DOTALL | re.IGNORECASE
-        )
-        html_content = re.sub(
-            r"<(em|i)[^>]*>(.*?)</\1>", r"*\2*", html_content, flags=re.DOTALL | re.IGNORECASE
-        )
+        html_content = re.sub(r"<(strong|b)[^>]*>(.*?)</\1>", r"**\2**", html_content, flags=re.DOTALL | re.IGNORECASE)
+        html_content = re.sub(r"<(em|i)[^>]*>(.*?)</\1>", r"*\2*", html_content, flags=re.DOTALL | re.IGNORECASE)
 
         # Convert lists
-        html_content = re.sub(
-            r"<li[^>]*>(.*?)</li>", r"- \1\n", html_content, flags=re.DOTALL | re.IGNORECASE
-        )
+        html_content = re.sub(r"<li[^>]*>(.*?)</li>", r"- \1\n", html_content, flags=re.DOTALL | re.IGNORECASE)
         html_content = re.sub(r"<[uo]l[^>]*>", "\n", html_content, flags=re.IGNORECASE)
         html_content = re.sub(r"</[uo]l>", "\n", html_content, flags=re.IGNORECASE)
 
@@ -476,9 +452,7 @@ class UrlToMarkdownConverter:
                 element.decompose()
 
             # Remove elements with common nav/sidebar classes
-            for element in body.find_all(
-                class_=re.compile(r"(nav|sidebar|footer|header|menu)", re.I)
-            ):
+            for element in body.find_all(class_=re.compile(r"(nav|sidebar|footer|header|menu)", re.I)):
                 element.decompose()
 
             return body
@@ -541,9 +515,7 @@ class UrlToMarkdownConverter:
 
         return " ".join(markdown_parts)
 
-    async def convert_document_to_markdown(
-        self, content: bytes, content_type: str
-    ) -> dict[str, Any]:
+    async def convert_document_to_markdown(self, content: bytes, content_type: str) -> dict[str, Any]:
         """Convert document formats to markdown."""
         try:
             if content_type == "application/pdf":
@@ -713,9 +685,7 @@ async def convert_url(
     include_images: bool = Field(True, description="Include images in markdown"),
     include_links: bool = Field(True, description="Preserve links in markdown"),
     clean_content: bool = Field(True, description="Clean and optimize content"),
-    extraction_method: str = Field(
-        "auto", pattern="^(auto|readability|raw)$", description="HTML extraction method"
-    ),
+    extraction_method: str = Field("auto", pattern="^(auto|readability|raw)$", description="HTML extraction method"),
     markdown_engine: str = Field(
         "html2text",
         pattern="^(html2text|markdownify|beautifulsoup|basic)$",
@@ -748,17 +718,13 @@ async def convert_url(
             if extraction_method == "readability":
                 result = await converter._convert_with_readability(html_content, final_url)
             elif extraction_method == "raw":
-                result = await converter.convert_html_to_markdown(
-                    html_content, final_url, markdown_engine, include_images, include_links
-                )
+                result = await converter.convert_html_to_markdown(html_content, final_url, markdown_engine, include_images, include_links)
             else:  # auto
                 # Try readability first, fallback to specified engine
                 if converter.html_engines.get("readability"):
                     result = await converter._convert_with_readability(html_content, final_url)
                 else:
-                    result = await converter.convert_html_to_markdown(
-                        html_content, final_url, markdown_engine, include_images, include_links
-                    )
+                    result = await converter.convert_html_to_markdown(html_content, final_url, markdown_engine, include_images, include_links)
         else:
             # Handle document formats
             result = await converter.convert_document_to_markdown(content, content_type)
@@ -814,9 +780,7 @@ async def convert_content(
                 include_images=include_images,
             )
         else:
-            result = await converter.convert_document_to_markdown(
-                content=content.encode("utf-8"), content_type=content_type
-            )
+            result = await converter.convert_document_to_markdown(content=content.encode("utf-8"), content_type=content_type)
 
         if result["success"] and clean_content:
             result["markdown"] = converter.clean_markdown(result["markdown"])

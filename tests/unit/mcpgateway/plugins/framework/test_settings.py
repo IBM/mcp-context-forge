@@ -313,7 +313,6 @@ class TestPluginsSettingsStartupIsolation:
             settings.cache_clear()
 
 
-
 class TestPluginsSettingsEnabledFlag:
     """Test lazy enabled flag resolution behavior."""
 

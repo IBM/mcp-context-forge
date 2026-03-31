@@ -39,7 +39,6 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # =============================================================================
 # Constants and Patterns
 # =============================================================================
@@ -51,13 +50,13 @@ _RESERVED_WORDS = frozenset({"null", "true", "false"})
 _SPECIAL_CHARS_RE = re.compile(r'[\n\r\t,:\[\]{}"\\\-]')
 
 # Pattern to detect if string looks like a number (full match for encoding)
-_NUMBER_LIKE_RE = re.compile(r'^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$')
+_NUMBER_LIKE_RE = re.compile(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$")
 
 # Pattern for leading zeros (must be quoted per spec)
-_LEADING_ZEROS_RE = re.compile(r'^0\d+$')
+_LEADING_ZEROS_RE = re.compile(r"^0\d+$")
 
 # Pattern to match number at start of string (partial match for decoding)
-_NUMBER_PREFIX_RE = re.compile(r'^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?')
+_NUMBER_PREFIX_RE = re.compile(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?")
 
 # Pattern for parsing TOON array header: key[N] or [N] or [N]{key1,key2}
 # Key can be: unquoted (word chars + dots), or quoted (with escaped quotes inside)
@@ -65,10 +64,10 @@ _NUMBER_PREFIX_RE = re.compile(r'^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?')
 _ARRAY_HEADER_RE = re.compile(r'^(?:([A-Za-z_][A-Za-z0-9_.]*|"(?:[^"\\]|\\.)*"))?\[(\d+)\](?:\{([^}]*)\})?:')
 
 # Pattern for simple key: value lines
-_KEY_VALUE_RE = re.compile(r'^([^:\s]+):\s*(.*)$')
+_KEY_VALUE_RE = re.compile(r"^([^:\s]+):\s*(.*)$")
 
 # Pattern for valid unquoted keys per TOON spec: ^[A-Za-z_][A-Za-z0-9_.]*$
-_VALID_KEY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_.]*$')
+_VALID_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 
 # Default indent size (2 spaces per spec recommendation)
 _INDENT_SIZE = 2
@@ -710,7 +709,7 @@ def _try_decode_primitive(s: str) -> Optional[Tuple[Any, str]]:
     if match:
         num_str = match.group()
         # Check that what follows is a delimiter or end of string
-        rest = s[len(num_str):]
+        rest = s[len(num_str) :]
         if not rest or rest[0] in ",\n :]}":
             remaining = rest.lstrip(",\n ")
             if "." in num_str or "e" in num_str.lower():
@@ -749,7 +748,7 @@ def _decode_quoted_string(s: str) -> Tuple[str, str]:
     while i < len(s):
         char = s[i]
         if char == '"':
-            return ("".join(result), s[i + 1:].lstrip(",\n "))
+            return ("".join(result), s[i + 1 :].lstrip(",\n "))
         if char == "\\":
             if i + 1 >= len(s):
                 raise ValueError("Unterminated escape sequence")
@@ -800,7 +799,7 @@ def _decode_array(s: str) -> List[Any]:
     count = int(match.group(2))
     keys_str = match.group(3)
     # Get remaining content, preserving indentation
-    remaining = s[match.end():]
+    remaining = s[match.end() :]
     # Strip just the leading space/newline after colon (": " or ":\n")
     if remaining[:1] in (" ", "\n"):
         remaining = remaining[1:]
@@ -1129,7 +1128,7 @@ def _decode_object(s: str) -> Dict[str, Any]:
             else:
                 colon_idx = stripped.index(":")
                 key = stripped[:colon_idx].strip()
-                value_str = stripped[colon_idx + 1:].strip()
+                value_str = stripped[colon_idx + 1 :].strip()
 
             # Check if value continues on next lines (indented)
             if not value_str and i + 1 < len(lines):
@@ -1215,7 +1214,7 @@ def _extract_nested_structure(s: str, open_char: str, close_char: str) -> Tuple[
         elif char == close_char:
             depth -= 1
             if depth == 0:
-                return (s[: i + 1], s[i + 1:].lstrip(",\n "))
+                return (s[: i + 1], s[i + 1 :].lstrip(",\n "))
 
     return (s, "")
 

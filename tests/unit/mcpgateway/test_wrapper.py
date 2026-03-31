@@ -181,7 +181,7 @@ async def test_ndjson_lines_basic_and_tail():
         yield b'{"a":1}\n{"b":2}\n'
         yield b'{"c":3}'
 
-    resp = types.SimpleNamespace(aiter_bytes=fake_iter_bytes, aiter_lines=None) # aiter_lines not used in optimized version
+    resp = types.SimpleNamespace(aiter_bytes=fake_iter_bytes, aiter_lines=None)  # aiter_lines not used in optimized version
     lines = [l async for l in wrapper.ndjson_lines(resp)]
     # lines are bytes now
     assert b'{"a":1}' in lines

@@ -101,9 +101,7 @@ class TestOrphanedTempTableGuard:
 
 def _create_email_api_tokens_table(conn):
     """Create the email_api_tokens table with the old global uniqueness constraint."""
-    conn.execute(
-        sa.text(
-            """
+    conn.execute(sa.text("""
             CREATE TABLE email_api_tokens (
                 id VARCHAR(36) PRIMARY KEY,
                 user_email VARCHAR(255) NOT NULL,
@@ -113,16 +111,12 @@ def _create_email_api_tokens_table(conn):
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (user_email, name)
             )
-            """
-        )
-    )
+            """))
 
 
 def _create_orphaned_temp_table(conn):
     """Create the orphaned _alembic_tmp_email_api_tokens table (simulates failed migration)."""
-    conn.execute(
-        sa.text(
-            """
+    conn.execute(sa.text("""
             CREATE TABLE _alembic_tmp_email_api_tokens (
                 id VARCHAR(36) PRIMARY KEY,
                 user_email VARCHAR(255) NOT NULL,
@@ -131,9 +125,7 @@ def _create_orphaned_temp_table(conn):
                 hashed_key VARCHAR(255) NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
-    )
+            """))
 
 
 def _get_table_names(conn):
@@ -210,9 +202,7 @@ class TestDowngradeFunctional:
 
     def _create_upgraded_table(self, conn):
         """Create email_api_tokens with the per-team constraint (post-upgrade state)."""
-        conn.execute(
-            sa.text(
-                """
+        conn.execute(sa.text("""
                 CREATE TABLE email_api_tokens (
                     id VARCHAR(36) PRIMARY KEY,
                     user_email VARCHAR(255) NOT NULL,
@@ -222,18 +212,12 @@ class TestDowngradeFunctional:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     CONSTRAINT uq_email_api_tokens_user_name_team UNIQUE (user_email, name, team_id)
                 )
-                """
-            )
-        )
-        conn.execute(
-            sa.text(
-                """
+                """))
+        conn.execute(sa.text("""
                 CREATE UNIQUE INDEX uq_email_api_tokens_user_name_global
                 ON email_api_tokens (user_email, name)
                 WHERE team_id IS NULL
-                """
-            )
-        )
+                """))
 
     def test_downgrade_with_orphaned_temp_table(self):
         """Test downgrade succeeds when orphaned _alembic_tmp_email_api_tokens exists."""

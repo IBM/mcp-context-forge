@@ -52,9 +52,7 @@ from .visualization.plots import DataVisualizer
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stderr)
-    ],  # Log to stderr so it doesn't interfere with MCP
+    handlers=[logging.StreamHandler(sys.stderr)],  # Log to stderr so it doesn't interfere with MCP
 )
 logger = logging.getLogger(__name__)
 
@@ -107,9 +105,7 @@ class DataAnalysisServer:
             default_style=self.config.get("plot_style", "seaborn-v0_8"),
         )
 
-        self.query_parser = DataQueryParser(
-            max_result_size=self.config.get("max_query_results", 10000)
-        )
+        self.query_parser = DataQueryParser(max_result_size=self.config.get("max_query_results", 10000))
 
     def _load_config(self, config_path: str | None) -> dict[str, Any]:
         """Load configuration from file."""
@@ -466,9 +462,7 @@ async def handle_list_tools() -> list[Tool]:
 
 
 @server.call_tool()
-async def handle_call_tool(
-    name: str, arguments: dict[str, Any]
-) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
+async def handle_call_tool(name: str, arguments: dict[str, Any]) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """Handle tool calls."""
     try:
         if name == "load_dataset":
@@ -483,9 +477,7 @@ async def handle_call_tool(
             )
 
             # Store in dataset manager
-            dataset_id = analysis_server.dataset_manager.store_dataset(
-                dataset=df, dataset_id=request.dataset_id, source=request.source
-            )
+            dataset_id = analysis_server.dataset_manager.store_dataset(dataset=df, dataset_id=request.dataset_id, source=request.source)
 
             # Get dataset info
             dataset_info = analysis_server.dataset_manager.get_dataset_info(dataset_id)
@@ -501,9 +493,7 @@ async def handle_call_tool(
             analysis_request = DataAnalysisRequest(**arguments)
 
             # Get dataset
-            df = analysis_server.dataset_manager.get_dataset(
-                analysis_request.dataset_id
-            )
+            df = analysis_server.dataset_manager.get_dataset(analysis_request.dataset_id)
 
             # Perform analysis
             analysis_result = analysis_server.analyzer.analyze_dataset(
@@ -624,9 +614,7 @@ async def handle_call_tool(
             transform_request = TransformRequest(**arguments)
 
             # Get dataset
-            df = analysis_server.dataset_manager.get_dataset(
-                transform_request.dataset_id
-            )
+            df = analysis_server.dataset_manager.get_dataset(transform_request.dataset_id)
 
             # Apply transformations
             transformed_df, summary = analysis_server.transformer.transform_data(
@@ -637,25 +625,15 @@ async def handle_call_tool(
 
             if transform_request.create_new_dataset:
                 # Store as new dataset
-                new_id = (
-                    transform_request.new_dataset_id
-                    or f"{transform_request.dataset_id}_transformed"
-                )
-                new_dataset_id = analysis_server.dataset_manager.store_dataset(
-                    dataset=transformed_df, dataset_id=new_id
-                )
+                new_id = transform_request.new_dataset_id or f"{transform_request.dataset_id}_transformed"
+                new_dataset_id = analysis_server.dataset_manager.store_dataset(dataset=transformed_df, dataset_id=new_id)
 
                 # Get original dataset shape for comparison
-                original_df = analysis_server.dataset_manager.get_dataset(
-                    transform_request.dataset_id
-                )
+                original_df = analysis_server.dataset_manager.get_dataset(transform_request.dataset_id)
 
                 # Use the proper response model for type safety
                 # Extract operation names from transformation log
-                operations_list = [
-                    op.get("operation", "unknown")
-                    for op in summary.get("transformation_log", [])
-                ]
+                operations_list = [op.get("operation", "unknown") for op in summary.get("transformation_log", [])]
 
                 transform_response = TransformResult(
                     dataset_id=new_dataset_id,
@@ -673,19 +651,12 @@ async def handle_call_tool(
                 }
             else:
                 # Update existing dataset
-                original_shape = analysis_server.dataset_manager.get_dataset(
-                    transform_request.dataset_id
-                ).shape
-                analysis_server.dataset_manager.store_dataset(
-                    dataset=transformed_df, dataset_id=transform_request.dataset_id
-                )
+                original_shape = analysis_server.dataset_manager.get_dataset(transform_request.dataset_id).shape
+                analysis_server.dataset_manager.store_dataset(dataset=transformed_df, dataset_id=transform_request.dataset_id)
 
                 # Use the proper response model for type safety
                 # Extract operation names from transformation log
-                operations_list = [
-                    op.get("operation", "unknown")
-                    for op in summary.get("transformation_log", [])
-                ]
+                operations_list = [op.get("operation", "unknown") for op in summary.get("transformation_log", [])]
 
                 transform_response = TransformResult(
                     dataset_id=transform_request.dataset_id,
@@ -739,9 +710,7 @@ async def handle_call_tool(
             )
 
             # Format result
-            formatted_result = analysis_server.query_parser.format_result(
-                query_result, query_request.return_format
-            )
+            formatted_result = analysis_server.query_parser.format_result(query_result, query_request.return_format)
 
             result = {
                 "success": query_result.get("success", True),

@@ -569,8 +569,7 @@ class ServersPage(BasePage):
 
     def get_edit_checked_tools(self) -> list[str]:
         """Return values of checked tool checkboxes in the edit modal."""
-        return self.page.evaluate(
-            """
+        return self.page.evaluate("""
             () => {
                 const container = document.getElementById('edit-server-tools');
                 if (!container) return [];
@@ -578,8 +577,7 @@ class ServersPage(BasePage):
                     container.querySelectorAll('input[name="associatedTools"]:checked')
                 ).map(cb => cb.value);
             }
-        """
-        )
+        """)
 
     def get_edit_tool_store_size(self) -> int:
         """Read the in-memory editServerSelections store size for tools."""

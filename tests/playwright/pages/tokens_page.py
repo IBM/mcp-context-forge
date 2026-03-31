@@ -211,8 +211,7 @@ class TokensPage(BasePage):
             pass
 
         # Fallback 1: force a token table refresh.
-        self.page.evaluate(
-            """
+        self.page.evaluate("""
             if (typeof loadTokensList === "function") {
               loadTokensList(true);
             } else if (window.htmx) {
@@ -221,8 +220,7 @@ class TokensPage(BasePage):
                 window.htmx.trigger(tokensTable, "refreshTokens");
               }
             }
-            """
-        )
+            """)
         self._wait_for_tokens_table_settled(timeout=15000)
 
         try:

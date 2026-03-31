@@ -69,10 +69,7 @@ async def test_ensure_rpc_permission_grants_session_token_with_team_role():
     # Verify has_permission was called with check_any_team=True
     mock_checker.has_permission.assert_called_once()
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True, (
-        "Expected check_any_team=True for session token without explicit team_id; "
-        "got call_kwargs=%r" % call_kwargs
-    )
+    assert call_kwargs.get("check_any_team") is True, "Expected check_any_team=True for session token without explicit team_id; " "got call_kwargs=%r" % call_kwargs
 
 
 @pytest.mark.asyncio
@@ -114,10 +111,7 @@ async def test_ensure_rpc_permission_non_session_token_uses_check_any_team_false
         await _ensure_rpc_permission(user, db, "tools.execute", "tools/call")
 
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team", False) is False, (
-        "Non-session tokens must not use check_any_team=True; "
-        "got call_kwargs=%r" % call_kwargs
-    )
+    assert call_kwargs.get("check_any_team", False) is False, "Non-session tokens must not use check_any_team=True; " "got call_kwargs=%r" % call_kwargs
 
 
 @pytest.mark.asyncio
@@ -172,10 +166,7 @@ async def test_ensure_rpc_permission_admin_session_token_calls_has_permission():
 
     mock_checker.has_permission.assert_called_once()
     call_kwargs = mock_checker.has_permission.call_args.kwargs
-    assert call_kwargs.get("check_any_team") is True, (
-        "Admin session tokens are still session tokens — expected check_any_team=True; "
-        "got call_kwargs=%r" % call_kwargs
-    )
+    assert call_kwargs.get("check_any_team") is True, "Admin session tokens are still session tokens — expected check_any_team=True; " "got call_kwargs=%r" % call_kwargs
 
 
 @pytest.mark.asyncio
@@ -193,9 +184,7 @@ async def test_ensure_rpc_permission_token_scope_cap_blocks_at_layer1():
 
     with patch("mcpgateway.main.PermissionChecker", return_value=mock_checker):
         with pytest.raises(JSONRPCError) as exc_info:
-            await _ensure_rpc_permission(
-                user, db, "tools.execute", "tools/call", request=mock_request
-            )
+            await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=mock_request)
 
     assert exc_info.value.code == -32003
     assert "Access denied" in exc_info.value.message

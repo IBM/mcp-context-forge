@@ -30,11 +30,7 @@ def test_migration_cleanup_sqlite():
 
     try:
         # Create test user
-        user = EmailUser(
-            email=f"test-{uuid.uuid4().hex[:8]}@example.com",
-            password_hash="dummy_hash",
-            is_active=True
-        )
+        user = EmailUser(email=f"test-{uuid.uuid4().hex[:8]}@example.com", password_hash="dummy_hash", is_active=True)
         session.add(user)
         session.commit()
 
@@ -47,32 +43,18 @@ def test_migration_cleanup_sqlite():
             permissions=["tools.read"],
             created_by="admin@example.com",
             is_system_role=False,
-            is_active=True
+            is_active=True,
         )
         session.add(role)
         session.commit()
 
         # Create duplicate state (inactive + active)
         inactive = UserRole(
-            id=str(uuid.uuid4()),
-            user_email=user.email,
-            role_id=role.id,
-            scope="team",
-            scope_id="team-123",
-            granted_by="admin@example.com",
-            is_active=False,
-            granted_at=datetime.now(timezone.utc)
+            id=str(uuid.uuid4()), user_email=user.email, role_id=role.id, scope="team", scope_id="team-123", granted_by="admin@example.com", is_active=False, granted_at=datetime.now(timezone.utc)
         )
 
         active = UserRole(
-            id=str(uuid.uuid4()),
-            user_email=user.email,
-            role_id=role.id,
-            scope="team",
-            scope_id="team-123",
-            granted_by="admin@example.com",
-            is_active=True,
-            granted_at=datetime.now(timezone.utc)
+            id=str(uuid.uuid4()), user_email=user.email, role_id=role.id, scope="team", scope_id="team-123", granted_by="admin@example.com", is_active=True, granted_at=datetime.now(timezone.utc)
         )
 
         session.add(inactive)
@@ -80,10 +62,7 @@ def test_migration_cleanup_sqlite():
         session.commit()
 
         # Verify duplicates exist
-        count_before = session.query(UserRole).filter(
-            UserRole.user_email == user.email,
-            UserRole.role_id == role.id
-        ).count()
+        count_before = session.query(UserRole).filter(UserRole.user_email == user.email, UserRole.role_id == role.id).count()
         assert count_before == 2, f"Expected 2 rows before cleanup, got {count_before}"
 
         # Run cleanup SQL (SQLite version)
@@ -106,16 +85,10 @@ def test_migration_cleanup_sqlite():
         session.commit()
 
         # Verify only active remains
-        count_after = session.query(UserRole).filter(
-            UserRole.user_email == user.email,
-            UserRole.role_id == role.id
-        ).count()
+        count_after = session.query(UserRole).filter(UserRole.user_email == user.email, UserRole.role_id == role.id).count()
         assert count_after == 1, f"Expected 1 row after cleanup, got {count_after}"
 
-        remaining = session.query(UserRole).filter(
-            UserRole.user_email == user.email,
-            UserRole.role_id == role.id
-        ).first()
+        remaining = session.query(UserRole).filter(UserRole.user_email == user.email, UserRole.role_id == role.id).first()
         assert remaining is not None
         assert remaining.is_active is True
         assert remaining.id == active.id

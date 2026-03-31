@@ -222,12 +222,7 @@ async def test_tool_pre_invoke_per_tool_rate_limiting():
             name="rl",
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
-            config={
-                "by_user": "100/s",  # High user limit
-                "by_tool": {
-                    "restricted_tool": "1/s"  # Low tool-specific limit
-                }
-            },
+            config={"by_user": "100/s", "by_tool": {"restricted_tool": "1/s"}},  # High user limit  # Low tool-specific limit
         )
     )
 
@@ -277,6 +272,7 @@ def test_make_headers_without_retry_after():
 # ============================================================================
 # _select_most_restrictive TESTS
 # ============================================================================
+
 
 class TestSelectMostRestrictive:
     """Comprehensive tests for _select_most_restrictive function."""
@@ -341,7 +337,7 @@ class TestSelectMostRestrictive:
         """When multiple violated, select the one with shortest reset time."""
         now = 1000
         results = [
-            (False, 10, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),   # Resets sooner
+            (False, 10, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),  # Resets sooner
             (False, 20, now + 60, {"limited": True, "remaining": 0, "reset_in": 60}),
             (False, 30, now + 120, {"limited": True, "remaining": 0, "reset_in": 120}),
         ]
@@ -357,8 +353,8 @@ class TestSelectMostRestrictive:
         now = 1000
         results = [
             (True, 100, now + 60, {"limited": True, "remaining": 90, "reset_in": 60}),  # Allowed
-            (False, 50, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),   # Violated (shortest)
-            (False, 75, now + 90, {"limited": True, "remaining": 0, "reset_in": 90}),   # Violated
+            (False, 50, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),  # Violated (shortest)
+            (False, 75, now + 90, {"limited": True, "remaining": 0, "reset_in": 90}),  # Violated
         ]
         allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
         assert allowed is False
@@ -677,10 +673,7 @@ async def test_redis_backend_shares_state_across_instances():
 
     # Worker 2 shares the same Redis — alice's counter is still 2, next request is blocked
     r3 = await plugin.tool_pre_invoke(payload, ctx)
-    assert r3.violation is not None, (
-        "alice made 3 requests total (limit is 2). With Redis backend, clearing "
-        "_store has no effect — the counter persists in Redis across all workers."
-    )
+    assert r3.violation is not None, "alice made 3 requests total (limit is 2). With Redis backend, clearing " "_store has no effect — the counter persists in Redis across all workers."
     assert r3.violation.http_status_code == 429
 
 
@@ -709,11 +702,7 @@ async def test_store_evicts_expired_windows():
 
     # Expected: expired entries are evicted, _store is empty (or much smaller)
     # Actual:   _store still holds all UNIQUE_USERS entries indefinitely
-    assert len(_store) == 0, (
-        f"Expected _store to be empty after all windows expired, "
-        f"but found {len(_store)} stale entries. "
-        f"No eviction mechanism exists — _store grows without bound."
-    )
+    assert len(_store) == 0, f"Expected _store to be empty after all windows expired, " f"but found {len(_store)} stale entries. " f"No eviction mechanism exists — _store grows without bound."
 
 
 @pytest.mark.asyncio
@@ -733,9 +722,7 @@ async def test_concurrent_requests_respect_limit():
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
     payload = ToolPreInvokePayload(name="test_tool", arguments={})
 
-    results = await asyncio.gather(*[
-        plugin.tool_pre_invoke(payload, ctx) for _ in range(20)
-    ])
+    results = await asyncio.gather(*[plugin.tool_pre_invoke(payload, ctx) for _ in range(20)])
 
     allowed = sum(1 for r in results if r.violation is None)
 
@@ -748,10 +735,7 @@ async def test_concurrent_requests_respect_limit():
 
 @pytest.mark.xfail(
     strict=True,
-    reason=(
-        "Gap: fixed window allows 2× the limit at a window boundary. "
-        "N requests at end of W1 + N requests at start of W2 all succeed."
-    ),
+    reason=("Gap: fixed window allows 2× the limit at a window boundary. " "N requests at end of W1 + N requests at start of W2 all succeed."),
 )
 @pytest.mark.asyncio
 async def test_fixed_window_burst_at_boundary():
@@ -790,9 +774,7 @@ async def test_fixed_window_burst_at_boundary():
     # Expected: a sliding window would cap total at ~5-6 across the boundary
     # Actual:   fixed window allows all 10 (5 in W1 + 5 in W2)
     assert allowed_total <= 5, (
-        f"Fixed window burst: {allowed_total} requests allowed across the window "
-        f"boundary. Configured limit is 5/s. "
-        f"Fix: replace fixed window with a sliding window or token bucket."
+        f"Fixed window burst: {allowed_total} requests allowed across the window " f"boundary. Configured limit is 5/s. " f"Fix: replace fixed window with a sliding window or token bucket."
     )
 
 
@@ -810,7 +792,7 @@ async def test_prompt_pre_fetch_enforces_by_tool_config():
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH],
             config={
-                "by_user": "100/s",          # High — will not trigger
+                "by_user": "100/s",  # High — will not trigger
                 "by_tool": {"search": "2/s"},  # Low — should trigger on 3rd call
             },
         )
@@ -828,9 +810,7 @@ async def test_prompt_pre_fetch_enforces_by_tool_config():
     # Expected: blocked because by_tool["search"] = 2/s is exhausted
     # Actual:   allowed — prompt_pre_fetch never reads by_tool
     assert r3.violation is not None, (
-        "Expected 3rd prompt_pre_fetch call to be blocked by by_tool limit (2/s). "
-        "prompt_pre_fetch does not check by_tool — tool-level limits only apply "
-        "to tool_pre_invoke."
+        "Expected 3rd prompt_pre_fetch call to be blocked by by_tool limit (2/s). " "prompt_pre_fetch does not check by_tool — tool-level limits only apply " "to tool_pre_invoke."
     )
 
 
@@ -1326,9 +1306,7 @@ async def test_retry_after_is_within_window_duration():
 
     assert result.violation is not None
     retry_after = int(result.violation.http_headers["Retry-After"])
-    assert 1 <= retry_after <= 1, (
-        f"For a 1/s limit, Retry-After should be 1 second, got {retry_after}"
-    )
+    assert 1 <= retry_after <= 1, f"For a 1/s limit, Retry-After should be 1 second, got {retry_after}"
 
 
 @pytest.mark.asyncio
@@ -1346,9 +1324,7 @@ async def test_retry_after_for_minute_window_is_bounded():
 
     assert result.violation is not None
     retry_after = int(result.violation.http_headers["Retry-After"])
-    assert 1 <= retry_after <= 60, (
-        f"For a 1/m limit, Retry-After should be 1–60 seconds, got {retry_after}"
-    )
+    assert 1 <= retry_after <= 60, f"For a 1/m limit, Retry-After should be 1–60 seconds, got {retry_after}"
 
 
 @pytest.mark.asyncio
@@ -1389,10 +1365,7 @@ async def test_x_ratelimit_reset_consistent_within_window():
     reset2 = r2.http_headers["X-RateLimit-Reset"]
     reset3 = r3.http_headers["X-RateLimit-Reset"]
 
-    assert reset1 == reset2 == reset3, (
-        f"X-RateLimit-Reset must be identical across all requests in the same window. "
-        f"Got {reset1}, {reset2}, {reset3}"
-    )
+    assert reset1 == reset2 == reset3, f"X-RateLimit-Reset must be identical across all requests in the same window. " f"Got {reset1}, {reset2}, {reset3}"
 
 
 @pytest.mark.asyncio
@@ -1411,9 +1384,7 @@ async def test_x_ratelimit_remaining_decrements_correctly():
         assert r.violation is None
         results.append(int(r.http_headers["X-RateLimit-Remaining"]))
 
-    assert results == [4, 3, 2, 1, 0], (
-        f"X-RateLimit-Remaining should count down 4→3→2→1→0, got {results}"
-    )
+    assert results == [4, 3, 2, 1, 0], f"X-RateLimit-Remaining should count down 4→3→2→1→0, got {results}"
 
 
 # ============================================================================
@@ -1445,10 +1416,7 @@ async def test_bypass_none_user_falls_back_to_anonymous_bucket():
 
     assert r1.violation is None
     assert r2.violation is None
-    assert r3.violation is not None, (
-        "None and empty-string users share the 'anonymous' bucket — "
-        "a third request must be blocked regardless of which falsy identity sent it"
-    )
+    assert r3.violation is not None, "None and empty-string users share the 'anonymous' bucket — " "a third request must be blocked regardless of which falsy identity sent it"
 
 
 @pytest.mark.xfail(
@@ -1482,10 +1450,7 @@ async def test_bypass_whitespace_user_shares_anonymous_bucket():
 
     # Whitespace user should be in the same bucket → blocked
     r = await plugin.tool_pre_invoke(payload, ctx_ws)
-    assert r.violation is not None, (
-        "Whitespace-only user identity should share the 'anonymous' bucket. "
-        "Currently it creates its own bucket, bypassing the anonymous limit."
-    )
+    assert r.violation is not None, "Whitespace-only user identity should share the 'anonymous' bucket. " "Currently it creates its own bucket, bypassing the anonymous limit."
 
 
 @pytest.mark.xfail(
@@ -1521,10 +1486,7 @@ async def test_bypass_tool_name_case_sensitivity():
 
     # Calling with different casing should still be caught by the same limit
     r = await plugin.tool_pre_invoke(payload_upper, ctx)
-    assert r.violation is not None, (
-        "'Search' should be subject to the same 1/s limit as 'search'. "
-        "Case-insensitive matching is not implemented — this is a bypass vector."
-    )
+    assert r.violation is not None, "'Search' should be subject to the same 1/s limit as 'search'. " "Case-insensitive matching is not implemented — this is a bypass vector."
 
 
 @pytest.mark.xfail(
@@ -1559,10 +1521,7 @@ async def test_bypass_tool_name_whitespace():
 
     # Whitespace variant should be caught by the same limit
     r = await plugin.tool_pre_invoke(ToolPreInvokePayload(name=" search", arguments={}), ctx)
-    assert r.violation is not None, (
-        "' search' (leading space) should be subject to the same limit as 'search'. "
-        "Whitespace stripping is not implemented — this is a bypass vector."
-    )
+    assert r.violation is not None, "' search' (leading space) should be subject to the same limit as 'search'. " "Whitespace stripping is not implemented — this is a bypass vector."
 
 
 @pytest.mark.asyncio
@@ -1585,9 +1544,7 @@ async def test_bypass_anonymous_exhaustion_does_not_affect_real_users():
 
     # Alice is a real user — her bucket is untouched
     r = await plugin.tool_pre_invoke(payload, ctx_alice)
-    assert r.violation is None, (
-        "Exhausting the anonymous bucket must not affect real authenticated users"
-    )
+    assert r.violation is None, "Exhausting the anonymous bucket must not affect real authenticated users"
 
 
 # ============================================================================
@@ -1612,8 +1569,7 @@ async def test_violation_description_does_not_contain_user_identity():
 
     assert result.violation is not None
     assert "alice@example.com" not in result.violation.description, (
-        "User identity must not appear in the violation description — "
-        "it is logged in permissive mode and embedded in PluginViolationError messages"
+        "User identity must not appear in the violation description — " "it is logged in permissive mode and embedded in PluginViolationError messages"
     )
 
 
@@ -1635,9 +1591,7 @@ async def test_violation_description_does_not_contain_tenant_identity():
     result = await plugin.tool_pre_invoke(payload, ctx)
 
     assert result.violation is not None
-    assert "acme-corp" not in result.violation.description, (
-        "Tenant identifier must not appear in the violation description"
-    )
+    assert "acme-corp" not in result.violation.description, "Tenant identifier must not appear in the violation description"
 
 
 @pytest.mark.asyncio
@@ -1651,9 +1605,7 @@ async def test_prompt_violation_description_does_not_contain_user_identity():
     result = await plugin.prompt_pre_fetch(payload, ctx)
 
     assert result.violation is not None
-    assert "bob@example.com" not in result.violation.description, (
-        "User identity must not appear in the prompt violation description"
-    )
+    assert "bob@example.com" not in result.violation.description, "User identity must not appear in the prompt violation description"
 
 
 @pytest.mark.asyncio
@@ -1686,7 +1638,5 @@ async def test_bypass_different_tenants_are_intentionally_independent():
     # Same user in tenant-2 is allowed — separate counter, by design
     r = await plugin.tool_pre_invoke(payload, ctx_t2)
     assert r.violation is None, (
-        "tenant-2 has a separate independent counter — this is intentional. "
-        "Tenant identity comes from the JWT and is controlled by the auth layer, "
-        "not bypassable by request content."
+        "tenant-2 has a separate independent counter — this is intentional. " "Tenant identity comes from the JWT and is controlled by the auth layer, " "not bypassable by request content."
     )

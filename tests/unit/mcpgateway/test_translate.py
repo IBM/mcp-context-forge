@@ -5735,7 +5735,7 @@ async def test_multi_protocol_server_mcp_post_branches_asgi_wrapper_shutdown_ide
     assert no_resp.status_code == 202
 
     # Skip non-JSON and wrong-id candidate, then timeout.
-    msgs = iter(["not json", '{\"id\": 999, \"result\": \"no\"}'])
+    msgs = iter(["not json", '{"id": 999, "result": "no"}'])
 
     async def seq_wait_for(queue_get_coro, timeout=None):
         _ = timeout

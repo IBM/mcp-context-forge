@@ -2230,7 +2230,9 @@ class TestAdminAuthMiddleware:
 
         assert response == "ok"
         # Verify has_admin_permission was called with the validated team_id
-        mock_permission_service.has_admin_permission.assert_awaited_once_with("dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"])
+        mock_permission_service.has_admin_permission.assert_awaited_once_with(
+            "dev@example.com", team_id="a1b2c3d4e5f6789012345678abcdef01", token_teams=["a1b2c3d4e5f6789012345678abcdef01", "fedcba9876543210fedcba9876543210"]
+        )
 
     @pytest.mark.asyncio
     async def test_admin_auth_team_scoped_request_ignores_nonmember_team_id(self, monkeypatch):

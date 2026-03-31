@@ -34,6 +34,7 @@ from mcpgateway.plugins.framework import PluginResult
 @pytest.mark.asyncio
 async def test_auth_method_propagation_from_plugin():
     """Test that auth_method flows from plugin through to user_context."""
+
     # Create a mock request with a real object for state (not a MagicMock)
     # This is needed because we set attributes directly on request.state
     # Don't use spec=Request because it prevents setting custom attributes
@@ -105,6 +106,7 @@ async def test_auth_method_propagation_from_plugin():
 @pytest.mark.asyncio
 async def test_auth_method_in_user_context():
     """Test that get_current_user_with_permissions includes auth_method from request.state."""
+
     # Create a mock request with a real object for state
     class MockState:
         pass

@@ -45,9 +45,7 @@ async def main():
     # Step 1: Load raw employee data
     print("\n📊 Step 1: Loading raw employee data...")
 
-    employee_data_path = (
-        Path(__file__).parent.parent / "sample_data" / "employee_data.csv"
-    )
+    employee_data_path = Path(__file__).parent.parent / "sample_data" / "employee_data.csv"
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -133,9 +131,7 @@ async def main():
         # Show transformation effects
         if "shape_changes" in summary:
             shape_changes = summary["shape_changes"]
-            print(
-                f"   • Shape change: {shape_changes.get('before')} → {shape_changes.get('after')}"
-            )
+            print(f"   • Shape change: {shape_changes.get('before')} → {shape_changes.get('after')}")
     else:
         cleaned_id = dataset_id  # Fallback to original
         print(f"❌ Cleaning failed: {cleaning_result.get('error')}")
@@ -278,15 +274,9 @@ async def main():
         # Show new feature statistics
         if "descriptive_stats" in analysis:
             desc_stats = analysis["descriptive_stats"]
-            if (
-                "numeric_columns" in desc_stats
-                and "salary_x_age" in desc_stats["numeric_columns"]
-            ):
+            if "numeric_columns" in desc_stats and "salary_x_age" in desc_stats["numeric_columns"]:
                 salary_x_age = desc_stats["numeric_columns"]["salary_x_age"]
-                print(
-                    f"   • Salary*Age interaction - Mean: {salary_x_age.get('mean', 0):.2f}, "
-                    f"Std: {salary_x_age.get('std', 0):.2f}"
-                )
+                print(f"   • Salary*Age interaction - Mean: {salary_x_age.get('mean', 0):.2f}, " f"Std: {salary_x_age.get('std', 0):.2f}")
 
     # Step 8: Transformation pipeline summary
     print("\n📋 Step 8: Querying transformation results...")
@@ -312,11 +302,7 @@ async def main():
         if "data" in query_data:
             print("✅ Sample of transformation results:")
             for i, row in enumerate(query_data["data"][:5]):
-                print(
-                    f"   • Row {i + 1}: {row['department']}, "
-                    f"Salary=${row['annual_salary']:.2f}, "
-                    f"Salary*Age={row['salary_x_age']:.2f}"
-                )
+                print(f"   • Row {i + 1}: {row['department']}, " f"Salary=${row['annual_salary']:.2f}, " f"Salary*Age={row['salary_x_age']:.2f}")
 
     # Step 9: Create visualization of transformed data
     print("\n📈 Step 9: Visualizing transformation results...")
@@ -336,9 +322,7 @@ async def main():
 
     if viz_result["success"]:
         viz_info = viz_result["visualization"]
-        print(
-            f"✅ Created transformation visualization: {viz_info.get('filename', 'N/A')}"
-        )
+        print(f"✅ Created transformation visualization: {viz_info.get('filename', 'N/A')}")
 
     # Final summary
     print("\n🎉 Data Transformation Pipeline Complete!")

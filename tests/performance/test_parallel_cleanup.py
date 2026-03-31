@@ -53,6 +53,7 @@ async def test_parallel_cleanup_performance():
     # Patch _refresh_session_db to simulate blocking DB operation
     def slow_refresh_session_db(self, session_id: str) -> bool:
         import time
+
         time.sleep(self._sessions[session_id].delay)  # simulate DB latency
         return True
 

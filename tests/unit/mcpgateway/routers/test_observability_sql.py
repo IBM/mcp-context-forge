@@ -35,7 +35,6 @@ def allow_permission(monkeypatch):
     monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
 
 
-
 class TestQueryPerformancePostgresql:
     """Tests for PostgreSQL query performance computation."""
 

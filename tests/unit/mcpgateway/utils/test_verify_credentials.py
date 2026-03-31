@@ -624,9 +624,12 @@ async def test_require_docs_auth_override_enforces_revocation_and_user_status(mo
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
 
     verified_payload = {"sub": "alice@example.com", "jti": "token-jti"}
-    with patch("mcpgateway.utils.verify_credentials.verify_credentials", new=AsyncMock(return_value=verified_payload)), patch(
-        "mcpgateway.utils.verify_credentials._enforce_revocation_and_active_user",
-        new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked")),
+    with (
+        patch("mcpgateway.utils.verify_credentials.verify_credentials", new=AsyncMock(return_value=verified_payload)),
+        patch(
+            "mcpgateway.utils.verify_credentials._enforce_revocation_and_active_user",
+            new=AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked")),
+        ),
     ):
         with pytest.raises(HTTPException) as exc:
             await vc.require_docs_auth_override(auth_header="Bearer token", jwt_token=None)

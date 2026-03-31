@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Dict, Any
 import yaml
 
-
 DOCKER_COMPOSE_TEMPLATE = """version: '3.8'
 
 services:
@@ -257,9 +256,7 @@ class DockerComposeGenerator:
         # Generate benchmark servers
         benchmark_servers = ""
         if benchmark_enabled:
-            benchmark_servers = self._generate_benchmark_servers(
-                benchmark_count, benchmark_start_port, benchmark_tools, benchmark_resources, benchmark_prompts
-            )
+            benchmark_servers = self._generate_benchmark_servers(benchmark_count, benchmark_start_port, benchmark_tools, benchmark_resources, benchmark_prompts)
 
         # Generate load balancer if multiple instances
         load_balancer = ""

@@ -244,6 +244,7 @@ class TestGetUserActionPermissions:
             mock_service_class.return_value = mock_service
 
             checked_permissions = []
+
             async def track_permission(user_email, permission, token_teams, allow_admin_bypass, check_any_team):
                 checked_permissions.append(permission)
                 return True
@@ -278,6 +279,7 @@ class TestGetUserActionPermissions:
         db = Mock()
 
         call_count = 0
+
         async def mixed_results(user_email, permission, token_teams, allow_admin_bypass, check_any_team):
             nonlocal call_count
             call_count += 1

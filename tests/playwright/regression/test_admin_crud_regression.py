@@ -22,6 +22,7 @@ from __future__ import annotations
 # Standard
 import re
 from typing import Any, Dict, List
+
 # Third-Party
 from playwright.sync_api import Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -29,7 +30,6 @@ import pytest
 
 # Local
 from ..conftest import _ensure_admin_logged_in
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -54,11 +54,13 @@ def error_collector(page: Page):
 
     def _on_response(response: Any) -> None:
         if response.status >= 400:
-            failed_requests.append({
-                "url": response.url,
-                "status": response.status,
-                "method": response.request.method,
-            })
+            failed_requests.append(
+                {
+                    "url": response.url,
+                    "status": response.status,
+                    "method": response.request.method,
+                }
+            )
 
     page.on("pageerror", _on_pageerror)
     page.on("response", _on_response)
@@ -85,20 +87,12 @@ def _filter_benign_errors(errors: List[str]) -> List[str]:
         "unpkg.com",
         "favicon.ico",
     ]
-    return [
-        e for e in errors
-        if not any(pattern in e for pattern in benign_patterns)
-    ]
+    return [e for e in errors if not any(pattern in e for pattern in benign_patterns)]
 
 
 def _filter_expected_failures(requests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Filter out expected 404s and other acceptable failures."""
-    return [
-        r for r in requests
-        if not (
-            r["status"] == 404 and ("favicon" in r["url"] or "static" in r["url"])
-        )
-    ]
+    return [r for r in requests if not (r["status"] == 404 and ("favicon" in r["url"] or "static" in r["url"]))]
 
 
 # ---------------------------------------------------------------------------
@@ -111,9 +105,7 @@ def _filter_expected_failures(requests: List[Dict[str, Any]]) -> List[Dict[str, 
 class TestVirtualServerCRUD:
     """Regression tests for virtual server create/edit/delete flows."""
 
-    def test_create_virtual_server_flow(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_create_virtual_server_flow(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: Create virtual server succeeds without errors.
 
         Steps:
@@ -157,18 +149,10 @@ class TestVirtualServerCRUD:
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
 
-        assert js_errors == [], (
-            "JavaScript errors during server creation:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
-        assert failed_requests == [], (
-            "Failed API calls during server creation:\n"
-            + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
-        )
+        assert js_errors == [], "JavaScript errors during server creation:\n" + "\n".join(f"  - {e}" for e in js_errors)
+        assert failed_requests == [], "Failed API calls during server creation:\n" + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
 
-    def test_edit_virtual_server_flow(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_edit_virtual_server_flow(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: Edit virtual server saves changes correctly.
 
         Steps:
@@ -200,7 +184,7 @@ class TestVirtualServerCRUD:
         edit_button.click()
 
         # Step 4: Wait for edit modal and modify server name
-        edit_modal = admin_page.locator('#server-edit-modal')
+        edit_modal = admin_page.locator("#server-edit-modal")
         edit_modal.wait_for(state="visible", timeout=5_000)
 
         modal_name_input = edit_modal.locator('input[name="name"]')
@@ -227,18 +211,10 @@ class TestVirtualServerCRUD:
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
 
-        assert js_errors == [], (
-            "JavaScript errors during server edit:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
-        assert failed_requests == [], (
-            "Failed API calls during server edit:\n"
-            + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
-        )
+        assert js_errors == [], "JavaScript errors during server edit:\n" + "\n".join(f"  - {e}" for e in js_errors)
+        assert failed_requests == [], "Failed API calls during server edit:\n" + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
 
-    def test_delete_virtual_server_flow(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_delete_virtual_server_flow(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: Delete virtual server succeeds.
 
         Steps:
@@ -270,9 +246,7 @@ class TestVirtualServerCRUD:
         # Capture the server ID from the first delete form so we can
         # verify it disappears after deletion (row counts are unreliable
         # with pagination when total items exceed per_page).
-        first_delete_form = admin_page.locator(
-            '#servers-table-body form[action*="/delete"]'
-        ).first
+        first_delete_form = admin_page.locator('#servers-table-body form[action*="/delete"]').first
         delete_action = first_delete_form.get_attribute("action") or ""
         # Extract server ID from action URL like /admin/servers/<id>/delete
         deleted_server_id = delete_action.rsplit("/delete", 1)[0].rsplit("/", 1)[-1]
@@ -302,23 +276,15 @@ class TestVirtualServerCRUD:
         # delete-form action URL.  This is pagination-safe unlike
         # counting rows (the default per_page=10 may re-fill the
         # page from subsequent pages after a deletion).
-        remaining_delete_forms = admin_page.locator(
-            f'#servers-table-body form[action*="{deleted_server_id}"]'
-        )
+        remaining_delete_forms = admin_page.locator(f'#servers-table-body form[action*="{deleted_server_id}"]')
         expect(remaining_delete_forms).to_have_count(0, timeout=15_000)
 
         # Step 6 & 7: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
 
-        assert js_errors == [], (
-            "JavaScript errors during server deletion:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
-        assert failed_requests == [], (
-            "Failed API calls during server deletion:\n"
-            + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
-        )
+        assert js_errors == [], "JavaScript errors during server deletion:\n" + "\n".join(f"  - {e}" for e in js_errors)
+        assert failed_requests == [], "Failed API calls during server deletion:\n" + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
 
 
 # ---------------------------------------------------------------------------
@@ -331,9 +297,7 @@ class TestVirtualServerCRUD:
 class TestStatePersistence:
     """Regression tests for state persistence across page refreshes."""
 
-    def test_selected_tab_persists_after_refresh(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_selected_tab_persists_after_refresh(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: Selected tab state retained after page refresh.
 
         Steps:
@@ -362,14 +326,9 @@ class TestStatePersistence:
 
         # Step 4: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
-        assert js_errors == [], (
-            "JavaScript errors after page refresh:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
+        assert js_errors == [], "JavaScript errors after page refresh:\n" + "\n".join(f"  - {e}" for e in js_errors)
 
-    def test_team_context_persists_after_refresh(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_team_context_persists_after_refresh(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: Team context retained after page refresh.
 
         Steps:
@@ -417,14 +376,9 @@ class TestStatePersistence:
 
         # Step 6: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
-        assert js_errors == [], (
-            "JavaScript errors after team context refresh:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
+        assert js_errors == [], "JavaScript errors after team context refresh:\n" + "\n".join(f"  - {e}" for e in js_errors)
 
-    def test_filter_state_persists_after_refresh(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_filter_state_persists_after_refresh(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: Filter/search state retained after page refresh.
 
         Steps:
@@ -467,10 +421,7 @@ class TestStatePersistence:
 
         # Step 6: Verify no errors
         js_errors = _filter_benign_errors(error_collector["js_errors"])
-        assert js_errors == [], (
-            "JavaScript errors after filter state refresh:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
+        assert js_errors == [], "JavaScript errors after filter state refresh:\n" + "\n".join(f"  - {e}" for e in js_errors)
 
 
 # ---------------------------------------------------------------------------
@@ -483,9 +434,7 @@ class TestStatePersistence:
 class TestErrorMonitoring:
     """Regression tests for console errors and API failures."""
 
-    def test_no_console_errors_on_page_load(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_no_console_errors_on_page_load(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: No JavaScript errors on admin page load.
 
         Steps:
@@ -497,14 +446,9 @@ class TestErrorMonitoring:
         admin_page.wait_for_timeout(2_000)
 
         js_errors = _filter_benign_errors(error_collector["js_errors"])
-        assert js_errors == [], (
-            "JavaScript errors on page load:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
+        assert js_errors == [], "JavaScript errors on page load:\n" + "\n".join(f"  - {e}" for e in js_errors)
 
-    def test_no_failed_api_calls_on_page_load(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_no_failed_api_calls_on_page_load(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: No failed API calls on admin page load.
 
         Steps:
@@ -517,14 +461,9 @@ class TestErrorMonitoring:
         admin_page.wait_for_timeout(2_000)
 
         failed_requests = _filter_expected_failures(error_collector["failed_requests"])
-        assert failed_requests == [], (
-            "Failed API calls on page load:\n"
-            + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
-        )
+        assert failed_requests == [], "Failed API calls on page load:\n" + "\n".join(f"  - {r['method']} {r['url']} → {r['status']}" for r in failed_requests)
 
-    def test_no_console_errors_during_tab_navigation(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_no_console_errors_during_tab_navigation(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: No JavaScript errors when navigating between tabs.
 
         Steps:
@@ -546,14 +485,9 @@ class TestErrorMonitoring:
                 admin_page.wait_for_timeout(1_000)
 
         js_errors = _filter_benign_errors(error_collector["js_errors"])
-        assert js_errors == [], (
-            "JavaScript errors during tab navigation:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
+        assert js_errors == [], "JavaScript errors during tab navigation:\n" + "\n".join(f"  - {e}" for e in js_errors)
 
-    def test_data_action_buttons_work_without_errors(
-        self, admin_page: Page, error_collector: Dict[str, Any]
-    ) -> None:
+    def test_data_action_buttons_work_without_errors(self, admin_page: Page, error_collector: Dict[str, Any]) -> None:
         """Regression: All data-action buttons work without console errors.
 
         This test verifies that the innerHTML guard fix (data-action pattern)
@@ -572,7 +506,7 @@ class TestErrorMonitoring:
         admin_page.wait_for_timeout(2_000)
 
         # Find data-action buttons
-        action_buttons = admin_page.locator('[data-action]')
+        action_buttons = admin_page.locator("[data-action]")
         button_count = action_buttons.count()
 
         if button_count == 0:
@@ -595,7 +529,4 @@ class TestErrorMonitoring:
                 continue
 
         js_errors = _filter_benign_errors(error_collector["js_errors"])
-        assert js_errors == [], (
-            "JavaScript errors when clicking data-action buttons:\n"
-            + "\n".join(f"  - {e}" for e in js_errors)
-        )
+        assert js_errors == [], "JavaScript errors when clicking data-action buttons:\n" + "\n".join(f"  - {e}" for e in js_errors)

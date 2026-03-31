@@ -83,7 +83,7 @@ class TestExplicitHealthRPCFeatureFlag:
             captured_timeout = timeout
             return await coro
 
-        with patch('asyncio.wait_for', side_effect=capture_wait_for):
+        with patch("asyncio.wait_for", side_effect=capture_wait_for):
             if mock_settings.mcp_session_pool_explicit_health_rpc:
                 await asyncio.wait_for(
                     mock_pooled.session.list_tools(),
@@ -133,7 +133,7 @@ class TestExplicitHealthRPCConfig:
 
     def test_can_be_enabled_via_env(self):
         """Verify setting can be enabled via environment variable."""
-        with patch.dict('os.environ', {'MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC': 'true'}):
+        with patch.dict("os.environ", {"MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC": "true"}):
             # First-Party
             from mcpgateway.config import Settings
 

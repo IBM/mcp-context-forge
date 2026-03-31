@@ -90,7 +90,7 @@ class FieldOverride(BaseModel):
     enable_numbers: Optional[bool] = None
     decimal_detection: Optional[str] = None  # auto|comma|dot
 
-    @field_validator('pattern', mode='before')
+    @field_validator("pattern", mode="before")
     @classmethod
     def compile_pattern(cls, v: Any) -> Pattern[str]:
         """Compile pattern string to regex Pattern object.

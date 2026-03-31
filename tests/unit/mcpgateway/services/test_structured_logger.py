@@ -20,7 +20,6 @@ from mcpgateway.services.structured_logger import (
     get_structured_logger,
 )
 
-
 # ---------- _should_log ----------
 
 
@@ -275,9 +274,7 @@ def test_persist_to_database_with_performance_metrics():
         mock_settings.version = "1.0"
         mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
-        router._persist_to_database(
-            {"level": "INFO", "message": "perf", "database_query_count": 5, "cache_hits": 10}
-        )
+        router._persist_to_database({"level": "INFO", "message": "perf", "database_query_count": 5, "cache_hits": 10})
     mock_session.add.assert_called_once()
 
 
@@ -292,9 +289,7 @@ def test_persist_to_database_with_security_fields():
         mock_settings.version = "1.0"
         mock_fresh.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_fresh.return_value.__exit__ = MagicMock(return_value=False)
-        router._persist_to_database(
-            {"level": "WARNING", "message": "sec", "security_event_type": "intrusion", "is_security_event": True, "security_severity": "HIGH"}
-        )
+        router._persist_to_database({"level": "WARNING", "message": "sec", "security_event_type": "intrusion", "is_security_event": True, "security_severity": "HIGH"})
     mock_session.add.assert_called_once()
 
 

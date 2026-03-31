@@ -56,55 +56,25 @@ class TestResult:
     error: Optional[str] = None
 
 
-def generate_token(
-    email: str,
-    is_admin: bool,
-    teams: Optional[List[str]] = "OMIT",
-    secret: str = "my-test-key-but-now-longer-than-32-bytes"
-) -> str:
+def generate_token(email: str, is_admin: bool, teams: Optional[List[str]] = "OMIT", secret: str = "my-test-key-but-now-longer-than-32-bytes") -> str:
     """Generate a JWT token with specified claims."""
-    payload = {
-        "sub": email,
-        "is_admin": is_admin,
-        "iat": int(time.time()),
-        "exp": int(time.time()) + 3600,
-        "iss": "mcpgateway",
-        "aud": "mcpgateway-api"
-    }
+    payload = {"sub": email, "is_admin": is_admin, "iat": int(time.time()), "exp": int(time.time()) + 3600, "iss": "mcpgateway", "aud": "mcpgateway-api"}
     if teams != "OMIT":
         payload["teams"] = teams
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-async def test_with_http_rpc(
-    base_url: str,
-    token: str,
-    test_name: str,
-    expected_public: int,
-    expected_team: int
-) -> TestResult:
+async def test_with_http_rpc(base_url: str, token: str, test_name: str, expected_public: int, expected_team: int) -> TestResult:
     """Test via HTTP RPC endpoint."""
     import aiohttp
 
     try:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "params": {},
-            "id": 1
-        }
+        payload = {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1}
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{base_url}/rpc",
-                headers=headers,
-                json=payload
-            ) as response:
+            async with session.post(f"{base_url}/rpc", headers=headers, json=payload) as response:
                 data = await response.json()
 
                 if "error" in data:
@@ -118,7 +88,7 @@ async def test_with_http_rpc(
                         actual_team=0,
                         tool_names=[],
                         passed=False,
-                        error=data["error"].get("message", str(data["error"]))
+                        error=data["error"].get("message", str(data["error"])),
                     )
 
                 tools = data.get("result", {}).get("tools", [])
@@ -139,7 +109,7 @@ async def test_with_http_rpc(
                     actual_public=actual_public,
                     actual_team=actual_team,
                     tool_names=tool_names,
-                    passed=passed
+                    passed=passed,
                 )
 
     except Exception as e:
@@ -153,7 +123,7 @@ async def test_with_http_rpc(
             actual_team=0,
             tool_names=[],
             passed=False,
-            error=str(e)
+            error=str(e),
         )
 
 

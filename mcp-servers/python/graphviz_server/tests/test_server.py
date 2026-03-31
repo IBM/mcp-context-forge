@@ -114,9 +114,7 @@ def test_analyze_graph():
         with open(file_path, "w") as f:
             f.write(graph_content)
 
-        result = processor.analyze_graph(
-            file_path=file_path, include_structure=True, include_metrics=True
-        )
+        result = processor.analyze_graph(file_path=file_path, include_structure=True, include_metrics=True)
 
         assert result["success"] is True
         assert "structure" in result

@@ -478,9 +478,7 @@ class RSSParser:
             },
         }
 
-    def list_unique_values(
-        self, feed_data: dict[str, Any], field: str
-    ) -> dict[str, Any]:
+    def list_unique_values(self, feed_data: dict[str, Any], field: str) -> dict[str, Any]:
         """List unique values for a field with counts."""
         if not feed_data.get("success"):
             return {"success": False, "error": "Invalid feed data"}
@@ -528,9 +526,7 @@ class SimilaritySearchEngine:
         import os
 
         # Get model from env var or parameter or default
-        self.model_name = model_name or os.getenv(
-            "RSS_EMBEDDING_MODEL", "all-MiniLM-L6-v2"
-        )
+        self.model_name = model_name or os.getenv("RSS_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         self.model = None
         self.available = self._check_availability()
 
@@ -541,10 +537,7 @@ class SimilaritySearchEngine:
 
             return True
         except ImportError:
-            logger.warning(
-                "sentence-transformers not installed. "
-                "Install with: pip install mcp-rss-search[similarity]"
-            )
+            logger.warning("sentence-transformers not installed. " "Install with: pip install mcp-rss-search[similarity]")
             return False
 
     def _load_model(self, model_name: str | None = None):
@@ -713,9 +706,7 @@ class SimilaritySearchEngine:
             logger.error(f"Error in similarity search: {e}")
             return []
 
-    def find_duplicates(
-        self, entries: list[dict[str, Any]], similarity_threshold: float = 0.85
-    ) -> list[dict[str, Any]]:
+    def find_duplicates(self, entries: list[dict[str, Any]], similarity_threshold: float = 0.85) -> list[dict[str, Any]]:
         """
         Find duplicate or near-duplicate entries using semantic similarity.
 
@@ -772,9 +763,7 @@ class SimilaritySearchEngine:
             logger.error(f"Error finding duplicates: {e}")
             return []
 
-    def find_related(
-        self, entry: dict[str, Any], all_entries: list[dict[str, Any]], top_k: int = 5
-    ) -> list[dict[str, Any]]:
+    def find_related(self, entry: dict[str, Any], all_entries: list[dict[str, Any]], top_k: int = 5) -> list[dict[str, Any]]:
         """
         Find entries related to a given entry.
 
@@ -805,9 +794,7 @@ class SimilaritySearchEngine:
             logger.error(f"Error finding related entries: {e}")
             return []
 
-    def cluster_entries(
-        self, entries: list[dict[str, Any]], n_clusters: int = 5
-    ) -> dict[str, Any]:
+    def cluster_entries(self, entries: list[dict[str, Any]], n_clusters: int = 5) -> dict[str, Any]:
         """
         Cluster entries by semantic similarity.
 
@@ -890,9 +877,7 @@ class HybridSearchEngine:
 
             return True
         except ImportError:
-            logger.warning(
-                "rank-bm25 not installed. Hybrid search requires: pip install rank-bm25"
-            )
+            logger.warning("rank-bm25 not installed. Hybrid search requires: pip install rank-bm25")
             return False
 
     def _tokenize(self, text: str) -> list[str]:
@@ -904,9 +889,7 @@ class HybridSearchEngine:
         tokens = re.findall(r"\w+", text)
         return tokens
 
-    def _prepare_documents(
-        self, entries: list[dict[str, Any]], fields: list[str]
-    ) -> tuple[list[str], list[list[str]]]:
+    def _prepare_documents(self, entries: list[dict[str, Any]], fields: list[str]) -> tuple[list[str], list[list[str]]]:
         """
         Prepare documents for BM25.
 
@@ -968,9 +951,7 @@ class HybridSearchEngine:
         # Get semantic scores
         semantic_results = []
         if self.semantic_engine.available and semantic_weight > 0:
-            semantic_results = self.semantic_engine.similarity_search(
-                query, entries, top_k=len(entries), threshold=0.0, fields=fields
-            )
+            semantic_results = self.semantic_engine.similarity_search(query, entries, top_k=len(entries), threshold=0.0, fields=fields)
 
         # Get BM25 scores
         bm25_scores = {}
@@ -1012,9 +993,7 @@ class HybridSearchEngine:
         if semantic_score_map:
             max_semantic = max(semantic_score_map.values())
             if max_semantic > 0:
-                semantic_score_map = {
-                    k: v / max_semantic for k, v in semantic_score_map.items()
-                }
+                semantic_score_map = {k: v / max_semantic for k, v in semantic_score_map.items()}
 
         if bm25_scores:
             max_bm25 = max(bm25_scores.values())
@@ -1149,9 +1128,7 @@ async def search_titles(
     if not feed_data.get("success"):
         return feed_data
 
-    results = rss_parser.search_entries(
-        feed_data, query, fields=["title"], case_sensitive=case_sensitive, regex=regex
-    )
+    results = rss_parser.search_entries(feed_data, query, fields=["title"], case_sensitive=case_sensitive, regex=regex)
 
     return {
         "success": True,
@@ -1176,9 +1153,7 @@ async def search_descriptions(
     if not feed_data.get("success"):
         return feed_data
 
-    results = rss_parser.search_entries(
-        feed_data, query, fields=["description"], case_sensitive=case_sensitive, regex=regex
-    )
+    results = rss_parser.search_entries(feed_data, query, fields=["description"], case_sensitive=case_sensitive, regex=regex)
 
     return {
         "success": True,
@@ -1493,9 +1468,7 @@ async def analyze_feed(
         insights.append("Single-author publication")
 
     if stats.get("media", {}).get("entries_with_media", 0) > 0:
-        media_pct = (
-            stats["media"]["entries_with_media"] / stats["total_entries"] * 100
-        )
+        media_pct = stats["media"]["entries_with_media"] / stats["total_entries"] * 100
         insights.append(f"{media_pct:.1f}% of entries include media content")
 
     if len(stats.get("categories", {}).get("distribution", {})) > 20:
@@ -1578,9 +1551,7 @@ async def similarity_search(
 @mcp.tool(description="Find duplicate or near-duplicate entries using semantic similarity")
 async def find_duplicates(
     url: str = Field(..., description="RSS feed URL"),
-    similarity_threshold: float = Field(
-        0.85, ge=0.5, le=1.0, description="Similarity threshold for duplicates (0.5-1.0)"
-    ),
+    similarity_threshold: float = Field(0.85, ge=0.5, le=1.0, description="Similarity threshold for duplicates (0.5-1.0)"),
     use_cache: bool = Field(True, description="Use cached feed if available"),
 ) -> dict[str, Any]:
     """
@@ -1737,9 +1708,7 @@ async def search_subtitles_semantic(
     entries = feed_data.get("entries", [])
 
     # Search specifically in subtitle field
-    results = similarity_engine.similarity_search(
-        query, entries, top_k=top_k, threshold=threshold, fields=["subtitle"]
-    )
+    results = similarity_engine.similarity_search(query, entries, top_k=top_k, threshold=threshold, fields=["subtitle"])
 
     return {
         "success": True,
@@ -1783,9 +1752,7 @@ async def search_summaries_semantic(
     entries = feed_data.get("entries", [])
 
     # Search in both summary and description fields
-    results = similarity_engine.similarity_search(
-        query, entries, top_k=top_k, threshold=threshold, fields=["summary", "description"]
-    )
+    results = similarity_engine.similarity_search(query, entries, top_k=top_k, threshold=threshold, fields=["summary", "description"])
 
     return {
         "success": True,
@@ -1838,9 +1805,7 @@ async def search_multi_field_semantic(
     entries = feed_data.get("entries", [])
 
     # Search in specified fields
-    results = similarity_engine.similarity_search(
-        query, entries, top_k=top_k, threshold=threshold, fields=fields
-    )
+    results = similarity_engine.similarity_search(query, entries, top_k=top_k, threshold=threshold, fields=fields)
 
     return {
         "success": True,
@@ -1893,10 +1858,7 @@ async def inspect_feed_schema(
 
     # Calculate coverage
     total_entries = len(entries)
-    field_coverage = {
-        field: {"count": count, "percentage": round((count / total_entries) * 100, 1)}
-        for field, count in field_counts.items()
-    }
+    field_coverage = {field: {"count": count, "percentage": round((count / total_entries) * 100, 1)} for field, count in field_counts.items()}
 
     # Get sample values
     sample_values = {}

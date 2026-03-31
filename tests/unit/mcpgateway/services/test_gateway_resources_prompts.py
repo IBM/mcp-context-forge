@@ -303,10 +303,7 @@ class TestOrphanedResourceUpsert:
         resource_with_deleted_gateway.uri = "file://resource/"
 
         # Check if it's orphaned
-        is_orphaned = (
-            resource_with_deleted_gateway.gateway_id is None
-            or resource_with_deleted_gateway.gateway_id not in valid_gateway_ids
-        )
+        is_orphaned = resource_with_deleted_gateway.gateway_id is None or resource_with_deleted_gateway.gateway_id not in valid_gateway_ids
 
         assert is_orphaned is True
 

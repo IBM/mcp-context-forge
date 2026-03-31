@@ -10,13 +10,16 @@ description = "Experimental Rust MCP runtime edge for ContextForge"
 [features]
 default = []
 rmcp-upstream-client = ["dep:rmcp", "dep:reqwest-rmcp"]
+runtime-telemetry = ["dep:console-subscriber", "dep:dial9-tokio-telemetry"]
 
 [dependencies]
 async-stream = "0.3.6"
 axum = "0.8.8"
 base64 = "0.22.1"
 clap = { version = "4.5.60", features = ["derive", "env"] }
+console-subscriber = { version = "0.5.0", optional = true }
 deadpool-postgres = "0.14.1"
+dial9-tokio-telemetry = { version = "0.2.0", optional = true }
 futures-util = "0.3.31"
 redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
@@ -28,7 +31,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"
 thiserror = "2.0.16"
-tokio = { version = "1.50.0", features = ["full"] }
+tokio = { version = "1.50.0", features = ["full", "tracing"] }
 tokio-postgres = { version = "0.7.15", features = ["with-serde_json-1"] }
 tokio-postgres-rustls = "0.13.0"
 tracing = "0.1.44"
@@ -37,4 +40,4 @@ uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
-tokio = { version = "1.50.0", features = ["full"] }
+tokio = { version = "1.50.0", features = ["full", "tracing"] }

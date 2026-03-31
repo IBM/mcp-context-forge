@@ -722,9 +722,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"subscribe": True}}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(
@@ -759,9 +757,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"subscribe": True}}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"subscribe": True}}, [], [], []))
         gateway_service._notify_gateway_updated = AsyncMock()
 
         gateway_update = GatewayUpdate(client_key=settings.masked_auth_value)
@@ -5357,7 +5353,6 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
 
-
     @pytest.mark.asyncio
     async def test_health_check_with_mtls_ca_certificate(self, gateway_service, monkeypatch):
         """Health check creates SSL context with mTLS client_cert/client_key (lines 3348-3349)."""
@@ -5396,8 +5391,11 @@ class TestCheckSingleGatewayHealth:
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
         monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
         mock_settings = MagicMock(
-            enable_ed25519_signing=False, health_check_timeout=5, auto_refresh_servers=False,
-            httpx_admin_read_timeout=5, mcp_session_pool_enabled=False,
+            enable_ed25519_signing=False,
+            health_check_timeout=5,
+            auto_refresh_servers=False,
+            httpx_admin_read_timeout=5,
+            mcp_session_pool_enabled=False,
             auth_encryption_secret=settings.auth_encryption_secret,
         )
         monkeypatch.setattr("mcpgateway.services.gateway_service.settings", mock_settings)

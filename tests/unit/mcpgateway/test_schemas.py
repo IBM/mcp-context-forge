@@ -111,7 +111,7 @@ class TestMCPTypes:
         import base64
 
         binary_data = b"binary_image_data"
-        base64_data = base64.b64encode(binary_data).decode('utf-8')
+        base64_data = base64.b64encode(binary_data).decode("utf-8")
 
         content = ImageContent(
             type="image",
@@ -182,7 +182,7 @@ class TestMCPTypes:
         import base64
 
         binary_data = b"binary_image_data"
-        base64_data = base64.b64encode(binary_data).decode('utf-8')
+        base64_data = base64.b64encode(binary_data).decode("utf-8")
 
         image_message = Message(
             role=Role.ASSISTANT,
@@ -1256,11 +1256,14 @@ class TestSchemaValidators:
 
         assert "Subscriber ID exceeds maximum length" in str(exc_info.value)
 
-    @pytest.mark.parametrize("schema_cls,kwargs", [
-        (ToolCreate, {"name": "t", "integration_type": "REST", "request_type": "GET", "url": "http://x.com"}),
-        (ResourceCreate, {"uri": "test://x", "name": "x", "content": ""}),
-        (PromptCreate, {"name": "p", "template": "hi"}),
-    ])
+    @pytest.mark.parametrize(
+        "schema_cls,kwargs",
+        [
+            (ToolCreate, {"name": "t", "integration_type": "REST", "request_type": "GET", "url": "http://x.com"}),
+            (ResourceCreate, {"uri": "test://x", "name": "x", "content": ""}),
+            (PromptCreate, {"name": "p", "template": "hi"}),
+        ],
+    )
     def test_visibility_validator_rejects_invalid_values(self, schema_cls, kwargs):
         """ToolCreate, ResourceCreate, and PromptCreate must reject invalid visibility strings."""
         with pytest.raises(ValidationError, match="literal_error"):

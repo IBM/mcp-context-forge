@@ -142,9 +142,7 @@ async def decode_qr_code(
             )
             result = qr_decode(request)
             if result.success:
-                data_preview = (
-                    str(result.data)[:50] + "..." if len(str(result.data)) > 50 else result.data
-                )
+                data_preview = str(result.data)[:50] + "..." if len(str(result.data)) > 50 else result.data
                 logger.info(f"QR code decoded successfully (data preview: {data_preview})")
             else:
                 logger.warning(f"QR decode failed: {result.error}")
@@ -176,12 +174,7 @@ async def validate_qr_data(
             )
             result = validate(request)
             if result.valid:
-                logger.info(
-                    "QR data validated successfully "
-                    f"(valid={result.valid}, "
-                    f"fits={result.fits}, "
-                    f"suggested_version={result.suggested_version})"
-                )
+                logger.info("QR data validated successfully " f"(valid={result.valid}, " f"fits={result.fits}, " f"suggested_version={result.suggested_version})")
             else:
                 logger.warning(f"QR data validation failed: {result.error}")
             return result

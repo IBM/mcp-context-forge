@@ -60,6 +60,7 @@ async def test_initialize_logs_warning_on_exception(monkeypatch):
 @pytest.mark.asyncio
 async def test_shutdown_cancels_task():
     service = CancellationService()
+
     class DummyTask:
         def __init__(self):
             self.cancel_called = False

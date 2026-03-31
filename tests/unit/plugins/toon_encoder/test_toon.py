@@ -291,10 +291,7 @@ class TestTokenSavings:
 
     def test_savings_array_of_objects(self):
         """Arrays of objects should show significant savings."""
-        data = [
-            {"id": i, "name": f"user{i}", "score": i * 10}
-            for i in range(10)
-        ]
+        data = [{"id": i, "name": f"user{i}", "score": i * 10} for i in range(10)]
         json_str = json.dumps(data)
         json_len, toon_len, savings = estimate_token_savings(json_str)
         assert toon_len < json_len
@@ -452,15 +449,7 @@ class TestDeeplyNestedStructures:
 
     def test_deeply_nested_objects(self):
         """Deeply nested objects encode/decode correctly."""
-        data = {
-            "level1": {
-                "level2": {
-                    "level3": {
-                        "level4": {"value": "deep"}
-                    }
-                }
-            }
-        }
+        data = {"level1": {"level2": {"level3": {"level4": {"value": "deep"}}}}}
         encoded = encode(data)
         decoded = decode(encoded)
         assert decoded == data
@@ -477,13 +466,7 @@ class TestDeeplyNestedStructures:
 
     def test_nested_object_with_array(self):
         """Nested object containing array works correctly."""
-        data = {
-            "outer": {
-                "inner": {
-                    "values": [1, 2, 3]
-                }
-            }
-        }
+        data = {"outer": {"inner": {"values": [1, 2, 3]}}}
         encoded = encode(data)
         decoded = decode(encoded)
         assert decoded == data

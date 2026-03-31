@@ -663,10 +663,12 @@ class TestGatewayServiceOAuthComprehensive:
         mock_stream_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_stream_response),
-            __aexit__=AsyncMock(return_value=False),
-        ))
+        mock_client.stream = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_stream_response),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
 
         mock_get_client.return_value = AsyncMock(
             __aenter__=AsyncMock(return_value=mock_client),

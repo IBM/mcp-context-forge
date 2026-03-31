@@ -90,7 +90,7 @@ class TestMCPTypes:
         import base64
 
         binary_data = b"binary_image_data"
-        base64_data = base64.b64encode(binary_data).decode('utf-8')
+        base64_data = base64.b64encode(binary_data).decode("utf-8")
 
         content = ImageContent(
             type="image",
@@ -161,7 +161,7 @@ class TestMCPTypes:
         import base64
 
         binary_data = b"binary_image_data"
-        base64_data = base64.b64encode(binary_data).decode('utf-8')
+        base64_data = base64.b64encode(binary_data).decode("utf-8")
 
         image_message = Message(
             role=Role.ASSISTANT,

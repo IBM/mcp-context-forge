@@ -53,9 +53,7 @@ from mcpgateway.db import (
 def get_orphaned_resources(db: Session, team_id: str = None, owner_email: str = None):
     """Find resources with no valid gateway."""
     # Get all valid gateway IDs
-    valid_gateway_ids = set(
-        r[0] for r in db.execute(select(DbGateway.id)).all()
-    )
+    valid_gateway_ids = set(r[0] for r in db.execute(select(DbGateway.id)).all())
 
     # Build query for resources
     query = select(DbResource)
@@ -68,19 +66,14 @@ def get_orphaned_resources(db: Session, team_id: str = None, owner_email: str = 
     resources = db.execute(query).scalars().all()
 
     # Filter to orphaned (gateway_id is NULL or invalid)
-    orphaned = [
-        r for r in resources
-        if r.gateway_id is None or r.gateway_id not in valid_gateway_ids
-    ]
+    orphaned = [r for r in resources if r.gateway_id is None or r.gateway_id not in valid_gateway_ids]
 
     return orphaned
 
 
 def get_orphaned_prompts(db: Session, team_id: str = None, owner_email: str = None):
     """Find prompts with no valid gateway."""
-    valid_gateway_ids = set(
-        r[0] for r in db.execute(select(DbGateway.id)).all()
-    )
+    valid_gateway_ids = set(r[0] for r in db.execute(select(DbGateway.id)).all())
 
     query = select(DbPrompt)
 
@@ -91,19 +84,14 @@ def get_orphaned_prompts(db: Session, team_id: str = None, owner_email: str = No
 
     prompts = db.execute(query).scalars().all()
 
-    orphaned = [
-        p for p in prompts
-        if p.gateway_id is None or p.gateway_id not in valid_gateway_ids
-    ]
+    orphaned = [p for p in prompts if p.gateway_id is None or p.gateway_id not in valid_gateway_ids]
 
     return orphaned
 
 
 def get_orphaned_tools(db: Session, team_id: str = None, owner_email: str = None):
     """Find tools with no valid gateway."""
-    valid_gateway_ids = set(
-        r[0] for r in db.execute(select(DbGateway.id)).all()
-    )
+    valid_gateway_ids = set(r[0] for r in db.execute(select(DbGateway.id)).all())
 
     query = select(DbTool)
 
@@ -114,10 +102,7 @@ def get_orphaned_tools(db: Session, team_id: str = None, owner_email: str = None
 
     tools = db.execute(query).scalars().all()
 
-    orphaned = [
-        t for t in tools
-        if t.gateway_id is None or t.gateway_id not in valid_gateway_ids
-    ]
+    orphaned = [t for t in tools if t.gateway_id is None or t.gateway_id not in valid_gateway_ids]
 
     return orphaned
 
@@ -132,13 +117,11 @@ def delete_orphaned_resources(db: Session, resource_ids: list, dry_run: bool = T
 
     # Delete in chunks to avoid SQLite parameter limits
     for i in range(0, len(resource_ids), 500):
-        chunk = resource_ids[i:i + 500]
+        chunk = resource_ids[i : i + 500]
         # Delete related records first
         db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
         db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-        db.execute(delete(server_resource_association).where(
-            server_resource_association.c.resource_id.in_(chunk)
-        ))
+        db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
         # Delete resources
         db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
@@ -154,11 +137,9 @@ def delete_orphaned_prompts(db: Session, prompt_ids: list, dry_run: bool = True)
         return len(prompt_ids)
 
     for i in range(0, len(prompt_ids), 500):
-        chunk = prompt_ids[i:i + 500]
+        chunk = prompt_ids[i : i + 500]
         db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-        db.execute(delete(server_prompt_association).where(
-            server_prompt_association.c.prompt_id.in_(chunk)
-        ))
+        db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
         db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
 
     return len(prompt_ids)
@@ -173,35 +154,19 @@ def delete_orphaned_tools(db: Session, tool_ids: list, dry_run: bool = True):
         return len(tool_ids)
 
     for i in range(0, len(tool_ids), 500):
-        chunk = tool_ids[i:i + 500]
+        chunk = tool_ids[i : i + 500]
         db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-        db.execute(delete(server_tool_association).where(
-            server_tool_association.c.tool_id.in_(chunk)
-        ))
+        db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
         db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
     return len(tool_ids)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Cleanup orphaned resources, prompts, and tools from the database."
-    )
-    parser.add_argument(
-        "--execute",
-        action="store_true",
-        help="Actually delete records (default is dry-run)"
-    )
-    parser.add_argument(
-        "--team-id",
-        type=str,
-        help="Filter by team ID"
-    )
-    parser.add_argument(
-        "--owner-email",
-        type=str,
-        help="Filter by owner email"
-    )
+    parser = argparse.ArgumentParser(description="Cleanup orphaned resources, prompts, and tools from the database.")
+    parser.add_argument("--execute", action="store_true", help="Actually delete records (default is dry-run)")
+    parser.add_argument("--team-id", type=str, help="Filter by team ID")
+    parser.add_argument("--owner-email", type=str, help="Filter by owner email")
     args = parser.parse_args()
 
     dry_run = not args.execute

@@ -401,9 +401,7 @@ class TestCustomAuthExamplePlugin:
         payload = HttpPreRequestPayload(
             path="/protocol/initialize",
             method="POST",
-            headers=HttpHeaderPayload(
-                {"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}
-            ),
+            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}),
             client_host="192.168.1.100",
             client_port=54321,
         )

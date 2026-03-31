@@ -182,6 +182,40 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_LOG", default_value = "info")]
     pub log_filter: String,
 
+    #[arg(long, env = "MCP_RUST_TELEMETRY_ENABLED", default_value_t = false)]
+    pub telemetry_enabled: bool,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_TELEMETRY_PATH",
+        default_value = "/tmp/contextforge-mcp-runtime/telemetry/trace.bin"
+    )]
+    pub telemetry_path: PathBuf,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_TELEMETRY_ROTATE_BYTES",
+        default_value_t = 8 * 1024 * 1024
+    )]
+    pub telemetry_rotate_bytes: u64,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_TELEMETRY_MAX_BYTES",
+        default_value_t = 64 * 1024 * 1024
+    )]
+    pub telemetry_max_bytes: u64,
+
+    #[arg(long, env = "MCP_RUST_TOKIO_CONSOLE_ENABLED", default_value_t = false)]
+    pub tokio_console_enabled: bool,
+
+    #[arg(
+        long,
+        env = "MCP_RUST_TOKIO_CONSOLE_BIND",
+        default_value = "127.0.0.1:6669"
+    )]
+    pub tokio_console_bind: String,
+
     #[arg(long, env = "MCP_RUST_EXIT_AFTER_STARTUP_MS", hide = true)]
     pub exit_after_startup_ms: Option<u64>,
 }
@@ -255,6 +289,42 @@ impl RuntimeConfig {
             _ => Ok(Some(parsed)),
         }
     }
+
+    /// Validates telemetry-specific configuration values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any telemetry or Tokio console option is invalid.
+    pub fn validate_telemetry_config(&self) -> Result<(), String> {
+        if self.telemetry_path.as_os_str().is_empty() {
+            return Err("telemetry path must not be empty".to_string());
+        }
+
+        if self.telemetry_rotate_bytes == 0 {
+            return Err("telemetry rotate bytes must be greater than zero".to_string());
+        }
+
+        if self.telemetry_max_bytes == 0 {
+            return Err("telemetry max bytes must be greater than zero".to_string());
+        }
+
+        if self.telemetry_max_bytes < self.telemetry_rotate_bytes {
+            return Err(
+                "telemetry max bytes must be greater than or equal to telemetry rotate bytes"
+                    .to_string(),
+            );
+        }
+
+        self.tokio_console_bind
+            .parse::<SocketAddr>()
+            .map(|_| ())
+            .map_err(|err| {
+                format!(
+                    "invalid Tokio console bind address '{}': {err}",
+                    self.tokio_console_bind
+                )
+            })
+    }
 }
 
 #[cfg(test)]
@@ -311,7 +381,7 @@ mod tests {
 
         assert!(matches!(
             config.listen_target().expect("uds target"),
-            ListenTarget::Uds(path) if path == PathBuf::from("/tmp/contextforge.sock")
+            ListenTarget::Uds(path) if path == std::path::Path::new("/tmp/contextforge.sock")
         ));
     }
 
@@ -399,5 +469,58 @@ mod tests {
         let config = config_from(["contextforge-mcp-runtime", "--exit-after-startup-ms", "25"]);
 
         assert_eq!(config.exit_after_startup_ms, Some(25));
+    }
+
+    #[test]
+    fn telemetry_defaults_are_populated() {
+        let config = config_from(["contextforge-mcp-runtime"]);
+
+        assert!(!config.telemetry_enabled);
+        assert_eq!(
+            config.telemetry_path,
+            PathBuf::from("/tmp/contextforge-mcp-runtime/telemetry/trace.bin")
+        );
+        assert_eq!(config.telemetry_rotate_bytes, 8 * 1024 * 1024);
+        assert_eq!(config.telemetry_max_bytes, 64 * 1024 * 1024);
+        assert!(!config.tokio_console_enabled);
+        assert_eq!(config.tokio_console_bind, "127.0.0.1:6669");
+    }
+
+    #[test]
+    fn validate_telemetry_config_rejects_invalid_sizes() {
+        let mut config = config_from(["contextforge-mcp-runtime"]);
+        config.telemetry_rotate_bytes = 0;
+
+        let error = config
+            .validate_telemetry_config()
+            .expect_err("zero rotate bytes should fail");
+        assert!(error.contains("telemetry rotate bytes"));
+
+        config.telemetry_rotate_bytes = 1024;
+        config.telemetry_max_bytes = 0;
+        let error = config
+            .validate_telemetry_config()
+            .expect_err("zero max bytes should fail");
+        assert!(error.contains("telemetry max bytes"));
+
+        config.telemetry_max_bytes = 512;
+        let error = config
+            .validate_telemetry_config()
+            .expect_err("max bytes smaller than rotate bytes should fail");
+        assert!(error.contains("greater than or equal"));
+    }
+
+    #[test]
+    fn validate_telemetry_config_rejects_invalid_console_bind() {
+        let config = config_from([
+            "contextforge-mcp-runtime",
+            "--tokio-console-bind",
+            "not-an-addr",
+        ]);
+
+        let error = config
+            .validate_telemetry_config()
+            .expect_err("invalid bind should fail");
+        assert!(error.contains("invalid Tokio console bind address"));
     }
 }

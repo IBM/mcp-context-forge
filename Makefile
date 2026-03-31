@@ -20,6 +20,7 @@ SHELL := /bin/bash
 # Default is disabled to avoid requiring Rust toolchain for standard builds
 ENABLE_RUST_BUILD ?= 0
 ENABLE_RUST_MCP_RMCP_BUILD ?=
+ENABLE_RUST_MCP_TELEMETRY_BUILD ?= 0
 RUST_MCP_BUILD ?= 0
 RUST_MCP_MODE ?= off
 RUST_MCP_LOG ?= warn
@@ -4832,7 +4833,7 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@RUST_BUILD_VALUE="$(ENABLE_RUST_BUILD)"; RMCP_BUILD_VALUE="$(ENABLE_RUST_MCP_RMCP_BUILD)"; RUST_ARG=""; RMCP_ARG=""; PROFILING_ARG=""; \
+	@RUST_BUILD_VALUE="$(ENABLE_RUST_BUILD)"; RMCP_BUILD_VALUE="$(ENABLE_RUST_MCP_RMCP_BUILD)"; TELEMETRY_BUILD_VALUE="$(ENABLE_RUST_MCP_TELEMETRY_BUILD)"; RUST_ARG=""; RMCP_ARG=""; TELEMETRY_ARG=""; PROFILING_ARG=""; \
 	if [ "$(RUST_MCP_BUILD)" = "1" ] || [ "$(RUST_MCP_BUILD)" = "true" ]; then \
 		RUST_BUILD_VALUE="1"; \
 		if [ -z "$$RMCP_BUILD_VALUE" ] || [ "$$RMCP_BUILD_VALUE" = "0" ] || [ "$$RMCP_BUILD_VALUE" = "false" ]; then \
@@ -4848,10 +4849,17 @@ container-build:
 		else \
 			RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
 		fi; \
+		if [ "$$TELEMETRY_BUILD_VALUE" = "1" ] || [ "$$TELEMETRY_BUILD_VALUE" = "true" ]; then \
+			echo "🦀 Enabling runtime telemetry support in the Rust MCP runtime..."; \
+			TELEMETRY_ARG="--build-arg ENABLE_RUST_MCP_TELEMETRY=true"; \
+		else \
+			TELEMETRY_ARG="--build-arg ENABLE_RUST_MCP_TELEMETRY=false"; \
+		fi; \
 	else \
 		echo "⏭️  Building container WITHOUT Rust plugins (set RUST_MCP_BUILD=1 or ENABLE_RUST_BUILD=1 to enable)"; \
 		RUST_ARG="--build-arg ENABLE_RUST=false"; \
 		RMCP_ARG="--build-arg ENABLE_RUST_MCP_RMCP=false"; \
+		TELEMETRY_ARG="--build-arg ENABLE_RUST_MCP_TELEMETRY=false"; \
 	fi; \
 	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
 		echo "📊 Building container WITH profiling tools (memray)..."; \
@@ -4864,6 +4872,7 @@ container-build:
 		-f $(CONTAINER_FILE) \
 		$$RUST_ARG \
 		$$RMCP_ARG \
+		$$TELEMETRY_ARG \
 		$$PROFILING_ARG \
 		$(DOCKER_BUILD_ARGS) \
 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \

@@ -15,7 +15,6 @@ from mcpgateway.services.metrics import (
     tool_timeout_counter,
 )
 
-
 _METRIC_GAUGE_NAMES = ("app_info", "database_info", "http_pool_max_connections", "http_pool_max_keepalive_connections")
 
 

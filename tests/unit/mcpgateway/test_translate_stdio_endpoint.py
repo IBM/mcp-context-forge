@@ -279,7 +279,7 @@ sys.stdout.flush()
             "DEBUG": "false",
         }
 
-        endpoint = StdIOEndpoint( "jq -cMn env", pubsub, env_vars)
+        endpoint = StdIOEndpoint("jq -cMn env", pubsub, env_vars)
 
         await endpoint.start()
 

@@ -67,6 +67,7 @@ class TestEventService:
     @pytest.mark.asyncio
     async def test_init_with_redis_connection_failure(self, mock_settings, mock_redis_available):
         """Test initialization when Redis connection fails."""
+
         async def mock_get_redis_client():
             raise Exception("Connection failed")
 
@@ -84,6 +85,7 @@ class TestEventService:
     @pytest.mark.asyncio
     async def test_init_with_redis_ping_failure(self, mock_settings, mock_redis_available):
         """Test initialization when shared client returns None (unavailable)."""
+
         async def mock_get_redis_client():
             return None
 
@@ -145,9 +147,7 @@ class TestEventService:
             assert orjson.loads(call_args[1]) == event_data
 
     @pytest.mark.asyncio
-    async def test_publish_event_with_redis_failure_fallback_to_local(
-        self, mock_settings, mock_redis_available
-    ):
+    async def test_publish_event_with_redis_failure_fallback_to_local(self, mock_settings, mock_redis_available):
         """Test event publishing falls back to local queues when Redis fails."""
         mock_redis_client = AsyncMock()
         mock_redis_client.publish = AsyncMock(side_effect=Exception("Redis publish failed"))
@@ -256,9 +256,7 @@ class TestEventService:
     @pytest.mark.skip
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
-    async def test_subscribe_events_with_redis_cancellation(
-        self, mock_settings, mock_redis_available
-    ):
+    async def test_subscribe_events_with_redis_cancellation(self, mock_settings, mock_redis_available):
         """Test event subscription cancellation with Redis."""
         with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
             with patch("mcpgateway.services.event_service.logger") as mock_logger:
@@ -289,6 +287,7 @@ class TestEventService:
                 sys.modules["redis.asyncio"] = mock_aioredis_module
 
                 try:
+
                     async def consume():
                         async for event in service.subscribe_events():
                             pass
@@ -360,9 +359,7 @@ class TestEventService:
     @pytest.mark.skip
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
-    async def test_subscribe_events_with_redis_cleanup_error(
-        self, mock_settings, mock_redis_available
-    ):
+    async def test_subscribe_events_with_redis_cleanup_error(self, mock_settings, mock_redis_available):
         """Test event subscription with Redis cleanup error."""
         with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
             with patch("mcpgateway.services.event_service.logger") as mock_logger:
@@ -397,9 +394,7 @@ class TestEventService:
 
                     assert str(exc_info.value) == "Connection error"
                     warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
-                    assert any(
-                        "Error closing Redis subscription" in call_str for call_str in warning_calls
-                    )
+                    assert any("Error closing Redis subscription" in call_str for call_str in warning_calls)
                 finally:
                     if "redis.asyncio" in sys.modules:
                         del sys.modules["redis.asyncio"]
@@ -407,9 +402,7 @@ class TestEventService:
     @pytest.mark.skip
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
-    async def test_subscribe_events_with_redis_import_error(
-        self, mock_settings, mock_redis_available
-    ):
+    async def test_subscribe_events_with_redis_import_error(self, mock_settings, mock_redis_available):
         """Test event subscription when redis.asyncio import fails."""
         with patch("mcpgateway.services.event_service.redis") as mock_redis_module:
             mock_redis_client = MagicMock()
@@ -473,9 +466,7 @@ class TestEventService:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
-    async def test_subscribe_events_local_mode_cancellation(
-        self, mock_settings, mock_redis_unavailable
-    ):
+    async def test_subscribe_events_local_mode_cancellation(self, mock_settings, mock_redis_unavailable):
         """Test event subscription cancellation in local mode."""
         with patch("mcpgateway.services.event_service.logger") as mock_logger:
             from mcpgateway.services.event_service import EventService
@@ -511,9 +502,7 @@ class TestEventService:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
-    async def test_subscribe_events_local_mode_queue_cleanup(
-        self, mock_settings, mock_redis_unavailable
-    ):
+    async def test_subscribe_events_local_mode_queue_cleanup(self, mock_settings, mock_redis_unavailable):
         """Test queue cleanup after local subscription ends."""
         from mcpgateway.services.event_service import EventService
 
@@ -651,9 +640,7 @@ class TestEventService:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
-    async def test_multiple_subscribers_receive_same_event(
-        self, mock_settings, mock_redis_unavailable
-    ):
+    async def test_multiple_subscribers_receive_same_event(self, mock_settings, mock_redis_unavailable):
         """Test multiple subscribers receive the same published event."""
         from mcpgateway.services.event_service import EventService
 
@@ -672,10 +659,7 @@ class TestEventService:
 
         await asyncio.gather(subscriber(1), subscriber(2), subscriber(3), publisher())
 
-        assert all(
-            event == {"event": "broadcast", "data": "test"}
-            for event in subscriber_results.values()
-        )
+        assert all(event == {"event": "broadcast", "data": "test"} for event in subscriber_results.values())
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)

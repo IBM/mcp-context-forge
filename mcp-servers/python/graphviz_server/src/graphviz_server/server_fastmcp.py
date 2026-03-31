@@ -58,9 +58,7 @@ class GraphvizProcessor:
                 return cmd
 
         logger.warning("Graphviz not found. Please install Graphviz.")
-        raise RuntimeError(
-            "Graphviz not found. Please install Graphviz from https://graphviz.org/download/"
-        )
+        raise RuntimeError("Graphviz not found. Please install Graphviz from https://graphviz.org/download/")
 
     def create_graph(
         self,
@@ -345,9 +343,7 @@ class GraphvizProcessor:
             logger.error(f"Error setting attributes: {e}")
             return {"success": False, "error": str(e)}
 
-    def analyze_graph(
-        self, file_path: str, include_structure: bool = True, include_metrics: bool = True
-    ) -> dict[str, Any]:
+    def analyze_graph(self, file_path: str, include_structure: bool = True, include_metrics: bool = True) -> dict[str, Any]:
         """Analyze a DOT graph file."""
         try:
             if not Path(file_path).exists():
@@ -382,9 +378,7 @@ class GraphvizProcessor:
                 # Basic metrics
                 analysis["metrics"] = {
                     "file_size": len(content),
-                    "has_attributes": "label=" in content
-                    or "color=" in content
-                    or "shape=" in content,
+                    "has_attributes": "label=" in content or "color=" in content or "shape=" in content,
                     "has_subgraphs": "subgraph" in content,
                 }
 
@@ -508,9 +502,7 @@ async def add_edge(
 @mcp.tool(description="Set graph, node, or edge attributes")
 async def set_attributes(
     file_path: str = Field(..., description="Path to the DOT file"),
-    target_type: str = Field(
-        ..., pattern="^(graph|node|edge)$", description="Attribute target (graph, node, edge)"
-    ),
+    target_type: str = Field(..., pattern="^(graph|node|edge)$", description="Attribute target (graph, node, edge)"),
     target_id: str | None = Field(None, description="Target ID (for node/edge, None for graph)"),
     attributes: dict[str, str] | None = Field(None, description="Attributes to set"),
 ) -> dict[str, Any]:

@@ -149,6 +149,7 @@ class PromptTarget:
     name: str
     required_arguments: dict[str, str]
 
+
 # Shared state (populated on test_start)
 _server_id: str = ""
 _tool_names: list[str] = []

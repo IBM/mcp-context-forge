@@ -166,13 +166,11 @@ class TestSecurityHeadersInIframeContext:
 
         _ensure_admin_logged_in(page, base_url)
         admin_url = f"{base_url}/admin/"
-        page.set_content(
-            f"""<!DOCTYPE html>
+        page.set_content(f"""<!DOCTYPE html>
 <html><head><title>deny test</title></head>
 <body>
 <iframe id="admin-frame" src="{admin_url}" style="width:100%;height:100vh;border:none"></iframe>
-</body></html>"""
-        )
+</body></html>""")
 
         frame = page.frame_locator("#admin-frame")
         try:
@@ -337,15 +335,13 @@ class TestEmbeddedModeUIBehavior:
         page.route(admin_pattern, _strip_headers)
 
         admin_url = f"{base_url}/admin/?ui_hide=metrics"
-        page.set_content(
-            f"""<!DOCTYPE html>
+        page.set_content(f"""<!DOCTYPE html>
 <html><head><title>ui_hide iframe test</title></head>
 <body>
 <iframe id="admin-frame" src="{admin_url}" style="width:100%;height:100vh;border:none"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
 </iframe>
-</body></html>"""
-        )
+</body></html>""")
 
         frame = page.frame_locator("#admin-frame")
         try:
@@ -400,16 +396,14 @@ class TestCORSInIframeContext:
     def test_same_origin_fetch_from_iframe(self, page: Page, iframe_host):
         """fetch('/health') from inside the iframe succeeds (same-origin)."""
         frame = iframe_host
-        result = frame.locator("body").evaluate(
-            """async () => {
+        result = frame.locator("body").evaluate("""async () => {
                 try {
                     const resp = await fetch('/health');
                     return { status: resp.status, ok: resp.ok };
                 } catch (e) {
                     return { error: e.message };
                 }
-            }"""
-        )
+            }""")
         assert "error" not in result, f"Same-origin fetch from iframe failed: {result.get('error')}"
         assert result["status"] == 200, f"Expected 200 from /health, got {result['status']}"
 

@@ -278,10 +278,12 @@ class TestHttpAuthResolveUserPayload:
 
     def test_auth_resolve_payload_with_mtls_cert_header(self):
         """Test auth resolve payload with mTLS certificate header."""
-        headers = HttpHeaderPayload({
-            "X-SSL-Client-Cert": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
-            "X-SSL-Client-DN": "CN=user@example.com,O=Example Corp",
-        })
+        headers = HttpHeaderPayload(
+            {
+                "X-SSL-Client-Cert": "-----BEGIN CERTIFICATE-----\nMIIC...\n-----END CERTIFICATE-----",
+                "X-SSL-Client-DN": "CN=user@example.com,O=Example Corp",
+            }
+        )
 
         payload = HttpAuthResolveUserPayload(
             credentials=None,

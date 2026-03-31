@@ -206,9 +206,7 @@ class SimpleTokenAuthPlugin(Plugin):
             continue_processing=True,  # Allow other plugins to run, auth middleware will use our payload
         )
 
-    async def http_auth_check_permission(
-        self, payload: HttpAuthCheckPermissionPayload, context: PluginContext
-    ) -> PluginResult:
+    async def http_auth_check_permission(self, payload: HttpAuthCheckPermissionPayload, context: PluginContext) -> PluginResult:
         """Check and grant permissions for token-authenticated users.
 
         Users authenticated via simple tokens bypass RBAC checks and get full permissions.
@@ -228,10 +226,7 @@ class SimpleTokenAuthPlugin(Plugin):
 
         # Grant full permissions to token-authenticated users
         # You could add more granular logic here based on token properties, time, IP, etc.
-        logger.info(
-            f"[SimpleTokenAuth] Granting permission '{payload.permission}' to token user {payload.user_email} "
-            f"(admin={payload.is_admin}, resource={payload.resource_type})"
-        )
+        logger.info(f"[SimpleTokenAuth] Granting permission '{payload.permission}' to token user {payload.user_email} " f"(admin={payload.is_admin}, resource={payload.resource_type})")
 
         result = HttpAuthCheckPermissionResultPayload(
             granted=True,

@@ -113,15 +113,13 @@ class TestAdminUI:
         admin_page.page.set_viewport_size({"width": 375, "height": 667})
         admin_page.page.wait_for_timeout(300)
         # Alpine keeps sidebarOpen=true from desktop; force it closed
-        admin_page.page.evaluate(
-            """() => {
+        admin_page.page.evaluate("""() => {
                 const el = document.querySelector('[x-data]');
                 if (!el) return;
                 // Try Alpine v3 _x_dataStack, then v2 __x
                 if (el._x_dataStack) { el._x_dataStack[0].sidebarOpen = false; }
                 else if (el.__x) { el.__x.$data.sidebarOpen = false; }
-            }"""
-        )
+            }""")
         admin_page.page.wait_for_timeout(500)
 
         hamburger = admin_page.page.locator("button.lg\\:hidden")
@@ -133,14 +131,12 @@ class TestAdminUI:
         expect(sidebar).to_be_visible(timeout=10000)
 
         # Close sidebar again
-        admin_page.page.evaluate(
-            """() => {
+        admin_page.page.evaluate("""() => {
                 const el = document.querySelector('[x-data]');
                 if (!el) return;
                 if (el._x_dataStack) { el._x_dataStack[0].sidebarOpen = false; }
                 else if (el.__x) { el.__x.$data.sidebarOpen = false; }
-            }"""
-        )
+            }""")
         admin_page.page.wait_for_timeout(400)
 
         # Resize back to desktop — sidebar must reappear without page reload

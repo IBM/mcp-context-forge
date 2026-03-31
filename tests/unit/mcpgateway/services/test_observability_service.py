@@ -87,8 +87,7 @@ def test_record_token_usage_with_and_without_span(mock_ctid, mock_db):
     span = MagicMock()
     mock_db.query.return_value.filter_by.return_value.first.return_value = span
     service.record_token_usage(mock_db, model="gpt-4-turbo", input_tokens=5, output_tokens=3)
-    service.record_token_usage(mock_db, span_id="sid", model="claude-3-sonnet",
-                               input_tokens=10, output_tokens=15, provider="anthropic")
+    service.record_token_usage(mock_db, span_id="sid", model="claude-3-sonnet", input_tokens=10, output_tokens=15, provider="anthropic")
     assert service.record_metric.call_count >= 2
 
 
@@ -150,7 +149,7 @@ def test_parse_traceparent_zero_ids(caplog):
 
 
 def test_parse_traceparent_valid_but_zero_ids(caplog):
-    header = "00-" + "0"*32 + "-0000000000000000-01"
+    header = "00-" + "0" * 32 + "-0000000000000000-01"
     output = parse_traceparent(header)
     assert output is None
     assert "Invalid traceparent" in caplog.text or "zero" in caplog.text
@@ -158,20 +157,18 @@ def test_parse_traceparent_valid_but_zero_ids(caplog):
 
 def test_parse_traceparent_malformed_formats(caplog):
     assert parse_traceparent("wrong-format") is None
-    assert parse_traceparent("xx-" + "abc"*16 + "-1234567890123456-00") is None
+    assert parse_traceparent("xx-" + "abc" * 16 + "-1234567890123456-00") is None
     assert "Invalid traceparent" in caplog.text or "Unsupported" in caplog.text
 
 
 def test_format_traceparent_unsampled_branch():
-    val = format_traceparent("a"*32, "b"*16, sampled=False)
+    val = format_traceparent("a" * 32, "b" * 16, sampled=False)
     assert val.endswith("-00")
 
 
 def test_start_trace_with_parent_and_resources(mock_db):
     service = ObservabilityService()
-    tid = service.start_trace(mock_db, "GET /endpoint", parent_span_id="parent123",
-                              http_method="GET", http_url="/endpoint",
-                              attributes={"a": 1}, resource_attributes={"service": "gateway"})
+    tid = service.start_trace(mock_db, "GET /endpoint", parent_span_id="parent123", http_method="GET", http_url="/endpoint", attributes={"a": 1}, resource_attributes={"service": "gateway"})
     assert isinstance(tid, str)
     mock_db.add.assert_called()
 
@@ -312,8 +309,7 @@ def test_trace_a2a_request_no_request_data_skips_sanitization(mock_db):
 def test_record_transport_activity_full_branches(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
-                                      message_count=1, bytes_sent=100, bytes_received=50, connection_id="conn1")
+    service.record_transport_activity(mock_db, "http", "send", message_count=1, bytes_sent=100, bytes_received=50, connection_id="conn1")
     assert service.record_metric.call_count >= 3
 
 
@@ -327,12 +323,12 @@ def test_record_transport_activity_bytes_sent_zero_skips_metric(mock_db):
     metric_names = [call.kwargs["name"] for call in service.record_metric.mock_calls if "name" in call.kwargs]
     assert not any(name.endswith(".bytes_sent") for name in metric_names)
 
+
 def test_record_metric_exists(mock_db):
     service = ObservabilityService()
     metric_func = getattr(service, "record_metric", None)
     if metric_func:
-        metric_func(db=mock_db, name="metric.test", value=1.0, metric_type="counter",
-                    unit="test", trace_id="tid", attributes={"a": "b"})
+        metric_func(db=mock_db, name="metric.test", value=1.0, metric_type="counter", unit="test", trace_id="tid", attributes={"a": "b"})
         mock_db.add.assert_called()
 
 
@@ -430,6 +426,7 @@ def test_query_traces_applies_filters(mock_db):
 
     with patch("mcpgateway.services.observability_service.ObservabilityTrace") as mock_trace:
         mock_trace.attributes.__getitem__.return_value.astext = MagicMock()
+
         class _Comparable:
             def __ge__(self, _other):
                 return MagicMock()
@@ -565,14 +562,13 @@ def test_query_traces_invalid_limit_and_order(mock_db):
 def test_record_transport_activity_all_metrics(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "ws", "send",
-                                      message_count=3, bytes_sent=100, bytes_received=200, connection_id="c123")
+    service.record_transport_activity(mock_db, "ws", "send", message_count=3, bytes_sent=100, bytes_received=200, connection_id="c123")
     assert service.record_metric.call_count >= 3
 
 
 def test_parse_traceparent_invalid_strings(caplog):
     assert parse_traceparent("invalid-header") is None
-    assert parse_traceparent("00-" + "0"*32 + "-abcd"*4 + "-01") is None
+    assert parse_traceparent("00-" + "0" * 32 + "-abcd" * 4 + "-01") is None
     bad = "01-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
     assert parse_traceparent(bad) is None
     assert "Invalid" in caplog.text or "Unsupported" in caplog.text
@@ -580,9 +576,7 @@ def test_parse_traceparent_invalid_strings(caplog):
 
 def test_start_trace_with_resource_and_parent(mock_db):
     service = ObservabilityService()
-    tid = service.start_trace(mock_db, "GET /test", parent_span_id="p123",
-                              attributes={"foo": "bar"},
-                              resource_attributes={"service": "gateway"})
+    tid = service.start_trace(mock_db, "GET /test", parent_span_id="p123", attributes={"foo": "bar"}, resource_attributes={"service": "gateway"})
     mock_db.add.assert_called()
     assert isinstance(tid, str)
 
@@ -642,14 +636,12 @@ def test_trace_a2a_request_with_response_result(mock_db):
 def test_record_transport_activity_full(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
-                                      message_count=1, bytes_sent=50, bytes_received=25,
-                                      connection_id="cid")
+    service.record_transport_activity(mock_db, "http", "send", message_count=1, bytes_sent=50, bytes_received=25, connection_id="cid")
     assert service.record_metric.call_count >= 3
 
 
 def test_parse_traceparent_zero_trace_parent(caplog):
-    header = "00-" + "0"*32 + "-0000000000000000-01"
+    header = "00-" + "0" * 32 + "-0000000000000000-01"
     result = parse_traceparent(header)
     assert result is None
     assert "Invalid traceparent" in caplog.text or "zero" in caplog.text
@@ -664,9 +656,7 @@ def test_generate_trace_and_span_ids_lengths():
 
 def test_start_trace_parent_id_included(mock_db):
     service = ObservabilityService()
-    trace_id = service.start_trace(mock_db, "GET /resource",
-                                   parent_span_id="p123",
-                                   attributes={"foo": "bar"})
+    trace_id = service.start_trace(mock_db, "GET /resource", parent_span_id="p123", attributes={"foo": "bar"})
     mock_db.add.assert_called()
     # parent_span_id gets merged in attributes
     assert "parent_span_id" in (mock_db.add.call_args[0][0].attributes or {})
@@ -724,6 +714,7 @@ def test_query_spans_applies_filters(mock_db):
 
     with patch("mcpgateway.services.observability_service.ObservabilitySpan") as mock_span:
         mock_span.attributes.__getitem__.return_value.astext = MagicMock()
+
         class _Comparable:
             def __ge__(self, _other):
                 return MagicMock()
@@ -871,9 +862,7 @@ def test_record_token_usage_auto_cost_and_total(mock_db):
     with patch("mcpgateway.services.observability_service.current_trace_id") as cvar:
         cvar.get.return_value = "tid"
         service.record_metric = MagicMock()
-        service.record_token_usage(mock_db, model="gpt-4o-mini",
-                                   input_tokens=10, output_tokens=5,
-                                   total_tokens=None, estimated_cost_usd=None)
+        service.record_token_usage(mock_db, model="gpt-4o-mini", input_tokens=10, output_tokens=5, total_tokens=None, estimated_cost_usd=None)
         service.record_metric.assert_called()
 
 
@@ -890,12 +879,7 @@ def test_trace_a2a_request_successful_path(mock_db):
 def test_record_transport_activity_all_metrics_and_error(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
-                                      message_count=2,
-                                      bytes_sent=128,
-                                      bytes_received=64,
-                                      connection_id="cid1",
-                                      error="fail")
+    service.record_transport_activity(mock_db, "http", "send", message_count=2, bytes_sent=128, bytes_received=64, connection_id="cid1", error="fail")
     # should record message, send, receive, error metrics
     assert service.record_metric.call_count >= 3
 

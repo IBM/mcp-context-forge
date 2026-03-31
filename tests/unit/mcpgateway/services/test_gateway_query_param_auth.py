@@ -68,8 +68,7 @@ def test_db():
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes."""
-    with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, \
-         patch("mcpgateway.services.gateway_service.structured_logger") as mock_logger:
+    with patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit, patch("mcpgateway.services.gateway_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -79,14 +78,14 @@ def mock_logging_services():
 def _bypass_gatewayread_validation(monkeypatch):
     """Stub GatewayRead.model_validate to return input unchanged."""
     from mcpgateway.schemas import GatewayRead
+
     monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: x))
 
 
 @pytest.fixture(autouse=True)
 def mock_all_settings():
     """Mock settings in both schemas and gateway_service modules."""
-    with patch("mcpgateway.schemas.settings") as schema_settings, \
-         patch("mcpgateway.services.gateway_service.settings") as service_settings:
+    with patch("mcpgateway.schemas.settings") as schema_settings, patch("mcpgateway.services.gateway_service.settings") as service_settings:
         # Configure schema settings
         schema_settings.insecure_allow_queryparam_auth = True
         schema_settings.insecure_queryparam_auth_allowed_hosts = ["api.tavily.com", "mcp.tavily.com", "api.example.com"]
@@ -116,9 +115,7 @@ class TestQueryParamAuthRegistration:
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
         url = url_normalize("https://api.tavily.com/mcp")
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_added = AsyncMock()
 
         mock_model = Mock()
@@ -268,9 +265,7 @@ class TestQueryParamAuthUpdate:
             ]
         )
 
-        gateway_service._initialize_gateway = AsyncMock(
-            return_value=({"tools": {"listChanged": True}}, [], [], [])
-        )
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
         gateway_service._notify_gateway_changed = AsyncMock()
 
         mock_model = Mock()

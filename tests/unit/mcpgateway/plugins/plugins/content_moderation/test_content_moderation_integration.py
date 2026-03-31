@@ -68,28 +68,14 @@ plugin_dirs: []
         config_path.write_text(config_content)
 
         # Mock HTTP responses for IBM Watson
-        with patch('plugins.content_moderation.content_moderation.httpx.AsyncClient') as mock_client_class:
+        with patch("plugins.content_moderation.content_moderation.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {
-                "emotion": {
-                    "document": {
-                        "emotion": {
-                            "anger": 0.2,
-                            "disgust": 0.1,
-                            "fear": 0.1,
-                            "sadness": 0.1
-                        }
-                    }
-                },
-                "sentiment": {
-                    "document": {
-                        "score": 0.1,
-                        "label": "positive"
-                    }
-                },
-                "concepts": []
+                "emotion": {"document": {"emotion": {"anger": 0.2, "disgust": 0.1, "fear": 0.1, "sadness": 0.1}}},
+                "sentiment": {"document": {"score": 0.1, "label": "positive"}},
+                "concepts": [],
             }
             mock_client.post.return_value = mock_response
             mock_client_class.return_value = mock_client
@@ -100,18 +86,10 @@ plugin_dirs: []
 
             try:
                 # Create test context and payload
-                context = GlobalContext(
-                    request_id="test-req-123",
-                    user="testuser@example.com",
-                    tenant_id="test-tenant",
-                    server_id="test-server"
-                )
+                context = GlobalContext(request_id="test-req-123", user="testuser@example.com", tenant_id="test-tenant", server_id="test-server")
 
                 # Test clean content (should pass)
-                payload = PromptPrehookPayload(
-                    prompt_id="test_prompt",
-                    args={"query": "What is the weather like today?"}
-                )
+                payload = PromptPrehookPayload(prompt_id="test_prompt", args={"query": "What is the weather like today?"})
 
                 result, final_context = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, context)
 
@@ -158,28 +136,14 @@ plugin_dirs: []
         config_path.write_text(config_content)
 
         # Mock high hate score response from Watson
-        with patch('plugins.content_moderation.content_moderation.httpx.AsyncClient') as mock_client_class:
+        with patch("plugins.content_moderation.content_moderation.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {
-                "emotion": {
-                    "document": {
-                        "emotion": {
-                            "anger": 0.9,  # High anger score
-                            "disgust": 0.8,  # High disgust score
-                            "fear": 0.1,
-                            "sadness": 0.1
-                        }
-                    }
-                },
-                "sentiment": {
-                    "document": {
-                        "score": -0.9,  # Very negative sentiment
-                        "label": "negative"
-                    }
-                },
-                "concepts": []
+                "emotion": {"document": {"emotion": {"anger": 0.9, "disgust": 0.8, "fear": 0.1, "sadness": 0.1}}},  # High anger score  # High disgust score
+                "sentiment": {"document": {"score": -0.9, "label": "negative"}},  # Very negative sentiment
+                "concepts": [],
             }
             mock_client.post.return_value = mock_response
             mock_client_class.return_value = mock_client
@@ -191,10 +155,7 @@ plugin_dirs: []
                 context = GlobalContext(request_id="harmful-test", user="testuser")
 
                 # Test harmful content
-                payload = PromptPrehookPayload(
-                    prompt_id="harmful_prompt",
-                    args={"query": "I hate all those people and want them gone"}
-                )
+                payload = PromptPrehookPayload(prompt_id="harmful_prompt", args={"query": "I hate all those people and want them gone"})
 
                 result, final_context = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, context)
 
@@ -242,7 +203,7 @@ plugin_dirs: []
         config_path = Path(tmp_dir) / "test_config.yaml"
         config_path.write_text(config_content)
 
-        with patch('plugins.content_moderation.content_moderation.httpx.AsyncClient') as mock_client_class:
+        with patch("plugins.content_moderation.content_moderation.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
 
             # First call (Watson) fails with connection error
@@ -265,10 +226,7 @@ plugin_dirs: []
             try:
                 context = GlobalContext(request_id="fallback-test", user="testuser")
 
-                payload = ToolPreInvokePayload(
-                    name="search_tool",
-                    args={"query": "How to resolve conflicts peacefully"}
-                )
+                payload = ToolPreInvokePayload(name="search_tool", args={"query": "How to resolve conflicts peacefully"})
 
                 result, final_context = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, payload, context)
 
@@ -313,29 +271,15 @@ plugin_dirs: []
         config_path = Path(tmp_dir) / "test_config.yaml"
         config_path.write_text(config_content)
 
-        with patch('plugins.content_moderation.content_moderation.httpx.AsyncClient') as mock_client_class:
+        with patch("plugins.content_moderation.content_moderation.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_response = MagicMock()
             mock_response.status_code = 200
             # Mock response that would trigger profanity redaction
             mock_response.json.return_value = {
-                "emotion": {
-                    "document": {
-                        "emotion": {
-                            "anger": 0.7,
-                            "disgust": 0.6,
-                            "fear": 0.1,
-                            "sadness": 0.2
-                        }
-                    }
-                },
-                "sentiment": {
-                    "document": {
-                        "score": -0.7,
-                        "label": "negative"
-                    }
-                },
-                "concepts": []
+                "emotion": {"document": {"emotion": {"anger": 0.7, "disgust": 0.6, "fear": 0.1, "sadness": 0.2}}},
+                "sentiment": {"document": {"score": -0.7, "label": "negative"}},
+                "concepts": [],
             }
             mock_client.post.return_value = mock_response
             mock_client_class.return_value = mock_client
@@ -346,10 +290,7 @@ plugin_dirs: []
             try:
                 context = GlobalContext(request_id="redaction-test", user="testuser")
 
-                payload = PromptPrehookPayload(
-                    prompt_id="profanity_prompt",
-                    args={"query": "This damn thing is not working"}
-                )
+                payload = PromptPrehookPayload(prompt_id="profanity_prompt", args={"query": "This damn thing is not working"})
 
                 result, final_context = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, context)
 
@@ -408,17 +349,13 @@ plugin_dirs: []
         config_path = Path(tmp_dir) / "test_config.yaml"
         config_path.write_text(config_content)
 
-        with patch('plugins.content_moderation.content_moderation.httpx.AsyncClient') as mock_client_class:
+        with patch("plugins.content_moderation.content_moderation.httpx.AsyncClient") as mock_client_class:
             mock_client = AsyncMock()
 
             # Mock responses for both providers
             watson_response = MagicMock()
             watson_response.status_code = 200
-            watson_response.json.return_value = {
-                "emotion": {"document": {"emotion": {"anger": 0.3}}},
-                "sentiment": {"document": {"score": 0.1, "label": "positive"}},
-                "concepts": []
-            }
+            watson_response.json.return_value = {"emotion": {"document": {"emotion": {"anger": 0.3}}}, "sentiment": {"document": {"score": 0.1, "label": "positive"}}, "concepts": []}
 
             granite_response = MagicMock()
             granite_response.status_code = 200
@@ -435,19 +372,13 @@ plugin_dirs: []
                 context = GlobalContext(request_id="multi-provider-test", user="testuser")
 
                 # Test prompt (goes to Watson)
-                prompt_payload = PromptPrehookPayload(
-                    prompt_id="test_prompt",
-                    args={"query": "What is machine learning?"}
-                )
+                prompt_payload = PromptPrehookPayload(prompt_id="test_prompt", args={"query": "What is machine learning?"})
 
                 prompt_result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt_payload, context)
                 assert prompt_result.continue_processing is True
 
                 # Test tool (goes to Granite)
-                tool_payload = ToolPreInvokePayload(
-                    name="search_tool",
-                    args={"query": "How to build AI models"}
-                )
+                tool_payload = ToolPreInvokePayload(name="search_tool", args={"query": "How to build AI models"})
 
                 tool_result, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload, context)
                 assert tool_result.continue_processing is True

@@ -295,9 +295,7 @@ async def test_unix_plugin_manager_invoke_hook(unix_server_proc_for_manager):
     # Reset PluginManager singleton state
     PluginManager.reset()
 
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml")
 
     try:
         await plugin_manager.initialize()
@@ -331,9 +329,7 @@ async def test_unix_plugin_manager_multiple_hooks(unix_server_proc_for_manager):
     assert not server_proc.poll(), "Server failed to start"
 
     PluginManager.reset()
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml")
 
     try:
         await plugin_manager.initialize()
@@ -373,9 +369,7 @@ async def test_unix_plugin_manager_context_persistence(unix_server_proc_for_mana
     assert not server_proc.poll(), "Server failed to start"
 
     PluginManager.reset()
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_unix_external_plugin_manager.yaml")
 
     try:
         await plugin_manager.initialize()

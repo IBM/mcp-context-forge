@@ -1110,9 +1110,7 @@ class TestGetCallerPermissionsTokenNarrowing:
             result = await _get_caller_permissions(MagicMock(), user, team_id="team-a")
 
             assert result != ["*"], "Narrowed admin must not receive wildcard permissions"
-            mock_ps.get_user_permissions.assert_awaited_once_with(
-                user_email="admin@test.com", team_id="team-a", token_teams=["team-a"]
-            )
+            mock_ps.get_user_permissions.assert_awaited_once_with(user_email="admin@test.com", team_id="team-a", token_teams=["team-a"])
 
     @pytest.mark.asyncio
     async def test_public_only_admin_does_not_get_wildcard(self):

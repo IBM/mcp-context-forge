@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 import yaml
 
-
 # HTML Template with embedded CSS and Chart.js
 HTML_TEMPLATE = """
 <!DOCTYPE html>

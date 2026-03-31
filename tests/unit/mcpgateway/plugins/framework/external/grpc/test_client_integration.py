@@ -270,6 +270,7 @@ async def test_grpc_client_over_uds(grpc_server_proc_uds):
 # PluginManager Integration Tests
 # =============================================================================
 
+
 @pytest.fixture
 def grpc_server_proc_for_manager(tmp_path):
     """Start a gRPC plugin server and return a matching PluginManager config file."""

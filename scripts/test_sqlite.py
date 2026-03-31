@@ -510,13 +510,11 @@ class SQLAlchemyTest:
 
                     # Test more complex query
                     try:
-                        result = conn.execute(
-                            text("""
+                        result = conn.execute(text("""
                             SELECT gateways.name, gateways.enabled, gateways.reachable
                             FROM gateways
                             LIMIT 5
-                        """)
-                        )
+                        """))
                         rows = result.fetchall()
                         print_status(f"Complex query successful: {len(rows)} gateway records")
 

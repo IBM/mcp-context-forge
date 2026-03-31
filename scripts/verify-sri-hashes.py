@@ -12,6 +12,7 @@ Usage:
     python scripts/verify-sri-hashes.py
     make sri-verify
 """
+
 import hashlib
 import base64
 import json
@@ -61,10 +62,7 @@ def load_stored_hashes() -> Dict[str, str]:
     sri_file = Path(__file__).parent.parent / "mcpgateway" / "sri_hashes.json"
 
     if not sri_file.exists():
-        raise FileNotFoundError(
-            f"SRI hashes file not found: {sri_file}\n"
-            "Run 'make sri-generate' to generate hashes"
-        )
+        raise FileNotFoundError(f"SRI hashes file not found: {sri_file}\n" "Run 'make sri-generate' to generate hashes")
 
     with sri_file.open("r") as f:
         return json.load(f)

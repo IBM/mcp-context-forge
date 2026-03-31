@@ -88,6 +88,24 @@ make -C tools_rust/mcp_runtime test-rmcp
 make -C tools_rust/mcp_runtime coverage
 ```
 
+### Experimental telemetry build
+
+Dial9 and Tokio console support are compiled out of the default runtime build.
+Build the runtime with the `runtime-telemetry` feature when you want those
+paths available:
+
+```bash
+make -C tools_rust/mcp_runtime check-telemetry
+make -C tools_rust/mcp_runtime test-telemetry
+make -C tools_rust/mcp_runtime build-release-telemetry
+```
+
+For container builds, set:
+
+```bash
+ENABLE_RUST_BUILD=1 ENABLE_RUST_MCP_TELEMETRY_BUILD=1 make container-build
+```
+
 ### Rust-local profiling
 
 ```bash
@@ -101,6 +119,32 @@ Generated profiling artifacts are written under:
 ```text
 tools_rust/mcp_runtime/profiles/
 ```
+
+### Experimental telemetry runtime knobs
+
+These runtime flags are disabled by default and only work in a telemetry-enabled
+build:
+
+```bash
+MCP_RUST_TELEMETRY_ENABLED=true
+MCP_RUST_TELEMETRY_PATH=/tmp/contextforge-mcp-runtime/telemetry/trace.bin
+MCP_RUST_TELEMETRY_ROTATE_BYTES=8388608
+MCP_RUST_TELEMETRY_MAX_BYTES=67108864
+MCP_RUST_TOKIO_CONSOLE_ENABLED=true
+MCP_RUST_TOKIO_CONSOLE_BIND=127.0.0.1:6669
+```
+
+Expected behavior:
+
+- when both flags are off, no trace files are written and no Tokio console port
+  is opened
+- when Dial9 is on, traces rotate under the configured path with bounded disk
+  usage
+- when Tokio console is on, connect with `tokio-console 127.0.0.1:6669`
+
+If you set either runtime flag on a binary built without
+`runtime-telemetry`, startup fails fast with a configuration error that says
+the build must include the `runtime-telemetry` Cargo feature.
 
 ## Verify what is running
 

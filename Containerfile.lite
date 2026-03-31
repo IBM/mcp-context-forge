@@ -21,6 +21,7 @@
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
+ARG ENABLE_RUST_MCP_TELEMETRY=false
 # Enable profiling tools (memray, py-spy) - off by default for smaller images
 # To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile.lite .
 # Usage after enabling:
@@ -38,6 +39,7 @@ ARG ENABLE_PROFILING=false
 FROM quay.io/pypa/manylinux2014:2026.03.06-3 AS rust-builder-base
 ARG ENABLE_RUST
 ARG ENABLE_RUST_MCP_RMCP
+ARG ENABLE_RUST_MCP_TELEMETRY
 
 # Set shell with pipefail for safety
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -85,8 +87,19 @@ WORKDIR /build/tools_rust/mcp_runtime
 
 # Build the experimental Rust MCP runtime binary (only if ENABLE_RUST=true)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        RUST_MCP_FEATURES=""; \
         if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
-            cargo build --release --features rmcp-upstream-client; \
+            RUST_MCP_FEATURES="rmcp-upstream-client"; \
+        fi; \
+        if [ "$ENABLE_RUST_MCP_TELEMETRY" = "true" ]; then \
+            if [ -n "$RUST_MCP_FEATURES" ]; then \
+                RUST_MCP_FEATURES="$RUST_MCP_FEATURES,runtime-telemetry"; \
+            else \
+                RUST_MCP_FEATURES="runtime-telemetry"; \
+            fi; \
+        fi; \
+        if [ -n "$RUST_MCP_FEATURES" ]; then \
+            cargo build --release --features "$RUST_MCP_FEATURES"; \
         else \
             cargo build --release; \
         fi && \
@@ -163,6 +176,7 @@ COPY --from=rust-builder /build/tools_rust/mcp_runtime/target/release/contextfor
 # ----------------------------------------------------------------------------
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
+ARG ENABLE_RUST_MCP_TELEMETRY=false
 ARG ENABLE_PROFILING=false
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
@@ -320,6 +334,7 @@ COPY --from=builder --chown=1001:0 /app /app
 ENV PATH="/app/.venv/bin:${PATH}" \
     CONTEXTFORGE_ENABLE_RUST_BUILD=${ENABLE_RUST} \
     CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD=${ENABLE_RUST_MCP_RMCP} \
+    CONTEXTFORGE_ENABLE_RUST_MCP_TELEMETRY_BUILD=${ENABLE_RUST_MCP_TELEMETRY} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \

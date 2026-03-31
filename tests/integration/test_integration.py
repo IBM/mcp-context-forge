@@ -363,7 +363,9 @@ class TestIntegrationScenarios:
         resp = test_client.post("/rpc/", json=rpc_body, headers=auth_headers)
         assert resp.status_code == 200
         assert resp.json()["result"]["content"][0]["text"] == "ok"
-        mock_invoke.assert_awaited_once_with(db=ANY, name="test_tool", arguments={"foo": "bar"}, request_headers=ANY, app_user_email="integration-test-user@example.com", plugin_context_table=None, plugin_global_context=None)
+        mock_invoke.assert_awaited_once_with(
+            db=ANY, name="test_tool", arguments={"foo": "bar"}, request_headers=ANY, app_user_email="integration-test-user@example.com", plugin_context_table=None, plugin_global_context=None
+        )
 
     # --------------------------------------------------------------------- #
     # 5. Metrics aggregation endpoint                                       #

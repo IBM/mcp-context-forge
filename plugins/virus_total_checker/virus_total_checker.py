@@ -143,7 +143,7 @@ class VirusTotalConfig(BaseModel):
     deny_ip_cidrs: list[str] = Field(default_factory=list)
     override_precedence: str = Field(default="deny_over_allow", description="deny_over_allow | allow_over_deny")
 
-    @field_validator('url_pattern', mode='before')
+    @field_validator("url_pattern", mode="before")
     @classmethod
     def compile_url_pattern(cls, v: Any) -> Pattern[str]:
         """Compile url_pattern string to regex Pattern object.
@@ -158,7 +158,7 @@ class VirusTotalConfig(BaseModel):
             return re.compile(v)
         return v
 
-    @field_validator('allow_url_patterns', 'deny_url_patterns', mode='before')
+    @field_validator("allow_url_patterns", "deny_url_patterns", mode="before")
     @classmethod
     def compile_url_pattern_lists(cls, v: Any) -> list[Pattern[str]]:
         """Compile list of pattern strings to regex Pattern objects.

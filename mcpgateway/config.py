@@ -278,6 +278,32 @@ class Settings(BaseSettings):
         default=False,
         description="Enable the experimental Rust-owned MCP session-bound auth-context reuse path for direct public /mcp ingress.",
     )
+    experimental_rust_mcp_telemetry_enabled: bool = Field(
+        default=False,
+        description="Enable experimental Dial9 Tokio runtime telemetry for the Rust MCP sidecar.",
+    )
+    experimental_rust_mcp_telemetry_path: str = Field(
+        default="/tmp/contextforge-mcp-runtime/telemetry/trace.bin",
+        description="Trace output path for experimental Rust MCP Dial9 telemetry.",
+    )
+    experimental_rust_mcp_telemetry_rotate_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        ge=1,
+        description="Rotate Rust MCP Dial9 telemetry traces after this many bytes per file.",
+    )
+    experimental_rust_mcp_telemetry_max_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        ge=1,
+        description="Maximum total on-disk bytes retained for Rust MCP Dial9 telemetry traces.",
+    )
+    experimental_rust_mcp_tokio_console_enabled: bool = Field(
+        default=False,
+        description="Enable the experimental Tokio console subscriber for the Rust MCP sidecar.",
+    )
+    experimental_rust_mcp_tokio_console_bind: str = Field(
+        default="127.0.0.1:6669",
+        description="Bind address for the experimental Rust MCP Tokio console endpoint.",
+    )
 
     # Authentication
     basic_auth_user: str = "admin"

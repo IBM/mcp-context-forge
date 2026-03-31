@@ -158,7 +158,19 @@ async def test_list_models_denies_without_llm_read_permission(monkeypatch: pytes
 
     class DummyService:
         def get_gateway_models(self, db):
-            return [GatewayModelInfo(id="m1", model_id="gpt-4", model_name="GPT", provider_id="p1", provider_name="Provider", provider_type="openai", supports_streaming=True, supports_function_calling=False, supports_vision=False)]
+            return [
+                GatewayModelInfo(
+                    id="m1",
+                    model_id="gpt-4",
+                    model_name="GPT",
+                    provider_id="p1",
+                    provider_name="Provider",
+                    provider_type="openai",
+                    supports_streaming=True,
+                    supports_function_calling=False,
+                    supports_vision=False,
+                )
+            ]
 
     monkeypatch.setattr("mcpgateway.services.llm_provider_service.LLMProviderService", lambda: DummyService())
 
@@ -171,7 +183,19 @@ async def test_list_models_denies_without_llm_read_permission(monkeypatch: pytes
 
 @pytest.mark.asyncio
 async def test_list_models(monkeypatch: pytest.MonkeyPatch, mock_permission_service):
-    models = [GatewayModelInfo(id="m1", model_id="gpt-4", model_name="GPT", provider_id="p1", provider_name="Provider", provider_type="openai", supports_streaming=True, supports_function_calling=False, supports_vision=False)]
+    models = [
+        GatewayModelInfo(
+            id="m1",
+            model_id="gpt-4",
+            model_name="GPT",
+            provider_id="p1",
+            provider_name="Provider",
+            provider_type="openai",
+            supports_streaming=True,
+            supports_function_calling=False,
+            supports_vision=False,
+        )
+    ]
 
     class DummyService:
         def get_gateway_models(self, db):

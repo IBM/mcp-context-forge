@@ -167,9 +167,9 @@ class TestAPIIntegration:
         # Test invalid inputs — each should show an error toast
         invalid_cases = [
             '{"invalid": json}',  # malformed JSON
-            '[1, 2, 3]',          # array (not object)
-            '"just a string"',    # string primitive
-            'null',               # null (typeof null === "object" in JS)
+            "[1, 2, 3]",  # array (not object)
+            '"just a string"',  # string primitive
+            "null",  # null (typeof null === "object" in JS)
         ]
         for invalid_value in invalid_cases:
             _close_and_reopen_test_modal(page, test_btn)

@@ -23,7 +23,6 @@ import re
 # Third-Party
 import pytest
 
-
 # Migration module information
 OBSERVABILITY_MIGRATIONS = [
     {

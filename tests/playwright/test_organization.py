@@ -359,9 +359,7 @@ class TestTokens:
         tokens_page.close_token_created_modal()
 
         # Revoke via frontend function using created token ID.
-        with tokens_page.page.expect_response(
-            lambda revoke_response: revoke_response.url.endswith(f"/tokens/{token_id}") and revoke_response.request.method == "DELETE"
-        ) as revoke_info:
+        with tokens_page.page.expect_response(lambda revoke_response: revoke_response.url.endswith(f"/tokens/{token_id}") and revoke_response.request.method == "DELETE") as revoke_info:
             tokens_page.page.evaluate(
                 """
                 ({ id, name }) => {

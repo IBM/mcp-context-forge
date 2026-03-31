@@ -54,10 +54,7 @@ def _force_safe_test_db_defaults() -> None:
 
     if configured:
         warnings.warn(
-            "External DB-related test env ignored "
-            f"({', '.join(configured)}). "
-            f"Set {EXTERNAL_TEST_DB_OPT_IN_ENV}=1 or pass --allow-external-db to allow it. "
-            f"Using {TEST_SQLITE_MEMORY_URL}.",
+            "External DB-related test env ignored " f"({', '.join(configured)}). " f"Set {EXTERNAL_TEST_DB_OPT_IN_ENV}=1 or pass --allow-external-db to allow it. " f"Using {TEST_SQLITE_MEMORY_URL}.",
             UserWarning,
             stacklevel=2,
         )

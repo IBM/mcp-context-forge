@@ -20,6 +20,7 @@ from plugins.url_reputation.url_reputation import URLReputationPlugin, URLReputa
 
 try:
     import url_reputation_rust  # noqa: F401
+
     _RUST_AVAILABLE = True
 except ImportError:
     _RUST_AVAILABLE = False
@@ -74,7 +75,6 @@ async def test_phishing_like_domain_blocked():
     url = "https://pаypal.com/login"  # Cyrillic 'а'
     res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri=url), None)
     assert not res.continue_processing
-
 
 
 @pytest.mark.skipif(not _RUST_AVAILABLE, reason="Rust url_reputation plugin not available")
@@ -470,8 +470,7 @@ async def test_rust_error_fallback_blocks_url():
     )
     mock_rust = MagicMock()
     mock_rust.validate_url_py.side_effect = RuntimeError("Rust engine crashed")
-    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", True), \
-         patch(f"{_PLUGIN_MODULE}.URLReputationPluginRust", return_value=mock_rust, create=True):
+    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", True), patch(f"{_PLUGIN_MODULE}.URLReputationPluginRust", return_value=mock_rust, create=True):
         plugin = URLReputationPlugin(config)
         res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://example.com"), None)
     assert not res.continue_processing

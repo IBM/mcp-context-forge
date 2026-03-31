@@ -115,6 +115,36 @@ def test_validate_transport_accepts_and_rejects():
         Settings(transport_type="bogus").validate_transport()
 
 
+def test_experimental_rust_mcp_telemetry_settings_defaults():
+    settings = Settings(_env_file=None)
+
+    assert settings.experimental_rust_mcp_telemetry_enabled is False
+    assert settings.experimental_rust_mcp_telemetry_path == "/tmp/contextforge-mcp-runtime/telemetry/trace.bin"
+    assert settings.experimental_rust_mcp_telemetry_rotate_bytes == 8 * 1024 * 1024
+    assert settings.experimental_rust_mcp_telemetry_max_bytes == 64 * 1024 * 1024
+    assert settings.experimental_rust_mcp_tokio_console_enabled is False
+    assert settings.experimental_rust_mcp_tokio_console_bind == "127.0.0.1:6669"
+
+
+def test_experimental_rust_mcp_telemetry_settings_accept_overrides():
+    settings = Settings(
+        experimental_rust_mcp_telemetry_enabled=True,
+        experimental_rust_mcp_telemetry_path="/tmp/custom-traces/trace.bin",
+        experimental_rust_mcp_telemetry_rotate_bytes=1024,
+        experimental_rust_mcp_telemetry_max_bytes=8192,
+        experimental_rust_mcp_tokio_console_enabled=True,
+        experimental_rust_mcp_tokio_console_bind="127.0.0.1:7777",
+        _env_file=None,
+    )
+
+    assert settings.experimental_rust_mcp_telemetry_enabled is True
+    assert settings.experimental_rust_mcp_telemetry_path == "/tmp/custom-traces/trace.bin"
+    assert settings.experimental_rust_mcp_telemetry_rotate_bytes == 1024
+    assert settings.experimental_rust_mcp_telemetry_max_bytes == 8192
+    assert settings.experimental_rust_mcp_tokio_console_enabled is True
+    assert settings.experimental_rust_mcp_tokio_console_bind == "127.0.0.1:7777"
+
+
 def test_cors_settings_branches():
     """cors_settings property returns CORS configuration based on cors_enabled flag."""
     # Test with cors_enabled = True (default)

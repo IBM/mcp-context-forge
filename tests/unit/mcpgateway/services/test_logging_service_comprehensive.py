@@ -34,6 +34,7 @@ def _restore_root_logger_level():
     for handler, level in saved_handler_levels:
         handler.setLevel(level)
 
+
 # ---------------------------------------------------------------------------
 # Test file handler creation
 # ---------------------------------------------------------------------------

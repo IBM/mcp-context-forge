@@ -125,12 +125,10 @@ def test_invalid_config_raises(tmp_path, monkeypatch):
     import qr_code_server.config as cfg
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(
-        """
+    config_file.write_text("""
     output:
     max_batch_size: "not-an-int"
-    """
-    )
+    """)
 
     monkeypatch.setattr(cfg, "CONFIG_PATH", config_file)
 

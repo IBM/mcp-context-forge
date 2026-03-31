@@ -79,15 +79,11 @@ async def multiply_numbers(
 ) -> CalculationResult:
     """Multiply two numbers and return a structured result."""
     logger.info(f"Multiplying {a} * {b}")
-    return CalculationResult(
-        result=a * b, operation="multiplication", operands=[a, b], success=True
-    )
+    return CalculationResult(result=a * b, operation="multiplication", operands=[a, b], success=True)
 
 
 @mcp.tool(description="Divide two numbers with error handling in output")
-async def divide_numbers(
-    a: float = Field(..., description="Numerator"), b: float = Field(..., description="Denominator")
-) -> CalculationResult:
+async def divide_numbers(a: float = Field(..., description="Numerator"), b: float = Field(..., description="Denominator")) -> CalculationResult:
     """Divide two numbers with error handling."""
     logger.info(f"Dividing {a} / {b}")
 
@@ -207,9 +203,7 @@ async def get_server_info() -> dict[str, Any]:
 
 def main() -> None:
     """Main server entry point with transport selection."""
-    parser = argparse.ArgumentParser(
-        description="Output Schema Test MCP Server - Tests outputSchema field support"
-    )
+    parser = argparse.ArgumentParser(description="Output Schema Test MCP Server - Tests outputSchema field support")
     parser.add_argument(
         "--transport",
         choices=["stdio", "http"],
@@ -217,9 +211,7 @@ def main() -> None:
         help="Transport mode (stdio or http)",
     )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host (only for http transport)")
-    parser.add_argument(
-        "--port", type=int, default=9100, help="HTTP port (only for http transport)"
-    )
+    parser.add_argument("--port", type=int, default=9100, help="HTTP port (only for http transport)")
 
     args = parser.parse_args()
 
