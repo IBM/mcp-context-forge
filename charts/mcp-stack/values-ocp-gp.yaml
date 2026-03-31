@@ -62,6 +62,9 @@ postgres:
 # --- PgBouncer ---
 pgbouncer:
   enabled: true                            # connection pooler between gateway and Postgres
+  image:
+    repository: docker.io/gandhipratik203/pgbouncer-ocp
+    tag: v3-amd64
 
 # --- Redis ---
 redis:
