@@ -21,7 +21,7 @@ vim.api.nvim_create_autocmd("FileType", {
 --
 vim.g.ale_linters = {
     make = {},
-    python = { "mypy", "ruff", "flake8", "pylint" },
+    python = { "mypy", "ruff", "pylint" },
     markdown = { "markdownlint" },
 }
 vim.g.ale_python_auto_uv = 1

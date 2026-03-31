@@ -7,7 +7,6 @@ on:
       - "mcpgateway/**"
       - "plugins/**"
       - "pyproject.toml"
-      - ".pre-commit-config.yaml"
       - ".github/workflows/linting-full.yml"
   workflow_dispatch:
 

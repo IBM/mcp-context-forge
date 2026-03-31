@@ -22,7 +22,7 @@ make doctest test htmlcov
 make smoketest
 
 # Full quality check pipeline
-make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint verify
+make doctest test htmlcov smoketest lint-web bandit interrogate pylint verify
 ```
 
 ## Prerequisites
@@ -167,7 +167,7 @@ make doctest test htmlcov smoketest
 make test
 
 # With code quality checks
-make test flake8 pylint
+make test ruff pylint
 ```
 
 ### Doctest Testing
