@@ -1048,6 +1048,7 @@ generate-report:                           ## Display most recent load test repo
 # help: populate-report      - Show latest population report
 
 .PHONY: populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
+.PHONY: populate-small-bulk populate-medium-bulk populate-large-bulk
 
 populate-small:                            ## Populate via REST API - small (100 users)
 	@echo "📊 Populating via REST API (small profile)..."
@@ -1062,6 +1063,18 @@ populate-small:                            ## Populate via REST API - small (100
 		python -m tests.populate --profile small"
 	@echo ""
 	@echo "✅ Small API population complete!"
+	@echo "📄 Report: reports/small_populate_report.json"
+
+populate-small-bulk:                       ## Populate via bulk DB inserts - small (100 users) - FAST
+	@echo "⚡ Populating via BULK mode (small profile)..."
+	@echo "   Target: 100 users, ~3K entities"
+	@echo "   Time: <10 seconds (200-1000x faster than API mode)"
+	@echo "   ⚠️  Bypasses validation/RBAC - for test data only"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile small --mode bulk"
+	@echo ""
+	@echo "✅ Small bulk population complete!"
 	@echo "📄 Report: reports/small_populate_report.json"
 
 populate-medium:                           ## Populate via REST API - medium (10K users)
@@ -1080,6 +1093,19 @@ populate-medium:                           ## Populate via REST API - medium (10
 	@echo "✅ Medium API population complete!"
 	@echo "📄 Report: reports/medium_populate_report.json"
 
+populate-medium-bulk:                      ## Populate via bulk DB inserts - medium (10K users) - FAST
+	@echo "⚡ Populating via BULK mode (medium profile)..."
+	@echo "   Target: 10K users, ~300K entities"
+	@echo "   Time: ~5-10 minutes (200-1000x faster than API mode)"
+	@echo "   ⚠️  Bypasses validation/RBAC - for test data only"
+	@echo "   ⚠️  Recommended: PostgreSQL backend"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile medium --mode bulk"
+	@echo ""
+	@echo "✅ Medium bulk population complete!"
+	@echo "📄 Report: reports/medium_populate_report.json"
+
 populate-large:                            ## Populate via REST API - large (500K users)
 	@echo "📊 Populating via REST API (large profile)..."
 	@echo "   Target: 500K users, ~13M entities"
@@ -1094,6 +1120,27 @@ populate-large:                            ## Populate via REST API - large (500
 			python -m tests.populate --profile large"; \
 		echo ""; \
 		echo "✅ Large API population complete!"; \
+		echo "📄 Report: reports/large_populate_report.json"; \
+	else \
+		echo "❌ Cancelled"; \
+		exit 1; \
+	fi
+
+populate-large-bulk:                       ## Populate via bulk DB inserts - large (500K users) - FAST
+	@echo "⚡ Populating via BULK mode (large profile)..."
+	@echo "   Target: 500K users, ~13M entities"
+	@echo "   Time: ~30-60 minutes (200-1000x faster than API mode)"
+	@echo "   ⚠️  Bypasses validation/RBAC - for test data only"
+	@echo "   ⚠️  REQUIRED: PostgreSQL backend"
+	@echo ""
+	@read -p "This will create millions of records. Continue? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		test -d "$(VENV_DIR)" || $(MAKE) venv; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+			python -m tests.populate --profile large --mode bulk"; \
+		echo ""; \
+		echo "✅ Large bulk population complete!"; \
 		echo "📄 Report: reports/large_populate_report.json"; \
 	else \
 		echo "❌ Cancelled"; \

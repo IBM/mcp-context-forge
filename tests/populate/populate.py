@@ -1,10 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Main CLI for REST API data population.
+"""Main CLI for data population with hybrid mode support.
+
+Supports two population modes:
+- API mode: Creates entities via REST API endpoints (slower, full validation)
+- Bulk mode: Direct database inserts for performance (faster, bypasses API validation)
+
+Hybrid mode strategy:
+- Users: Bulk insert + API login (fast creation, tokens for downstream)
+- Teams/RBAC/Tokens: API mode (requires user authentication)
+- Infrastructure (gateways/tools/resources/prompts/servers/a2a_agents): Bulk mode (fast)
 
 Usage:
-    python -m tests.populate --profile small
-    python -m tests.populate --profile medium --dry-run
-    python -m tests.populate --profile large --base-url http://localhost:8080
+    python -m tests.populate.populate --config tests/populate/configs/small.yaml --mode api
+    python -m tests.populate.populate --config tests/populate/configs/medium.yaml --mode bulk
+    python -m tests.populate.populate --profile small --dry-run
+    python -m tests.populate.populate --profile large --base-url http://localhost:8080
 """
 
 # Standard
@@ -142,6 +152,7 @@ async def run_population(config: Dict[str, Any], base_url: str, dry_run: bool = 
             existing_data=existing_data,
             progress_tracker=tracker,
             dry_run=dry_run,
+            use_bulk_mode=config.get("use_bulk_mode", False),
         )
         populator_instances[name] = instance
         tracker.add_task(name, instance.get_count(), name)
@@ -236,14 +247,20 @@ async def run_population(config: Dict[str, Any], base_url: str, dry_run: bool = 
 def main():
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Populate ContextForge with test data via REST API",
+        description="Populate ContextForge with test data via REST API or bulk database inserts",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # REST API mode (default) - full validation and RBAC
   python -m tests.populate --profile small
   python -m tests.populate --profile medium --base-url http://gateway:4444
+  
+  # Bulk mode - direct database inserts for performance (200-1000x faster)
+  python -m tests.populate --profile medium --mode bulk
+  python -m tests.populate --profile large --mode bulk
+  
+  # Dry run
   python -m tests.populate --profile small --dry-run
-  python -m tests.populate --profile large --base-url http://localhost:8080
         """,
     )
 
@@ -266,6 +283,13 @@ Examples:
         help="Gateway base URL (default: http://localhost:8080)",
     )
     parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["api", "bulk"],
+        default="api",
+        help="Population mode: 'api' for REST API (full validation), 'bulk' for direct DB inserts (fast, no validation)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Preview what would be created without making requests",
@@ -286,6 +310,9 @@ Examples:
             config = yaml.safe_load(f)
     else:
         config = load_config(args.profile)
+    
+    # Set bulk mode flag in config
+    config["use_bulk_mode"] = args.mode == "bulk"
 
     # Configure logging: suppress noisy libraries to avoid flickering the Rich Live display
     log_level = args.log_level or config.get("global", {}).get("log_level", "WARNING")

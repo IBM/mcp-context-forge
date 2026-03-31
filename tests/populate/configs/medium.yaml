@@ -70,8 +70,8 @@ scale:
 
 population_order:
   - users
-  - teams
   - rbac
+  - teams
   - gateways
   - tools
   - resources
