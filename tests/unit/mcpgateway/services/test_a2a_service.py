@@ -2843,7 +2843,7 @@ class TestUpdateAgentQueryParamAuth:
             monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
             with (
-                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.a2a_service.settings") as mock_settings,
                 patch("mcpgateway.services.tool_service.tool_service") as ts,
             ):
                 mock_settings.insecure_allow_queryparam_auth = True
@@ -2878,7 +2878,7 @@ class TestUpdateAgentQueryParamAuth:
             monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
             with (
-                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.a2a_service.settings") as mock_settings,
                 patch("mcpgateway.services.tool_service.tool_service") as ts,
             ):
                 mock_settings.insecure_allow_queryparam_auth = True
@@ -2913,7 +2913,7 @@ class TestUpdateAgentQueryParamAuth:
             monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
             with (
-                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.a2a_service.settings") as mock_settings,
                 patch("mcpgateway.services.tool_service.tool_service") as ts,
             ):
                 mock_settings.insecure_allow_queryparam_auth = True
@@ -2950,7 +2950,7 @@ class TestUpdateAgentQueryParamAuth:
             monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
             with (
-                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.a2a_service.settings") as mock_settings,
                 patch("mcpgateway.services.tool_service.tool_service") as ts,
             ):
                 mock_settings.insecure_allow_queryparam_auth = True
@@ -2988,7 +2988,7 @@ class TestUpdateAgentQueryParamAuth:
             monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
             with (
-                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.a2a_service.settings") as mock_settings,
                 patch("mcpgateway.services.tool_service.tool_service") as ts,
             ):
                 mock_settings.insecure_allow_queryparam_auth = True
@@ -3017,7 +3017,7 @@ class TestUpdateAgentQueryParamAuth:
             monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
 
             with (
-                patch("mcpgateway.config.settings") as mock_settings,
+                patch("mcpgateway.services.a2a_service.settings") as mock_settings,
                 patch("mcpgateway.services.tool_service.tool_service") as ts,
             ):
                 mock_settings.insecure_allow_queryparam_auth = True
