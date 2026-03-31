@@ -159,6 +159,12 @@ class TestToolUpdateDescriptionValidationStrict:
         result = ToolUpdate.validate_description("pipe | grep")
         assert result is not None
 
+    def test_semicolon_allowed_in_strict_mode(self, monkeypatch):
+        """Semicolons are allowed because they appear in natural-language tool descriptions."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("Use this tool remotely; do not use it for local file operations")
+        assert result is not None
+
     @pytest.mark.parametrize(
         "description",
         [
@@ -1097,6 +1103,12 @@ class TestToolCreateDescriptionValidationStrict:
         """Single pipe is allowed because it is valid in LogQL, PromQL, regex, and Markdown tables."""
         monkeypatch.setattr(settings, "validation_strict", True)
         result = ToolCreate.validate_description("pipe | grep")
+        assert result is not None
+
+    def test_semicolon_allowed_in_strict_mode(self, monkeypatch):
+        """Semicolons are allowed because they appear in natural-language tool descriptions."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolCreate.validate_description("Use this tool remotely; do not use it for local file operations")
         assert result is not None
 
     @pytest.mark.parametrize(
