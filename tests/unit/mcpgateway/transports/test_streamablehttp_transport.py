@@ -9592,9 +9592,11 @@ class TestCallToolDirectProxy:
 
         with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
             with patch("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", return_value="gw-direct"):
-                with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", new_callable=AsyncMock, return_value=True):
-                    with patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct):
-                        result = await tr.call_tool("my_tool", {"arg": "value"})
+                with patch("mcpgateway.transports.streamablehttp_transport._check_scoped_permission", return_value=True):
+                    with patch("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", new_callable=AsyncMock, return_value=True):
+                        with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", new_callable=AsyncMock, return_value=True):
+                            with patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct):
+                                result = await tr.call_tool("my_tool", {"arg": "value"})
 
         assert isinstance(result, mcp_types.CallToolResult)
         assert result.isError is False
@@ -9628,8 +9630,10 @@ class TestCallToolDirectProxy:
 
         with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
             with patch("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", return_value="gw-direct"):
-                with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", new_callable=AsyncMock, return_value=False):
-                    result = await tr.call_tool("secret_tool", {"arg": "value"})
+                with patch("mcpgateway.transports.streamablehttp_transport._check_scoped_permission", return_value=True):
+                    with patch("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", new_callable=AsyncMock, return_value=True):
+                        with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", new_callable=AsyncMock, return_value=False):
+                            result = await tr.call_tool("secret_tool", {"arg": "value"})
 
         assert isinstance(result, mcp_types.CallToolResult)
         assert result.isError is True
@@ -9662,9 +9666,11 @@ class TestCallToolDirectProxy:
 
         with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
             with patch("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", return_value="gw-direct"):
-                with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", new_callable=AsyncMock, return_value=True):
-                    with patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct):
-                        result = await tr.call_tool("my_tool", {"arg": "value"})
+                with patch("mcpgateway.transports.streamablehttp_transport._check_scoped_permission", return_value=True):
+                    with patch("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", new_callable=AsyncMock, return_value=True):
+                        with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", new_callable=AsyncMock, return_value=True):
+                            with patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct):
+                                result = await tr.call_tool("my_tool", {"arg": "value"})
 
         # invoke_tool_direct was called and raised
         mock_invoke_direct.assert_awaited_once()
@@ -9705,10 +9711,12 @@ class TestCallToolDirectProxy:
 
         with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
             with patch("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", return_value="gw-cache"):
-                with patch.object(tr.tool_service, "invoke_tool", mock_invoke_normal):
-                    with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
-                        mock_settings.mcpgateway_session_affinity_enabled = False
-                        await tr.call_tool("my_tool", {"arg": "value"})
+                with patch("mcpgateway.transports.streamablehttp_transport._check_scoped_permission", return_value=True):
+                    with patch("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", new_callable=AsyncMock, return_value=True):
+                        with patch.object(tr.tool_service, "invoke_tool", mock_invoke_normal):
+                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                mock_settings.mcpgateway_session_affinity_enabled = False
+                                await tr.call_tool("my_tool", {"arg": "value"})
 
         # Normal mode invoke_tool was called since gateway is not direct_proxy
         mock_invoke_normal.assert_awaited_once()
@@ -9745,12 +9753,14 @@ class TestCallToolDirectProxy:
 
         with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
             with patch("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", return_value="gw-direct"):
-                with patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct):
-                    with patch.object(tr.tool_service, "invoke_tool", mock_invoke_normal):
-                        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
-                            mock_settings.mcpgateway_direct_proxy_enabled = False
-                            mock_settings.mcpgateway_session_affinity_enabled = False
-                            await tr.call_tool("my_tool", {"arg": "value"})
+                with patch("mcpgateway.transports.streamablehttp_transport._check_scoped_permission", return_value=True):
+                    with patch("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", new_callable=AsyncMock, return_value=True):
+                        with patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct):
+                            with patch.object(tr.tool_service, "invoke_tool", mock_invoke_normal):
+                                with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                                    mock_settings.mcpgateway_direct_proxy_enabled = False
+                                    mock_settings.mcpgateway_session_affinity_enabled = False
+                                    await tr.call_tool("my_tool", {"arg": "value"})
 
         # Direct proxy was NOT called since feature flag is disabled
         mock_invoke_direct.assert_not_awaited()
@@ -10622,6 +10632,8 @@ async def test_call_tool_uses_recovered_email_not_stale_contextvar(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", fake_get_context)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: None)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_scoped_permission", lambda *a, **k: True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._check_streamable_permission", AsyncMock(return_value=True))
 
     mock_db = MagicMock()
     mock_result = MagicMock()

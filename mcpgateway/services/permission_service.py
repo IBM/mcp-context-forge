@@ -74,7 +74,6 @@ class PermissionService:
         resource_type: Optional[str] = None,
         resource_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
         allow_admin_bypass: bool = True,
@@ -85,15 +84,17 @@ class PermissionService:
         Checks user's roles across all applicable scopes (global, team, personal)
         and returns True if any role grants the required permission.
 
+        Note: Token-level narrowing (Layer 1) is enforced separately via data filtering.
+        This method only evaluates RBAC permissions (Layer 2). Token-level narrowing is not
+        enforced here. Specific high-risk endpoints (e.g. token oversight) enforce their own
+        narrowing guards where required.
+
         Args:
             user_email: Email of the user to check
             permission: Permission to check (e.g., 'tools.create')
             resource_type: Type of resource being accessed
             resource_id: Specific resource ID if applicable
             team_id: Team context for the permission check
-            token_teams: Normalized token team scope from auth context.
-                        `[]` means public-only scope; `None` means unrestricted
-                        admin scope (when allowed by token semantics).
             ip_address: IP address for audit logging
             user_agent: User agent for audit logging
             allow_admin_bypass: If True, admin users bypass all permission checks.
