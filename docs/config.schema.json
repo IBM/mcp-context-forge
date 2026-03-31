@@ -3647,7 +3647,7 @@
       "type": "integer"
     },
     "tool_description_forbidden_patterns": {
-      "description": "Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. '[\"&&\",\";\"]'.",
+      "description": "Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. '[\"&&\",\"||\"]'.",
       "items": {
         "type": "string"
       },
