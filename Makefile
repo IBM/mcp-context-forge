@@ -146,8 +146,8 @@ endef
 define ensure_pip_package
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip show $(1) >/dev/null 2>&1 || \
-		uv pip install -q $(1)"
+		$(UV_BIN) pip show $(1) >/dev/null 2>&1 || \
+		$(UV_BIN) pip install -q $(1)"
 endef
 
 # =============================================================================
@@ -178,6 +178,7 @@ uv:
 
 # UV_BIN: prefer uv in PATH, fallback to ~/.local/bin/uv
 UV_BIN := $(shell type -p uv 2>/dev/null || echo "$(HOME)/.local/bin/uv")
+export UV_BIN
 
 .PHONY: venv
 venv: uv
@@ -192,15 +193,15 @@ activate:
 
 .PHONY: install
 install: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install ."
 
 .PHONY: install-db
 install-db: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install .[redis,postgres]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install .[redis,postgres]"
 
 .PHONY: install-dev
 install-dev: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --group dev ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev ."
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"; \
@@ -211,7 +212,7 @@ install-dev: venv
 .PHONY: update
 update:
 	@echo "⬆️   Updating installed dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -U --group dev ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -U --group dev ."
 
 # help: check-env            - Verify all required env vars in .env are present
 .PHONY: check-env check-env-dev
@@ -2987,7 +2988,7 @@ mutmut-clean:
 .PHONY: ensure-pip-licenses pip-licenses license-check scc scc-report
 
 ensure-pip-licenses:
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q pip-licenses"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q pip-licenses"
 
 pip-licenses: ensure-pip-licenses
 	@mkdir -p $(dir $(LICENSES_MD))
@@ -3865,9 +3866,9 @@ tox:                                ## 🧪  Multi-Python tox matrix (uv)
 sbom: uv							## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report..."
 	@rm -Rf "$(VENV_DIR).sbom"
-	@uv venv "$(VENV_DIR).sbom"
-	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && uv pip install .[dev]"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q cyclonedx-bom sbom2doc"
+	@$(UV_BIN) venv "$(VENV_DIR).sbom"
+	@/bin/bash -c "source $(VENV_DIR).sbom/bin/activate && $(UV_BIN) pip install .[dev]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q cyclonedx-bom sbom2doc"
 	@echo "🔍  Generating SBOM from environment..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m cyclonedx_py environment \
@@ -6317,7 +6318,7 @@ LOCAL_PYPI_AUTH := $(LOCAL_PYPI_DIR)/.htpasswd
 
 local-pypi-install:
 	@echo "📦  Installing pypiserver..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install 'pypiserver>=2.3.0' passlib"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install 'pypiserver>=2.3.0' passlib"
 	@mkdir -p $(LOCAL_PYPI_DIR)
 
 local-pypi-start: local-pypi-install local-pypi-stop
@@ -6409,7 +6410,7 @@ local-pypi-test:
 local-pypi-clean: clean dist local-pypi-start-auth local-pypi-upload-auth local-pypi-test
 	@echo "🎉  Full local PyPI cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip show $(PROJECT_NAME)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip show $(PROJECT_NAME)"
 
 # Convenience target to restart server
 local-pypi-restart: local-pypi-stop local-pypi-start
@@ -6587,7 +6588,7 @@ devpi-test:
 devpi-clean: clean dist devpi-upload devpi-test
 	@echo "🎉  Full devpi cycle complete!"
 	@echo "📊  Package info:"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip show mcp-contextforge-gateway"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip show mcp-contextforge-gateway"
 
 .PHONY: devpi-status
 devpi-status:
@@ -6756,7 +6757,7 @@ shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	if ! $(VENV_DIR)/bin/bashate -h >/dev/null 2>&1 ; then \
 	  echo "🛠  Installing bashate (into venv)..." ; \
 	  test -d "$(VENV_DIR)" || $(MAKE) venv ; \
-	  /bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q bashate" ; \
+	  /bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q bashate" ; \
 	fi
 	@echo "✅  Shell linters ready."
 
@@ -6823,7 +6824,7 @@ ALEMBIC_CONFIG = mcpgateway/alembic.ini
 
 alembic-install:
 	@echo "➜ Installing Alembic ..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q alembic sqlalchemy"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q alembic sqlalchemy"
 
 .PHONY: db-init
 db-init: ## Initialize alembic migrations
@@ -8171,7 +8172,7 @@ rust-ensure-deps:                       ## Ensure Rust toolchain, maturin, and a
 	@if ! command -v maturin > /dev/null 2>&1; then \
 		if [ -f "$(VENV_DIR)/bin/activate" ]; then \
 			echo "📦 Installing maturin into venv..."; \
-			/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
+			/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install maturin"; \
 		elif command -v pip > /dev/null 2>&1; then \
 			echo "📦 Installing maturin globally (venv not found)..."; \
 			pip install maturin; \

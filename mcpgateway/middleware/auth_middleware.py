@@ -22,6 +22,7 @@ from typing import Callable
 # Third-Party
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -60,6 +61,51 @@ def _should_log_auth_failure() -> bool:
     """
     # Log failures for "all" and "failures_only" levels, not for "high_severity"
     return settings.security_logging_level in ("all", "failures_only")
+
+
+def _get_or_create_session(request: Request) -> tuple[Session, bool]:
+    """Get existing session from request.state.db or create new one.
+
+    This function implements the session reuse pattern established in PR #3600
+    to eliminate duplicate database sessions. It checks if a middleware (typically
+    ObservabilityMiddleware) has already created a request-scoped session and
+    reuses it. If no session exists (e.g., when observability is disabled), it
+    creates a new one as a fallback.
+
+    Args:
+        request: FastAPI/Starlette request object
+
+    Returns:
+        tuple: (session, owned) where:
+            - session: SQLAlchemy Session object
+            - owned: bool, True if we created the session (caller must close it)
+
+    Note:
+        When creating a new session (owned=True), it is NOT stored in
+        request.state.db. This prevents downstream code (e.g., get_db()
+        in route handlers) from reusing a session that auth middleware
+        will close after logging.
+
+    Examples:
+        >>> from unittest.mock import Mock
+        >>> mock_request = Mock()
+        >>> mock_request.state.db = None
+        >>> db, owned = _get_or_create_session(mock_request)
+        >>> owned
+        True
+    """
+    db = getattr(request.state, "db", None)
+    if db is not None:
+        logger.debug(f"[AUTH] Reusing session from middleware: {id(db)}")
+        return db, False
+
+    # Fallback: create a temporary session for auth logging only
+    # (e.g., when observability is disabled).
+    # Do NOT store in request.state.db — this session will be closed after
+    # logging; downstream get_db() should create its own session.
+    logger.debug("[AUTH] Creating new session (no middleware session available)")
+    db = SessionLocal()
+    return db, True
 
 
 class AuthContextMiddleware(BaseHTTPMiddleware):
@@ -129,9 +175,9 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             logger.info(f"✓ Authenticated user: {user_email if user_email else user_id}")
 
             # Log successful authentication (only if logging level is "all")
-            # DB session created only when needed
+            # DB session reused from middleware or created if needed (Issue #3622)
             if log_success:
-                db = SessionLocal()
+                db, owned = _get_or_create_session(request)
                 try:
                     security_logger.log_authentication_attempt(
                         user_id=user_id,
@@ -142,21 +188,34 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         user_agent=request.headers.get("user-agent"),
                         db=db,
                     )
+                    # Commit immediately to persist logs even if exception occurs later in middleware chain
+                    # Route handler's get_db() may commit again (no-op if no new changes)
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log successful auth: {log_error}")
-                finally:
+                    # Rollback shared session to clear PendingRollbackError state so
+                    # downstream call_next()/get_db() does not inherit a broken session.
                     try:
-                        db.close()
-                    except Exception as close_error:
-                        logger.debug(f"Failed to close database session: {close_error}")
+                        db.rollback()
+                    except Exception:
+                        try:
+                            db.invalidate()
+                        except Exception:
+                            pass  # nosec B110 - Best effort cleanup
+                finally:
+                    # Only close if we created the session
+                    if owned:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.warning(f"Failed to close auth session: {close_error}")
 
         except HTTPException as e:
             if e.status_code in (401, 403) and e.detail in _HARD_DENY_DETAILS:
                 logger.info(f"✗ Auth rejected ({e.status_code}): {e.detail}")
 
                 if log_failure:
-                    db = SessionLocal()
+                    db, owned = _get_or_create_session(request)
                     try:
                         security_logger.log_authentication_attempt(
                             user_id="unknown",
@@ -168,14 +227,28 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                             failure_reason=str(e.detail),
                             db=db,
                         )
+                        # Commit immediately to persist logs, especially for hard-deny paths (API requests)
+                        # that return JSONResponse without reaching get_db()
+                        # For browser requests that continue to route handler, get_db() commits again (no-op)
                         db.commit()
                     except Exception as log_error:
                         logger.debug(f"Failed to log auth failure: {log_error}")
-                    finally:
+                        # Rollback shared session to clear PendingRollbackError state so
+                        # downstream call_next()/get_db() does not inherit a broken session.
                         try:
-                            db.close()
-                        except Exception as close_error:
-                            logger.debug(f"Failed to close database session: {close_error}")
+                            db.rollback()
+                        except Exception:
+                            try:
+                                db.invalidate()
+                            except Exception:
+                                pass  # nosec B110 - Best effort cleanup
+                    finally:
+                        # Only close if we created the session
+                        if owned:
+                            try:
+                                db.close()
+                            except Exception as close_error:
+                                logger.warning(f"Failed to close auth session: {close_error}")
 
                 # Browser/admin requests with stale cookies: let the request continue
                 # without user context so the RBAC layer can redirect to /admin/login.
@@ -208,9 +281,9 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
 
             # Log failed authentication attempt (based on logging level)
-            # DB session created only when needed
+            # DB session reused from middleware or created if needed (Issue #3622)
             if log_failure:
-                db = SessionLocal()
+                db, owned = _get_or_create_session(request)
                 try:
                     security_logger.log_authentication_attempt(
                         user_id="unknown",
@@ -222,14 +295,28 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         failure_reason=str(e),
                         db=db,
                     )
+                    # Commit immediately to persist logs even if exception occurs later
+                    # When owned=True, session is closed after this block, so commit is required
+                    # When owned=False, get_db() may commit again (no-op if no new changes)
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log auth failure: {log_error}")
-                finally:
+                    # Rollback shared session to clear PendingRollbackError state so
+                    # downstream call_next()/get_db() does not inherit a broken session.
                     try:
-                        db.close()
-                    except Exception as close_error:
-                        logger.debug(f"Failed to close database session: {close_error}")
+                        db.rollback()
+                    except Exception:
+                        try:
+                            db.invalidate()
+                        except Exception:
+                            pass  # nosec B110 - Best effort cleanup
+                finally:
+                    # Only close if we created the session
+                    if owned:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.warning(f"Failed to close auth session: {close_error}")
 
         # Continue with request
         return await call_next(request)

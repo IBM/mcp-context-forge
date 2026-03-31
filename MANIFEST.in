@@ -192,6 +192,7 @@ exclude .hadolint.yaml
 exclude .ruff.toml
 exclude .pre-commit-config.yaml
 exclude .secrets.baseline
+exclude .npmrc
 
 # Backup and temporary files
 global-exclude *~

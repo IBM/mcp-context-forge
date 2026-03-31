@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import importlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+import warnings
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -2454,3 +2455,181 @@ def test_get_resource_param_to_model_builds_mapping():
     mapping = rbac._get_resource_param_to_model()
     assert mapping["tool_id"].__name__ == "Tool"
     assert mapping["server_id"].__name__ == "Server"
+
+
+# Session Reuse Tests for get_db() (Issue #3622)
+
+
+def test_rbac_get_db_emits_deprecation_warning():
+    """Verify deprecated get_db() emits DeprecationWarning."""
+    import warnings
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        gen = rbac.get_db()
+        db = next(gen)
+
+        # Verify deprecation warning was issued
+        assert len(w) == 1
+        assert issubclass(w[0].category, DeprecationWarning)
+        assert "rbac.get_db() is deprecated" in str(w[0].message)
+
+        # Cleanup
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+def test_rbac_get_db_reuses_request_session_when_available():
+    """Verify get_db(request) reuses request.state.db when provided."""
+    mock_session = MagicMock()
+    mock_request = MagicMock()
+    mock_request.state.db = mock_session
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        gen = rbac.get_db(request=mock_request)
+        db = next(gen)
+
+    assert db is mock_session
+
+    # Cleanup
+    try:
+        next(gen)
+    except StopIteration:
+        pass
+
+
+def test_rbac_get_db_creates_session_when_no_request():
+    """Verify get_db() creates session when request=None."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        with patch("mcpgateway.middleware.rbac.SessionLocal") as mock_session_local:
+            mock_new_session = MagicMock()
+            mock_session_local.return_value = mock_new_session
+
+            gen = rbac.get_db(request=None)
+            db = next(gen)
+
+            assert db is mock_new_session
+            mock_session_local.assert_called_once()
+
+            # Cleanup - should commit and close owned session
+            try:
+                next(gen)
+            except StopIteration:
+                pass
+
+            mock_new_session.commit.assert_called_once()
+            mock_new_session.close.assert_called_once()
+
+
+def test_rbac_get_db_creates_session_when_no_state_db():
+    """Verify get_db() creates session when request.state.db is None."""
+    mock_request = MagicMock()
+    mock_request.state.db = None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        with patch("mcpgateway.middleware.rbac.SessionLocal") as mock_session_local:
+            mock_new_session = MagicMock()
+            mock_session_local.return_value = mock_new_session
+
+            gen = rbac.get_db(request=mock_request)
+            db = next(gen)
+
+            assert db is mock_new_session
+            mock_session_local.assert_called_once()
+
+            # Cleanup
+            try:
+                next(gen)
+            except StopIteration:
+                pass
+
+
+def test_rbac_get_db_only_commits_owned_sessions():
+    """Verify get_db() only commits sessions it created."""
+    # Test 1: Reused session should NOT be committed
+    mock_session = MagicMock()
+    mock_request = MagicMock()
+    mock_request.state.db = mock_session
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        gen = rbac.get_db(request=mock_request)
+        db = next(gen)
+
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+        # Reused session should not be committed or closed
+        mock_session.commit.assert_not_called()
+        mock_session.close.assert_not_called()
+
+    # Test 2: Owned session SHOULD be committed
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        with patch("mcpgateway.middleware.rbac.SessionLocal") as mock_session_local:
+            mock_new_session = MagicMock()
+            mock_session_local.return_value = mock_new_session
+
+            gen = rbac.get_db(request=None)
+            db = next(gen)
+
+            try:
+                next(gen)
+            except StopIteration:
+                pass
+
+            # Owned session should be committed and closed
+            mock_new_session.commit.assert_called_once()
+            mock_new_session.close.assert_called_once()
+
+
+def test_rbac_get_db_handles_rollback_on_exception():
+    """Verify get_db() rolls back owned sessions on exception."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        with patch("mcpgateway.middleware.rbac.SessionLocal") as mock_session_local:
+            mock_new_session = MagicMock()
+            mock_session_local.return_value = mock_new_session
+
+            gen = rbac.get_db(request=None)
+            db = next(gen)
+
+            # Simulate exception
+            try:
+                gen.throw(Exception("Test exception"))
+            except Exception:
+                pass
+
+            # Should rollback owned session
+            mock_new_session.rollback.assert_called_once()
+            mock_new_session.close.assert_called_once()
+
+
+def test_rbac_get_db_backwards_compatibility():
+    """Verify deprecated get_db() still works for legacy callers."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        with patch("mcpgateway.middleware.rbac.SessionLocal") as mock_session_local:
+            mock_session = MagicMock()
+            mock_session_local.return_value = mock_session
+
+            gen = rbac.get_db()
+            db = next(gen)
+
+            assert db is not None
+            assert hasattr(db, "query")  # Mock has all attributes
+
+            # Should commit on success
+            try:
+                next(gen)
+            except StopIteration:
+                pass
+
+            mock_session.commit.assert_called_once()
