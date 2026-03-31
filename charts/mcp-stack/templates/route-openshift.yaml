@@ -1,0 +1,50 @@
+{{- if .Values.route.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.route.host }}
+  host: {{ .Values.route.host }}
+  {{- end }}
+  to:
+    kind: Service
+    {{- if .Values.nginxProxy.enabled }}
+    name: {{ include "mcp-stack.fullname" . }}-nginx
+    {{- else }}
+    name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+    {{- end }}
+    weight: 100
+  port:
+    {{- if and .Values.nginxProxy.enabled .Values.nginxProxy.tls.enabled }}
+    targetPort: https
+    {{- else }}
+    targetPort: http
+    {{- end }}
+  tls:
+    termination: {{ .Values.route.tls.termination | default "edge" }}
+    insecureEdgeTerminationPolicy: {{ .Values.route.tls.insecureEdgeTerminationPolicy | default "Redirect" }}
+    {{- if .Values.route.tls.certificate }}
+    certificate: |
+      {{- .Values.route.tls.certificate | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.key }}
+    key: |
+      {{- .Values.route.tls.key | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.caCertificate }}
+    caCertificate: |
+      {{- .Values.route.tls.caCertificate | nindent 6 }}
+    {{- end }}
+    {{- if .Values.route.tls.destinationCACertificate }}
+    destinationCACertificate: |
+      {{- .Values.route.tls.destinationCACertificate | nindent 6 }}
+    {{- end }}
+  wildcardPolicy: None
+{{- end }}
