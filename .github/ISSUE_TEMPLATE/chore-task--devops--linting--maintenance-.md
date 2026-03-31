@@ -41,7 +41,7 @@ Why is this task needed? Does it reduce tech debt, unblock other work, or improv
 
 Reference any relevant Makefile targets that are involved, if applicable. Ex:
 
-- `make lint` - run ruff, mypy, flake8, etc.
+- `make lint` - run ruff, mypy, pylint, etc.
 - `make pre-commit` - run pre-configured hooks
 - `make install-web-linters` - installs npm-based linters
 - `make sonar-submit-docker` - run SonarQube scanner via Docker

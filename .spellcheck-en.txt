@@ -82,7 +82,7 @@ defusedxml
 deployable
 dev
 dir
-dlint
+
 docbuilder
 Dockerfile
 Dockle

@@ -338,13 +338,12 @@ make autoflake isort black pre-commit
 ### 4.2 Python linters
 
 ```bash
-make flake8 ruff vulture bandit interrogate pylint verify
+make ruff vulture bandit interrogate pylint verify
 ```
 
 | Target | What it checks |
 |--------|----------------|
-| `flake8` | PEP 8 style violations (E3, E4, E7, E9, F, D1) |
-| `ruff` | Fast lint pass (overlaps flake8, catches additional patterns) |
+| `ruff` | PEP 8 style, pyflakes, docstrings, pylint rules (E3, E4, E7, E9, F, D1, D417, PL) |
 | `vulture` | Dead code detection (unused functions, variables, imports) |
 | `bandit` | Security vulnerabilities in Python code |
 | `interrogate` | Docstring coverage (must meet threshold) |
@@ -1339,7 +1338,7 @@ make test
 
 # 4. Format, lint & security
 make autoflake isort black pre-commit
-make flake8 ruff vulture bandit interrogate pylint verify
+make ruff vulture bandit interrogate pylint verify
 make yamllint tomllint jsonlint
 make lint-web
 make dodgy gitleaks

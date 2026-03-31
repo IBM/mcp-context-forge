@@ -38,7 +38,7 @@ Use the smallest set that matches your change.
 | Pure Rust refactor in `src/` or `tests/` | `make -C tools_rust/mcp_runtime fmt-check clippy-all test test-rmcp` |
 | Rust + Python integration change | Rust-local checks plus `make doctest test htmlcov` |
 | MCP protocol, auth, session, or transport behavior | Rebuild stack and run `make test-mcp-cli test-mcp-rbac`; add `make test-mcp-plugin-parity` with `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml` for live plugin parity, `make test-mcp-access-matrix` for detailed role/output verification, `make test-mcp-session-isolation` for Rust public path work, and `make test-mcp-session-isolation-load` for correctness-under-load changes |
-| Overview / Version Info / templates / JS / CSS | `make test-js-coverage lint-web flake8 bandit interrogate pylint`, plus `make test-ui-smoke` and targeted Playwright tests |
+| Overview / Version Info / templates / JS / CSS | `make test-js-coverage lint-web bandit interrogate pylint`, plus `make test-ui-smoke` and targeted Playwright tests |
 | Packaging / release readiness | `make verify` |
 | Performance-sensitive hot path | relevant tests plus benchmark and profiling targets |
 
@@ -77,7 +77,7 @@ expects before a serious validation pass.
 
 ```bash
 make autoflake isort black pre-commit
-make test-js-coverage lint-web flake8 bandit interrogate pylint verify
+make test-js-coverage lint-web bandit interrogate pylint verify
 make doctest test htmlcov
 ```
 
@@ -85,7 +85,7 @@ Notes:
 
 - `make autoflake isort black pre-commit`
   - use after broader edits, especially mixed Python/template/doc changes
-- `make test-js-coverage lint-web flake8 bandit interrogate pylint verify`
+- `make test-js-coverage lint-web bandit interrogate pylint verify`
   - this is the wider hygiene gate for Python, docs, web assets, and package
     metadata
 - `make doctest test htmlcov`
@@ -109,7 +109,7 @@ For most MCP runtime PR work, this is the minimum serious root-level gate:
 
 ```bash
 make doctest test htmlcov
-make flake8 bandit interrogate pylint
+make bandit interrogate pylint
 ```
 
 Add these when you touched UI/templates/static files:
@@ -404,7 +404,7 @@ make -C tools_rust/mcp_runtime test-rmcp
 ```bash
 make -C tools_rust/mcp_runtime fmt-check clippy-all test-rmcp
 make doctest test htmlcov
-make flake8 bandit interrogate pylint
+make bandit interrogate pylint
 make testing-rebuild-rust-full
 make test-mcp-cli
 make test-mcp-rbac
@@ -416,7 +416,7 @@ make test-mcp-session-isolation
 
 ```bash
 make autoflake isort black pre-commit
-make test-js-coverage lint-web flake8 bandit interrogate pylint
+make test-js-coverage lint-web bandit interrogate pylint
 make doctest test htmlcov
 make test-ui-smoke
 uv run pytest tests/playwright/test_version_page.py -q
@@ -436,7 +436,7 @@ make -C tools_rust/mcp_runtime flamegraph-test
 
 ```bash
 make autoflake isort black pre-commit
-make test-js-coverage lint-web flake8 bandit interrogate pylint verify
+make test-js-coverage lint-web bandit interrogate pylint verify
 make doctest test htmlcov
 make testing-rebuild-rust-full
 make test-mcp-cli
@@ -471,7 +471,7 @@ If you are unsure which commands to run, default to the broader workflow:
 
 ```bash
 make autoflake isort black pre-commit
-make test-js-coverage lint-web flake8 bandit interrogate pylint verify
+make test-js-coverage lint-web bandit interrogate pylint verify
 make doctest test htmlcov
 make testing-rebuild-rust-full
 make test-mcp-cli

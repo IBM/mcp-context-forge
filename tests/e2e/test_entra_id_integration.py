@@ -35,10 +35,6 @@ Environment Variables:
 
 from __future__ import annotations
 
-# flake8: noqa: F821
-# Note: F821 "undefined name" warnings are false positives.
-# PEP 563 (__future__ annotations) makes forward references work at runtime,
-# but flake8's static analysis doesn't understand this. The code is correct.
 
 # Standard Library
 import asyncio
