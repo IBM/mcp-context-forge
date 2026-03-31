@@ -1116,42 +1116,25 @@ generate-report:                           ## Display most recent load test repo
 # 📊 REST API POPULATION - Populate via HTTP endpoints (full write path)
 # =============================================================================
 # help: 📊 REST API POPULATION
-# help: populate-small       - Populate via REST API (100 users, ~3K entities, ~2 min)
-# help: populate-medium      - Populate via REST API (10K users, ~300K entities, ~1 hr)
-# help: populate-large       - Populate via REST API (500K users, ~13M entities, ~4-12 hrs)
+# help: populate-small       - Populate via REST API (100 users, ~3K entities, ~20 min)
+# help: populate-medium      - Populate via REST API (10K users, ~300K entities, ~12 hr)
+# help: populate-large       - Populate via REST API (500K users, ~13M entities, ~12-24 hrs)
 # help: populate-dry         - Preview what would be created (no requests sent)
 # help: populate-verify      - Verify populated data via GET endpoints
 # help: populate-clean       - Delete all loadtest.example.com entities via API
 # help: populate-report      - Show latest population report
 
 .PHONY: populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
-.PHONY: populate-small-bulk populate-medium-bulk populate-large-bulk
 
 populate-small:                            ## Populate via REST API - small (100 users)
 	@echo "📊 Populating via REST API (small profile)..."
 	@echo "   Target: 100 users, ~3K entities"
 	@echo "   Time: ~2 minutes"
-	@echo "   💡 Using fast Argon2 settings for performance"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=8192 && \
-		export ARGON2ID_PARALLELISM=1 && \
 		python -m tests.populate --profile small"
 	@echo ""
 	@echo "✅ Small API population complete!"
-	@echo "📄 Report: reports/small_populate_report.json"
-
-populate-small-bulk:                       ## Populate via bulk DB inserts - small (100 users) - FAST
-	@echo "⚡ Populating via BULK mode (small profile)..."
-	@echo "   Target: 100 users, ~3K entities"
-	@echo "   Time: <10 seconds (200-1000x faster than API mode)"
-	@echo "   ⚠️  Bypasses validation/RBAC - for test data only"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python -m tests.populate --profile small --mode bulk"
-	@echo ""
-	@echo "✅ Small bulk population complete!"
 	@echo "📄 Report: reports/small_populate_report.json"
 
 populate-medium:                           ## Populate via REST API - medium (10K users)
@@ -1162,25 +1145,9 @@ populate-medium:                           ## Populate via REST API - medium (10
 	@echo "   💡 Using fast Argon2 settings from .env for performance"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=8192 && \
-		export ARGON2ID_PARALLELISM=1 && \
 		python -m tests.populate --profile medium"
 	@echo ""
 	@echo "✅ Medium API population complete!"
-	@echo "📄 Report: reports/medium_populate_report.json"
-
-populate-medium-bulk:                      ## Populate via bulk DB inserts - medium (10K users) - FAST
-	@echo "⚡ Populating via BULK mode (medium profile)..."
-	@echo "   Target: 10K users, ~300K entities"
-	@echo "   Time: ~5-10 minutes (200-1000x faster than API mode)"
-	@echo "   ⚠️  Bypasses validation/RBAC - for test data only"
-	@echo "   ⚠️  Recommended: PostgreSQL backend"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python -m tests.populate --profile medium --mode bulk"
-	@echo ""
-	@echo "✅ Medium bulk population complete!"
 	@echo "📄 Report: reports/medium_populate_report.json"
 
 populate-large:                            ## Populate via REST API - large (500K users)
@@ -1203,11 +1170,46 @@ populate-large:                            ## Populate via REST API - large (500
 		exit 1; \
 	fi
 
-populate-large-bulk:                       ## Populate via bulk DB inserts - large (500K users) - FAST
+# =============================================================================
+# 🚀 BULK DATABASE POPULATION - Direct DB inserts (bypass write path)
+# =============================================================================
+# help: 🚀 BULK DATABASE POPULATION
+# help: populate-small-bulk   - Bulk insert (100 users, ~5K entities, ~14s)
+# help: populate-medium-bulk  - Bulk insert (10K users, ~2.1M entities, ~41min)
+# help: populate-large-bulk   - Bulk insert (100K users, ~21M entities)
+
+.PHONY: populate-small-bulk populate-medium-bulk populate-large-bulk
+
+populate-small-bulk:                       ## Populate via bulk DB inserts - small (100 users) - FAST
+	@echo "⚡ Populating via BULK mode (small profile)..."
+	@echo "   Target: 100 users, ~5K entities"
+	@echo "   Time: ~14 seconds (7.5x faster than API mode)"
+	@echo "   ⚠️  Bypasses API validation - for test data only"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile small --mode bulk"
+	@echo ""
+	@echo "✅ Small bulk population complete!"
+	@echo "📄 Report: reports/small_populate_report.json"
+
+populate-medium-bulk:                      ## Populate via bulk DB inserts - medium (10K users) - FAST
+	@echo "⚡ Populating via BULK mode (medium profile)..."
+	@echo "   Target: 10K users, ~2.1M entities"
+	@echo "   Time: ~41 minutes (17x faster than API mode)"
+	@echo "   ⚠️  Bypasses API validation - for test data only"
+	@echo "   ⚠️  Recommended: PostgreSQL backend"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile medium --mode bulk"
+	@echo ""
+	@echo "✅ Medium bulk population complete!"
+	@echo "📄 Report: reports/medium_populate_report.json"
+
+populate-large-bulk:                       ## Populate via bulk DB inserts - large (100K users) - FAST
 	@echo "⚡ Populating via BULK mode (large profile)..."
-	@echo "   Target: 500K users, ~13M entities"
-	@echo "   Time: ~30-60 minutes (200-1000x faster than API mode)"
-	@echo "   ⚠️  Bypasses validation/RBAC - for test data only"
+	@echo "   Target: 100K users, ~21M entities"
+	@echo "   Time: ~6-8 hours (estimated)"
+	@echo "   ⚠️  Bypasses API validation - for test data only"
 	@echo "   ⚠️  REQUIRED: PostgreSQL backend"
 	@echo ""
 	@read -p "This will create millions of records. Continue? [y/N] " -n 1 -r; \
