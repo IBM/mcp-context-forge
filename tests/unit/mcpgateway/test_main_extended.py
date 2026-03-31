@@ -10060,7 +10060,7 @@ class TestRemainingCoverageGaps:
         db_status = next((item for item in result.statusItems if item.name == "Database"), None)
         assert db_status is not None
         assert db_status.statusCode == 200
-        assert db_status.message == "Databse Connection Successful"
+        assert db_status.message == "Database Connection Successful"
         
         # Check Redis status
         redis_status = next((item for item in result.statusItems if item.name == "Redis"), None)
@@ -10126,7 +10126,7 @@ class TestRemainingCoverageGaps:
         db_status = next((item for item in result.statusItems if item.name == "Database"), None)
         assert db_status is not None
         assert db_status.statusCode == 200
-        assert db_status.message == "Databse Connection Successful"
+        assert db_status.message == "Database Connection Successful"
         
         # Check Redis status - should be unhealthy due to exception
         redis_status = next((item for item in result.statusItems if item.name == "Redis"), None)

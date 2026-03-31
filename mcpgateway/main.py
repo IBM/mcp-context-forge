@@ -11042,7 +11042,7 @@ async def healthcheck(response: Response):
     """
     Perform a basic health check to verify database connectivity.
 
-    Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
+    Async function so FastAPI runs it in a threadpool, avoiding event loop blocking.
     Uses a dedicated session to avoid cross-thread issues and double-commit
     from get_db dependency. All DB operations happen in the same thread.
 
@@ -11058,7 +11058,7 @@ async def healthcheck(response: Response):
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_200_OK, message="Databse Connection Successful"))
+        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_200_OK, message="Database Connection Successful"))
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -11070,21 +11070,22 @@ async def healthcheck(response: Response):
                 pass  # nosec B110 - Best effort cleanup on connection failure
         error_message = f"Database health check failed: {str(e)}"
         logger.error(error_message)
-        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Databse"))
+        status_items.append(HealthStatusItem(name="Database", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database"))
     finally:
         db.close()
 
-    # Check Redis
-    if settings.cache_type == "redis" and settings.redis_url:
+    # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
+    redis_enabled = settings.cache_type == "redis" and settings.redis_url
+    if redis_enabled:
         try:
             # is_redis_available() checks if Redis is available and responding to ping.
             if await is_redis_available():
                 status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_200_OK, message="ready"))
             else:
-                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
+                status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
         except Exception as e:
             logger.error(f"Redis health check failed: {str(e)}")
-            status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Redis"))
+            status_items.append(HealthStatusItem(name="Redis", statusCode=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
 
     # Determine overall status:
     # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
@@ -11095,8 +11096,6 @@ async def healthcheck(response: Response):
     # Check database health
     database_healthy = database_status and database_status.statusCode == 200
 
-    # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
-    redis_enabled = settings.cache_type == "redis" and settings.redis_url
     redis_healthy = not redis_enabled or (redis_status and redis_status.statusCode == 200)
 
     overall_status = "healthy" if database_healthy and redis_healthy else "unhealthy"
