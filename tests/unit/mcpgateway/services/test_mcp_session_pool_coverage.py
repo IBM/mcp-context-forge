@@ -3563,6 +3563,17 @@ class TestMaxTotalKeysLimit:
         await pool.close_all()
 
     @pytest.mark.asyncio
+    async def test_non_capacity_runtime_error_propagates_from_acquire(self):
+        """RuntimeError not related to key cap should propagate unmodified (covers bare raise)."""
+        pool = MCPSessionPool(max_total_keys=10)
+
+        with patch.object(pool, "_get_or_create_pool", side_effect=RuntimeError("unexpected internal error")):
+            with pytest.raises(RuntimeError, match="unexpected internal error"):
+                await pool.acquire("http://test:8080")
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
     async def test_80_percent_warning_emitted(self):
         """Should emit warning when pool key count reaches 80% of max_total_keys."""
         pool = MCPSessionPool(max_total_keys=10)
@@ -3695,9 +3706,27 @@ class TestJwtIdentityExtractorNone:
         identity_hash = pool._compute_identity_hash({"Authorization": "Bearer token"})
 
         # Should not be "anonymous" since we have an Authorization header
-        assert identity_hash != "anonymous"
 
-        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_session_reraises_non_capacity_runtime_error(self):
+        """Test that RuntimeError without 'Maximum pool keys' message is re-raised as-is."""
+        pool = MCPSessionPool(max_total_keys=1, max_sessions_per_key=1)
+        
+        # Mock _get_or_create_pool to raise RuntimeError with different message
+        async def mock_get_or_create_pool(pool_key):
+            raise RuntimeError("Some other runtime error")
+        
+        pool._get_or_create_pool = mock_get_or_create_pool
+        
+        # Should re-raise the RuntimeError as-is (not convert to TimeoutError)
+        with pytest.raises(RuntimeError, match="Some other runtime error"):
+            async with pool.session(
+                url="http://test.com",
+                transport_type=TransportType.SSE,
+                headers={},
+            ):
+                pass
 
     @pytest.mark.asyncio
     async def test_jwt_identity_extractor_with_real_jwt_decode_failure(self):

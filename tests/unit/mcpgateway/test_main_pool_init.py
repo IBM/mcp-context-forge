@@ -76,16 +76,20 @@ class TestPoolInitAutoAlignment:
             init_mcp_session_pool,
         )
 
-        # Create pool with specific values
+        # Create pool with specific values including new global capacity limits
         pool = init_mcp_session_pool(
             health_check_interval_seconds=30.0,
             default_transport_timeout_seconds=7.5,
+            max_total_keys=100,
+            max_total_sessions=500,
         )
 
         try:
             # Verify the pool received the correct values
             assert pool._health_check_interval == 30.0
             assert pool._default_transport_timeout == 7.5
+            assert pool._max_total_keys == 100
+            assert pool._max_total_sessions == 500
         finally:
             await close_mcp_session_pool()
 

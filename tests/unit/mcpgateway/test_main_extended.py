@@ -346,6 +346,14 @@ class TestJwtIdentityExtractor:
         result = extractor(headers)
         assert result is None
 
+    def test_extractor_returns_none_for_bearer_only_header(self):
+        """Header containing only 'Bearer ' with no token should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": "Bearer "}
+
+        result = extractor(headers)
+        assert result is None
+
     def test_extractor_returns_none_for_missing_authorization_header(self):
         """Missing Authorization header should return None."""
         extractor = _create_jwt_identity_extractor()
@@ -393,6 +401,19 @@ class TestJwtIdentityExtractor:
         # Test uppercase key
         headers_upper = {"Authorization": f"Bearer {token}"}
         assert extractor(headers_upper) == "user-case"
+
+    def test_extractor_returns_none_on_jwt_decode_exception(self):
+        """JWT decode raising an exception should return None and log debug message."""
+        # Third-Party
+        from unittest.mock import patch
+
+        extractor = _create_jwt_identity_extractor()
+        
+        # Create a valid-looking token that will fail decode
+        with patch("jwt.decode", side_effect=Exception("Decode failed")):
+            headers = {"Authorization": "Bearer some-token"}
+            result = extractor(headers)
+            assert result is None
 
     def test_extractor_prefers_sub_over_email_and_user_id(self):
         """When all three claims present, sub should be preferred."""
@@ -4470,6 +4491,7 @@ class TestLifespanAdvanced:
         # Feature flags
         monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_jwt_identity_extraction", True)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", True)

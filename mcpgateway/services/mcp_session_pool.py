@@ -888,7 +888,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Original error is preserved via 'from e' for debugging/monitoring.
             if "Maximum pool keys" in str(e):
                 logger.error(f"Pool key limit reached, cannot acquire session: {e}")
-                raise asyncio.TimeoutError(f"Session pool capacity exhausted. " f"Enable MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION or increase limits.") from e
+                raise asyncio.TimeoutError("Session pool capacity exhausted. Enable MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION or increase limits.") from e
             raise
 
         # Update pool key last used time IMMEDIATELY after getting pool
@@ -2230,6 +2230,7 @@ def get_mcp_session_pool() -> MCPSessionPool:
 
 
 def init_mcp_session_pool(
+    *,
     max_sessions_per_key: int = 10,
     session_ttl_seconds: float = 300.0,
     health_check_interval_seconds: float = 60.0,
