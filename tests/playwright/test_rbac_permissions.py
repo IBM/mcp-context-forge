@@ -1467,11 +1467,12 @@ class TestSessionTokenCookieRBAC:
         logger.info("Developer cookie /rpc tools/list: error_code=%s — RBAC passed", error_code)
 
     def test_cross_team_tool_not_visible(self, playwright: Playwright, admin_api: APIRequestContext, rbac_developer_user: Dict):
-        """Developer must NOT see tools scoped to a different team (cross-team isolation).
+        """Developer must NOT access tools scoped to a different team (cross-team isolation).
 
         Creates a tool in a fresh team the developer does NOT belong to.
-        Verifies Layer 1 (token scoping) denies visibility even though
-        check_any_team=True grants the RBAC permission.
+        Verifies Layer 2 (RBAC) denies access when an explicit out-of-scope
+        team_id is provided.  The token-scoping guard in _get_user_roles()
+        rejects the request before Layer 1 filtering runs.
         """
         import json as _json  # noqa: PLC0415
 
@@ -1501,14 +1502,8 @@ class TestSessionTokenCookieRBAC:
             )
             try:
                 list_resp = dev_ctx.get(f"/tools?team_id={other_team_id}")
-                assert list_resp.status == 200
-                tools = list_resp.json()
-                names = [t.get("name") for t in (tools if isinstance(tools, list) else tools.get("tools", []))]
-                assert tool_name not in names, (
-                    f"Developer can see cross-team tool '{tool_name}' — Layer 1 isolation broken. "
-                    f"Visible: {names}"
-                )
-                logger.info("Cross-team tool '%s' correctly NOT visible to developer", tool_name)
+                assert list_resp.status == 403, f"Expected 403 for cross-team tool access, got {list_resp.status}"
+                logger.info("Cross-team tool access correctly denied with 403 for developer")
             finally:
                 dev_ctx.dispose()
         finally:

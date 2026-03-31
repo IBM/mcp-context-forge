@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 
 # First, patch RBAC decorators before any mcpgateway imports
-def mock_require_permission_decorator(permission: str, resource_type=None):
+def mock_require_permission_decorator(permission: str, resource_type=None, **kwargs):
     """Mock decorator that bypasses permission checks."""
 
     def decorator(func):

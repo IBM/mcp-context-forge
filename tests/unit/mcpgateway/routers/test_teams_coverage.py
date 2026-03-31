@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 
 # Patch RBAC decorators before importing teams module
-def _noop_decorator(permission: str, resource_type=None):
+def _noop_decorator(permission: str, resource_type=None, **kwargs):
     def decorator(func):
         return func
 

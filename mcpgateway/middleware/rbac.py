@@ -553,7 +553,7 @@ def _is_mutate_permission(permission: str) -> bool:
     return parts[-1] in _MUTATE_PERMISSION_ACTIONS if len(parts) >= 2 else False
 
 
-def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
+def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True, check_globally: bool = False):
     """Decorator to require specific permission for accessing an endpoint.
 
     Args:
@@ -562,6 +562,10 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
         allow_admin_bypass: If True (default), admin users bypass all permission checks.
                            If False, even admins must have explicit permissions.
                            Use False for admin UI routes to enforce granular RBAC.
+        check_globally: If True, evaluate the permission against global/personal roles
+                        only, ignoring the request's team_id. Use for team-entry endpoints
+                        (e.g. join, leave) where the user needs a global permission but
+                        the URL contains a team_id they are not yet a member of.
 
     Returns:
         Callable: Decorated function that enforces the permission requirement
@@ -641,6 +645,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 # verify_team_for_user, token team membership checks).
                 if not team_id:
                     check_any_team = True
+
+            # check_globally: evaluate permission against global/personal roles only,
+            # ignoring the request's team_id.  Used for team-entry endpoints where the
+            # caller needs teams.join but is not yet a member of the target team.
+            if check_globally:
+                team_id = None
+                check_any_team = False
 
             # First, check if any plugins want to handle permission checking
             # First-Party
@@ -781,6 +792,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
         setattr(wrapper, "_required_permission", permission)
         setattr(wrapper, "_resource_type", resource_type)
         setattr(wrapper, "_allow_admin_bypass", allow_admin_bypass)
+        setattr(wrapper, "_check_globally", check_globally)
 
         return wrapper
 
