@@ -155,9 +155,9 @@ clean = "Result: Error"
 
 **Scenario**: MCP server tools whose descriptions contain Markdown syntax fail to register
 
-**Affected patterns**: `> `, `< `, `|`, `&&`, `||`, `;`, `$(`
+**Blocked patterns**: `> `, `< `, `&&`, `||`, `$(`
 
-These shell/pipe metacharacters are blocked by default in `ToolCreate` to reduce injection risk from externally-sourced tool metadata. However, they are common in Markdown content (e.g. `> blockquote`, `< input`, `command | grep pattern`).
+These shell metacharacters are blocked by default in `ToolCreate` and `ToolUpdate` to reduce injection risk from externally-sourced tool metadata. However, they are common in Markdown content (e.g. `> blockquote`, `< input`). Note: single pipes (`|`), semicolons (`;`), and backticks (`` ` ``) are explicitly allowed as they commonly appear in natural-language documentation and Markdown tables.
 
 **Control variables**:
 
@@ -392,7 +392,7 @@ All N tools failed validation. First error: Validation failed for tool 'X':
   'msg': "Value error, Description contains unsafe characters: '> '", ...}]
 ```
 
-**Cause**: The tool's `description` field contains a shell/pipe metacharacter (`> `, `< `, `|`, `&&`, `||`, `$(`) that is blocked by default. This is common with Markdown-formatted descriptions. Note: semicolons (`;`) and backticks (`` ` ``) are allowed as they commonly appear in natural-language documentation.
+**Cause**: The tool's `description` field contains a shell metacharacter (`> `, `< `, `&&`, `||`, `$(`) that is blocked by default. This is common with Markdown-formatted descriptions. Note: single pipes (`|`), semicolons (`;`), and backticks (`` ` ``) are allowed as they commonly appear in natural-language documentation.
 
 **Solution** (pick one):
 
