@@ -4204,11 +4204,11 @@ class TestDebugLevelLogging:
         assert True  # Logging infrastructure verified
 
     def test_process_structured_data_logs_debug(self, caplog):
-        """Test that _process_structured_data logs DEBUG information."""
+        """Test that _process_structured_data works correctly (debug logs removed for performance)."""
         mock_context = Mock(spec=PluginContext)
 
         with caplog.at_level(logging.DEBUG):
-            _process_structured_data(
+            result, modified, violation = _process_structured_data(
                 data={"key": "value"},
                 min_chars=0,
                 max_chars=100,
@@ -4219,16 +4219,18 @@ class TestDebugLevelLogging:
                 path="root"
             )
 
-        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
-        assert len(debug_records) > 0
-        assert "Processing structured data" in caplog.text or "type=" in caplog.text
+        # Debug logs removed for performance optimization (PR #3926)
+        # Verify function still works correctly
+        assert result == {"key": "value"}
+        assert modified is False
+        assert violation is None
 
     def test_numeric_string_skip_logs_debug(self, caplog):
-        """Test that numeric string skipping logs DEBUG."""
+        """Test that numeric strings are skipped correctly (debug logs removed for performance)."""
         mock_context = Mock(spec=PluginContext)
 
         with caplog.at_level(logging.DEBUG):
-            _process_structured_data(
+            result, modified, violation = _process_structured_data(
                 data="123.45",  # Numeric string
                 min_chars=0,
                 max_chars=5,
@@ -4239,9 +4241,11 @@ class TestDebugLevelLogging:
                 path="root"
             )
 
-        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
-        assert len(debug_records) > 0
-        assert "numeric string" in caplog.text.lower() or "Skipping" in caplog.text
+        # Debug logs removed for performance optimization (PR #3926)
+        # Verify numeric strings are still skipped correctly
+        assert result == "123.45"  # Numeric string preserved
+        assert modified is False
+        assert violation is None
 
 
 # ----------------------------------------------------------------------------
@@ -4367,11 +4371,11 @@ class TestLogContextAndMetadata:
                       for r in debug_records)
 
     def test_structured_data_logs_include_path(self, caplog):
-        """Test that structured data processing logs include path information."""
+        """Test that structured data processing works correctly with paths (debug logs removed for performance)."""
         mock_context = Mock(spec=PluginContext)
 
         with caplog.at_level(logging.DEBUG):
-            _process_structured_data(
+            result, modified, violation = _process_structured_data(
                 data={"nested": {"key": "value"}},
                 min_chars=0,
                 max_chars=100,
@@ -4382,11 +4386,11 @@ class TestLogContextAndMetadata:
                 path="root.nested"
             )
 
-        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
-        assert len(debug_records) > 0
-        # Path information should be in logs
-        assert any("root" in r.message or "path" in r.message.lower() or "nested" in r.message
-                  for r in debug_records)
+        # Debug logs removed for performance optimization (PR #3926)
+        # Verify function still processes nested data correctly
+        assert result == {"nested": {"key": "value"}}
+        assert modified is False
+        assert violation is None
 
 
 # ----------------------------------------------------------------------------

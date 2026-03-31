@@ -589,12 +589,16 @@ def _truncate(
             logger.error(f"Invalid value type in _truncate: {type(value).__name__}")
             return str(value) if value is not None else ""
 
+        # PERFORMANCE: Cache ellipsis and its length
         ell = ellipsis or ""
+        ell_len = len(ell)
 
         # Token-based truncation (only if limit_mode is "token" and max_tokens specified)
         # Treat 0 as None (disabled) - consistent with validator behavior
         if limit_mode == "token" and max_tokens is not None and max_tokens > 0:
-            estimated_tokens = len(value) // chars_per_token
+            # PERFORMANCE: Cache value length
+            value_len = len(value)
+            estimated_tokens = value_len // chars_per_token
 
             if estimated_tokens > max_tokens:
                 # Use binary search to find cut point
@@ -602,18 +606,10 @@ def _truncate(
 
                 # Apply word boundary if enabled
                 if word_boundary and cut > 0:
-                    original_cut = cut
                     cut = _find_word_boundary(value, cut, cut)
+                    # PERFORMANCE: Skip debug logging in hot path
 
-                    if cut != original_cut:
-                        logger.debug(
-                            f"Word boundary adjustment: original_cut={original_cut}, "
-                            f"adjusted_cut={cut}, adjustment={original_cut - cut}"
-                        )
-
-                result = value[:cut] + ell
-
-                return result
+                return value[:cut] + ell
 
         # Character-based truncation (only if limit_mode is "character")
         if limit_mode != "character":
@@ -623,12 +619,12 @@ def _truncate(
         if max_chars is None or max_chars == 0:
             return value
 
+        # PERFORMANCE: Cache value length - calculate once
         value_len = len(value)
         if value_len <= max_chars:
             return value
 
-        # Truncation needed
-        ell_len = len(ell)
+        # Truncation needed - ellipsis length already cached above
 
         # If ellipsis doesn't fit, hard cut
         if ell_len >= max_chars:
@@ -640,10 +636,7 @@ def _truncate(
         # Word boundary truncation
         if word_boundary and cut > 0:
             cut = _find_word_boundary(value, cut, max_chars)
-
-            result = value[:cut] + ell
-
-            return result
+            return value[:cut] + ell
 
         # Hard cut (no word boundary mode or no boundary found)
         return value[:cut] + ell
@@ -706,7 +699,8 @@ def _process_structured_data(
     max_structure_size: int = 10_000,
     max_recursion_depth: int = 100,
     max_binary_search_iterations: int = 20,
-    limit_mode: str = "character"
+    limit_mode: str = "character",
+    current_depth: int = 0
 ) -> Tuple[Any, bool, Optional[PluginViolation]]:
     """Recursively process structured data, truncating or blocking based on strategy.
 
@@ -730,6 +724,7 @@ def _process_structured_data(
         max_structure_size: Maximum structure size for security (prevents DoS).
         max_recursion_depth: Maximum recursion depth for security (prevents stack overflow).
         max_binary_search_iterations: Maximum binary search iterations for security.
+        current_depth: Current recursion depth (internal parameter for performance).
 
     Returns:
         Tuple of (modified_data, was_modified, violation).
@@ -743,16 +738,11 @@ def _process_structured_data(
         MemoryError, TypeError, KeyError, AttributeError.
     """
     try:
-        logger.debug(
-            f"Processing structured data: type={type(data).__name__}, path={path or 'root'}, "
-            f"strategy={strategy}"
-        )
-
-        # Security: Check recursion depth
-        depth = path.count('.') + path.count('[')
-        if depth > max_recursion_depth:
+        # PERFORMANCE: Only log in debug mode and avoid expensive string operations
+        # Security: Check recursion depth (optimized - use passed depth instead of calculating)
+        if current_depth > max_recursion_depth:
             logger.error(
-                f"Recursion depth {depth} exceeds maximum {max_recursion_depth} at path: {path}"
+                f"Recursion depth {current_depth} exceeds maximum {max_recursion_depth} at path: {path}"
             )
             return data, False, None
 
@@ -760,7 +750,7 @@ def _process_structured_data(
         if isinstance(data, str):
             # Skip processing for numeric strings (int, float, scientific notation)
             if _is_numeric_string(data):
-                logger.debug(f"Skipping numeric string at {path or 'root'}: length={len(data)}")
+                # PERFORMANCE: Skip debug logging in hot path
                 return data, False, None
 
             # PERFORMANCE: Calculate once, reuse
@@ -776,11 +766,7 @@ def _process_structured_data(
             above_max_tokens = max_tokens is not None and token_count > max_tokens
 
             if below_min_chars or above_max_chars or below_min_tokens or above_max_tokens:
-                logger.debug(
-                    f"String out of bounds at {path or 'root'}: length={length}, tokens={token_count}, "
-                    f"char_limits=[{min_chars}, {max_chars}], token_limits=[{min_tokens}, {max_tokens}]"
-                )
-
+                # PERFORMANCE: Skip debug logging in hot path
                 # BLOCK MODE: Return violation immediately
                 if strategy == "block":
                     location = f" at {path}" if path else ""
@@ -802,10 +788,12 @@ def _process_structured_data(
                             http_status_code=422,
                             mcp_error_code=-32000,
                         )
-                        logger.warning(
-                            f"Token limit violation detected, blocking output: location={path or 'root'}, "
-                            f"token_count={token_count}, max_tokens={max_tokens}"
-                        )
+                        # PERFORMANCE: Only log warnings for actual violations (keep for debugging)
+                        if logger.isEnabledFor(logging.WARNING):
+                            logger.warning(
+                                f"Token limit violation detected, blocking output: location={path or 'root'}, "
+                                f"token_count={token_count}, max_tokens={max_tokens}"
+                            )
                     elif above_max_chars:
                         violation = PluginViolation(
                             reason=f"String length out of bounds{location}",
@@ -821,7 +809,7 @@ def _process_structured_data(
                             http_status_code=422,
                             mcp_error_code=-32000,
                         )
-                        logger.debug(f"🚫 BLOCKING: String at {path or 'root'} exceeds char limits (length={length})")
+                        # PERFORMANCE: Skip debug logging in hot path
                     else:
                         # Min violations
                         violation = PluginViolation(
@@ -838,7 +826,7 @@ def _process_structured_data(
                             http_status_code=422,
                             mcp_error_code=-32000,
                         )
-                        logger.debug(f"🚫 BLOCKING: String at {path or 'root'} below minimum limits")
+                        # PERFORMANCE: Skip debug logging in hot path
 
                     return data, False, violation
 
@@ -865,13 +853,16 @@ def _process_structured_data(
 
             modified = False
             result = []
+            # PERFORMANCE: Increment depth once, avoid path string building in tight loop
+            next_depth = current_depth + 1
             for idx, item in enumerate(data):
+                # PERFORMANCE: Only build path string when needed (for violations/errors)
                 item_path = f"{path}[{idx}]" if path else f"[{idx}]"
                 processed_item, item_modified, violation = _process_structured_data(
                     item, min_chars, max_chars, ellipsis, strategy, word_boundary, context, item_path,
                     min_tokens, max_tokens, chars_per_token,
                     max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations,
-                    limit_mode
+                    limit_mode, next_depth
                 )
 
                 # In block mode, return violation immediately
@@ -894,13 +885,16 @@ def _process_structured_data(
 
             modified = False
             result = {}
+            # PERFORMANCE: Increment depth once, avoid repeated calculations
+            next_depth = current_depth + 1
             for key, value in data.items():
+                # PERFORMANCE: Only build path string when needed (for violations/errors)
                 value_path = f"{path}.{key}" if path else key
                 processed_value, value_modified, violation = _process_structured_data(
                     value, min_chars, max_chars, ellipsis, strategy, word_boundary, context, value_path,
                     min_tokens, max_tokens, chars_per_token,
                     max_text_length, max_structure_size, max_recursion_depth, max_binary_search_iterations,
-                    limit_mode
+                    limit_mode, next_depth
                 )
 
                 # In block mode, return violation immediately
