@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 class RustA2ARuntimeError(RuntimeError):
     """Raised when the Rust A2A runtime cannot complete a request."""
 
+    def __init__(self, message: str, *, is_timeout: bool = False) -> None:
+        super().__init__(message)
+        self.is_timeout = is_timeout
+
 
 class RustA2ARuntimeClient:
     """HTTP client used to call the experimental Rust A2A runtime."""
@@ -39,7 +43,18 @@ class RustA2ARuntimeClient:
         self._uds_client_lock = asyncio.Lock()
 
     async def invoke(self, prepared: PreparedA2AInvocation, *, timeout_seconds: Optional[float] = None) -> Dict[str, Any]:
-        """Execute an A2A invocation through the Rust runtime."""
+        """Execute an A2A invocation through the Rust runtime.
+
+        Args:
+            prepared: Fully resolved invocation payload from :func:`prepare_a2a_invocation`.
+            timeout_seconds: Optional per-request timeout override (seconds).
+
+        Returns:
+            Parsed JSON dict from the Rust runtime response.
+
+        Raises:
+            RustA2ARuntimeError: On non-200 response, invalid JSON, or non-object payload.
+        """
         client = await self._get_runtime_client()
         target_url = _build_runtime_invoke_url()
         request_timeout = timeout_seconds or float(settings.experimental_rust_a2a_runtime_timeout_seconds)
@@ -59,8 +74,12 @@ class RustA2ARuntimeClient:
 
         if response.status_code != 200:
             detail = response.text
+            is_upstream_timeout = response.status_code == 504
             logger.error("Experimental Rust A2A runtime request failed with HTTP %s: %s", response.status_code, detail)
-            raise RustA2ARuntimeError(f"Experimental Rust A2A runtime failed with HTTP {response.status_code}: {detail}")
+            raise RustA2ARuntimeError(
+                f"Experimental Rust A2A runtime failed with HTTP {response.status_code}: {detail}",
+                is_timeout=is_upstream_timeout,
+            )
 
         try:
             payload = response.json()
@@ -72,7 +91,11 @@ class RustA2ARuntimeClient:
         return payload
 
     async def _get_runtime_client(self) -> httpx.AsyncClient:
-        """Return the httpx client, lazily creating a UDS transport if configured."""
+        """Return the httpx client, lazily creating a UDS transport if configured.
+
+        Returns:
+            Shared HTTP client, or a lazily-created UDS client when ``experimental_rust_a2a_runtime_uds`` is set.
+        """
         uds_path = settings.experimental_rust_a2a_runtime_uds
         if not uds_path:
             return await get_http_client()
@@ -95,7 +118,11 @@ _rust_a2a_runtime_client: RustA2ARuntimeClient | None = None
 
 
 def get_rust_a2a_runtime_client() -> RustA2ARuntimeClient:
-    """Return the lazy singleton Rust A2A runtime client."""
+    """Return the lazy singleton Rust A2A runtime client.
+
+    Returns:
+        RustA2ARuntimeClient singleton instance.
+    """
     global _rust_a2a_runtime_client  # pylint: disable=global-statement
     if _rust_a2a_runtime_client is None:
         _rust_a2a_runtime_client = RustA2ARuntimeClient()
@@ -103,7 +130,11 @@ def get_rust_a2a_runtime_client() -> RustA2ARuntimeClient:
 
 
 def _build_runtime_invoke_url() -> str:
-    """Build the Rust runtime invoke URL, preserving any configured base path."""
+    """Build the Rust runtime invoke URL, preserving any configured base path.
+
+    Returns:
+        Absolute URL pointing to the ``/invoke`` endpoint of the Rust sidecar.
+    """
     base = urlsplit(settings.experimental_rust_a2a_runtime_url)
     base_path = base.path.rstrip("/")
     target_path = f"{base_path}/invoke" if base_path else "/invoke"

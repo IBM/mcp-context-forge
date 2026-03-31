@@ -80,6 +80,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
         .pool_max_idle_per_host(config.client_pool_max_idle_per_host)
         .tcp_keepalive(Duration::from_secs(config.client_tcp_keepalive_seconds))
         .timeout(Duration::from_millis(config.request_timeout_ms))
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
 
     let state = AppState {

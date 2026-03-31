@@ -138,7 +138,11 @@ def _rust_runtime_managed() -> bool:
 
 
 def _rust_a2a_runtime_managed() -> bool:
-    """Return whether the gateway expects to manage the Rust A2A sidecar locally."""
+    """Return whether the gateway expects to manage the Rust A2A sidecar locally.
+
+    Returns:
+        ``True`` when the ``EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED`` env var is unset or truthy.
+    """
     return _env_flag("EXPERIMENTAL_RUST_A2A_RUNTIME_MANAGED", default=True)
 
 
@@ -298,7 +302,11 @@ def _mcp_runtime_status_payload() -> Dict[str, Any]:
 
 
 def _current_a2a_runtime_mode() -> str:
-    """Return the current A2A runtime mode label used for diagnostics."""
+    """Return the current A2A runtime mode label used for diagnostics.
+
+    Returns:
+        One of ``"python"``, ``"python-rust-built-disabled"``, ``"rust-managed"``, or ``"rust-external"``.
+    """
     if settings.experimental_rust_a2a_runtime_enabled:
         return "rust-managed" if _rust_a2a_runtime_managed() else "rust-external"
     if _rust_build_included():
@@ -307,21 +315,27 @@ def _current_a2a_runtime_mode() -> str:
 
 
 def _current_a2a_invoke_mode() -> str:
-    """Return which runtime currently owns registered A2A agent invocation."""
+    """Return which runtime currently owns registered A2A agent invocation.
+
+    Returns:
+        ``"rust"`` when delegation is enabled, otherwise ``"python"``.
+    """
     if settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled:
         return "rust"
     return "python"
 
 
 def _a2a_runtime_status_payload() -> Dict[str, Any]:
-    """Return A2A runtime diagnostics for version and UI surfaces."""
+    """Return A2A runtime diagnostics for version and UI surfaces.
+
+    Returns:
+        Dict with mode, invoke_mode, flags, and optional sidecar transport details.
+    """
     payload: Dict[str, Any] = {
         "mode": _current_a2a_runtime_mode(),
         "invoke_mode": _current_a2a_invoke_mode(),
         "rust_runtime_enabled": settings.experimental_rust_a2a_runtime_enabled,
-        "rust_delegate_enabled": bool(
-            settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled
-        ),
+        "rust_delegate_enabled": bool(settings.experimental_rust_a2a_runtime_enabled and settings.experimental_rust_a2a_runtime_delegate_enabled),
     }
 
     if settings.experimental_rust_a2a_runtime_enabled:
