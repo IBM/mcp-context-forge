@@ -22,17 +22,25 @@ global:
 
 # --- Gateway ---
 mcpContextForge:
-  replicaCount: 2                          # min replicas, HPA scales up to 6
+  replicaCount: 4                          # start with 4, HPA scales up to 10
 
   hpa:
     enabled: true
-    minReplicas: 2
-    maxReplicas: 6
+    minReplicas: 4
+    maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
 
+  resources:
+    limits:
+      cpu: "4"
+      memory: 4Gi
+    requests:
+      cpu: "1"
+      memory: 1Gi
+
   pluginConfig:
-    enabled: true
+    enabled: false                         # disabled for benchmark
     plugins: |
       plugin_dirs:
         - "plugins/native"
