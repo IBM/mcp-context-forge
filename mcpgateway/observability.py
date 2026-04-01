@@ -656,6 +656,9 @@ class OpenTelemetryRequestMiddleware:
             scope: ASGI connection scope.
             receive: ASGI receive callable.
             send: ASGI send callable.
+
+        Raises:
+            Exception: Any exception raised by the wrapped ASGI application.
         """
         if scope.get("type") != "http" or _TRACER is None:
             await self.app(scope, receive, send)
