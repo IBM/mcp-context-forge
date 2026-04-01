@@ -7240,6 +7240,7 @@ class TestRunLeaderHeartbeat:
         gateway_service._leader_ttl = 30
         gateway_service._redis_client = None
         gateway_service._leader_heartbeat_interval = 0
+        gateway_service._follower_election_task = None
         await gateway_service._run_leader_heartbeat()
 
     @pytest.mark.asyncio
@@ -7251,7 +7252,9 @@ class TestRunLeaderHeartbeat:
         gateway_service._redis_client = AsyncMock()
         gateway_service._redis_client.get = AsyncMock(return_value="other-leader")
         gateway_service._leader_heartbeat_interval = 0
-        await gateway_service._run_leader_heartbeat()
+        gateway_service._follower_election_task = None
+        with patch.object(gateway_service, "_start_follower_election"):
+            await gateway_service._run_leader_heartbeat()
 
     @pytest.mark.asyncio
     async def test_heartbeat_refreshes_ttl(self, gateway_service):
@@ -7259,6 +7262,7 @@ class TestRunLeaderHeartbeat:
         gateway_service._instance_id = "test-id"
         gateway_service._leader_key = "leader:health_check"
         gateway_service._leader_ttl = 30
+        gateway_service._follower_election_task = None
         call_count = 0
 
         async def mock_get(*args):
@@ -7272,7 +7276,8 @@ class TestRunLeaderHeartbeat:
         gateway_service._redis_client.get = mock_get
         gateway_service._redis_client.expire = AsyncMock()
         gateway_service._leader_heartbeat_interval = 0
-        await gateway_service._run_leader_heartbeat()
+        with patch.object(gateway_service, "_start_follower_election"):
+            await gateway_service._run_leader_heartbeat()
         gateway_service._redis_client.expire.assert_awaited_once()
 
 
