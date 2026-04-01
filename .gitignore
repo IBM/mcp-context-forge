@@ -189,6 +189,8 @@ packages.json
 # ========================================
 # AI & Code Assistant Tools
 # ========================================
+.worktrees/
+worktrees/
 .aider*
 aider*
 .ai*
