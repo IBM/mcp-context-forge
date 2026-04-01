@@ -22,10 +22,14 @@ global:
 
 # --- Gateway ---
 mcpContextForge:
-  replicaCount: 1                          # single replica to avoid migration deadlock
+  replicaCount: 2                          # min replicas, HPA scales up to 6
 
   hpa:
-    enabled: false                         # disable autoscaler until stable
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
 
   pluginConfig:
     enabled: true
