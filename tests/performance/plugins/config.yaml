@@ -236,12 +236,12 @@ plugins:
     conditions: []
     config: {}
 
-  # Rate limiter (fixed_window algorithm, memory backend — default)
+  # Rate limiter (cpex-rate-limiter package)
   - name: RateLimiterPlugin
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
-    description: Per-user/tenant/tool rate limits — fixed window algorithm
-    version: 0.1.0
-    author: Pratik Gandhi
+    kind: cpex_rate_limiter.RateLimiterPlugin
+    description: Per-user/tenant/tool rate limits
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive

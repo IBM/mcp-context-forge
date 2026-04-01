@@ -175,7 +175,7 @@ Optimization:
 - `response_cache_by_prompt` - Response caching
 - `circuit_breaker` - Circuit breaker pattern
 - `retry_with_backoff` - Retry logic with backoff
-- `rate_limiter` - Rate limiting
+- `cpex-rate-limiter` - Rate limiting (external package: `cpex_rate_limiter.RateLimiterPlugin`)
 - `output_length_guard` - Output length limits
 
 Utilities:

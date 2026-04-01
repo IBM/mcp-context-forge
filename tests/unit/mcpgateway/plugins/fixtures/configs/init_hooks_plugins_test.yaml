@@ -205,15 +205,15 @@ plugins:
     conditions: []
     config: {}
 
-  # Rate limiter (fixed window, in-memory)
+  # Rate limiter (cpex-rate-limiter package)
   - name: "RateLimiterPlugin"
-    kind: "plugins.rate_limiter.rate_limiter.RateLimiterPlugin"
+    kind: "cpex_rate_limiter.RateLimiterPlugin"
     description: "Per-user/tenant/tool rate limits"
-    version: "0.1.0"
+    version: "0.0.2"
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 20
     conditions: []
     config:

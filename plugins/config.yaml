@@ -206,9 +206,9 @@ plugins:
 
   # Rate limiter (fixed window, Redis-backed for shared state across instances)
   - name: "RateLimiterPlugin"
-    kind: "plugins.rate_limiter.rate_limiter.RateLimiterPlugin"
+    kind: "cpex_rate_limiter.RateLimiterPlugin"
     description: "Per-user/tenant/tool rate limits"
-    version: "0.1.0"
+    version: "0.0.2"
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]

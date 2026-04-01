@@ -18,7 +18,7 @@ plugins:
 
   # Rate Limiter Plugin (will generate rate limit violations)
   - name: "RateLimiter"
-    kind: "plugins.rate_limiter.rate_limiter.RateLimiterPlugin"
+    kind: "cpex_rate_limiter.RateLimiterPlugin"
     hooks: ["tool_pre_invoke"]
     mode: "permissive"  # Don't block for testing
     priority: 200

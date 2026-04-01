@@ -389,7 +389,18 @@ sys.exit(1)
 PY
 }
 
+install_plugin_requirements() {
+    RELOAD_PLUGIN_REQUIREMENTS_TXT="${RELOAD_PLUGIN_REQUIREMENTS_TXT:-false}"
+    PLUGIN_REQUIREMENTS_TXT_PATH="${PLUGIN_REQUIREMENTS_TXT_PATH:-/app/plugins/requirements.txt}"
+
+    if [[ "${RELOAD_PLUGIN_REQUIREMENTS_TXT}" = "true" && -f "${PLUGIN_REQUIREMENTS_TXT_PATH}" ]]; then
+        echo "🧩 Installing plugin packages from ${PLUGIN_REQUIREMENTS_TXT_PATH}..."
+        /app/.venv/bin/pip install --no-cache-dir -r "${PLUGIN_REQUIREMENTS_TXT_PATH}"
+    fi
+}
+
 apply_rust_mcp_mode_defaults
+install_plugin_requirements
 build_server_command "$@"
 print_mcp_runtime_mode
 

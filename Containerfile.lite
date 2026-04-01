@@ -164,6 +164,7 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 # This maximizes Docker layer caching - dependencies change less often
 # ----------------------------------------------------------------------------
 COPY pyproject.toml /app/
+COPY plugins/requirements.txt /app/plugins/requirements.txt
 
 # ----------------------------------------------------------------------------
 # Copy Rust plugin wheels from rust-builder stage (if any exist)
@@ -200,6 +201,10 @@ RUN set -euo pipefail \
         && /app/.venv/bin/pip install --no-cache-dir "psycopg[c]>=3.3.3"; \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian]"; \
+    fi \
+    && if [ -f /app/plugins/requirements.txt ]; then \
+        echo "🧩 Installing plugin packages..."; \
+        /app/.venv/bin/pip install --no-cache-dir -r /app/plugins/requirements.txt; \
     fi \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/rust-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
