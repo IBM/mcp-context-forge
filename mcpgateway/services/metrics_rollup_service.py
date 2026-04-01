@@ -595,7 +595,7 @@ class MetricsRollupService:
                 ]
 
                 # Add server_id for server-scoped metrics (nullable for legacy/admin invocations)
-                if hasattr(raw_model, 'server_id'):
+                if hasattr(raw_model, "server_id"):
                     select_cols.append(raw_model.server_id.label("server_id"))
                     group_by_cols.append(raw_model.server_id)
 
@@ -638,7 +638,7 @@ class MetricsRollupService:
                             p95_response_time=row.p95_rt,
                             p99_response_time=row.p99_rt,
                             interaction_type=row.interaction_type if is_a2a else None,
-                            server_id=row.server_id if hasattr(row, 'server_id') else None,
+                            server_id=row.server_id if hasattr(row, "server_id") else None,
                         )
                     )
             else:
@@ -646,7 +646,7 @@ class MetricsRollupService:
                 group_cols = [entity_id_attr]
 
                 # Add server_id for server-scoped metrics (nullable for legacy/admin invocations)
-                if hasattr(raw_model, 'server_id'):
+                if hasattr(raw_model, "server_id"):
                     group_cols.append(raw_model.server_id)
 
                 if is_a2a:
@@ -675,7 +675,7 @@ class MetricsRollupService:
 
                 # Store aggregation results by entity key
                 # Row structure depends on group_cols: [entity_id, server_id?, interaction_type?]
-                has_server_id = hasattr(raw_model, 'server_id')
+                has_server_id = hasattr(raw_model, "server_id")
                 agg_results = {}
                 for row in db.execute(agg_query).yield_per(settings.yield_batch_size):
                     entity_id = row[0]
