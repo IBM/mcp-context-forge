@@ -11038,27 +11038,28 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 # Healthcheck      #
 ####################
 @app.get("/health")
-async def healthcheck(response: Response):
+def healthcheck(response: Response = None):
     """
     Perform a basic health check to verify database connectivity.
 
-    Async function so FastAPI runs it in a threadpool, avoiding event loop blocking.
+    Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
     Uses a dedicated session to avoid cross-thread issues and double-commit
     from get_db dependency. All DB operations happen in the same thread.
 
     Args:
-        response: Response object used to attach runtime-mode headers.
+        response: Optional response object used to attach runtime-mode headers.
 
     Returns:
-        A HealthCheckResponse with the health status and optional error message.
+        A dictionary with the health status and optional error message.
     """
-    status_items = []
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_200_OK, message="Database Connection Successful"))
+        if response is not None:
+            _apply_runtime_mode_headers(response)
+        return {"status": "healthy", "mcp_runtime": _mcp_runtime_status_payload()}
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -11068,11 +11069,72 @@ async def healthcheck(response: Response):
                 db.invalidate()
             except Exception:
                 pass  # nosec B110 - Best effort cleanup on connection failure
-        error_message = f"Database health check failed: {str(e)}"
+        error_message = f"Database connection error: {str(e)}"
         logger.error(error_message)
-        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database"))
+        if response is not None:
+            _apply_runtime_mode_headers(response)
+        return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
     finally:
         db.close()
+
+
+def _check_db_ready() -> tuple[bool, str | None]:
+    """
+    Check database connectivity in a thread-safe manner.
+
+    Returns:
+        tuple: (success: bool, error_message: str | None)
+    """
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        # Explicitly commit to release PgBouncer backend connection in transaction mode.
+        db.commit()
+        return (True, None)
+    except Exception as e:
+        # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110 - Best effort cleanup on connection failure
+        return (False, str(e))
+    finally:
+        db.close()
+
+
+@app.get("/ready", response_model=HealthCheckResponse)
+async def readiness_check(response: Response):
+    """
+    Perform a comprehensive readiness check to verify all dependencies.
+
+    This endpoint checks:
+    - Database connectivity (via asyncio.to_thread to avoid blocking)
+    - Redis availability (if enabled)
+
+    Returns HTTP 200 when ready, HTTP 503 when not ready.
+
+    Args:
+        response: Response object used to attach runtime-mode headers and status code.
+
+    Returns:
+        A HealthCheckResponse with detailed component health status.
+        HTTP 200 if all components are healthy (ready).
+        HTTP 503 if any component is unhealthy (not ready).
+    """
+    status_items = []
+
+    # Database health check (run in thread to avoid blocking event loop)
+    db_success, db_error = await asyncio.to_thread(_check_db_ready)
+
+    if db_success:
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_200_OK, message="Database Connection Successful"))
+    else:
+        error_message = f"Database health check failed: {db_error}"
+        logger.error(error_message)
+        status_items.append(HealthStatusItem(name="Database", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Database"))
 
     # Check Redis health only if it's enabled (cache_type is redis and redis_url is configured)
     redis_enabled = settings.cache_type == "redis" and settings.redis_url
@@ -11088,17 +11150,22 @@ async def healthcheck(response: Response):
             status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
 
     # Determine overall status:
-    # - "healthy" if Database is healthy (200) AND Redis is healthy when enabled
-    # - "unhealthy" if Database is unhealthy (503) OR Redis is unhealthy when enabled
+    # - "ready" if Database is healthy (200) AND Redis is healthy when enabled
+    # - "unready" if Database is unhealthy (503) OR Redis is unhealthy when enabled
     database_status = next((item for item in status_items if item.name == "Database"), None)
     redis_status = next((item for item in status_items if item.name == "Cache"), None)
 
     # Check database health
     database_healthy = database_status and database_status.status_code == 200
 
+    # Redis is healthy if: not enabled OR (enabled AND status is 200)
     redis_healthy = not redis_enabled or (redis_status and redis_status.status_code == 200)
 
-    overall_status = "healthy" if database_healthy and redis_healthy else "unhealthy"
+    is_ready = database_healthy and redis_healthy
+    overall_status = "ready" if is_ready else "unready"
+
+    # Set HTTP status code: 200 for ready, 503 for unready
+    response.status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
     _apply_runtime_mode_headers(response)
     return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
