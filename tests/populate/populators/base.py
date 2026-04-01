@@ -161,7 +161,7 @@ class BasePopulator(ABC):
                     errors += 1
             except Exception as exc:
                 errors += 1
-                logger.error(f"Failed to create {self.get_name()}: {exc}")
+                logger.debug(f"Failed to create {self.get_name()}: {exc}")
 
             update_count += 1
             if self.progress_tracker and update_count % self.progress_update_frequency == 0:

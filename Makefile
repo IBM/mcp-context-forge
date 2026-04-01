@@ -1142,7 +1142,6 @@ populate-medium:                           ## Populate via REST API - medium (10
 	@echo "   Target: 10K users, ~300K entities"
 	@echo "   Time: ~30-60 minutes"
 	@echo "   ⚠️  Recommended: PostgreSQL backend"
-	@echo "   💡 Using fast Argon2 settings from .env for performance"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python -m tests.populate --profile medium"
