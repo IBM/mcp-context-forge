@@ -318,6 +318,7 @@ COPY --from=builder --chown=1001:0 /app /app
 # - Disable pip version check to reduce startup time
 # ----------------------------------------------------------------------------
 ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONPATH="/app" \
     CONTEXTFORGE_ENABLE_RUST_BUILD=${ENABLE_RUST} \
     CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD=${ENABLE_RUST_MCP_RMCP} \
     PYTHONDONTWRITEBYTECODE=1 \
