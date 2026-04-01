@@ -10,7 +10,7 @@ let escapeHtml;
 beforeAll(() => {
     const win = loadAdminJs();
     escapeHtml = win.escapeHtml;
-});
+}, 5000);
 
 afterAll(() => {
     cleanupAdminJs();

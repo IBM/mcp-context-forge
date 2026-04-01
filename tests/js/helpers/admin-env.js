@@ -37,15 +37,26 @@ let instrumentedCode = null;
 export function loadAdminJs(options = {}) {
     if (!instrumentedCode) {
         const adminJsContent = fs.readFileSync(adminJsPath, "utf8");
-        const instrumenter = createInstrumenter({
-            compact: false,
-            esModules: false,
-            coverageVariable: "__coverage__",
-        });
-        instrumentedCode = instrumenter.instrumentSync(
-            adminJsContent,
-            adminJsPath,
-        );
+        // Skip instrumentation when not collecting coverage — instrumenting a
+        // ~1.3 MB file takes several seconds and is only needed for coverage reports.
+        // process.argv is unreliable in Vitest workers (spawned as separate processes),
+        // so fall back to Vitest's internal worker state.
+        const isCoverageRun =
+            process.argv.includes("--coverage") ||
+            globalThis.__vitest_worker__?.config?.coverage?.enabled === true;
+        if (isCoverageRun) {
+            const instrumenter = createInstrumenter({
+                compact: false,
+                esModules: false,
+                coverageVariable: "__coverage__",
+            });
+            instrumentedCode = instrumenter.instrumentSync(
+                adminJsContent,
+                adminJsPath,
+            );
+        } else {
+            instrumentedCode = adminJsContent;
+        }
     }
 
     dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
