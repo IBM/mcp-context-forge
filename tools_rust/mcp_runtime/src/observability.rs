@@ -1239,7 +1239,9 @@ impl ObservabilityConfig {
         let enabled = parse_bool_with_default("OTEL_ENABLE_OBSERVABILITY", false);
         let otlp_endpoint = resolve_otlp_endpoint();
         let otlp_headers = resolve_otlp_headers(otlp_endpoint.as_deref());
-        validate_langfuse_configuration(otlp_endpoint.as_deref(), &otlp_headers)?;
+        if enabled {
+            validate_langfuse_configuration(otlp_endpoint.as_deref(), &otlp_headers)?;
+        }
 
         let emit_langfuse_attributes = parse_optional_bool("OTEL_EMIT_LANGFUSE_ATTRIBUTES")
             .unwrap_or_else(|| is_langfuse_otlp_endpoint(otlp_endpoint.as_deref()));
