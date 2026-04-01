@@ -1823,6 +1823,36 @@ async def test_streamable_http_auth_rejects_undocumented_mcp_subpaths_permissive
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/mcp/../admin",  # Uvicorn decodes %2e%2e → .. before scope["path"]
+        "/mcp/./hidden",  # single-dot segment
+        "/mcp//message",  # double-slash (NOT the same as /mcp/message)
+        "/mcp/ ",  # trailing space
+    ],
+)
+async def test_streamable_http_auth_rejects_decoded_path_traversal_variants(monkeypatch, path):
+    """Defense-in-depth: percent-decoded path variants must still be rejected.
+
+    Uvicorn percent-decodes scope["path"] before our code runs (e.g.
+    /mcp/%2e%2e/admin becomes /mcp/../admin).  These tests verify the
+    allowlist check is not bypassed by decoded traversal sequences.
+    """
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    scope = _make_scope(path)
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called and called[0]["status"] == 404
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_oauth_server_returns_resource_metadata_in_strict_mode(monkeypatch):
     """Per-server OAuth runs before global strict-mode check so resource_metadata is included.
 
