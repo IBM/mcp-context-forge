@@ -122,7 +122,7 @@ def test_compute_metrics_summary_with_none_min_max_handling(test_db, test_tool):
 
     test_db.refresh(test_tool)
     _ = len(test_tool.metrics)  # Trigger lazy load to use in-memory path
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     # Verify min/max came from hourly metrics
     assert summary["min_response_time"] == 0.05
@@ -151,7 +151,7 @@ def test_compute_metrics_summary_with_hourly_none_values(test_db, test_tool):
 
     test_db.refresh(test_tool)
     _ = len(test_tool.metrics)  # Trigger lazy load to use in-memory path
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     # Should work with just current hour metrics
     assert summary["total_executions"] == 10
@@ -182,7 +182,7 @@ def test_compute_metrics_summary_last_time_from_hourly(test_db, test_tool):
 
     test_db.refresh(test_tool)
     _ = len(test_tool.metrics)  # Trigger lazy load to use in-memory path
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     # Last time should be hour_start (consistent with aggregate_metrics_combined)
     expected_last_time = hour_start
@@ -248,7 +248,7 @@ def test_metrics_summary_attributeerror_on_hourly_relationship(test_db, test_too
         return original_getattribute(self, name)
 
     with patch.object(Tool, "__getattribute__", mock_getattribute):
-        summary = test_tool.metrics_summary
+        summary = test_tool.metrics_summary()
         # Should still work with just raw metrics (falls back to empty list)
         assert summary["total_executions"] == 1
 
@@ -276,7 +276,7 @@ def test_resource_metrics_summary_attributeerror(test_db, test_resource):
         return original_getattribute(self, name)
 
     with patch.object(Resource, "__getattribute__", mock_getattribute):
-        summary = test_resource.metrics_summary
+        summary = test_resource.metrics_summary()
         assert summary["total_executions"] == 1
 
 
@@ -303,7 +303,7 @@ def test_prompt_metrics_summary_attributeerror(test_db, test_prompt):
         return original_getattribute(self, name)
 
     with patch.object(Prompt, "__getattribute__", mock_getattribute):
-        summary = test_prompt.metrics_summary
+        summary = test_prompt.metrics_summary()
         assert summary["total_executions"] == 1
 
 
@@ -358,7 +358,7 @@ def test_metrics_summary_old_raw_metrics_counted_when_no_hourly(test_db, test_to
     # Refresh and explicitly load metrics relationship to trigger in-memory path
     test_db.refresh(test_tool)
     _ = len(test_tool.metrics)  # Trigger lazy load
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     # Metrics should be counted because their hour has no hourly aggregate
     assert summary["total_executions"] == 3
@@ -386,7 +386,7 @@ def test_metrics_summary_timezone_naive_timestamps(test_db, test_tool):
 
     test_db.refresh(test_tool)
     _ = len(test_tool.metrics)  # Trigger lazy load to use in-memory path
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     # Should handle naive timestamps by converting to UTC
     assert summary["total_executions"] >= 1
@@ -410,7 +410,7 @@ def test_resource_metrics_summary_sql_path(test_db, test_resource):
     fresh_resource = test_db.query(Resource).filter(Resource.id == test_resource.id).first()
 
     # Call metrics_summary WITHOUT loading metrics first (triggers SQL path)
-    summary = fresh_resource.metrics_summary
+    summary = fresh_resource.metrics_summary()
 
     assert summary["total_executions"] == 1
     assert summary["successful_executions"] == 1
@@ -434,7 +434,7 @@ def test_prompt_metrics_summary_sql_path(test_db, test_prompt):
     fresh_prompt = test_db.query(Prompt).filter(Prompt.id == test_prompt.id).first()
 
     # Call metrics_summary WITHOUT loading metrics first (triggers SQL path)
-    summary = fresh_prompt.metrics_summary
+    summary = fresh_prompt.metrics_summary()
 
     assert summary["total_executions"] == 1
     assert summary["successful_executions"] == 1

@@ -170,7 +170,7 @@ def test_tool_metrics_properties():
     assert tool.max_response_time == 2.0
     assert tool.avg_response_time == 1.5
     assert tool.last_execution_time == now + timedelta(seconds=1)
-    summary = tool.metrics_summary
+    summary = tool.metrics_summary()
     assert summary["total_executions"] == 2
     assert summary["failure_rate"] == 0.5
 
@@ -221,7 +221,7 @@ def test_tool_metrics_summary_all_fields():
         db.ToolMetric(response_time=3.0, is_success=False, timestamp=now + timedelta(seconds=1)),
     ]
     tool = make_tool_with_metrics(metrics)
-    summary = tool.metrics_summary
+    summary = tool.metrics_summary()
     assert summary["total_executions"] == 2
     assert summary["successful_executions"] == 1
     assert summary["failed_executions"] == 1
@@ -236,7 +236,7 @@ def test_tool_metrics_summary_empty():
     """Test metrics_summary returns zeros/None for empty metrics."""
     tool = db.Tool()
     tool.metrics = []
-    summary = tool.metrics_summary
+    summary = tool.metrics_summary()
     assert summary["total_executions"] == 0
     assert summary["successful_executions"] == 0
     assert summary["failed_executions"] == 0
@@ -251,7 +251,7 @@ def test_tool_metrics_summary_detached():
     """Test metrics_summary returns zeros/None for detached object without session."""
     tool = db.Tool()
     # Don't set metrics - simulates detached object without session
-    summary = tool.metrics_summary
+    summary = tool.metrics_summary()
     assert summary["total_executions"] == 0
     assert summary["failure_rate"] == 0.0
 
@@ -348,7 +348,7 @@ def test_tool_metrics_summary_sql_path(monkeypatch):
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
-    summary = tool.metrics_summary
+    summary = tool.metrics_summary()
 
     # Expected: hourly(3,2) + raw(2,1) = total(5,3)
     assert summary["total_executions"] == 5
@@ -393,7 +393,7 @@ def test_resource_metrics_summary_loaded():
         db.ResourceMetric(response_time=3.0, is_success=False, timestamp=now + timedelta(seconds=1)),
     ]
     resource = make_resource_with_metrics(metrics)
-    summary = resource.metrics_summary
+    summary = resource.metrics_summary()
     assert summary["total_executions"] == 2
     assert summary["successful_executions"] == 1
     assert summary["failed_executions"] == 1
@@ -471,7 +471,7 @@ def test_resource_metrics_summary_sql_path(monkeypatch):
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
-    summary = resource.metrics_summary
+    summary = resource.metrics_summary()
 
     # Expected: hourly(4,3) + raw(2,1) = total(6,4)
     assert summary["total_executions"] == 6
@@ -516,7 +516,7 @@ def test_prompt_metrics_summary_loaded():
         db.PromptMetric(response_time=4.0, is_success=False, timestamp=now + timedelta(seconds=1)),
     ]
     prompt = make_prompt_with_metrics(metrics)
-    summary = prompt.metrics_summary
+    summary = prompt.metrics_summary()
     assert summary["total_executions"] == 2
     assert summary["successful_executions"] == 1
     assert summary["failed_executions"] == 1
@@ -594,7 +594,7 @@ def test_prompt_metrics_summary_sql_path(monkeypatch):
 
     monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
 
-    summary = prompt.metrics_summary
+    summary = prompt.metrics_summary()
 
     # Expected: hourly(7,6) + raw(3,2) = total(10,8)
     assert summary["total_executions"] == 10
@@ -2182,7 +2182,7 @@ def test_resource_metric_counts_and_timing_are_safe_when_detached():
     assert resource.avg_response_time is None
     assert resource.last_execution_time is None
 
-    summary = resource.metrics_summary
+    summary = resource.metrics_summary()
     assert summary["total_executions"] == 0
     assert summary["failure_rate"] == 0.0
 
@@ -2195,7 +2195,7 @@ def test_prompt_metric_counts_and_timing_are_safe_when_detached():
     assert prompt.avg_response_time is None
     assert prompt.last_execution_time is None
 
-    summary = prompt.metrics_summary
+    summary = prompt.metrics_summary()
     assert summary["total_executions"] == 0
     assert summary["failure_rate"] == 0.0
 

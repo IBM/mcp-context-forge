@@ -121,7 +121,7 @@ def _build_db_prompt(
     p.gateway = None
     p.metrics = metrics or []
 
-    # Mock metrics_summary property to match the new implementation
+    # Mock metrics_summary method to match the new implementation
     # Calculate summary from provided metrics
     if metrics:
         total = len(metrics)
@@ -133,7 +133,7 @@ def _build_db_prompt(
         avg_rt = sum(m.response_time for m in metrics) / total if total > 0 else None
         last_time = max((m.timestamp for m in metrics), default=None)
 
-        p.metrics_summary = {
+        summary_data = {
             "total_executions": total,
             "successful_executions": successful,
             "failed_executions": failed,
@@ -144,7 +144,7 @@ def _build_db_prompt(
             "last_execution_time": last_time,
         }
     else:
-        p.metrics_summary = {
+        summary_data = {
             "total_executions": 0,
             "successful_executions": 0,
             "failed_executions": 0,
@@ -154,6 +154,9 @@ def _build_db_prompt(
             "avg_response_time": None,
             "last_execution_time": None,
         }
+
+    # Make metrics_summary callable (method) instead of a dict
+    p.metrics_summary = lambda server_id=None: summary_data
 
     # validate_arguments: accept anything
     p.validate_arguments = Mock()
@@ -2493,7 +2496,7 @@ class TestListServerPrompts:
 
         assert prompts == ["converted_prompt_with_metrics"]
         # Verify convert_prompt_to_read was called with include_metrics=True
-        prompt_service.convert_prompt_to_read.assert_called_once_with(mock_prompt, include_metrics=True)
+        prompt_service.convert_prompt_to_read.assert_called_once_with(mock_prompt, include_metrics=True, server_id="server-1")
 
     @pytest.mark.asyncio
     async def test_include_inactive_true_skips_enabled_filter(self, prompt_service):

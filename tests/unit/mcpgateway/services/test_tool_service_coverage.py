@@ -182,7 +182,7 @@ def mock_tool(mock_gateway):
     tool.federation_source = None
     tool.metrics = []
     tool.execution_count = 0
-    tool.metrics_summary = {
+    tool.metrics_summary = lambda server_id=None: {
         "total_executions": 0,
         "successful_executions": 0,
         "failed_executions": 0,
@@ -3306,7 +3306,7 @@ class TestConvertToolToReadMetrics:
             passthrough_headers=[],
             execution_count=None,
             metrics=[],
-            metrics_summary={
+            metrics_summary=lambda server_id=None: {
                 "total_executions": 5,
                 "successful_executions": 4,
                 "failed_executions": 1,
@@ -3372,7 +3372,7 @@ class TestConvertToolToReadMetrics:
             passthrough_headers=[],
             execution_count=None,
             metrics=[],
-            metrics_summary={},
+            metrics_summary=lambda server_id=None: {},
             _sa_instance_state=MagicMock(),
         )
         result = tool_service.convert_tool_to_read(tool, include_metrics=False)

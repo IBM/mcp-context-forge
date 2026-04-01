@@ -49,9 +49,9 @@ def test_resource_with_metrics(test_db, test_server):
     # Associate with server
     test_server.resources.append(resource)
 
-    # Add a metric
+    # Add a metric with server_id
     now = datetime.now(timezone.utc)
-    metric = ResourceMetric(resource_id=resource_id, response_time=0.5, is_success=True, timestamp=now)
+    metric = ResourceMetric(resource_id=resource_id, server_id=test_server.id, response_time=0.5, is_success=True, timestamp=now)
     test_db.add(metric)
     test_db.commit()
     test_db.refresh(resource)
@@ -76,9 +76,9 @@ def test_prompt_with_metrics(test_db, test_server):
     # Associate with server
     test_server.prompts.append(prompt)
 
-    # Add a metric
+    # Add a metric with server_id
     now = datetime.now(timezone.utc)
-    metric = PromptMetric(prompt_id=prompt_id, response_time=0.5, is_success=True, timestamp=now)
+    metric = PromptMetric(prompt_id=prompt_id, server_id=test_server.id, response_time=0.5, is_success=True, timestamp=now)
     test_db.add(metric)
     test_db.commit()
     test_db.refresh(prompt)

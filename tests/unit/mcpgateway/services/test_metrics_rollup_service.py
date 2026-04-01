@@ -685,6 +685,7 @@ class TestRollupInternals:
             interaction_type = MagicMock()
             tool_id = MagicMock()
             tool_name = MagicMock()
+            server_id = MagicMock()
 
             def __init__(self, **kwargs):
                 for key, value in kwargs.items():
@@ -1235,6 +1236,7 @@ class TestRollupInternals:
             interaction_type = MagicMock()
             a2a_agent_id = MagicMock()
             agent_name = MagicMock()
+            server_id = MagicMock()
 
             def __init__(self, **kwargs):
                 for key, value in kwargs.items():
@@ -1285,6 +1287,7 @@ class TestRollupInternals:
             interaction_type = MagicMock()
             tool_id = MagicMock()
             tool_name = MagicMock()
+            server_id = MagicMock()
 
             def __init__(self, **kwargs):
                 for key, value in kwargs.items():
@@ -1345,6 +1348,7 @@ class TestRollupInternals:
             interaction_type = _Col(sentinel)
             a2a_agent_id = MagicMock()
             agent_name = MagicMock()
+            server_id = MagicMock()
 
             def __init__(self, **kwargs):
                 for key, value in kwargs.items():
@@ -1400,6 +1404,7 @@ class TestRollupInternals:
             interaction_type = MagicMock()
             tool_id = MagicMock()
             tool_name = MagicMock()
+            server_id = MagicMock()
 
             def __init__(self, **kwargs):
                 for key, value in kwargs.items():

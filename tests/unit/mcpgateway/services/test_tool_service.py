@@ -422,7 +422,7 @@ def mock_tool(mock_gateway):
     tool.max_response_time = None
     tool.avg_response_time = None
     tool.last_execution_time = None
-    tool.metrics_summary = {
+    tool.metrics_summary = lambda server_id=None: {
         "total_executions": 0,
         "successful_executions": 0,
         "failed_executions": 0,
@@ -613,7 +613,7 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_includes_metrics(self, tool_service, mock_tool):
         """Verify include_metrics populates metrics and execution_count."""
-        mock_tool.metrics_summary = {
+        mock_tool.metrics_summary = lambda server_id=None: {
             "total_executions": 3,
             "successful_executions": 2,
             "failed_executions": 1,
@@ -1311,7 +1311,7 @@ class TestToolService:
 
         assert tools == ["converted_tool"]
         service.convert_tool_to_read.assert_called_once_with(
-            mock_tool, include_metrics=False, include_auth=False, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None
+            mock_tool, include_metrics=False, include_auth=False, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None, server_id="server123"
         )
 
     @pytest.mark.asyncio
@@ -1395,6 +1395,7 @@ class TestToolService:
             requesting_user_email=None,
             requesting_user_is_admin=False,
             requesting_user_team_roles=None,
+            server_id="server123",
         )
 
     @pytest.mark.asyncio
@@ -5768,7 +5769,7 @@ class TestToolServiceHelpers:
                 team_id=None,
                 owner_email="owner@example.com",
                 visibility="private",
-                metrics_summary={"total_executions": 2},
+                metrics_summary=lambda server_id=None: {"total_executions": 2},
                 gateway_slug="",
                 team=None,
             )
