@@ -15,6 +15,7 @@ CARGO ?= cargo
 RUSTUP ?= rustup
 FEATURE_RMCP := rmcp-upstream-client
 FEATURE_TELEMETRY := runtime-telemetry
+TELEMETRY_RUSTFLAGS ?= --cfg tokio_unstable
 CLIPPY_FLAGS ?= -W clippy::pedantic
 CLIPPY_CONF_DIR ?= $(CURDIR)
 RUN_ARGS ?=
@@ -70,12 +71,12 @@ build-release-rmcp:
 # help: build-telemetry            - Run cargo build with runtime telemetry feature
 build-telemetry:
 	@echo "Running cargo build --features $(FEATURE_TELEMETRY)..."
-	@$(CARGO) build --features $(FEATURE_TELEMETRY)
+	@RUSTFLAGS="$(TELEMETRY_RUSTFLAGS) $${RUSTFLAGS:-}" $(CARGO) build --features $(FEATURE_TELEMETRY)
 
 # help: build-release-telemetry    - Run cargo build --release with runtime telemetry feature
 build-release-telemetry:
 	@echo "Running cargo build --release --features $(FEATURE_TELEMETRY)..."
-	@$(CARGO) build --release --features $(FEATURE_TELEMETRY)
+	@RUSTFLAGS="$(TELEMETRY_RUSTFLAGS) $${RUSTFLAGS:-}" $(CARGO) build --release --features $(FEATURE_TELEMETRY)
 
 # help: run                        - Run cargo run (override with RUN_ARGS='...')
 run:
@@ -100,7 +101,7 @@ run-release-rmcp:
 # help: run-telemetry              - Run cargo run with runtime telemetry feature
 run-telemetry:
 	@echo "Running cargo run --features $(FEATURE_TELEMETRY) $(RUN_ARGS)..."
-	@$(CARGO) run --features $(FEATURE_TELEMETRY) -- $(RUN_ARGS)
+	@RUSTFLAGS="$(TELEMETRY_RUSTFLAGS) $${RUSTFLAGS:-}" $(CARGO) run --features $(FEATURE_TELEMETRY) -- $(RUN_ARGS)
 
 # help: clean                      - Remove cargo build artifacts
 clean:
@@ -136,12 +137,12 @@ test-release-rmcp:
 # help: test-telemetry             - Run cargo test with runtime telemetry feature
 test-telemetry:
 	@echo "Running cargo test --features $(FEATURE_TELEMETRY)..."
-	@$(CARGO) test --features $(FEATURE_TELEMETRY)
+	@RUSTFLAGS="$(TELEMETRY_RUSTFLAGS) $${RUSTFLAGS:-}" $(CARGO) test --features $(FEATURE_TELEMETRY)
 
 # help: test-release-telemetry     - Run cargo test --release with runtime telemetry feature
 test-release-telemetry:
 	@echo "Running cargo test --release --features $(FEATURE_TELEMETRY)..."
-	@$(CARGO) test --release --features $(FEATURE_TELEMETRY)
+	@RUSTFLAGS="$(TELEMETRY_RUSTFLAGS) $${RUSTFLAGS:-}" $(CARGO) test --release --features $(FEATURE_TELEMETRY)
 
 # help: doc-test                   - Run cargo test --doc
 doc-test:
@@ -172,7 +173,7 @@ check-rmcp:
 # help: check-telemetry            - Run cargo check with runtime telemetry feature
 check-telemetry:
 	@echo "Running cargo check --features $(FEATURE_TELEMETRY)..."
-	@$(CARGO) check --features $(FEATURE_TELEMETRY)
+	@RUSTFLAGS="$(TELEMETRY_RUSTFLAGS) $${RUSTFLAGS:-}" $(CARGO) check --features $(FEATURE_TELEMETRY)
 
 # help: check-all-targets          - Run cargo check --all-targets --all-features
 check-all-targets:
@@ -297,4 +298,4 @@ deny:
 # help: generate-trace             - Generate a Dial9 telemetry trace with representative workload
 generate-trace:
 	@echo "Generating Dial9 telemetry trace..."
-	@bash ../../artifacts/dial9/generate-trace.sh
+	@bash ../../scripts/generate-dial9-trace.sh

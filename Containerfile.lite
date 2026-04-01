@@ -88,10 +88,13 @@ WORKDIR /build/tools_rust/mcp_runtime
 # Build the experimental Rust MCP runtime binary (only if ENABLE_RUST=true)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         RUST_MCP_FEATURES=""; \
+        RUST_MCP_RUSTFLAGS="${RUSTFLAGS:-}"; \
         if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
             RUST_MCP_FEATURES="rmcp-upstream-client"; \
         fi; \
         if [ "$ENABLE_RUST_MCP_TELEMETRY" = "true" ]; then \
+            RUST_MCP_RUSTFLAGS="--cfg tokio_unstable ${RUST_MCP_RUSTFLAGS}"; \
+            export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"; \
             if [ -n "$RUST_MCP_FEATURES" ]; then \
                 RUST_MCP_FEATURES="$RUST_MCP_FEATURES,runtime-telemetry"; \
             else \
@@ -99,9 +102,9 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             fi; \
         fi; \
         if [ -n "$RUST_MCP_FEATURES" ]; then \
-            cargo build --release --features "$RUST_MCP_FEATURES"; \
+            RUSTFLAGS="$RUST_MCP_RUSTFLAGS" cargo build --release --features "$RUST_MCP_FEATURES"; \
         else \
-            cargo build --release; \
+            RUSTFLAGS="$RUST_MCP_RUSTFLAGS" cargo build --release; \
         fi && \
         cp target/release/contextforge_mcp_runtime target/release/contextforge-mcp-runtime && \
         echo "✅ Rust MCP runtime built successfully"; \
