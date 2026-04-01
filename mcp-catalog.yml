@@ -1412,6 +1412,18 @@ catalog_servers:
     requires_api_key: false
     tags: ["time", "timezone", "local", "development"]
 
+  - id: strale
+    name: "Strale"
+    category: "Data & Compliance"
+    url: "https://api.strale.io/mcp"
+    auth_type: "API Key"
+    provider: "Strale"
+    transport: "STREAMABLEHTTP"
+    secure: true
+    description: "Trust and quality infrastructure for AI agents. 250+ quality-scored capabilities for IBAN validation, company registry lookups, sanctions screening, web scraping, lead enrichment, and Web3 risk analysis. Free tier available."
+    requires_api_key: true
+    tags: ["compliance", "validation", "company-data", "sanctions", "kyb", "web3", "enrichment", "trust"]
+
 # Categories for filtering
 categories:
   - Project Management
