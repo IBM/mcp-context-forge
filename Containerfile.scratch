@@ -321,6 +321,7 @@ COPY --from=builder ${ROOTFS_PATH}/ /
 # - Disable pip version check to reduce startup time
 # ----------------------------------------------------------------------------
 ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONPATH="/app" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \

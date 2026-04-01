@@ -117,8 +117,10 @@ EXPOSE 4444
 # Set the runtime user
 USER 1001
 
-# Ensure virtual environment binaries are in PATH
-ENV PATH="/app/.venv/bin:$PATH"
+# Ensure virtual environment binaries are in PATH and project modules resolve
+# even when containers run an alternate Python entrypoint.
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app"
 
 # HTTP server selection via HTTP_SERVER environment variable:
 #   - gunicorn : Python-based with Uvicorn workers (default)

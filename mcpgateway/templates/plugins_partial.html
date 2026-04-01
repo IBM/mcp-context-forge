@@ -319,12 +319,6 @@
         >
           Permissive
         </span>
-        {% else %}
-        <span
-          class="px-2 py-1 bg-gray-100 text-gray-800 text-xs font-medium rounded dark:bg-gray-700 dark:text-gray-300"
-        >
-          Disabled
-        </span>
         {% endif %}
 
         <!-- Implementation Badge -->
@@ -348,17 +342,13 @@
       <!-- Tags -->
       {% if plugin.tags %}
       <div class="flex flex-wrap gap-1 mb-4">
-        {% for tag in plugin.tags[:3] %}
+        {% for tag in plugin.tags %}
         <span
           class="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded dark:bg-gray-700 dark:text-gray-300"
         >
           {% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}
         </span>
-        {% endfor %} {% if plugin.tags|length > 3 %}
-        <span class="px-2 py-1 text-gray-500 text-xs">
-          +{{ plugin.tags|length - 3 }} more
-        </span>
-        {% endif %}
+        {% endfor %}
       </div>
       {% endif %}
 
@@ -367,12 +357,10 @@
       <div class="text-xs text-gray-500 dark:text-gray-400 mb-4">
         <div class="font-medium mb-1">Hooks:</div>
         <div class="flex flex-wrap gap-1">
-          {% for hook in plugin.hooks[:2] %}
+          {% for hook in plugin.hooks %}
           <span class="text-xs">{{ hook.replace('_', ' ') }}</span>
-          {% if not loop.last %}<span>,</span>{% endif %} {% endfor %} {% if
-          plugin.hooks|length > 2 %}
-          <span>... ({{ plugin.hooks|length }} total)</span>
-          {% endif %}
+          {% if not loop.last %}<span>,</span>{% endif %}
+          {% endfor %}
         </div>
       </div>
       {% endif %}
