@@ -8,6 +8,11 @@
 
 **ContextForge 1.0.0** marks the first General Availability release.
 
+### Changed
+
+#### **👥 RBAC / Teams**
+* Added `tools.execute` permission to team-scoped `viewer` role, enabling team members to execute MCP tools without requiring `developer` role (which grants full CRUD permissions). `platform_viewer` (global scope) remains read-only. ([#3882](https://github.com/IBM/mcp-context-forge/pull/3882), [#3881](https://github.com/IBM/mcp-context-forge/issues/3881))
+
 ### ⚠️ Breaking Changes
 
 #### **👥 `MAX_MEMBERS_PER_TEAM` No Longer Baked Into Team Rows** ([#3682](https://github.com/IBM/mcp-context-forge/pull/3682), [#3588](https://github.com/IBM/mcp-context-forge/issues/3588))
