@@ -294,12 +294,13 @@ class ResourceService(BaseService):
             >>> # Fake metrics
             >>> m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
             >>> m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
+            >>> metrics_data = {"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
+            ...                 "failure_rate": 0.5, "min_response_time": 0.1, "max_response_time": 0.3,
+            ...                 "avg_response_time": 0.2, "last_execution_time": now}
             >>> r = SimpleNamespace(
             ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
             ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2],
-            ...     metrics_summary={"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
-            ...                      "failure_rate": 0.5, "min_response_time": 0.1, "max_response_time": 0.3,
-            ...                      "avg_response_time": 0.2, "last_execution_time": now}
+            ...     metrics_summary=lambda server_id=None: metrics_data
             ... )
             >>> out = svc.convert_resource_to_read(r, include_metrics=True)
             >>> out.metrics.total_executions
