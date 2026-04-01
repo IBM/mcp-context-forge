@@ -1804,7 +1804,17 @@ async def list_prompts() -> List[types.Prompt]:
         try:
             async with get_db() as db:
                 prompts = await prompt_service.list_server_prompts(db, server_id, user_email=user_email, token_teams=token_teams)
-                return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
+                return [
+                    types.Prompt(
+                        name=prompt.name,
+                        description=prompt.description,
+                        arguments=[
+                            types.PromptArgument(name=arg.name, description=arg.description, required=arg.required)
+                            for arg in (prompt.arguments or [])
+                        ],
+                    )
+                    for prompt in prompts
+                ]
         except Exception as e:
             logger.exception("Error listing Prompts:%s", e)
             return []
@@ -1812,7 +1822,17 @@ async def list_prompts() -> List[types.Prompt]:
         try:
             async with get_db() as db:
                 prompts, _ = await prompt_service.list_prompts(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
-                return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
+                return [
+                    types.Prompt(
+                        name=prompt.name,
+                        description=prompt.description,
+                        arguments=[
+                            types.PromptArgument(name=arg.name, description=arg.description, required=arg.required)
+                            for arg in (prompt.arguments or [])
+                        ],
+                    )
+                    for prompt in prompts
+                ]
         except Exception as e:
             logger.exception("Error listing prompts:%s", e)
             return []
