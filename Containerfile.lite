@@ -94,7 +94,14 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         fi; \
         if [ "$ENABLE_RUST_MCP_TELEMETRY" = "true" ]; then \
             RUST_MCP_RUSTFLAGS="--cfg tokio_unstable ${RUST_MCP_RUSTFLAGS}"; \
-            export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"; \
+            if [ -z "${CARGO_BUILD_JOBS:-}" ]; then \
+                detected_jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"; \
+                if [ "$detected_jobs" -gt 2 ]; then \
+                    export CARGO_BUILD_JOBS=2; \
+                else \
+                    export CARGO_BUILD_JOBS=1; \
+                fi; \
+            fi; \
             if [ -n "$RUST_MCP_FEATURES" ]; then \
                 RUST_MCP_FEATURES="$RUST_MCP_FEATURES,runtime-telemetry"; \
             else \

@@ -34,12 +34,56 @@ cleanup() {
 
 trap cleanup EXIT
 
+ensure_nonempty_file() {
+  local file_path="$1"
+  local description="$2"
+
+  if [[ ! -s "$file_path" ]]; then
+    echo "${description} is missing or empty: ${file_path}" >&2
+    exit 1
+  fi
+}
+
+pick_trace_file() {
+  local trace_dir="$1"
+  local finalized_trace="$2"
+  local trace_file=""
+
+  shopt -s nullglob
+  local trace_candidates=("$trace_dir"/*.bin)
+  shopt -u nullglob
+
+  if [[ "${#trace_candidates[@]}" -gt 0 ]]; then
+    trace_file="${trace_candidates[0]}"
+  elif [[ -f "$trace_dir/trace.0.bin.active" ]]; then
+    cp "$trace_dir/trace.0.bin.active" "$finalized_trace"
+    trace_file="$finalized_trace"
+  fi
+
+  if [[ -z "$trace_file" ]]; then
+    echo "No Dial9 trace files were created in $trace_dir" >&2
+    exit 1
+  fi
+
+  ensure_nonempty_file "$trace_file" "Dial9 trace artifact"
+  printf '%s\n' "$trace_file"
+}
+
+build_local_runtime() {
+  echo "Building telemetry-enabled runtime release binary..."
+  (
+    cd "$RUNTIME_DIR"
+    make build-release-telemetry
+  )
+}
+
 run_local_trace() {
-echo "Building telemetry-enabled runtime with tokio_unstable hooks..."
-(
-  cd "$RUNTIME_DIR"
-  RUSTFLAGS="--cfg tokio_unstable ${RUSTFLAGS:-}" cargo build --features runtime-telemetry
-)
+local exit_after_startup_ms=$(((TRACE_DURATION_SECONDS * 1000) + 5000))
+if (( exit_after_startup_ms < 15000 )); then
+  exit_after_startup_ms=15000
+fi
+
+build_local_runtime
 
 echo "Starting runtime on ${RUNTIME_URL}..."
 (
@@ -48,9 +92,9 @@ echo "Starting runtime on ${RUNTIME_URL}..."
   export MCP_RUST_TELEMETRY_PATH="$TRACE_PATH"
   export MCP_RUST_LOG=info
   export TOKIO_WORKER_THREADS="$RUNTIME_WORKERS"
-  ./target/debug/contextforge_mcp_runtime \
+  ./target/release/contextforge_mcp_runtime \
     --listen-http "127.0.0.1:${PORT}" \
-    --exit-after-startup-ms 8000
+    --exit-after-startup-ms "$exit_after_startup_ms"
 ) >"$LOG_PATH" 2>&1 &
 runtime_pid=$!
 
@@ -117,15 +161,91 @@ wait "$runtime_pid"
 trap - EXIT
 }
 
+register_fast_test_gateway() {
+  local gateway_url="$1"
+  local admin_token="$2"
+  local trace_run_id="$3"
+  local gateway_name="fast_test_${trace_run_id}"
+  local virtual_server_id="trace${trace_run_id}"
+
+  GATEWAY_URL="$gateway_url" \
+  ADMIN_TOKEN="$admin_token" \
+  TRACE_GATEWAY_NAME="$gateway_name" \
+  TRACE_VIRTUAL_SERVER_ID="$virtual_server_id" \
+  /bin/bash -eu -o pipefail <<'EOF'
+python3 - <<'PY'
+import json
+import os
+import time
+import urllib.request
+
+gateway_url = os.environ["GATEWAY_URL"]
+token = os.environ["ADMIN_TOKEN"]
+gateway_name = os.environ["TRACE_GATEWAY_NAME"]
+virtual_server_id = os.environ["TRACE_VIRTUAL_SERVER_ID"]
+
+def api_request(method, path, data=None):
+    req = urllib.request.Request(f"{gateway_url}{path}", method=method)
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type", "application/json")
+    if data is not None:
+        req.data = json.dumps(data).encode("utf-8")
+    with urllib.request.urlopen(req, timeout=30) as response:
+        body = response.read()
+        return json.loads(body.decode("utf-8")) if body else None
+
+for _ in range(30):
+    try:
+        api_request("GET", "/gateways")
+        break
+    except Exception:
+        time.sleep(2)
+else:
+    raise SystemExit("gateway admin API never became ready")
+
+result = api_request("POST", "/gateways", {
+    "name": gateway_name,
+    "url": "http://fast_test_server:8880/mcp",
+    "transport": "STREAMABLEHTTP",
+})
+gateway_id = result.get("id", "")
+
+tool_ids = []
+for _ in range(30):
+    time.sleep(1)
+    tools = api_request("GET", "/tools") or []
+    tool_ids = [t["id"] for t in tools if t.get("gatewayId") == gateway_id]
+    if tool_ids:
+        break
+
+api_request("POST", "/servers", {
+    "server": {
+        "id": virtual_server_id,
+        "name": f"Fast Test Server {virtual_server_id[:8]}",
+        "description": "Virtual server exposing Fast Test MCP tools",
+        "associated_tools": tool_ids,
+        "associated_resources": [],
+        "associated_prompts": [],
+    }
+})
+PY
+EOF
+
+  printf '%s\n' "$virtual_server_id"
+}
+
 run_compose_echo_delay_trace() {
   local trace_mount_dir="$ARTIFACT_DIR/${TRACE_STEM}-telemetry"
   local override_file="$ARTIFACT_DIR/${TRACE_STEM}.compose.override.yml"
-  local summary_report="$ROOT_DIR/reports/${TRACE_STEM}.locust.txt"
+  local report_dir="$ROOT_DIR/reports"
+  local summary_report="$report_dir/${TRACE_STEM}.locust.txt"
   local summary_file="$ARTIFACT_DIR/${TRACE_STEM}.locust.txt"
   local finalized_trace="$ARTIFACT_DIR/${TRACE_STEM}.0.bin"
   local gateway_url="http://127.0.0.1:${GATEWAY_PORT}"
+  local trace_run_id=""
+  local virtual_server_id=""
 
-  mkdir -p "$trace_mount_dir"
+  mkdir -p "$trace_mount_dir" "$report_dir"
 
   cat >"$override_file" <<'EOF'
 services:
@@ -253,80 +373,13 @@ EOF
     /bin/bash -eu -o pipefail -c "source \"$VENV_DIR/bin/activate\" && python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret 'my-test-key-but-now-longer-than-32-bytes' --algo HS256 2>/dev/null"
   )"
 
-  GATEWAY_URL="$gateway_url" ADMIN_TOKEN="$admin_token" /bin/bash -eu -o pipefail <<'EOF'
-python3 - <<'PY'
-import json
-import os
-import time
-import urllib.error
-import urllib.request
-
-gateway_url = os.environ["GATEWAY_URL"]
-token = os.environ["ADMIN_TOKEN"]
-virtual_server_id = "b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8"  # pragma: allowlist secret
-
-def api_request(method, path, data=None):
-    req = urllib.request.Request(f"{gateway_url}{path}", method=method)
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Content-Type", "application/json")
-    if data is not None:
-        req.data = json.dumps(data).encode("utf-8")
-    with urllib.request.urlopen(req, timeout=30) as response:
-        body = response.read()
-        return json.loads(body.decode("utf-8")) if body else None
-
-for _ in range(30):
-    try:
-        api_request("GET", "/gateways")
-        break
-    except Exception:
-        time.sleep(2)
-else:
-    raise SystemExit("gateway admin API never became ready")
-
-try:
-    api_request("DELETE", f"/servers/{virtual_server_id}")
-except Exception:
-    pass
-
-try:
-    gateways = api_request("GET", "/gateways") or []
-    for gw in gateways:
-        if gw.get("name") == "fast_test":
-            try:
-                api_request("DELETE", f"/gateways/{gw['id']}")
-            except Exception:
-                pass
-except Exception:
-    pass
-
-result = api_request("POST", "/gateways", {
-    "name": "fast_test",
-    "url": "http://fast_test_server:8880/mcp",
-    "transport": "STREAMABLEHTTP",
-})
-gateway_id = result.get("id", "")
-
-tool_ids = []
-for _ in range(30):
-    time.sleep(1)
-    tools = api_request("GET", "/tools") or []
-    tool_ids = [t["id"] for t in tools if t.get("gatewayId") == gateway_id]
-    if tool_ids:
-        break
-
-api_request("POST", "/servers", {
-    "server": {
-        "id": virtual_server_id,
-        "name": "Fast Test Server",
-        "description": "Virtual server exposing Fast Test MCP tools",
-        "associated_tools": tool_ids,
-        "associated_resources": [],
-        "associated_prompts": [],
-    }
-})
+  trace_run_id="$(
+    python3 - <<'PY'
+import uuid
+print(uuid.uuid4().hex)
 PY
-EOF
+  )"
+  virtual_server_id="$(register_fast_test_gateway "$gateway_url" "$admin_token" "$trace_run_id")"
 
   echo "Running Locust echo-delay workload..."
   local locust_exit_code=0
@@ -336,6 +389,7 @@ EOF
       uv pip show locust >/dev/null 2>&1 || uv pip install locust requests PyJWT && \
       MCPGATEWAY_BEARER_TOKEN=\"$admin_token\" \
       LOCUST_WXO_AUTH_ENABLED=false \
+      ECHO_DELAY_SERVER_ID=\"$virtual_server_id\" \
       ECHO_DELAY_MS=\"$ECHO_DELAY_MS\" \
       locust -f tests/loadtest/locustfile_echo_delay.py \
         --host=\"$gateway_url\" \
@@ -349,24 +403,14 @@ EOF
   ) || locust_exit_code=$?
 
   cp "$summary_report" "$summary_file"
+  ensure_nonempty_file "$summary_file" "Locust summary"
   sleep 2
 
-  shopt -s nullglob
-  trace_files=("$trace_mount_dir"/*.bin)
-  shopt -u nullglob
-
-  if [[ "${#trace_files[@]}" -eq 0 ]] && [[ -f "$trace_mount_dir/trace.0.bin.active" ]]; then
-    cp "$trace_mount_dir/trace.0.bin.active" "$finalized_trace"
-    trace_files=("$finalized_trace")
-  fi
-
-  if [[ "${#trace_files[@]}" -eq 0 ]]; then
-    echo "No compose-backed Dial9 trace files were created in $trace_mount_dir" >&2
-    exit 1
-  fi
+  local trace_file
+  trace_file="$(pick_trace_file "$trace_mount_dir" "$finalized_trace")"
 
   printf 'Generated trace artifact(s):\n'
-  printf '  %s\n' "${trace_files[@]}"
+  printf '  %s\n' "$trace_file"
   printf 'Locust summary:\n  %s\n' "$summary_file"
   trap - EXIT
   compose_trace_cleanup
@@ -398,6 +442,10 @@ if [[ "${#trace_files[@]}" -eq 0 ]]; then
   echo "No finalized Dial9 trace files were created; see ${LOG_PATH}" >&2
   exit 1
 fi
+
+for trace_file in "${trace_files[@]}"; do
+  ensure_nonempty_file "$trace_file" "Dial9 trace artifact"
+done
 
 printf 'Generated trace artifact(s):\n'
 printf '  %s\n' "${trace_files[@]}"
