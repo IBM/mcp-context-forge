@@ -133,6 +133,7 @@ docs/docs/security/report.md
 # ========================================
 # IDE & Editor
 # ========================================
+.codex
 .vscode
 .vscode/
 .idea/
