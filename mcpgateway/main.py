@@ -11112,7 +11112,7 @@ async def readiness_check(response: Response):
 
     This endpoint checks:
     - Database connectivity (via asyncio.to_thread to avoid blocking)
-    - Redis availability (if enabled)
+    - Cache availability (if enabled)
 
     Returns HTTP 200 when ready, HTTP 503 when not ready.
 
@@ -11142,7 +11142,7 @@ async def readiness_check(response: Response):
         try:
             # is_redis_available() checks if Redis is available and responding to ping.
             if await is_redis_available():
-                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_200_OK, message="ready"))
+                status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_200_OK, message="Cache Connection Successful"))
             else:
                 status_items.append(HealthStatusItem(name="Cache", status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message="Cannot connect to Cache"))
         except Exception as e:

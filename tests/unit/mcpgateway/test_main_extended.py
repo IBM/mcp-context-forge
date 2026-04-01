@@ -10315,7 +10315,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available)
         
         # Configure Redis to be enabled for this test
-        monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
+        monkeypatch.setattr(main_mod.settings, "cache_type", "Cache Connection Successful")
         monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
 
         response_obj = FastAPIResponse()
