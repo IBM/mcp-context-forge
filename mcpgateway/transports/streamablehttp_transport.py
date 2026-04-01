@@ -188,12 +188,7 @@ def _record_mcp_auth_cache_event(outcome: str) -> None:
 # SECURITY: Uses [^/]+ (any non-slash characters) instead of a restrictive hex-only
 # class to ensure ALL server-scoped paths are captured.  A narrow regex caused non-hex
 # IDs (e.g. "xyz") to silently fall through to unscoped global behaviour (#3891).
-# Matches both URL patterns:
-#   /servers/{server_id}/mcp  (canonical, RFC 9728 compliant)
-#   /mcp/{server_id}          (Starlette mount shorthand routed by the /mcp mount)
-_SERVER_ID_RE: Pattern[str] = re.compile(
-    r"(?:^/servers/(?P<server_id>[^/]+)/mcp|^/mcp/(?P<mcp_server_id>[^/]+))"
-)
+_SERVER_ID_RE: Pattern[str] = re.compile(r"^/servers/(?P<server_id>[^/]+)/mcp")
 
 # Pattern that detects a server-scoped MCP path even when _SERVER_ID_RE doesn't
 # match (e.g. empty segment: /servers//mcp).  Used as a defense-in-depth guard.
@@ -202,15 +197,6 @@ _SERVER_SCOPED_PATH_RE: Pattern[str] = re.compile(r"^/servers/.*/mcp(?:/)?$")
 # Sentinel returned by _validate_server_id to signal that an error response
 # has already been sent and the caller should return immediately.
 _REJECT = object()
-
-
-def _extract_server_id(match: re.Match) -> str:
-    """Extract server ID from a _SERVER_ID_RE match.
-
-    Handles both URL patterns: ``/servers/{id}/mcp`` (group ``server_id``)
-    and ``/mcp/{id}`` (group ``mcp_server_id``).
-    """
-    return match.group("server_id") or match.group("mcp_server_id")
 
 
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
@@ -1640,7 +1626,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         path = request.url.path
         match = _SERVER_ID_RE.search(path)
         if match:
-            s_id = _extract_server_id(match)
+            s_id = match.group("server_id")
 
         # Extract headers
         req_headers = dict(request.headers)
@@ -2606,7 +2592,7 @@ class SessionManagerWrapper:
             sent and the caller should return immediately.
         """
         if match:
-            server_id = _extract_server_id(match)
+            server_id = match.group("server_id")
             # SECURITY: Validate that the server_id exists in the database
             # to prevent unauthorized access via invalid server IDs.
             # Uses the shared BaseService.entity_exists() for a lightweight
@@ -2723,7 +2709,7 @@ class SessionManagerWrapper:
         # This mirrors /servers/{id}/sse and /servers/{id}/message guards.
         user_context = user_context_var.get()
         if match and _should_enforce_streamable_rbac(user_context):
-            _server_id = _extract_server_id(match)
+            _server_id = match.group("server_id")
             has_server_access = await _check_streamable_permission(
                 user_context=user_context,
                 permission="servers.use",
@@ -2800,7 +2786,7 @@ class SessionManagerWrapper:
 
                 # Inject server_id from URL path into params for /rpc routing
                 if match:
-                    server_id = _extract_server_id(match)
+                    server_id = match.group("server_id")
                     if not isinstance(json_body.get("params"), dict):
                         json_body["params"] = {}
                     json_body["params"]["server_id"] = server_id
@@ -2967,7 +2953,7 @@ class SessionManagerWrapper:
 
                         # Inject server_id from URL path into params for /rpc routing
                         if match:
-                            server_id = _extract_server_id(match)
+                            server_id = match.group("server_id")
                             if not isinstance(json_body.get("params"), dict):
                                 json_body["params"] = {}
                             json_body["params"]["server_id"] = server_id
@@ -3340,7 +3326,7 @@ class _StreamableHttpAuthHandler:
         # discover the OAuth server to authenticate.  (Fixes #3752)
         match = _SERVER_ID_RE.search(path)
         if match:
-            per_server_id = _extract_server_id(match)
+            per_server_id = match.group("server_id")
             try:
                 await _check_server_oauth_enforcement(per_server_id, {"is_authenticated": False})
             except OAuthRequiredError:
