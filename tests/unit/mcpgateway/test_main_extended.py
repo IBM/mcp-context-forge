@@ -10054,7 +10054,6 @@ class TestRemainingCoverageGaps:
         assert result["mcp_runtime"]["resume_core_mode"] == "python"
         assert result["mcp_runtime"]["live_stream_core_mode"] == "python"
         assert result["mcp_runtime"]["session_auth_reuse_mode"] == "python"
-        
         # Check response headers
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "python-rust-built-disabled"
         assert response.headers["x-contextforge-mcp-transport-mounted"] == "python"
@@ -10308,33 +10307,26 @@ class TestRemainingCoverageGaps:
                 return None
 
         monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
-        
         # Mock Redis availability check to return True (healthy)
         async def mock_is_redis_available():
             return True
         monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available)
-        
         # Configure Redis to be enabled for this test
         monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
         monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
 
         response_obj = FastAPIResponse()
         result = await main_mod.readiness_check(response_obj)
-
         # Check overall status
         assert result.status == "ready"
         assert response_obj.status_code == 200
-        
         # Check status_items for Database and Redis
-        print("iiiitemmmms", result)
         assert len(result.status_items) == 2
-        
         # Check Database status
         db_status = next((item for item in result.status_items if item.name == "Database"), None)
         assert db_status is not None
         assert db_status.status_code == 200
         assert db_status.message == "Database Connection Successful"
-        
         # Check Redis status
         redis_status = next((item for item in result.status_items if item.name == "Cache"), None)
         assert redis_status is not None
