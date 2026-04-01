@@ -20923,8 +20923,26 @@ async function refreshGatewayTools(gatewayId, gatewayName, buttonEl) {
             `${gatewayName}: ${data.toolsAdded ?? 0} added, ${data.toolsUpdated ?? 0} updated, ${data.toolsRemoved ?? 0} removed`,
         );
 
-        // Reload the gateways partial table via HTMX to reflect updated tool counts / button labels
-        htmx.ajax("GET", `${window.ROOT_PATH}/admin/gateways/partial`, {
+        // Reload the gateways partial table via HTMX to reflect updated tool counts / button labels.
+        // Use buildTableUrl to preserve current pagination, search, filter, and team scope.
+        const _refreshParams = {
+            include_inactive: (
+                document.getElementById("show-inactive-gateways")?.checked ??
+                true
+            ).toString(),
+            q: document.getElementById("gateways-search-input")?.value || "",
+            tags: document.getElementById("gateways-tag-filter")?.value || "",
+        };
+        const _teamId = getCurrentTeamId();
+        if (_teamId) {
+            _refreshParams.team_id = _teamId;
+        }
+        const reloadUrl = buildTableUrl(
+            "gateways",
+            `${window.ROOT_PATH}/admin/gateways/partial`,
+            _refreshParams,
+        );
+        htmx.ajax("GET", reloadUrl, {
             target: "#gateways-table",
             swap: "outerHTML",
         });
