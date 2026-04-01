@@ -3268,6 +3268,15 @@ class _StreamableHttpAuthHandler:
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
 
+        # Reject undocumented /mcp/* sub-paths that the Starlette mount would
+        # otherwise route to the global MCP handler.  Only /mcp, /mcp/,
+        # /mcp/sse, and /mcp/message are valid direct-access endpoints;
+        # server-scoped access uses /servers/{id}/mcp (rewritten by middleware).
+        if path.startswith("/mcp/"):
+            _sub = normalized.removeprefix("/mcp")
+            if _sub and _sub not in ("/sse", "/message"):
+                return await self._send_error(detail="Not found", status_code=404)
+
         # Reset per-request OAuth enforcement cache so keep-alive connections
         # re-evaluate on every request instead of inheriting a stale True.
         _oauth_checked_var.set(False)

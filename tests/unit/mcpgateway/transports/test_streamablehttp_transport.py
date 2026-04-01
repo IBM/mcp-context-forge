@@ -1781,55 +1781,17 @@ async def test_streamable_http_auth_no_authorization_permissive_mode(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_streamable_http_auth_mcp_server_id_path_requires_auth_strict(monkeypatch):
-    """Regression: /mcp/{server_id} MUST enforce auth in strict mode.
+@pytest.mark.parametrize("path", ["/mcp/abc123def", "/mcp/test", "/mcp/../admin", "/mcp/nonexistent-id"])
+async def test_streamable_http_auth_rejects_undocumented_mcp_subpaths(monkeypatch, path):
+    """Regression: undocumented /mcp/* sub-paths are rejected with 404.
 
     Before fix, the auth gate only matched paths ending with /mcp. Since
     /mcp/{server_id} ends with the server ID (not /mcp), authenticate()
-    returned True immediately — skipping ALL authentication.  (Fixes #3812)
+    returned True immediately — skipping ALL auth and serving tools via an
+    undocumented global alias.  Now these paths are rejected as 404 regardless
+    of auth mode, since /mcp/{id} is not a valid endpoint.  (Fixes #3812)
     """
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
-    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
-
-    scope = _make_scope("/mcp/abc123def")
-    called = []
-
-    async def send(msg):
-        called.append(msg)
-
-    result = await streamable_http_auth(scope, None, send)
-    assert result is False
-    assert called and called[0]["type"] == "http.response.start"
-    assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
-
-
-@pytest.mark.asyncio
-async def test_streamable_http_auth_mcp_server_id_path_permissive_public_only(monkeypatch):
-    """Regression: /mcp/{server_id} in permissive mode gets public-only scope, not full access."""
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
-    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
-
-    scope = _make_scope("/mcp/abc123def")
-    called = []
-
-    async def send(msg):
-        called.append(msg)
-
-    result = await streamable_http_auth(scope, None, send)
-    assert result is True
-    assert called == []
-
-    user_ctx = tr.user_context_var.get()
-    assert user_ctx.get("teams") == []  # Public-only
-    assert user_ctx.get("is_authenticated") is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/mcp/test", "/mcp/../admin", "/mcp/nonexistent-id"])
-async def test_streamable_http_auth_mcp_subpath_not_skipped(monkeypatch, path):
-    """Regression: arbitrary /mcp/* sub-paths must NOT skip auth."""
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
-    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
 
     scope = _make_scope(path)
     called = []
@@ -1839,7 +1801,25 @@ async def test_streamable_http_auth_mcp_subpath_not_skipped(monkeypatch, path):
 
     result = await streamable_http_auth(scope, None, send)
     assert result is False
-    assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+    assert called and called[0]["type"] == "http.response.start"
+    assert called[0]["status"] == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/mcp/abc123def", "/mcp/test"])
+async def test_streamable_http_auth_rejects_undocumented_mcp_subpaths_permissive(monkeypatch, path):
+    """Undocumented /mcp/* sub-paths rejected even in permissive mode (not an auth bypass)."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    scope = _make_scope(path)
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called[0]["status"] == 404
 
 
 @pytest.mark.asyncio
