@@ -1225,6 +1225,37 @@ class TestSchemaValidators:
         )
         assert gateway.gateway_mode == "direct_proxy"
 
+    def test_gateway_read_tool_count_defaults_to_zero(self):
+        """GatewayRead.tool_count should default to 0 and serialize as toolCount."""
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(
+            id="gw-tc",
+            name="Tool Count GW",
+            slug="tool-count-gw",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+        )
+        assert gateway.tool_count == 0
+        dumped = gateway.model_dump(by_alias=True)
+        assert dumped["toolCount"] == 0
+
+    def test_gateway_read_tool_count_set_explicitly(self):
+        """GatewayRead.tool_count should accept an explicit value."""
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(
+            id="gw-tc2",
+            name="Tool Count GW 2",
+            slug="tool-count-gw-2",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+            tool_count=5,
+        )
+        assert gateway.tool_count == 5
+        dumped = gateway.model_dump(by_alias=True)
+        assert dumped["toolCount"] == 5
+
     def test_resource_subscription_rejects_empty_subscriber_id(self):
         """ResourceSubscription should reject empty subscriber IDs."""
         from mcpgateway.schemas import ResourceSubscription
