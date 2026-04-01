@@ -198,6 +198,7 @@ _SERVER_SCOPED_PATH_RE: Pattern[str] = re.compile(r"^/servers/.*/mcp(?:/)?$")
 # has already been sent and the caller should return immediately.
 _REJECT = object()
 
+
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
 
@@ -3259,11 +3260,22 @@ class _StreamableHttpAuthHandler:
         path = self.scope.get("path", "")
         # Normalize trailing slash for consistent matching
         normalized = path.rstrip("/")
-        # Check if this is an MCP-related path that requires authentication
-        is_mcp_path = normalized.endswith("/mcp") or normalized == "/mcp" or normalized.endswith("/mcp/sse") or normalized.endswith("/mcp/message")
+        # Check if this is an MCP-related path that requires authentication.
+        # path.startswith("/mcp/") catches /mcp/{server_id} paths that the
+        # Starlette mount at /mcp routes but that don't endswith("/mcp").
+        is_mcp_path = normalized.endswith("/mcp") or normalized == "/mcp" or normalized.endswith("/mcp/sse") or normalized.endswith("/mcp/message") or path.startswith("/mcp/")
         if not is_mcp_path or path.startswith("/.well-known/"):
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
+
+        # Reject undocumented /mcp/* sub-paths that the Starlette mount would
+        # otherwise route to the global MCP handler.  Only /mcp, /mcp/,
+        # /mcp/sse, and /mcp/message are valid direct-access endpoints;
+        # server-scoped access uses /servers/{id}/mcp (rewritten by middleware).
+        if path.startswith("/mcp/"):
+            _sub = normalized.removeprefix("/mcp")
+            if _sub and _sub not in ("/sse", "/message"):
+                return await self._send_error(detail="Not found", status_code=404)
 
         # Reset per-request OAuth enforcement cache so keep-alive connections
         # re-evaluate on every request instead of inheriting a stale True.
@@ -3316,12 +3328,11 @@ class _StreamableHttpAuthHandler:
         if bearer_header_supplied:
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
 
-        # Strict mode: require authentication
-        if settings.mcp_require_auth:
-            return await self._send_error(detail="Authentication required for MCP endpoints", headers={"WWW-Authenticate": "Bearer"})
-
-        # Permissive mode: allow unauthenticated access with public-only scope
-        # BUT first check if this specific server requires OAuth (per-server enforcement)
+        # Per-server OAuth enforcement MUST run before the global auth check so that
+        # oauth_enabled servers always return 401 with resource_metadata URL (RFC 9728).
+        # Without this, strict mode (mcp_require_auth=True) returns a generic
+        # WWW-Authenticate: Bearer with no resource_metadata, and MCP clients cannot
+        # discover the OAuth server to authenticate.  (Fixes #3752)
         match = _SERVER_ID_RE.search(path)
         if match:
             per_server_id = match.group("server_id")
@@ -3335,6 +3346,11 @@ class _StreamableHttpAuthHandler:
                 logger.exception("OAuth enforcement check failed for server %s", per_server_id)
                 return await self._send_error(detail="Service unavailable — unable to verify server authentication requirements", status_code=503)
 
+        # Strict mode: require authentication (non-OAuth servers get generic 401)
+        if settings.mcp_require_auth:
+            return await self._send_error(detail="Authentication required for MCP endpoints", headers={"WWW-Authenticate": "Bearer"})
+
+        # Permissive mode: allow unauthenticated access with public-only scope
         # Set context indicating unauthenticated user with public-only access (teams=[])
         user_context_var.set(
             {

@@ -1574,6 +1574,7 @@ async def test_streamable_http_auth_requires_auth_for_mcp_message(monkeypatch):
 async def test_streamable_http_auth_requires_auth_for_servers_mcp_sse(monkeypatch):
     """Auth should require authentication for /servers/{id}/mcp/sse paths."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
     scope = _make_scope("/servers/test-server-id/mcp/sse")
     called = []
 
@@ -1593,6 +1594,7 @@ async def test_streamable_http_auth_requires_auth_for_servers_mcp_sse(monkeypatc
 async def test_streamable_http_auth_requires_auth_for_servers_mcp_message(monkeypatch):
     """Auth should require authentication for /servers/{id}/mcp/message paths."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
     scope = _make_scope("/servers/test-server-id/mcp/message")
     called = []
 
@@ -1672,6 +1674,7 @@ async def test_streamable_http_auth_allows_mcp_message_with_valid_token(monkeypa
 async def test_streamable_http_auth_requires_auth_for_trailing_slash_variants(monkeypatch, path):
     """Auth must not be bypassed by appending a trailing slash to MCP transport paths."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
     scope = _make_scope(path)
     called = []
 
@@ -1712,6 +1715,8 @@ async def test_streamable_http_auth_requires_auth_for_options_without_cors_heade
     """OPTIONS without CORS preflight headers still requires auth (not a true preflight)."""
     # Enable strict auth mode to verify non-preflight OPTIONS still goes through normal auth
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    # Stub per-server OAuth check — this test validates OPTIONS handling, not OAuth
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
 
     # OPTIONS request without Origin or Access-Control-Request-Method is NOT a CORS preflight
     scope = _make_scope("/servers/1/mcp", method="OPTIONS")
@@ -1732,6 +1737,8 @@ async def test_streamable_http_auth_no_authorization_strict_mode(monkeypatch):
     """Auth returns False and sends 401 if no Authorization header when mcp_require_auth=True."""
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    # Stub per-server OAuth check — this test validates strict-mode 401, not per-server OAuth
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
 
     scope = _make_scope("/servers/1/mcp")
     called = []
@@ -1770,6 +1777,117 @@ async def test_streamable_http_auth_no_authorization_permissive_mode(monkeypatch
     assert user_ctx.get("is_authenticated") is False
 
 
+# --- Auth bypass regression tests for /mcp/{server_id} (Fixes #3752, #3812) ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/mcp/abc123def", "/mcp/test", "/mcp/../admin", "/mcp/nonexistent-id"])
+async def test_streamable_http_auth_rejects_undocumented_mcp_subpaths(monkeypatch, path):
+    """Regression: undocumented /mcp/* sub-paths are rejected with 404.
+
+    Before fix, the auth gate only matched paths ending with /mcp. Since
+    /mcp/{server_id} ends with the server ID (not /mcp), authenticate()
+    returned True immediately — skipping ALL auth and serving tools via an
+    undocumented global alias.  Now these paths are rejected as 404 regardless
+    of auth mode, since /mcp/{id} is not a valid endpoint.  (Fixes #3812)
+    """
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    scope = _make_scope(path)
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called and called[0]["type"] == "http.response.start"
+    assert called[0]["status"] == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/mcp/abc123def", "/mcp/test"])
+async def test_streamable_http_auth_rejects_undocumented_mcp_subpaths_permissive(monkeypatch, path):
+    """Undocumented /mcp/* sub-paths rejected even in permissive mode (not an auth bypass)."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    scope = _make_scope(path)
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called[0]["status"] == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/mcp/../admin",  # Uvicorn decodes %2e%2e → .. before scope["path"]
+        "/mcp/./hidden",  # single-dot segment
+        "/mcp//message",  # double-slash (NOT the same as /mcp/message)
+        "/mcp/ ",  # trailing space
+    ],
+)
+async def test_streamable_http_auth_rejects_decoded_path_traversal_variants(monkeypatch, path):
+    """Defense-in-depth: percent-decoded path variants must still be rejected.
+
+    Uvicorn percent-decodes scope["path"] before our code runs (e.g.
+    /mcp/%2e%2e/admin becomes /mcp/../admin).  These tests verify the
+    allowlist check is not bypassed by decoded traversal sequences.
+    """
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    scope = _make_scope(path)
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called and called[0]["status"] == 404
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_oauth_server_returns_resource_metadata_in_strict_mode(monkeypatch):
+    """Per-server OAuth runs before global strict-mode check so resource_metadata is included.
+
+    Before fix, strict mode (mcp_require_auth=True) returned a generic
+    WWW-Authenticate: Bearer without resource_metadata URL, preventing
+    MCP clients from discovering the OAuth server.  (Fixes #3752)
+    """
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    scope = _make_scope("/servers/abc123def/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send)
+    finally:
+        tr._oauth_checked_var.reset(token)
+    assert result is False
+    assert called[0]["status"] == 401
+    # Key assertion: resource_metadata URL must be present even in strict mode
+    www_auth = dict(called[0].get("headers", [])).get(b"www-authenticate", b"").decode()
+    assert "resource_metadata=" in www_auth
+
+
 @pytest.mark.asyncio
 async def test_streamable_http_auth_wrong_scheme(monkeypatch):
     """Auth returns False and sends 401 if Authorization is not Bearer and mcp_require_auth=True."""
@@ -1780,6 +1898,8 @@ async def test_streamable_http_auth_wrong_scheme(monkeypatch):
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
     # Enable strict auth mode to test 401 behavior
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    # Stub per-server OAuth check — this test validates scheme rejection, not OAuth
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Basic foobar")])
     called = []
 
