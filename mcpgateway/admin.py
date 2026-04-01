@@ -9223,7 +9223,7 @@ async def admin_gateways_partial_html(
     team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
-    query = select(DbGateway).options(joinedload(DbGateway.email_team))
+    query = select(DbGateway).options(joinedload(DbGateway.email_team), selectinload(DbGateway.tools))
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))

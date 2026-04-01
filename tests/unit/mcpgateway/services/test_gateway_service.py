@@ -4323,6 +4323,33 @@ class TestConvertGatewayToRead:
         # ORM object must NOT be mutated
         assert isinstance(mock_gateway.tags[0], str)
 
+    def test_tool_count_populated_from_eagerly_loaded_tools(self, gateway_service, mock_gateway):
+        """tool_count should reflect the number of eagerly-loaded tools."""
+        mock_gateway.tags = []
+        mock_gateway.auth_value = None
+        tool1 = MagicMock(spec=DbTool, id=1, name="t1")
+        tool2 = MagicMock(spec=DbTool, id=2, name="t2")
+        mock_gateway.tools = [tool1, tool2]
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
+        assert result.tool_count == 2
+
+    def test_tool_count_zero_when_tools_not_loaded(self, gateway_service, mock_gateway):
+        """tool_count should default to 0 when the tools relationship is not loaded."""
+        mock_gateway.tags = []
+        mock_gateway.auth_value = None
+        # Simulate ORM not having loaded the 'tools' attribute
+        mock_gateway.__dict__.pop("tools", None)
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
+        assert result.tool_count == 0
+
+    def test_tool_count_zero_when_tools_empty(self, gateway_service, mock_gateway):
+        """tool_count should be 0 when gateway has no tools."""
+        mock_gateway.tags = []
+        mock_gateway.auth_value = None
+        mock_gateway.tools = []
+        result = gateway_service.convert_gateway_to_read(mock_gateway)
+        assert result.tool_count == 0
+
 
 # ---------------------------------------------------------------------------
 # _get_auth_headers test

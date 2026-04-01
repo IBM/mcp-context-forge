@@ -21,50 +21,104 @@
       {% set can_modify = is_admin or gateway.ownerEmail == current_user_email or (gateway.visibility == 'team' and gateway.teamId and user_team_roles.get(gateway.teamId|string) == 'owner') %}
       <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}" data-owner-email="{{ gateway.ownerEmail }}" data-team-id="{{ gateway.teamId or '' }}" data-visibility="{{ gateway.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-          <div class="flex flex-col gap-y-1 max-w-48">
-            <!-- Row 1: Test -->
+          <div class="relative" x-data="{ menuOpen: false }" @click.away="menuOpen = false">
+            <!-- Three-dot trigger -->
             <button
-              onclick="testGateway({{ gateway.url|tojson_attr }})"
-              class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
-              x-tooltip="'💡Test this gateway with sample arguments'"
+              type="button"
+              @click="menuOpen = !menuOpen"
+              class="p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
+              :aria-expanded="menuOpen"
+              x-tooltip="'Actions'"
             >
-              Test
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z"/>
+              </svg>
             </button>
 
-            {% if gateway.authType == 'oauth' and can_modify %}
-            <!-- Row 2: OAuth Authorize -->
-            <a href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
-              class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
-              x-tooltip="'🔐 Authorize Users for OAuth'">
-              🔐 Authorize
-            </a>
-            <!-- Row 3:  Fetch Tools -->
-            <button onclick="fetchToolsForGateway({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }})"
-              class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
-              x-tooltip="'🔧 Fetch Tools from MCP Server'" id="fetch-tools-{{ gateway.id }}">
-              🔧 Fetch Tools
-            </button>
-            {% endif %}
+            <!-- Dropdown menu -->
+            <div
+              x-show="menuOpen"
+              x-transition:enter="transition ease-out duration-100"
+              x-transition:enter-start="opacity-0 scale-95"
+              x-transition:enter-end="opacity-100 scale-100"
+              x-transition:leave="transition ease-in duration-75"
+              x-transition:leave-start="opacity-100 scale-100"
+              x-transition:leave-end="opacity-0 scale-95"
+              class="absolute left-0 mt-1 w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
+              style="display:none"
+              role="menu"
+            >
+              <!-- Test -->
+              <button
+                type="button"
+                role="menuitem"
+                @click="menuOpen = false; testGateway({{ gateway.url|tojson_attr }})"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >Test</button>
 
-            <!-- Row 4:  View | Edit -->
-            <div class="flex gap-x-2">
-              <button onclick="viewGateway({{ gateway.id|tojson_attr }})" class="flex-1 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+              {% if gateway.authType == 'oauth' and can_modify %}
+              <!-- OAuth Authorize -->
+              <a
+                href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
+                @click="menuOpen = false"
+                role="menuitem"
+                class="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >🔐 Authorize</a>
+              {% endif %}
+
               {% if can_modify %}
-              <button onclick="editGateway({{ gateway.id|tojson_attr }})" class="flex-1 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+              <!-- Fetch / Refresh Tools (all auth types) -->
+              <button
+                type="button"
+                role="menuitem"
+                id="refresh-tools-{{ gateway.id }}"
+                @click="menuOpen = false; refreshGatewayTools({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }}, $event.currentTarget)"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                x-tooltip="'{% if gateway.toolCount == 0 %}First-time fetch from MCP server{% else %}Re-fetch latest tools from MCP server{% endif %}'"
+              >{% if gateway.toolCount == 0 %}Fetch Tools{% else %}Refresh Tools{% endif %}</button>
+              {% endif %}
+
+              <hr class="border-gray-200 dark:border-gray-600 my-1">
+
+              <!-- View -->
+              <button
+                type="button"
+                role="menuitem"
+                @click="menuOpen = false; viewGateway({{ gateway.id|tojson_attr }})"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >View</button>
+
+              {% if can_modify %}
+              <!-- Edit -->
+              <button
+                type="button"
+                role="menuitem"
+                @click="menuOpen = false; editGateway({{ gateway.id|tojson_attr }})"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >Edit</button>
+
+              <hr class="border-gray-200 dark:border-gray-600 my-1">
+
+              <!-- Activate / Deactivate -->
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'gateways')">
+                <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
+                <button
+                  type="submit"
+                  role="menuitem"
+                  class="w-full flex items-center px-4 py-2 text-sm {% if gateway.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
+                >{% if gateway.enabled %}Deactivate{% else %}Activate{% endif %}</button>
+              </form>
+
+              <!-- Delete -->
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'gateway', {{ gateway_label|tojson_attr }}, 'gateways')">
+                <button
+                  type="submit"
+                  role="menuitem"
+                  class="w-full flex items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                >Delete</button>
+              </form>
               {% endif %}
             </div>
-
-            {% if can_modify %}
-            <!-- Row 5:  Activate/Deactivate -->
-            <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'gateways')">
-              <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
-              <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if gateway.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if gateway.enabled %}Deactivate{% else %}Activate{% endif %}</button>
-            </form>
-            <!-- Row 6:  Delete -->
-            <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'gateway', {{ gateway_label|tojson_attr }}, 'gateways')">
-              <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
-            </form>
-            {% endif %}
           </div>
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>

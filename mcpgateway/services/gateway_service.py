@@ -4248,6 +4248,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
+        # Populate tool count from the eagerly-loaded tools relationship when available
+        tools_rel = gateway.__dict__.get("tools")
+        gateway_dict["tool_count"] = len(tools_rel) if tools_rel is not None else 0
+
         return GatewayRead.model_validate(gateway_dict).masked()
 
     def _create_db_tool(
