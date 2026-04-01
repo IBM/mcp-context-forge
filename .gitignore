@@ -186,6 +186,9 @@ packages-lock.json
 packages.json
 .npm-cache
 
+# React SPA build output
+mcpgateway/static/app/
+
 # ========================================
 # AI & Code Assistant Tools
 # ========================================

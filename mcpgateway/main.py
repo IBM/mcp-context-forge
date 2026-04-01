@@ -54,6 +54,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse
+import os
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
@@ -11129,6 +11131,32 @@ internal_trusted_mcp_transport = InternalTrustedMCPTransportBridge(streamable_ht
 # Streamable http Mount
 app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
 app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
+
+# Mount React SPA — served at /app regardless of UI_ENABLED
+# Uses settings.static_dir (absolute path via importlib.resources) so the path
+# resolves correctly regardless of where uvicorn is launched from.
+# Wrapped in try/except: the build output is git-ignored, so the directory may
+# not exist until `pnpm run build` has been run.
+try:
+    spa_dir = settings.static_dir / "app"
+    
+    # Custom SPA handler that serves index.html for all routes (client-side routing)
+    class SPAStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope):
+            try:
+                return await super().get_response(path, scope)
+            except Exception:
+                # If file not found, serve index.html for client-side routing
+                return await super().get_response("index.html", scope)
+    
+    app.mount(
+        "/app",
+        SPAStaticFiles(directory=str(spa_dir), html=True),
+        name="frontend",
+    )
+    logger.info("React SPA mounted at /app from %s", spa_dir)
+except RuntimeError:
+    logger.warning("React SPA not mounted — build output not found at %s/app (run: pnpm run build)", settings.static_dir)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:

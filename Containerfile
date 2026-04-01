@@ -1,4 +1,16 @@
 ###############################################################################
+# Stage 0: Node — build React frontend
+###############################################################################
+FROM node:22-slim AS frontend-build
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+COPY client/ ./client/
+COPY vite.config.js ./
+RUN npm run build
+# outputs to mcpgateway/static/app/
+
+###############################################################################
 # Rust builder stage - builds Rust plugins in manylinux2014 container
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true .
 # To build WITHOUT Rust (default): docker build .
@@ -86,6 +98,9 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 
 # Copy project files into container
 COPY . /app
+
+# Copy React build output from Node stage
+COPY --from=frontend-build /app/mcpgateway/static/app /app/mcpgateway/static/app
 
 # Copy Rust plugin wheels from builder (if any exist)
 COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
