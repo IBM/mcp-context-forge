@@ -471,11 +471,23 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Initialize optional Redis client holder (set in initialize())
         self._redis_client: Optional[Any] = None
 
+        # Metadata for this instance (always initialize for leader identification)
+        # Convert port to int to handle both real values and test mocks
+        try:
+            port_value = int(settings.port) if settings.port is not None else 0
+        except (ValueError, TypeError):
+            port_value = 0
+
+        self._instance_metadata = {
+            "instance_id": str(uuid.uuid4()),
+            "port": port_value,
+            "pid": os.getpid(),
+            "hostname": socket.gethostname()
+        }
+        self._instance_id = self._instance_metadata["instance_id"]
+
         # Leader election settings from config
         if self.redis_url and REDIS_AVAILABLE:
-            # Metadata for this instance
-            self._instance_metadata = {"instance_id": str(uuid.uuid4()), "port": settings.port, "pid": os.getpid(), "hostname": socket.gethostname()}
-            self._instance_id = self._instance_metadata["instance_id"]
             self._leader_key = settings.redis_leader_key
             self._leader_ttl = settings.redis_leader_ttl
             self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
@@ -4111,40 +4123,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 logger.error(f"Unexpected error in health check loop: {str(e)}")
                 await asyncio.sleep(self._health_check_interval)
-
-    def is_leader_sync(self) -> bool:
-        """Check if this instance is the current leader (synchronous version for health checks).
-
-        Returns:
-            bool: True if this instance holds the leader lock, False otherwise.
-        """
-        if not self._redis_client or not hasattr(self, "_leader_key"):
-            # Fallback to file lock for non-Redis setups
-            return True
-
-        try:
-            # Use sync Redis client method if available
-            import redis
-            if isinstance(self._redis_client, redis.asyncio.Redis):
-                # For async Redis client, we can't do sync call - return True as fallback
-                return True
-            
-            # For sync Redis client (shouldn't happen in current setup, but safe fallback)
-            current_leader_raw = self._redis_client.get(self._leader_key)
-            if not current_leader_raw:
-                return False
-
-            try:
-                current_leader_data = json.loads(current_leader_raw)
-                current_leader_id = current_leader_data.get("instance_id")
-            except (json.JSONDecodeError, AttributeError):
-                # Fallback for old UUID-only format
-                current_leader_id = current_leader_raw
-
-            return current_leader_id == self._instance_id
-        except Exception as e:
-            logger.warning(f"Error checking leader status: {e}")
-            return True  # Fail open for health checks
 
     async def is_leader(self) -> bool:
         """Check if this instance is the current leader (async version).

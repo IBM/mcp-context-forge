@@ -165,7 +165,18 @@ class TestRunFollowerElection:
                 with patch("asyncio.sleep", new_callable=AsyncMock):
                     await service._run_follower_election("test@example.com")  # pylint: disable=protected-access
 
-        redis_mock.set.assert_called_once_with("test:leader", "test-instance", ex=15, nx=True)
+        # Verify Redis set was called with JSON metadata instead of plain UUID
+        redis_mock.set.assert_called_once()
+        call_args = redis_mock.set.call_args
+        assert call_args[0][0] == "test:leader"  # key
+        # Second argument should be JSON string with instance metadata
+        import json
+        metadata = json.loads(call_args[0][1])
+        assert "instance_id" in metadata
+        assert "port" in metadata
+        assert "pid" in metadata
+        assert "hostname" in metadata
+        assert call_args[1] == {"ex": 15, "nx": True}  # kwargs
         assert service._health_check_task is not None  # pylint: disable=protected-access
         assert service._leader_heartbeat_task is not None  # pylint: disable=protected-access
 
