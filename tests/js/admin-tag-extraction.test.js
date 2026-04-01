@@ -369,10 +369,10 @@ function buildLoadedServersTable() {
 describe("showTab catalog — restore filters from URL on return", () => {
     const showTab = () => win.showTab;
 
-    // showTab wraps content-loading logic in setTimeout; use fake timers
-    // so vi.runAllTimers() flushes the callback synchronously.
+    // showTab wraps content-loading logic in setTimeout and requestAnimationFrame;
+    // use fake timers so vi.runAllTimers() flushes the callbacks synchronously.
     beforeEach(() => {
-        vi.useFakeTimers();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame'] });
     });
     afterEach(() => {
         vi.useRealTimers();

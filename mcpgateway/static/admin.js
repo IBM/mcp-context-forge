@@ -8803,6 +8803,29 @@ function showTab(tabName) {
         const panel = safeGetElement(`${tabName}-panel`);
         if (panel) {
             panel.classList.remove("hidden");
+
+            // Reset scroll position on the main content area
+            // Use requestAnimationFrame to ensure DOM updates have completed
+            try {
+                requestAnimationFrame(() => {
+                    try {
+                        // Try data attribute first (most specific), fall back to class selector
+                        const mainContent =
+                            document.querySelector("[data-scroll-container]") ||
+                            document.querySelector("main.overflow-y-auto");
+                        if (mainContent) {
+                            mainContent.scrollTop = 0;
+                        }
+                    } catch (error) {
+                        console.debug(
+                            "Error resetting scroll position:",
+                            error,
+                        );
+                    }
+                });
+            } catch (error) {
+                console.debug("requestAnimationFrame not available:", error);
+            }
         } else {
             console.error(`Panel ${tabName}-panel not found`);
             const fallbackTab = getDefaultTabName();
