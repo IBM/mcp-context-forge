@@ -688,12 +688,15 @@ class OpenTelemetryRequestMiddleware:
         else:
             query_text = str(query_string)
 
+        # Sanitize query string to prevent leaking session_id and other sensitive parameters
+        sanitized_query = sanitize_trace_text(query_text) if query_text else None
+
         span_name = f"{method} {path or '/'}"
         span_attributes: Dict[str, Any] = {
             "http.request.method": method,
             "http.route": path or "/",
             "url.path": path or "/",
-            "url.query": query_text or None,
+            "url.query": sanitized_query,
             "network.protocol.version": scope.get("http_version"),
             "server.address": server[0] if len(server) > 0 else None,
             "server.port": server[1] if len(server) > 1 else None,

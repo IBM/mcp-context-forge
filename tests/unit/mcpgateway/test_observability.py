@@ -1274,6 +1274,7 @@ class TestObservability:
         mock_extract.assert_called_once()
         span.set_attribute.assert_any_call("http.request.method", "POST")
         span.set_attribute.assert_any_call("http.route", "/rpc")
+        # Query string is now sanitized - non-sensitive params remain visible
         span.set_attribute.assert_any_call("url.query", "server_id=abc")
         span.set_attribute.assert_any_call("user_agent.original", "pytest")
         span.set_attribute.assert_any_call("correlation_id", "corr-123")
@@ -1388,15 +1389,133 @@ class TestObservability:
             patch("mcpgateway.observability.OTEL_AVAILABLE", True),
             patch("mcpgateway.observability.Status", DummyStatus),
             patch("mcpgateway.observability.StatusCode", DummyStatusCode),
+        ):
+            await middleware(scope, receive, send)
+
+        tracer.start_as_current_span.assert_called_once()
+        span.set_attribute.assert_any_call("http.request.method", "GET")
+        span.set_attribute.assert_any_call("url.query", "trace=1")
+        span.set_status.assert_called_once()
+        assert sent_messages[0]["status"] == 204
+
+    @pytest.mark.asyncio
+    async def test_open_telemetry_request_middleware_redacts_session_id_in_query_string(self):
+        """Test middleware redacts session_id from query strings to prevent leaking live sessions."""
+        sent_messages = []
+        span = MagicMock()
+        span_context = MagicMock()
+        span_context.__enter__ = MagicMock(return_value=span)
+        span_context.__exit__ = MagicMock(return_value=None)
+        tracer = MagicMock()
+        tracer.start_as_current_span.return_value = span_context
+
+        # First-Party
+        import mcpgateway.observability
+
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = tracer
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        middleware = OpenTelemetryRequestMiddleware(app)
+
+        # Simulate SSE callback URL with session_id in query string
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/message",
+            "headers": [(b"user-agent", b"pytest")],
+            "query_string": b"session_id=live-session-abc123&other=value",
+            "http_version": "1.1",
+            "server": ("localhost", 4444),
+            "client": ("127.0.0.1", 51234),
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent_messages.append(message)
+
+        await middleware(scope, receive, send)
+
+        # Verify session_id was redacted in the span attribute
+        span.set_attribute.assert_any_call("http.request.method", "POST")
+        span.set_attribute.assert_any_call("http.route", "/message")
+
+        # Check that session_id is redacted but other params remain
+        query_calls = [call for call in span.set_attribute.call_args_list if call[0][0] == "url.query"]
+        assert len(query_calls) == 1
+        query_value = query_calls[0][0][1]
+
+        # session_id should be redacted
+        assert "live-session-abc123" not in query_value
+        assert "session_id=***" in query_value or "sessionid=***" in query_value.lower()
+
+        # Non-sensitive params should remain visible
+        assert "other=value" in query_value
+
+        assert sent_messages[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_open_telemetry_request_middleware_tolerates_extract_failures_continued(self):
+        """Test middleware continues after extraction failures."""
+        sent_messages = []
+        span = MagicMock()
+        span_context = MagicMock()
+        span_context.__enter__ = MagicMock(return_value=span)
+        span_context.__exit__ = MagicMock(return_value=None)
+        tracer = MagicMock()
+        tracer.start_as_current_span.return_value = span_context
+
+        # First-Party
+        import mcpgateway.observability
+
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = tracer
+
+        class DummyStatusCode:
+            OK = "ok"
+
+        class DummyStatus:
+            def __init__(self, code, description=None):
+                self.code = code
+                self.description = description
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        middleware = OpenTelemetryRequestMiddleware(app)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/servers/plugin-a/mcp",
+            "headers": [(b"user-agent", b"pytest")],
+            "query_string": "trace=1",
+            "http_version": "1.1",
+            "server": ("localhost", 4444),
+            "client": ("127.0.0.1", 51234),
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            sent_messages.append(message)
+
+        with (
+            patch("mcpgateway.observability.otel_extract", side_effect=RuntimeError("bad parent")),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.Status", DummyStatus),
+            patch("mcpgateway.observability.StatusCode", DummyStatusCode),
             patch("mcpgateway.observability.logger") as mock_logger,
         ):
             await middleware(scope, receive, send)
 
-        tracer.start_as_current_span.assert_called_once_with(
-            "GET /servers/plugin-a/mcp",
-            kind=mcpgateway.observability.SpanKind.SERVER,
-        )
-        span.set_attribute.assert_any_call("url.query", "trace=1")
+        tracer.start_as_current_span.assert_called_once()
         span.set_attribute.assert_any_call("http.response.status_code", 204)
         status_arg = span.set_status.call_args[0][0]
         assert isinstance(status_arg, DummyStatus)

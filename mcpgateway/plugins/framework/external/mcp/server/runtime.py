@@ -424,10 +424,13 @@ class SSLCapableFastMCP(FastMCP):
 
         app_to_serve: Any = starlette_app
         if os.getenv("OTEL_ENABLE_OBSERVABILITY", "false").lower() == "true":
+            # Set service name BEFORE importing observability module
+            # The tracer is initialized at import time, so env vars must be set first
+            os.environ.setdefault("OTEL_SERVICE_NAME", MCP_SERVER_NAME)
+
             # First-Party
             from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
 
-            os.environ.setdefault("OTEL_SERVICE_NAME", MCP_SERVER_NAME)
             init_telemetry()
             if otel_tracing_enabled():
                 app_to_serve = OpenTelemetryRequestMiddleware(starlette_app, should_trace_request_path=_should_trace_plugin_server_path)

@@ -32,6 +32,8 @@ from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
 from mcpgateway.plugins.framework.observability import current_trace_id as plugins_trace_id
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.trace_redaction import sanitize_trace_text
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +131,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 ip_address=ip_address,
                 attributes={
                     "http.route": request.url.path,
-                    "http.query": str(request.url.query) if request.url.query else None,
+                    "http.query": sanitize_trace_text(str(request.url.query)) if request.url.query else None,
                 },
                 resource_attributes={
                     "service.name": "mcp-gateway",
@@ -218,7 +220,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Log exception in span
             if span_id:
                 try:
-                    self.service.end_span(db, span_id, status="error", status_message=str(e), attributes={"exception.type": type(e).__name__, "exception.message": str(e)})
+                    sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
+                    self.service.end_span(db, span_id, status="error", status_message=sanitized_error, attributes={"exception.type": type(e).__name__, "exception.message": sanitized_error})
 
                     # Add exception event
                     self.service.add_event(
@@ -226,9 +229,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                         span_id,
                         name="exception",
                         severity="error",
-                        message=str(e),
+                        message=sanitized_error,
                         exception_type=type(e).__name__,
-                        exception_message=str(e),
+                        exception_message=sanitized_error,
                         exception_stacktrace=traceback.format_exc(),
                     )
                 except Exception as log_error:
@@ -237,7 +240,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # End trace with error
             if trace_id:
                 try:
-                    self.service.end_trace(db, trace_id, status="error", status_message=str(e), http_status_code=500)
+                    sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
+                    self.service.end_trace(db, trace_id, status="error", status_message=sanitized_error, http_status_code=500)
                 except Exception as trace_error:
                     logger.warning(f"Failed to end trace: {trace_error}")
 

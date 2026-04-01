@@ -26,6 +26,8 @@ _DEFAULT_REDACT_FIELDS = ",".join(
         "cookie",
         "set-cookie",
         "private_key",
+        "session_id",
+        "sessionid",
     ]
 )
 _DEFAULT_MAX_PAYLOAD_SIZE = 32768
@@ -197,7 +199,8 @@ def _build_text_redaction_patterns(field_name: str) -> tuple[re.Pattern[str], re
     """
     key_pattern = _field_name_text_pattern(field_name)
     quoted_pattern = re.compile(rf"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*['\"])([^'\"]*)(['\"])", re.IGNORECASE)
-    bare_pattern = re.compile(rf"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*)(?!['\"])(?!REDACTED\b)(?!\*\*\*)([^\s,;]+)", re.IGNORECASE)
+    # Include & as a terminator for URL query parameters
+    bare_pattern = re.compile(rf"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*)(?!['\"])(?!REDACTED\b)(?!\*\*\*)([^\s,;&]+)", re.IGNORECASE)
     return quoted_pattern, bare_pattern
 
 
