@@ -1634,7 +1634,7 @@ class ResourceService(BaseService):
                         db_span_id = observability_service.start_span(
                             db=db,
                             trace_id=trace_id,
-                            name="invoke.resource",
+                            name="resource.read",
                             attributes={
                                 "resource.name": resource_name if resource_name else "unknown",
                                 "resource.id": str(resource_id) if resource_id else "unknown",
@@ -1649,7 +1649,7 @@ class ResourceService(BaseService):
                         db_span_id = None
 
                 with create_span(
-                    "invoke.resource",
+                    "resource.read",
                     {
                         "resource.name": resource_name if resource_name else "unknown",
                         "resource.id": str(resource_id) if resource_id else "unknown",
@@ -1986,7 +1986,7 @@ class ResourceService(BaseService):
                                         status_message=error_message if error_message else None,
                                     )
                                 db_span_ended = True
-                                logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
+                                logger.debug(f"✓ Ended resource.read span: {db_span_id}")
                             except Exception as e:
                                 logger.warning(f"Failed to end observability span for invoking resource: {e}")
 
