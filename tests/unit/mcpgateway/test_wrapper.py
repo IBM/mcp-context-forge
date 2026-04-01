@@ -525,6 +525,18 @@ async def test_forward_once_json_and_invalid(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_forward_once_application_json_empty_body_returns_no_output(monkeypatch):
+    wrapper._shutdown.clear()
+    captured = []
+    monkeypatch.setattr(wrapper, "send_to_stdout", lambda obj: captured.append(obj))
+
+    client = DummyClient(DummyResp(202, "application/json", b""))
+    await wrapper.forward_once(client, wrapper.Settings("x", None), {"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    assert captured == []
+
+
+@pytest.mark.asyncio
 async def test_forward_once_ndjson_and_sse_and_http_error(monkeypatch):
     wrapper._shutdown.clear()
     captured = []

@@ -932,6 +932,27 @@
             "OTEL_ENABLE_OBSERVABILITY": {
               "type": "string"
             },
+            "OTEL_EMIT_LANGFUSE_ATTRIBUTES": {
+              "type": "string"
+            },
+            "OTEL_CAPTURE_IDENTITY_ATTRIBUTES": {
+              "type": "string"
+            },
+            "OTEL_COPY_RESOURCE_ATTRS_TO_SPANS": {
+              "type": "string"
+            },
+            "OTEL_REDACT_FIELDS": {
+              "type": "string"
+            },
+            "OTEL_MAX_TRACE_PAYLOAD_SIZE": {
+              "type": "string"
+            },
+            "OTEL_CAPTURE_INPUT_SPANS": {
+              "type": "string"
+            },
+            "OTEL_CAPTURE_OUTPUT_SPANS": {
+              "type": "string"
+            },
             "OTEL_SERVICE_NAME": {
               "type": "string"
             },
@@ -1953,6 +1974,39 @@
               "type": "string"
             },
             "OAUTH_REQUEST_TIMEOUT": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_JAEGER_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_JAEGER_USER": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_OTLP_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_OTLP_HEADERS": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_ZIPKIN_ENDPOINT": {
+              "type": "string"
+            },
+            "OTEL_RESOURCE_ATTRIBUTES": {
+              "type": "string"
+            },
+            "OTEL_EXPORTER_JAEGER_PASSWORD": {
+              "type": "string"
+            },
+            "LANGFUSE_OTEL_AUTH": {
+              "type": "string"
+            },
+            "LANGFUSE_OTEL_ENDPOINT": {
+              "type": "string"
+            },
+            "LANGFUSE_PUBLIC_KEY": {
+              "type": "string"
+            },
+            "LANGFUSE_SECRET_KEY": {
               "type": "string"
             },
             "PASSWORD_CHANGE_ENFORCEMENT_ENABLED": {

@@ -29,6 +29,14 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.utils.trace_context import (
+    clear_trace_context,
+    set_trace_auth_method,
+    set_trace_context_from_teams,
+    set_trace_team_scope,
+    set_trace_user_email,
+    set_trace_user_is_admin,
+)
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
@@ -160,6 +168,18 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             async def protected_route(user = Depends(get_current_user_with_permissions)):
                 return {"user": user["email"]}
     """
+
+    def _set_trace_context_for_identity(*, email: Optional[str], is_admin: bool, auth_method: str, token_teams: Optional[List[str]] = None, team_scope_known: bool = False) -> None:
+        clear_trace_context()
+        set_trace_user_email(email)
+        set_trace_user_is_admin(is_admin)
+        set_trace_auth_method(auth_method)
+        trace_team_name = getattr(request.state, "trace_team_name", None)
+        if team_scope_known:
+            set_trace_context_from_teams(token_teams, user_email=email, is_admin=is_admin, auth_method=auth_method, team_name=trace_team_name)
+        elif is_admin:
+            set_trace_team_scope("admin")
+
     # Check for proxy authentication first (if MCP client auth is disabled)
     if not settings.mcp_client_auth_enabled:
         # Read plugin context from request.state for cross-hook context sharing
@@ -196,6 +216,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                         logger.debug(f"Could not lookup proxy user in DB: {e}")
                         # Continue with is_admin=False if lookup fails
 
+                _set_trace_context_for_identity(email=proxy_user, is_admin=is_admin, auth_method="proxy")
                 return {
                     "email": proxy_user,
                     "full_name": full_name,
@@ -228,6 +249,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
 
             # auth_required=false: allow anonymous access
 
+            _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",
@@ -259,6 +281,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 detail="Authentication required but no auth method configured",
             )
 
+        _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
         return {
             "email": "anonymous",
             "full_name": "Anonymous User",
@@ -319,6 +342,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         # AUTH_REQUIRED=false no longer implies admin access.
         # Preserve explicit unsafe override for local-only compatibility.
         if not settings.auth_required and getattr(settings, "allow_unauthenticated_admin", False) is True:
+            _set_trace_context_for_identity(email=settings.platform_admin_email, is_admin=True, auth_method="disabled")
             return {
                 "email": settings.platform_admin_email,
                 "full_name": "Platform Admin",
@@ -332,6 +356,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             }
 
         if not settings.auth_required:
+            _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",

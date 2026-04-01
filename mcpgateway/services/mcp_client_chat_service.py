@@ -93,11 +93,48 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.observability import create_span, set_span_attribute
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _llm_system_name(service: "MCPChatService") -> str:
+    """Return a stable provider/system label for trace attributes.
+
+    Args:
+        service: Chat service instance holding the active LLM provider.
+
+    Returns:
+        Lowercase provider name for GenAI trace attributes.
+    """
+    provider_name = type(service.llm_provider).__name__.replace("Provider", "")
+    return provider_name.lower() or "unknown"
+
+
+def _set_usage_attributes(span: Any, ai_message: Any) -> None:
+    """Attach token usage metadata to a span when available.
+
+    Args:
+        span: Active span object to enrich.
+        ai_message: Provider response object that may expose ``usage_metadata``.
+    """
+    usage = getattr(ai_message, "usage_metadata", None)
+    if not isinstance(usage, dict):
+        return
+
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    total_tokens = usage.get("total_tokens")
+    if input_tokens is not None:
+        set_span_attribute(span, "gen_ai.usage.prompt_tokens", input_tokens)
+    if output_tokens is not None:
+        set_span_attribute(span, "gen_ai.usage.completion_tokens", output_tokens)
+    if total_tokens is not None:
+        set_span_attribute(span, "gen_ai.usage.total_tokens", total_tokens)
 
 
 class ChatProcessingError(RuntimeError):
@@ -2464,34 +2501,41 @@ class MCPChatService:
         if not message or not message.strip():
             raise ValueError("Message cannot be empty")
 
-        try:
-            logger.debug("Processing chat message...")
+        span_attributes = {
+            "langfuse.observation.type": "generation",
+            "gen_ai.system": _llm_system_name(self),
+            "gen_ai.request.model": self.llm_provider.get_model_name(),
+        }
+        if is_input_capture_enabled("llm.chat"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload({"message": message})
 
-            # Get conversation history from manager
-            lc_messages = await self.history_manager.get_langchain_messages(self.user_id) if self.user_id else []
+        with create_span("llm.chat", span_attributes) as span:
+            try:
+                logger.debug("Processing chat message...")
 
-            # Add user message
-            user_message = HumanMessage(content=message)
-            lc_messages.append(user_message)
+                lc_messages = await self.history_manager.get_langchain_messages(self.user_id) if self.user_id else []
+                user_message = HumanMessage(content=message)
+                lc_messages.append(user_message)
 
-            # Invoke agent
-            response = await self._agent.ainvoke({"messages": lc_messages})
+                response = await self._agent.ainvoke({"messages": lc_messages})
+                ai_message = response["messages"][-1]
+                response_text = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
 
-            # Extract AI response
-            ai_message = response["messages"][-1]
-            response_text = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
+                if span:
+                    _set_usage_attributes(span, ai_message)
+                    if is_output_capture_enabled("llm.chat"):
+                        set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"response": response_text}))
 
-            # Save history if user_id provided
-            if self.user_id:
-                await self.history_manager.append_message(self.user_id, "user", message)
-                await self.history_manager.append_message(self.user_id, "assistant", response_text)
+                if self.user_id:
+                    await self.history_manager.append_message(self.user_id, "user", message)
+                    await self.history_manager.append_message(self.user_id, "assistant", response_text)
 
-            logger.debug("Chat message processed successfully")
-            return response_text
+                logger.debug("Chat message processed successfully")
+                return response_text
 
-        except Exception as e:
-            logger.error(f"Error processing chat message: {e}")
-            raise
+            except Exception as e:
+                logger.error(f"Error processing chat message: {e}")
+                raise
 
     async def chat_with_metadata(self, message: str) -> Dict[str, Any]:
         """
@@ -2724,197 +2768,202 @@ class MCPChatService:
                     logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track expired run_id {rid} (overflow count: {dropped_overflow_count})")
                 del pending_tool_ends[rid]
 
-        try:
-            async for event in self._agent.astream_events({"messages": lc_messages}, version="v2"):
-                kind = event.get("event")
-                now_iso = datetime.now(timezone.utc).isoformat()
-                now_ts = time.time()
+        span_attributes = {
+            "langfuse.observation.type": "generation",
+            "gen_ai.system": _llm_system_name(self),
+            "gen_ai.request.model": self.llm_provider.get_model_name(),
+            "llm.stream": True,
+        }
+        if is_input_capture_enabled("llm.chat"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload({"message": message})
 
-                # Periodically cleanup expired pending ends
-                _cleanup_expired_pending(now_ts)
+        with create_span("llm.chat", span_attributes) as span:
+            try:
+                async for event in self._agent.astream_events({"messages": lc_messages}, version="v2"):
+                    kind = event.get("event")
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    now_ts = time.time()
 
-                try:
-                    if kind == "on_tool_start":
-                        run_id = str(event.get("run_id") or uuid4())
-                        name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
-                        input_data = event.get("data", {}).get("input")
+                    # Periodically cleanup expired pending ends
+                    _cleanup_expired_pending(now_ts)
 
-                        # Filter out common metadata keys injected by LangChain/LangGraph
-                        if isinstance(input_data, dict):
-                            input_data = {k: v for k, v in input_data.items() if k not in ["runtime", "config", "run_manager", "callbacks"]}
+                    try:
+                        if kind == "on_tool_start":
+                            run_id = str(event.get("run_id") or uuid4())
+                            name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
+                            input_data = event.get("data", {}).get("input")
 
-                        tool_runs[run_id] = {"name": name, "start": now_iso, "input": input_data}
+                            # Filter out common metadata keys injected by LangChain/LangGraph
+                            if isinstance(input_data, dict):
+                                input_data = {k: v for k, v in input_data.items() if k not in ["runtime", "config", "run_manager", "callbacks"]}
 
-                        # Register run for cancellation tracking with gateway-level Cancellation service
-                        async def _noop_cancel_cb(reason: Optional[str]) -> None:
-                            """
-                            No-op cancel callback used when a run is started.
+                            tool_runs[run_id] = {"name": name, "start": now_iso, "input": input_data}
 
-                            Args:
-                                reason: Optional textual reason for cancellation.
+                            # Register run for cancellation tracking with gateway-level Cancellation service
+                            async def _noop_cancel_cb(reason: Optional[str]) -> None:
+                                """
+                                No-op cancel callback used when a run is started.
 
-                            Returns:
-                                None
-                            """
-                            # Default no-op; kept for potential future intra-process cancellation
-                            return None
+                                Args:
+                                    reason: Optional textual reason for cancellation.
 
-                        # Register with cancellation service only if feature is enabled
-                        if settings.mcpgateway_tool_cancellation_enabled:
-                            try:
-                                await cancellation_service.register_run(run_id, name=name, cancel_callback=_noop_cancel_cb)
-                            except Exception:
-                                logger.exception("Failed to register run %s with CancellationService", run_id)
+                                Returns:
+                                    None
+                                """
+                                # Default no-op; kept for potential future intra-process cancellation
+                                return None
 
-                        yield {"type": "tool_start", "id": run_id, "tool": name, "input": input_data, "start": now_iso}
+                            # Register with cancellation service only if feature is enabled
+                            if settings.mcpgateway_tool_cancellation_enabled:
+                                try:
+                                    await cancellation_service.register_run(run_id, name=name, cancel_callback=_noop_cancel_cb)
+                                except Exception:
+                                    logger.exception("Failed to register run %s with CancellationService", run_id)
 
-                        # NOTE: Do NOT clear from dropped_tool_ends here. If an end was dropped (TTL/buffer-full)
-                        # before this start arrived, that end is permanently lost. Since tools only end once,
-                        # we won't receive another end event, so this should still be reported as an orphan.
+                            yield {"type": "tool_start", "id": run_id, "tool": name, "input": input_data, "start": now_iso}
 
-                        # Check if we have a buffered end event for this run_id (out-of-order reconciliation)
-                        if run_id in pending_tool_ends:
-                            buffered = pending_tool_ends.pop(run_id)
-                            tool_runs[run_id]["end"] = buffered["end_time"]
-                            tool_runs[run_id]["output"] = buffered["output"]
-                            logger.info(f"Reconciled out-of-order on_tool_end for run_id {run_id}")
+                            # NOTE: Do NOT clear from dropped_tool_ends here. If an end was dropped (TTL/buffer-full)
+                            # before this start arrived, that end is permanently lost. Since tools only end once,
+                            # we won't receive another end event, so this should still be reported as an orphan.
 
-                            if tool_runs[run_id].get("output") == "":
-                                error = "Tool execution failed: Please check if the tool is accessible"
-                                yield {"type": "tool_error", "id": run_id, "tool": name, "error": error, "time": buffered["end_time"]}
+                            # Check if we have a buffered end event for this run_id (out-of-order reconciliation)
+                            if run_id in pending_tool_ends:
+                                buffered = pending_tool_ends.pop(run_id)
+                                tool_runs[run_id]["end"] = buffered["end_time"]
+                                tool_runs[run_id]["output"] = buffered["output"]
+                                logger.info(f"Reconciled out-of-order on_tool_end for run_id {run_id}")
 
-                            yield {"type": "tool_end", "id": run_id, "tool": name, "output": tool_runs[run_id].get("output"), "end": buffered["end_time"]}
+                                if tool_runs[run_id].get("output") == "":
+                                    error = "Tool execution failed: Please check if the tool is accessible"
+                                    yield {"type": "tool_error", "id": run_id, "tool": name, "error": error, "time": buffered["end_time"]}
 
-                    elif kind == "on_tool_end":
-                        run_id = str(event.get("run_id") or uuid4())
-                        output = event.get("data", {}).get("output")
-                        extracted_output = _extract_output(output)
+                                yield {"type": "tool_end", "id": run_id, "tool": name, "output": tool_runs[run_id].get("output"), "end": buffered["end_time"]}
 
-                        if run_id in tool_runs:
-                            # Normal case: start already received
-                            tool_runs[run_id]["end"] = now_iso
-                            tool_runs[run_id]["output"] = extracted_output
+                        elif kind == "on_tool_end":
+                            run_id = str(event.get("run_id") or uuid4())
+                            output = event.get("data", {}).get("output")
+                            extracted_output = _extract_output(output)
 
-                            if tool_runs[run_id].get("output") == "":
-                                error = "Tool execution failed: Please check if the tool is accessible"
-                                yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
+                            if run_id in tool_runs:
+                                # Normal case: start already received
+                                tool_runs[run_id]["end"] = now_iso
+                                tool_runs[run_id]["output"] = extracted_output
 
-                            yield {"type": "tool_end", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "output": tool_runs[run_id].get("output"), "end": now_iso}
-                        else:
-                            # Out-of-order: buffer the end event for later reconciliation
-                            if len(pending_tool_ends) < pending_max_size:
-                                pending_tool_ends[run_id] = {"output": extracted_output, "end_time": now_iso, "buffered_at": now_ts}
-                                logger.debug(f"Buffered out-of-order on_tool_end for run_id {run_id}, awaiting on_tool_start")
+                                if tool_runs[run_id].get("output") == "":
+                                    error = "Tool execution failed: Please check if the tool is accessible"
+                                    yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
+
+                                yield {"type": "tool_end", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "output": tool_runs[run_id].get("output"), "end": now_iso}
                             else:
-                                logger.warning(f"Pending tool ends buffer full ({pending_max_size}), dropping on_tool_end for run_id {run_id}")
-                                if len(dropped_tool_ends) < dropped_max_size:
-                                    dropped_tool_ends.add(run_id)
+                                # Out-of-order: buffer the end event for later reconciliation
+                                if len(pending_tool_ends) < pending_max_size:
+                                    pending_tool_ends[run_id] = {"output": extracted_output, "end_time": now_iso, "buffered_at": now_ts}
+                                    logger.debug(f"Buffered out-of-order on_tool_end for run_id {run_id}, awaiting on_tool_start")
                                 else:
-                                    dropped_overflow_count += 1
-                                    logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track run_id {run_id} (overflow count: {dropped_overflow_count})")
+                                    logger.warning(f"Pending tool ends buffer full ({pending_max_size}), dropping on_tool_end for run_id {run_id}")
+                                    if len(dropped_tool_ends) < dropped_max_size:
+                                        dropped_tool_ends.add(run_id)
+                                    else:
+                                        dropped_overflow_count += 1
+                                        logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track run_id {run_id} (overflow count: {dropped_overflow_count})")
 
-                        # Unregister run from cancellation service when finished (only if feature is enabled)
-                        if settings.mcpgateway_tool_cancellation_enabled:
-                            try:
-                                await cancellation_service.unregister_run(run_id)
-                            except Exception:
-                                logger.exception("Failed to unregister run %s", run_id)
+                            # Unregister run from cancellation service when finished (only if feature is enabled)
+                            if settings.mcpgateway_tool_cancellation_enabled:
+                                try:
+                                    await cancellation_service.unregister_run(run_id)
+                                except Exception:
+                                    logger.exception("Failed to unregister run %s", run_id)
 
-                    elif kind == "on_tool_error":
-                        run_id = str(event.get("run_id") or uuid4())
-                        error = str(event.get("data", {}).get("error", "Unknown error"))
+                        elif kind == "on_tool_error":
+                            run_id = str(event.get("run_id") or uuid4())
+                            error = str(event.get("data", {}).get("error", "Unknown error"))
 
-                        # Clear any buffered end for this run to avoid emitting both error and end
-                        if run_id in pending_tool_ends:
-                            del pending_tool_ends[run_id]
-                            logger.debug(f"Cleared buffered on_tool_end for run_id {run_id} due to tool error")
+                            # Clear any buffered end for this run to avoid emitting both error and end
+                            if run_id in pending_tool_ends:
+                                del pending_tool_ends[run_id]
+                                logger.debug(f"Cleared buffered on_tool_end for run_id {run_id} due to tool error")
 
-                        # Clear from dropped set if this run was previously dropped (prevents false orphan)
-                        dropped_tool_ends.discard(run_id)
+                            # Clear from dropped set if this run was previously dropped (prevents false orphan)
+                            dropped_tool_ends.discard(run_id)
 
-                        yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
+                            yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
 
-                        # Unregister run on error (only if feature is enabled)
-                        if settings.mcpgateway_tool_cancellation_enabled:
-                            try:
-                                await cancellation_service.unregister_run(run_id)
-                            except Exception:
-                                logger.exception("Failed to unregister run %s after error", run_id)
+                            # Unregister run on error (only if feature is enabled)
+                            if settings.mcpgateway_tool_cancellation_enabled:
+                                try:
+                                    await cancellation_service.unregister_run(run_id)
+                                except Exception:
+                                    logger.exception("Failed to unregister run %s after error", run_id)
 
-                    elif kind == "on_chat_model_stream":
-                        chunk = event.get("data", {}).get("chunk")
-                        if chunk and hasattr(chunk, "content"):
-                            content = chunk.content
-                            if content:
-                                full_response += content
-                                yield {"type": "token", "content": content}
+                        elif kind == "on_chat_model_stream":
+                            chunk = event.get("data", {}).get("chunk")
+                            if chunk and hasattr(chunk, "content"):
+                                content = chunk.content
+                                if content:
+                                    full_response += content
+                                    yield {"type": "token", "content": content}
 
-                except Exception as event_error:
-                    logger.warning(f"Error processing event {kind}: {event_error}")
-                    continue
+                    except Exception as event_error:
+                        logger.warning(f"Error processing event {kind}: {event_error}")
+                        continue
 
-            # Emit aggregated error for any orphan/dropped tool ends
-            # De-duplicate IDs (in case same ID was buffered and dropped in edge cases)
-            all_orphan_ids = sorted(set(pending_tool_ends.keys()) | dropped_tool_ends)
-            if all_orphan_ids or dropped_overflow_count > 0:
-                buffered_count = len(pending_tool_ends)
-                dropped_count = len(dropped_tool_ends)
-                total_unique = len(all_orphan_ids)
-                total_affected = total_unique + dropped_overflow_count
-                logger.warning(
-                    f"Stream completed with {total_affected} orphan tool end(s): {buffered_count} buffered, {dropped_count} dropped (tracked), {dropped_overflow_count} dropped (untracked overflow)"
-                )
-                # Log full list at debug level for observability
-                if all_orphan_ids:
-                    logger.debug(f"Full orphan run_id list: {', '.join(all_orphan_ids)}")
-                now_iso = datetime.now(timezone.utc).isoformat()
-                error_parts = []
-                if buffered_count > 0:
-                    error_parts.append(f"{buffered_count} buffered")
-                if dropped_count > 0:
-                    error_parts.append(f"{dropped_count} dropped (TTL expired or buffer full)")
-                if dropped_overflow_count > 0:
-                    error_parts.append(f"{dropped_overflow_count} additional dropped (tracking overflow)")
-                error_msg = f"Tool execution incomplete: {total_affected} tool end(s) received without matching start ({', '.join(error_parts)})"
-                # Truncate to first 10 IDs in error message to avoid excessive payload
-                if all_orphan_ids:
-                    max_display_ids = 10
-                    display_ids = all_orphan_ids[:max_display_ids]
-                    remaining = total_unique - len(display_ids)
-                    if remaining > 0:
-                        error_msg += f". Run IDs (first {max_display_ids} of {total_unique}): {', '.join(display_ids)} (+{remaining} more)"
-                    else:
-                        error_msg += f". Run IDs: {', '.join(display_ids)}"
-                yield {
-                    "type": "tool_error",
-                    "id": str(uuid4()),
-                    "tool": None,
-                    "error": error_msg,
-                    "time": now_iso,
-                }
-                pending_tool_ends.clear()
-                dropped_tool_ends.clear()
+                all_orphan_ids = sorted(set(pending_tool_ends.keys()) | dropped_tool_ends)
+                if all_orphan_ids or dropped_overflow_count > 0:
+                    buffered_count = len(pending_tool_ends)
+                    dropped_count = len(dropped_tool_ends)
+                    total_unique = len(all_orphan_ids)
+                    total_affected = total_unique + dropped_overflow_count
+                    logger.warning(
+                        f"Stream completed with {total_affected} orphan tool end(s): {buffered_count} buffered, {dropped_count} dropped (tracked), {dropped_overflow_count} dropped (untracked overflow)"
+                    )
+                    if all_orphan_ids:
+                        logger.debug(f"Full orphan run_id list: {', '.join(all_orphan_ids)}")
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    error_parts = []
+                    if buffered_count > 0:
+                        error_parts.append(f"{buffered_count} buffered")
+                    if dropped_count > 0:
+                        error_parts.append(f"{dropped_count} dropped (TTL expired or buffer full)")
+                    if dropped_overflow_count > 0:
+                        error_parts.append(f"{dropped_overflow_count} additional dropped (tracking overflow)")
+                    error_msg = f"Tool execution incomplete: {total_affected} tool end(s) received without matching start ({', '.join(error_parts)})"
+                    if all_orphan_ids:
+                        max_display_ids = 10
+                        display_ids = all_orphan_ids[:max_display_ids]
+                        remaining = total_unique - len(display_ids)
+                        if remaining > 0:
+                            error_msg += f". Run IDs (first {max_display_ids} of {total_unique}): {', '.join(display_ids)} (+{remaining} more)"
+                        else:
+                            error_msg += f". Run IDs: {', '.join(display_ids)}"
+                    yield {
+                        "type": "tool_error",
+                        "id": str(uuid4()),
+                        "tool": None,
+                        "error": error_msg,
+                        "time": now_iso,
+                    }
+                    pending_tool_ends.clear()
+                    dropped_tool_ends.clear()
 
-            # Calculate elapsed time
-            elapsed_ms = int((time.time() - start_ts) * 1000)
+                elapsed_ms = int((time.time() - start_ts) * 1000)
 
-            # Determine tool usage
-            tools_used = list({tr["name"] for tr in tool_runs.values() if tr.get("name")})
+                tools_used = list({tr["name"] for tr in tool_runs.values() if tr.get("name")})
 
-            # Yield final event
-            yield {"type": "final", "content": full_response, "tool_used": len(tools_used) > 0, "tools": tools_used, "elapsed_ms": elapsed_ms}
+                if span and is_output_capture_enabled("llm.chat"):
+                    set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"response": full_response}))
 
-            # Save history
-            if self.user_id and full_response:
-                await self.history_manager.append_message(self.user_id, "user", message)
-                await self.history_manager.append_message(self.user_id, "assistant", full_response)
+                yield {"type": "final", "content": full_response, "tool_used": len(tools_used) > 0, "tools": tools_used, "elapsed_ms": elapsed_ms}
 
-        except (ConnectionError, TimeoutError) as e:
-            logger.error(f"Error in chat_events: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error in chat_events: {e}")
-            raise ChatProcessingError(f"Chat processing error: {e}") from e
+                if self.user_id and full_response:
+                    await self.history_manager.append_message(self.user_id, "user", message)
+                    await self.history_manager.append_message(self.user_id, "assistant", full_response)
+
+            except (ConnectionError, TimeoutError) as e:
+                logger.error(f"Error in chat_events: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Error in chat_events: {e}")
+                raise ChatProcessingError(f"Chat processing error: {e}") from e
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
         """

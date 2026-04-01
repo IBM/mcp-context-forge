@@ -6900,3 +6900,68 @@ class TestListResourcesGatewayIdFilter:
             result, _ = await resource_service.list_resources(mock_db, gateway_id=None)
 
         assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_list_resources_creates_span(self, resource_service, mock_db):
+        mock_resource = MagicMock()
+        mock_resource.team_id = None
+        mock_resource.tags = []
+        mock_resource.team = None
+        mock_db.commit = MagicMock()
+
+        span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+        with (
+            patch.object(resource_service, "convert_resource_to_read", return_value="converted"),
+            patch("mcpgateway.services.resource_service.create_span", return_value=span_cm) as mock_create_span,
+            patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn,
+            patch.object(resource_service, "_apply_access_control", new=AsyncMock(side_effect=lambda query, *_args, **_kwargs: query)),
+            patch("mcpgateway.services.resource_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache_fn.return_value = AsyncMock(hash_filters=MagicMock(return_value="h"), get=AsyncMock(return_value=None), set=AsyncMock())
+            mock_paginate.return_value = ([mock_resource], None)
+
+            result, _ = await resource_service.list_resources(mock_db, user_email="user@example.com", token_teams=["team-1"], visibility="team")
+
+        assert result == ["converted"]
+        assert mock_create_span.call_args[0][0] == "resource.list"
+        attrs = mock_create_span.call_args[0][1]
+        assert attrs["user.email"] == "user@example.com"
+        assert attrs["team.scope"] == "team-1"
+        assert attrs["visibility"] == "team"
+
+    @pytest.mark.asyncio
+    async def test_list_server_resources_creates_span(self, resource_service, mock_db):
+        mock_db.commit = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [MagicMock(team_id=None)]
+
+        span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+        with (
+            patch.object(resource_service, "convert_resource_to_read", return_value="converted"),
+            patch("mcpgateway.services.resource_service.create_span", return_value=span_cm) as mock_create_span,
+        ):
+            result = await resource_service.list_server_resources(mock_db, "server-1", user_email="user@example.com", token_teams=["team-1"])
+
+        assert result == ["converted"]
+        assert mock_create_span.call_args[0][0] == "resource.list"
+        attrs = mock_create_span.call_args[0][1]
+        assert attrs["server_id"] == "server-1"
+        assert attrs["team.scope"] == "team-1"
+
+    @pytest.mark.asyncio
+    async def test_list_resource_templates_creates_span(self, resource_service, mock_db):
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+
+        span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+        with (
+            patch("mcpgateway.services.resource_service.ResourceTemplate.model_validate", return_value="template"),
+            patch("mcpgateway.services.resource_service.create_span", return_value=span_cm) as mock_create_span,
+        ):
+            result = await resource_service.list_resource_templates(mock_db, server_id="server-1", token_teams=["team-1"])
+
+        assert result == ["template"]
+        assert mock_create_span.call_args[0][0] == "resource_template.list"
+        attrs = mock_create_span.call_args[0][1]
+        assert attrs["server_id"] == "server-1"

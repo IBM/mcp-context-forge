@@ -505,7 +505,17 @@ class GatewaysPage(BasePage):
             "() => !document.querySelector('#gateways-loading.htmx-request')",
             timeout=15000,
         )
-        self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
+        try:
+            self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
+        except PlaywrightTimeoutError:
+            # Zero-result states or partial-swap races can leave the canonical
+            # table structure missing after a clear. Recover by reopening the
+            # gateways tab from a fresh admin navigation.
+            self.page.goto("/admin#gateways", wait_until="domcontentloaded")
+            if "/admin/login" in self.page.url:
+                return
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive gateways checkbox.
@@ -720,6 +730,9 @@ class GatewaysPage(BasePage):
 
         # Keep deleting until no more gateways with this URL exist
         while True:
+            if "/admin/login" in self.page.url:
+                return deleted_any
+
             # Search for the gateway by URL
             self.search_gateways(gateway_url)
             self.page.wait_for_timeout(500)
@@ -746,12 +759,15 @@ class GatewaysPage(BasePage):
                 logger.info("Deleted gateway '%s' with URL '%s'", gateway_name, gateway_url)
                 deleted_any = True
 
-                # Reload to see updated table — use tolerant navigation
+                # Delete submissions already navigate back through the admin UI.
+                # Avoid reloading the current POST result page; instead try a
+                # direct return to the gateways tab and stop if auth/session
+                # state has already moved us elsewhere after a successful
+                # delete.
                 try:
-                    self.page.reload(wait_until="domcontentloaded")
-                except PlaywrightTimeoutError:
                     self.page.goto("/admin#gateways", wait_until="domcontentloaded")
-                try:
+                    if "/admin/login" in self.page.url:
+                        return deleted_any
                     self.navigate_to_gateways_tab()
                     self.wait_for_gateways_table_loaded()
                 except (PlaywrightTimeoutError, AssertionError):

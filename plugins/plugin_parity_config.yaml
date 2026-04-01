@@ -10,6 +10,7 @@ plugins:
     priority: 100
     conditions:
       - resources: ["time://formats"]
+      - resources: ["parity://db-direct-formats"]
     config:
       header_template: "SPDX-License-Identifier: Apache-2.0"
       languages: ["python"]
@@ -42,6 +43,7 @@ plugins:
     priority: 120
     conditions:
       - prompts: ["fast-time-convert-time-detailed"]
+      - prompts: ["mcp-plugin-parity-db-direct"]
     config:
       sentinel_text: "[PROMPT-POST-FETCH-SENTINEL]"
       separator: "\n"

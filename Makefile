@@ -668,10 +668,9 @@ PYTEST_IGNORE_FLAGS := $(foreach p,$(PYTEST_IGNORE),--ignore=$(p))
 ## --- Automated checks --------------------------------------------------------
 smoketest:
 	@echo "🚀 Running smoketest..."
-	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
-		./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
-		echo "✅ Smoketest passed!" \
-	'
+	@test -d "$(VENV_DIR)" || $(MAKE) venv install install-dev
+	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
+	@echo "✅ Smoketest passed!"
 
 test-mcp-cli:  ## MCP protocol tests via mcp-cli + wrapper stdio (no LLM needed)
 	@echo "🔌 Running MCP protocol tests via mcp-cli against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -1222,48 +1221,71 @@ COMPOSE_CMD_MONITOR := $(shell \
 		echo "docker-compose"; \
 	fi)
 
+NGINX_PORT_SPECS := nginx:NGINX_PORT:8080
+LANGFUSE_PORT_SPECS := langfuse-web:LANGFUSE_PORT:3100 langfuse-worker:LANGFUSE_WORKER_PORT:3130
+MONITORING_PORT_SPECS := postgres_exporter:POSTGRES_EXPORTER_PORT:9187 redis_exporter:REDIS_EXPORTER_PORT:9121 pgbouncer_exporter:PGBOUNCER_EXPORTER_PORT:9127 nginx_exporter:NGINX_EXPORTER_PORT:9113 cadvisor:CADVISOR_PORT:8085 prometheus:PROMETHEUS_PORT:9090 loki:LOKI_PORT:3101 tempo:TEMPO_PORT:3200 tempo:TEMPO_OTLP_GRPC_PORT:4317 tempo:TEMPO_OTLP_HTTP_PORT:4318 grafana:GRAFANA_PORT:3000 pgadmin:PGADMIN_PORT:5050 redis_commander:REDIS_COMMANDER_PORT:8081
+
+define CHECK_PORT_SPECS
+	@PORT_SPECS='$(1)'; \
+	for spec in $$PORT_SPECS; do \
+		service=$${spec%%:*}; \
+		rest=$${spec#*:}; \
+		env_var=$${rest%%:*}; \
+		default_port=$${rest##*:}; \
+		port=$${!env_var:-}; \
+		if [ -z "$$port" ]; then port=$$default_port; fi; \
+		echo "🔎 Preflight: checking host port $$port ($$service)"; \
+		if $(COMPOSE_CMD_MONITOR) ps --services --status running 2>/dev/null | grep -qx "$$service"; then \
+			echo "ℹ️  Port $$port is already bound by this compose project's $$service; reusing it."; \
+			continue; \
+		fi; \
+		if command -v ss >/dev/null 2>&1; then \
+			if ss -H -ltn "sport = :$$port" | grep -q .; then \
+				echo "⚠️  Host port $$port for $$service is already in use."; \
+				ss -ltnp "sport = :$$port" || ss -ltn "sport = :$$port"; \
+				echo "   Override with $$env_var=<free-port> or stop the conflicting service."; \
+				exit 1; \
+			fi; \
+		elif command -v lsof >/dev/null 2>&1; then \
+			if lsof -nP -iTCP:$$port -sTCP:LISTEN >/dev/null 2>&1; then \
+				echo "⚠️  Host port $$port for $$service is already in use."; \
+				lsof -nP -iTCP:$$port -sTCP:LISTEN || true; \
+				echo "   Override with $$env_var=<free-port> or stop the conflicting service."; \
+				exit 1; \
+			fi; \
+		else \
+			echo "ℹ️  Skipping port check for $$service (ss/lsof not found)."; \
+		fi; \
+	done
+endef
+
 .PHONY: monitoring-up
 monitoring-up:                             ## Start monitoring stack (Prometheus, Grafana, exporters)
 	@echo "📊 Starting monitoring stack..."
-	@echo "🔎 Preflight: checking host port 8080 (nginx)"
-	@if command -v ss >/dev/null 2>&1; then \
-		if ss -H -ltn 'sport = :8080' | grep -q .; then \
-			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
-			ss -ltnp 'sport = :8080' || ss -ltn 'sport = :8080'; \
-			echo "   Stop the process or change the nginx host port mapping."; \
-			exit 1; \
-		fi; \
-	elif command -v lsof >/dev/null 2>&1; then \
-		if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then \
-			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
-			lsof -nP -iTCP:8080 -sTCP:LISTEN || true; \
-			echo "   Stop the process or change the nginx host port mapping."; \
-			exit 1; \
-		fi; \
-	else \
-		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
-	fi
+	$(call CHECK_PORT_SPECS,$(NGINX_PORT_SPECS) $(MONITORING_PORT_SPECS))
 	# Enable OTEL tracing + JSON console logs for the monitoring profile (Tempo + Loki correlation)
 	LOG_FORMAT=json \
 	OTEL_ENABLE_OBSERVABILITY=true \
 	OTEL_TRACES_EXPORTER=otlp \
 	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
 	$(COMPOSE_CMD_MONITOR) --profile monitoring up -d
+	@# Nginx resolves gateway backends when it starts; recreate it after gateway churn.
+	$(COMPOSE_CMD_MONITOR) up -d --no-deps --force-recreate nginx
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
-		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then break; fi; \
+		if curl -s -o /dev/null -w '' http://localhost:$${GRAFANA_PORT:-3000}/api/health 2>/dev/null; then break; fi; \
 		sleep 2; \
 	done
 	@# Configure Grafana: star dashboard and set as home
-	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
-	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/user/preferences' >/dev/null 2>&1 || true
+	@curl -s -X POST -u admin:changeme "http://localhost:$${GRAFANA_PORT:-3000}/api/user/stars/dashboard/uid/mcp-gateway-overview" >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${GRAFANA_PORT:-3000}/api/org/preferences" >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' "http://localhost:$${GRAFANA_PORT:-3000}/api/user/preferences" >/dev/null 2>&1 || true
 	@echo ""
 	@echo "✅ Monitoring stack started!"
 	@echo ""
-	@echo "   🌐 Grafana:    http://localhost:3000 (admin/changeme)"
-	@echo "   🔥 Prometheus: http://localhost:9090"
-	@echo "   🧵 Tempo:      http://localhost:3200 (OTLP: 4317 gRPC, 4318 HTTP)"
+	@echo "   🌐 Grafana:    http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"
+	@echo "   🔥 Prometheus: http://localhost:$${PROMETHEUS_PORT:-9090}"
+	@echo "   🧵 Tempo:      http://localhost:$${TEMPO_PORT:-3200} (OTLP: $${TEMPO_OTLP_GRPC_PORT:-4317} gRPC, $${TEMPO_OTLP_HTTP_PORT:-4318} HTTP)"
 	@echo ""
 	@echo "   ★ ContextForge Overview (home dashboard):"
 	@echo "      • Gateway replicas, Nginx, PostgreSQL, Redis status"
@@ -1300,6 +1322,181 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 	@echo "📊 Stopping and cleaning monitoring stack..."
 	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v --remove-orphans
 	@echo "✅ Monitoring stack stopped and volumes removed."
+
+# =============================================================================
+# help: 🔭 LANGFUSE LLM OBSERVABILITY
+# help: langfuse-up              - Start Langfuse stack (trace viz, evals, cost tracking)
+# help: langfuse-down            - Stop Langfuse stack
+# help: langfuse-status          - Show status of Langfuse services
+# help: langfuse-logs            - Show Langfuse stack logs
+# help: langfuse-reset-data      - Stop the Langfuse stack and remove only Langfuse data volumes
+# help: langfuse-clean-including-contextforge - Stop the combined stack and remove Langfuse + ContextForge volumes
+# help: langfuse-monitoring-up   - Start Langfuse + monitoring (gateway traces go to Langfuse)
+
+LANGFUSE_COMPOSE := $(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.with-langfuse.yml
+LANGFUSE_DATA_VOLUMES := langfuse-postgres-data langfuse-clickhouse-data langfuse-clickhouse-logs langfuse-minio-data langfuse-redis-data
+
+define VERIFY_LANGFUSE_GATEWAY_EXPORT
+	@echo "🔎 Verifying gateway OTLP exporter is wired to Langfuse..."
+	@$(LANGFUSE_COMPOSE) exec -T gateway /bin/sh -c '\
+		env | grep -q "^OTEL_ENABLE_OBSERVABILITY=true$$" && \
+		env | grep -q "^OTEL_EXPORTER_OTLP_PROTOCOL=http$$" && \
+		env | grep -q "^LANGFUSE_OTEL_ENDPOINT=" \
+	' || { \
+		echo "❌ Gateway is not running with the Langfuse OTLP overlay."; \
+		echo "   Expected OTEL_ENABLE_OBSERVABILITY=true, OTEL_EXPORTER_OTLP_PROTOCOL=http, and LANGFUSE_OTEL_ENDPOINT inside the gateway container."; \
+		exit 1; \
+	}
+	@expected_endpoint=$$($(LANGFUSE_COMPOSE) exec -T gateway /bin/sh -c 'printf "%s" "$$LANGFUSE_OTEL_ENDPOINT"'); \
+	found_endpoint=0; \
+	for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if $(LANGFUSE_COMPOSE) logs gateway --tail=400 2>/dev/null | grep -F "Endpoint: $$expected_endpoint" >/dev/null; then \
+			found_endpoint=1; \
+			break; \
+		fi; \
+		sleep 2; \
+	done; \
+	if [ "$$found_endpoint" -ne 1 ]; then \
+		echo "❌ Gateway did not initialize OpenTelemetry with the expected Langfuse endpoint ($$expected_endpoint)."; \
+		echo "   Rebuild the gateway image if the running container is stale, then rerun make langfuse-up."; \
+		exit 1; \
+	fi
+endef
+
+.PHONY: langfuse-up
+langfuse-up:                               ## Start Langfuse LLM observability stack
+	@echo "🔭 Starting Langfuse LLM observability stack..."
+	@if [ -z "$${LANGFUSE_PUBLIC_KEY:-}" ] || [ -z "$${LANGFUSE_SECRET_KEY:-}" ]; then \
+		echo "⚠️  LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set in the shell."; \
+		echo "   Using compose-local dev defaults: pk-lf-contextforge / sk-lf-contextforge"; \
+		echo "   Override them via env when you want a different local project or external Langfuse."; \
+	fi
+	$(call CHECK_PORT_SPECS,$(NGINX_PORT_SPECS) $(LANGFUSE_PORT_SPECS))
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_EXPORTER_OTLP_PROTOCOL=http \
+	$(LANGFUSE_COMPOSE) up -d
+	@# Force the gateway under the Langfuse overlay so a prior monitoring-only run
+	@# cannot leave Tempo-only OTLP settings behind.
+	$(LANGFUSE_COMPOSE) up -d --force-recreate gateway
+	@# Nginx resolves gateway backends when it starts; recreate it after gateway churn.
+	$(LANGFUSE_COMPOSE) up -d --no-deps --force-recreate nginx
+	@# Bring up the same lightweight MCP/A2A test targets used by the live smoke
+	@# suites so Langfuse runs can generate real end-to-end tool traffic without
+	@# depending on stale registrations from the testing profile.
+	$(LANGFUSE_COMPOSE) up -d fast_test_server register_fast_test a2a_echo_agent register_a2a_echo
+	$(VERIFY_LANGFUSE_GATEWAY_EXPORT)
+	@echo "⏳ Waiting for Langfuse to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+		if curl -s -o /dev/null -w '' http://localhost:$${LANGFUSE_PORT:-3100}/api/public/health 2>/dev/null; then break; fi; \
+		sleep 3; \
+	done
+	@echo ""
+	@echo "✅ Langfuse LLM observability started!"
+	@echo ""
+	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100}"
+	@echo "   📧 Login email:    $${LANGFUSE_INIT_USER_EMAIL:-admin@example.com}"
+	@echo "   🔐 Password:       $${LANGFUSE_INIT_USER_PASSWORD:-changeme}"
+	@echo "   🌐 Gateway:        http://localhost:$${NGINX_PORT:-8080}"
+	@echo ""
+	@echo "   OTEL traces from ContextForge → Langfuse (OTLP/HTTP)"
+	@echo "   Project: ContextForge Gateway (auto-provisioned)"
+	@echo ""
+
+.PHONY: langfuse-down
+langfuse-down:                             ## Stop Langfuse stack
+	@echo "🔭 Stopping Langfuse stack..."
+	$(LANGFUSE_COMPOSE) down --remove-orphans
+	@echo "✅ Langfuse stack stopped."
+
+.PHONY: langfuse-status
+langfuse-status:                           ## Show status of Langfuse services
+	@echo "🔭 Langfuse stack status:"
+	@$(LANGFUSE_COMPOSE) ps 2>/dev/null | grep -E "(langfuse)" || \
+		echo "   No Langfuse services running. Start with 'make langfuse-up'"
+	@echo ""
+	@echo "🔍 Langfuse health:"
+	@curl -sf http://localhost:$${LANGFUSE_PORT:-3100}/api/public/health 2>/dev/null && echo "" || \
+		echo "   Langfuse UI not reachable at http://localhost:$${LANGFUSE_PORT:-3100}"
+
+.PHONY: langfuse-logs
+langfuse-logs:                             ## Show Langfuse stack logs
+	$(LANGFUSE_COMPOSE) logs -f --tail=100
+
+.PHONY: langfuse-reset-data
+langfuse-reset-data:                       ## Stop the Langfuse stack and remove only Langfuse data volumes
+	@echo "🔭 Resetting Langfuse data volumes (ContextForge data preserved)..."
+	$(LANGFUSE_COMPOSE) down --remove-orphans
+	@for logical_volume in $(LANGFUSE_DATA_VOLUMES); do \
+		matches=$$(docker volume ls --format '{{.Name}}' | grep -E "(^|_)$${logical_volume}$$" || true); \
+		if [ -z "$$matches" ]; then \
+			echo "   • $$logical_volume: not present"; \
+			continue; \
+		fi; \
+		echo "$$matches" | while IFS= read -r volume_name; do \
+			[ -n "$$volume_name" ] || continue; \
+			echo "   • removing $$volume_name"; \
+			docker volume rm "$$volume_name" >/dev/null; \
+		done; \
+	done
+	@echo "✅ Langfuse data volumes removed."
+	@echo "   Re-run 'make langfuse-up' to start with a fresh Langfuse project."
+
+.PHONY: langfuse-clean-including-contextforge
+langfuse-clean-including-contextforge:     ## Stop the combined stack and remove Langfuse + ContextForge volumes
+	@echo "🔭 Stopping and cleaning the combined Langfuse + ContextForge stack..."
+	$(LANGFUSE_COMPOSE) down -v --remove-orphans
+	@echo "✅ Combined stack stopped and volumes removed."
+
+.PHONY: langfuse-clean
+langfuse-clean:                            ## Deprecated ambiguous alias
+	@echo "❌ 'make langfuse-clean' is ambiguous and has been removed."
+	@echo "   Use 'make langfuse-reset-data' to wipe only Langfuse data."
+	@echo "   Use 'make langfuse-clean-including-contextforge' to wipe the full combined stack, including ContextForge data."
+	@exit 1
+
+.PHONY: langfuse-monitoring-up
+langfuse-monitoring-up:                    ## Start Langfuse + full monitoring stack (Grafana, Prometheus, Tempo)
+	@echo "🔭📊 Starting Langfuse + monitoring stack..."
+	@echo "   Gateway OTLP traces will be sent to Langfuse."
+	@echo "   Grafana/Tempo remain available for infrastructure metrics and optional collector fan-out."
+	$(call CHECK_PORT_SPECS,$(NGINX_PORT_SPECS) $(LANGFUSE_PORT_SPECS) $(MONITORING_PORT_SPECS))
+	LOG_FORMAT=json \
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_EXPORTER_OTLP_PROTOCOL=http \
+	$(LANGFUSE_COMPOSE) --profile monitoring up -d
+	@# Force the gateway under the Langfuse overlay so a prior monitoring-only run
+	@# cannot leave Tempo-only OTLP settings behind.
+	$(LANGFUSE_COMPOSE) up -d --force-recreate gateway
+	@# Nginx resolves gateway backends when it starts; recreate it after gateway churn.
+	$(LANGFUSE_COMPOSE) up -d --no-deps --force-recreate nginx
+	$(VERIFY_LANGFUSE_GATEWAY_EXPORT)
+	@echo "⏳ Waiting for services to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -s -o /dev/null -w '' http://localhost:$${GRAFANA_PORT:-3000}/api/health 2>/dev/null; then break; fi; \
+		sleep 2; \
+	done
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+		if curl -s -o /dev/null -w '' http://localhost:$${LANGFUSE_PORT:-3100}/api/public/health 2>/dev/null; then break; fi; \
+		sleep 3; \
+	done
+	@echo ""
+	@echo "✅ Langfuse + monitoring stack started!"
+	@echo ""
+	@echo "   🔭 Langfuse UI:    http://localhost:$${LANGFUSE_PORT:-3100} ($${LANGFUSE_INIT_USER_EMAIL:-admin@example.com} / $${LANGFUSE_INIT_USER_PASSWORD:-changeme})"
+	@echo "   🌐 Grafana:        http://localhost:$${GRAFANA_PORT:-3000} (admin/changeme)"
+	@echo "   🔥 Prometheus:     http://localhost:$${PROMETHEUS_PORT:-9090}"
+	@echo "   🧵 Tempo:          http://localhost:$${TEMPO_PORT:-3200}"
+	@echo "   🌐 Gateway:        http://localhost:$${NGINX_PORT:-8080}"
+	@echo ""
+	@echo "   OTEL traces → Langfuse (LLM analytics at :$${LANGFUSE_PORT:-3100})"
+	@echo "   Note: For dual-export to Tempo, use infra/monitoring/otel-collector/collector.langfuse-tempo.yaml"
+	@echo ""
+
+.PHONY: langfuse-monitoring-down
+langfuse-monitoring-down:                  ## Stop Langfuse + monitoring stack
+	@echo "🔭📊 Stopping Langfuse + monitoring stack..."
+	$(LANGFUSE_COMPOSE) --profile monitoring down --remove-orphans
+	@echo "✅ Langfuse + monitoring stack stopped."
 
 # =============================================================================
 # help: 🧪 TESTING STACK (Locust + A2A echo + fast_test_server)

@@ -4,7 +4,7 @@
 # Standard
 import asyncio
 import signal
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -90,3 +90,39 @@ def test_sighup_handler_logs_warning_when_no_event_loop():
         sighup_handler(signal.SIGHUP, None)
     mock_logger.warning.assert_called_once()
     assert "not running" in mock_logger.warning.call_args[0][0]
+
+
+def test_install_sighup_handler_skips_outside_main_thread(monkeypatch):
+    """main._install_sighup_handler() skips registration outside the main thread.
+
+    Args:
+        monkeypatch: Pytest fixture for runtime patching.
+    """
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    monkeypatch.setattr(main_mod.threading, "current_thread", lambda: object())
+    monkeypatch.setattr(main_mod.threading, "main_thread", lambda: object())
+    mock_signal = MagicMock()
+    monkeypatch.setattr(main_mod.signal, "signal", mock_signal)
+
+    assert main_mod._install_sighup_handler() is False  # pylint: disable=protected-access
+    mock_signal.assert_not_called()
+
+
+def test_restore_default_sighup_handler_skips_outside_main_thread(monkeypatch):
+    """main._restore_default_sighup_handler() skips reset outside the main thread.
+
+    Args:
+        monkeypatch: Pytest fixture for runtime patching.
+    """
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    monkeypatch.setattr(main_mod.threading, "current_thread", lambda: object())
+    monkeypatch.setattr(main_mod.threading, "main_thread", lambda: object())
+    mock_signal = MagicMock()
+    monkeypatch.setattr(main_mod.signal, "signal", mock_signal)
+
+    main_mod._restore_default_sighup_handler()  # pylint: disable=protected-access
+    mock_signal.assert_not_called()

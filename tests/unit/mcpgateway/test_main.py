@@ -649,6 +649,20 @@ class TestProtocolEndpoints:
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
     @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
     @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_cancelled_accepts_unknown_run_as_noop(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
+        """Unknown cancellation notifications should be accepted as best-effort no-ops."""
+        mock_get_context.return_value = ("viewer@example.com", [], False)
+        mock_get_status.return_value = None
+        req = {"method": "notifications/cancelled", "params": {"requestId": "unknown-run"}}
+        response = test_client.post("/protocol/notifications", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_cancel_run.assert_awaited_once_with("unknown-run", reason=None)
+        mock_notify.assert_awaited_once()
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
     def test_handle_notification_alias_cancelled_enforces_authorization(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
         """The /notifications alias must enforce the same cancellation authorization rules."""
         mock_get_context.return_value = ("viewer@example.com", [], False)

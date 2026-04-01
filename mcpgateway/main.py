@@ -40,6 +40,7 @@ import logging
 import re
 import signal
 import sys
+import threading
 from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
@@ -94,7 +95,7 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError
+from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError, PromptHookType, ResourceHookType
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
@@ -171,6 +172,7 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
+from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 from mcpgateway.version import router as version_router
@@ -453,11 +455,21 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     if request.headers.get(_INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
         auth_context["_rust_session_validated"] = True
 
+    forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
+
+    set_trace_context_from_teams(
+        auth_context.get("teams"),
+        user_email=auth_context.get("email"),
+        is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
+        auth_method=forwarded_auth_method,
+        team_name=auth_context.get("team_name"),
+    )
+
     return {
         "email": auth_context.get("email"),
         "full_name": auth_context.get("email") or "MCP Internal Forward",
         "is_admin": bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
-        "auth_method": "mcp_internal_forward",
+        "auth_method": forwarded_auth_method,
         "token_use": auth_context.get("token_use"),
     }
 
@@ -1018,11 +1030,17 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
     else:
         data = {}
 
-    payload: Dict[str, Any] = {
-        "name": data.get("name", getattr(tool, "name", None)),
-        "description": data.get("description", getattr(tool, "description", None)),
-        "inputSchema": data.get("inputSchema", getattr(tool, "input_schema", None)),
-    }
+    name = data.get("name", getattr(tool, "name", None))
+    description = data.get("description", getattr(tool, "description", None))
+    input_schema = data.get("inputSchema", getattr(tool, "input_schema", None))
+
+    payload: Dict[str, Any] = {}
+    if name is not None:
+        payload["name"] = name
+    if description is not None or name is not None or input_schema is not None:
+        payload["description"] = description or ""
+    if input_schema is not None:
+        payload["inputSchema"] = input_schema
 
     output_schema = data.get("outputSchema", getattr(tool, "output_schema", None))
     if output_schema is not None:
@@ -1142,17 +1160,16 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
     requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
     run_status = await cancellation_service.get_status(request_id)
 
-    unauthorized = False
     if run_status is None:
-        # Default deny for non-admin users when run is not known on this worker.
-        # Session-affinity clients should route cancellation to the worker that owns the run.
-        unauthorized = not requester_is_admin
-    else:
-        run_owner_email = run_status.get("owner_email")
-        run_owner_team_ids = run_status.get("owner_team_ids") or []
-        requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
-        requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
-        unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
+        # Notifications are best-effort; unknown request ids should be accepted
+        # as no-ops rather than rejected as authorization failures.
+        return
+
+    run_owner_email = run_status.get("owner_email")
+    run_owner_team_ids = run_status.get("owner_team_ids") or []
+    requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
+    requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
+    unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
 
     if unauthorized:
         if as_jsonrpc_error:
@@ -1515,6 +1532,43 @@ async def attempt_to_bootstrap_sso_providers():
 ####################
 # Startup/Shutdown #
 ####################
+def _can_manage_sighup_handler() -> bool:
+    """Return whether this runtime context can safely install process signal handlers.
+
+    Returns:
+        ``True`` when startup is running on the process main thread and SIGHUP is available.
+    """
+    return hasattr(signal, "SIGHUP") and threading.current_thread() is threading.main_thread()
+
+
+def _install_sighup_handler() -> bool:
+    """Install the SIGHUP handler when the current runtime context supports it.
+
+    Returns:
+        ``True`` when the handler was installed in the current runtime context.
+    """
+    if not _can_manage_sighup_handler():
+        logger.debug("Skipping SIGHUP handler registration outside the main thread")
+        return False
+
+    # First-Party
+    from mcpgateway.handlers.signal_handlers import sighup_handler  # pylint: disable=import-outside-toplevel
+
+    signal.signal(signal.SIGHUP, sighup_handler)
+    return True
+
+
+def _restore_default_sighup_handler() -> None:
+    """Restore the default SIGHUP handler when the current runtime context supports it.
+
+    Returns:
+        ``None``.
+    """
+    if not _can_manage_sighup_handler():
+        return
+    signal.signal(signal.SIGHUP, signal.SIG_DFL)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1702,10 +1756,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
-        # First-Party
-        from mcpgateway.handlers.signal_handlers import sighup_handler  # pylint: disable=import-outside-toplevel
-
-        signal.signal(signal.SIGHUP, sighup_handler)
+        _install_sighup_handler()
 
         # Start cache invalidation subscriber for cross-worker cache synchronization
         # First-Party
@@ -1777,7 +1828,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         # Restore default SIGHUP handling in case we reset signal handlers.
         try:
-            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+            _restore_default_sighup_handler()
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"Failed to restore default SIGHUP handler: {exc}")
 
@@ -4142,6 +4193,7 @@ async def message_endpoint(request: Request, server_id: str = Depends(require_va
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+        set_trace_session_id(session_id)
 
         await _assert_session_owner_or_admin(request, user, session_id)
 
@@ -8498,7 +8550,10 @@ async def _authorize_internal_mcp_server_scoped_method(
         method: MCP method name being authorized.
 
     Returns:
-        Empty success response when the method is authorized, otherwise a JSON error response.
+        Empty success response when the method is authorized and remains eligible
+        for Rust direct execution, or a JSON success payload instructing Rust to
+        forward the request to Python when plugin hooks require Python
+        execution. Returns a JSON error response when authorization fails.
 
     Raises:
         HTTPException: If the trusted server scope header is missing.
@@ -8519,6 +8574,15 @@ async def _authorize_internal_mcp_server_scoped_method(
         )
         if db.is_active and db.in_transaction() is not None:
             db.commit()
+        fallback_reason = _server_scoped_direct_execution_fallback_reason(method)
+        if fallback_reason:
+            return ORJSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "directExecutionEligible": False,
+                    "fallbackReason": fallback_reason,
+                },
+            )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
@@ -8533,6 +8597,32 @@ async def _authorize_internal_mcp_server_scoped_method(
         raise
     finally:
         db.close()
+
+
+def _server_scoped_direct_execution_fallback_reason(method: str) -> Optional[str]:
+    """Return a direct-execution fallback reason for server-scoped Rust MCP calls.
+
+    This fail-closed helper lets Python remain the source of truth for plugin
+    semantics. Rust can safely execute DB-direct reads only when no relevant
+    prompt/resource hooks are configured.
+
+    Args:
+        method: MCP method name being considered for Rust direct execution.
+
+    Returns:
+        A stable fallback reason when Python must handle the request to preserve
+        plugin semantics, otherwise ``None``.
+    """
+    if not plugin_manager:
+        return None
+
+    if method == "resources/read":
+        if plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH) or plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH):
+            return "resource-hooks-configured"
+    if method == "prompts/get":
+        if plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH) or plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH):
+            return "prompt-hooks-configured"
+    return None
 
 
 @utility_router.post("/_internal/mcp/resources/list/authz/")
@@ -9087,7 +9177,15 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
     except (PluginError, PluginViolationError):
         raise
     except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+        request_id = body.get("id") if isinstance(body, dict) else None
+        return ORJSONResponse(
+            status_code=403,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": exc.code, "message": exc.message, **({"data": exc.data} if exc.data is not None else {})},
+                "id": exc.request_id if exc.request_id is not None else request_id,
+            },
+        )
     except Exception:
         try:
             db.rollback()
@@ -10095,6 +10193,7 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+        set_trace_session_id(session_id)
 
         await _assert_session_owner_or_admin(request, user, session_id)
 
@@ -11115,12 +11214,21 @@ class InternalTrustedMCPTransportBridge:
         forwarded_scope = dict(scope)
         forwarded_scope["path"] = "/mcp/"
         forwarded_scope["modified_path"] = f"/servers/{server_id}/mcp" if server_id else "/mcp/"
+        forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
 
         token = user_context_var.set(auth_context)
         try:
+            set_trace_context_from_teams(
+                auth_context.get("teams"),
+                user_email=auth_context.get("email"),
+                is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
+                auth_method=forwarded_auth_method,
+                team_name=auth_context.get("team_name"),
+            )
             await self.transport_app.handle_streamable_http(forwarded_scope, receive, send)
         finally:
             user_context_var.reset(token)
+            clear_trace_context()
 
 
 mcp_transport_app = _build_mcp_transport_app()

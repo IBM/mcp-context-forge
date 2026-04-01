@@ -151,14 +151,37 @@ def send_jsonrpc_via_wrapper(
     reader_thread = threading.Thread(target=_reader, daemon=True)
     reader_thread.start()
 
+    def _parsed_response_ids() -> set[Any]:
+        """Return currently observed JSON-RPC response ids from stdout lines."""
+        response_ids: set[Any] = set()
+        for line in stdout_lines:
+            line = line.strip()
+            if not line or not line.startswith("{"):
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "id" in payload:
+                response_ids.add(payload["id"])
+        return response_ids
+
+    expected_response_ids = {msg["id"] for msg in messages if "id" in msg}
+
     # Write all messages
     assert proc.stdin is not None
     for msg in messages:
         proc.stdin.write(json.dumps(msg) + "\n")
         proc.stdin.flush()
 
-    # Wait for responses to arrive before closing stdin
-    time.sleep(settle_seconds)
+    # Wait for responses to arrive before closing stdin. On a freshly recreated
+    # stack, tool/prompt calls can take longer than a fixed short sleep.
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        if expected_response_ids.issubset(_parsed_response_ids()):
+            break
+        time.sleep(0.1)
 
     # Close stdin to trigger graceful shutdown
     proc.stdin.close()

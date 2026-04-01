@@ -501,6 +501,8 @@ async def forward_once(
             raw = await resp.aread()
             if not shutting_down():
                 # raw is bytes
+                if not raw.strip():
+                    return
                 try:
                     send_to_stdout(orjson.loads(raw))
                 except Exception:

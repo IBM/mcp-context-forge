@@ -29,6 +29,7 @@ from starlette.types import Receive, Scope, Send
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports.base import Transport
+from mcpgateway.utils.trace_context import set_trace_session_id
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -423,6 +424,7 @@ class SSETransport(Transport):
         self._client_gone = asyncio.Event()
         # Server generates session_id for SSE - client receives it in endpoint event
         self._session_id = str(uuid.uuid4())
+        set_trace_session_id(self._session_id)
 
         logger.info("Creating SSE transport with base_url=%s, session_id=%s", self._base_url, self._session_id)
 

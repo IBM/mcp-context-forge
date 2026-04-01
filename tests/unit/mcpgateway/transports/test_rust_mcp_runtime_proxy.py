@@ -81,6 +81,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
         lambda: {
             "email": "user@example.com",
             "teams": ["team-a"],
+            "auth_method": "jwt",
             "is_authenticated": True,
             "is_admin": False,
             "permission_is_admin": True,
@@ -140,6 +141,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
     assert auth_context == {
         "email": "user@example.com",
         "teams": ["team-a"],
+        "auth_method": "jwt",
         "is_authenticated": True,
         "is_admin": False,
         "permission_is_admin": True,

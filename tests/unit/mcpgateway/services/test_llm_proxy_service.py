@@ -3,7 +3,7 @@
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
@@ -101,7 +101,10 @@ def test_get_api_key_decode_error(service, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_build_openai_request(service):
-    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
+    request = ChatCompletionRequest(
+        model="gpt-4",
+        messages=[ChatMessage(role="user", content="hi token=supersecret https://example.com?token=urlsecret")],
+    )
     provider = _make_provider()
     model = _make_model()
 
@@ -113,7 +116,10 @@ def test_build_openai_request(service):
 
 
 def test_build_azure_request(service, monkeypatch: pytest.MonkeyPatch):
-    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")])
+    request = ChatCompletionRequest(
+        model="gpt-4",
+        messages=[ChatMessage(role="user", content="hi token=supersecret https://example.com?token=urlsecret")],
+    )
     monkeypatch.setattr("mcpgateway.services.llm_provider_service.decode_auth", lambda *_a, **_k: {"value": "res"})
     provider = _make_provider(
         provider_type=LLMProviderType.AZURE_OPENAI,
@@ -1349,3 +1355,91 @@ async def test_chat_completion_stream_ollama_native_non_sse_null_chunk(service):
         chunks.append(chunk)
 
     assert any("ok" in c for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_sets_langfuse_generation_attributes(service):
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI)
+    model = _make_model()
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(
+        model="gpt-4",
+        messages=[ChatMessage(role="user", content="hi token=supersecret https://example.com?token=urlsecret")],
+    )
+
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "id": "resp1",
+        "created": 1,
+        "model": "gpt-4",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+    }
+
+    service._client = AsyncMock()
+    service._client.post = AsyncMock(return_value=response)
+
+    span = MagicMock()
+    span_cm = MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))
+    create_span = MagicMock(return_value=span_cm)
+
+    with (
+        patch("mcpgateway.services.llm_proxy_service.create_span", create_span),
+        patch("mcpgateway.services.llm_proxy_service.is_input_capture_enabled", return_value=True),
+        patch("mcpgateway.services.llm_proxy_service.is_output_capture_enabled", return_value=True),
+        patch("mcpgateway.services.llm_proxy_service.set_span_attribute", side_effect=lambda target, key, value: target.set_attribute(key, value)),
+    ):
+        result = await service.chat_completion(MagicMock(), request)
+
+    assert result.id == "resp1"
+    create_span.assert_called_once()
+    attrs = create_span.call_args[0][1]
+    assert attrs["langfuse.observation.type"] == "generation"
+    assert attrs["gen_ai.system"] == "openai"
+    assert attrs["gen_ai.request.model"] == "gpt-4"
+    assert "hi" in attrs["langfuse.observation.input"]
+    assert "supersecret" not in attrs["langfuse.observation.input"]
+    assert "urlsecret" not in attrs["langfuse.observation.input"]
+    assert "token=***" in attrs["langfuse.observation.input"]
+    assert "token=REDACTED" in attrs["langfuse.observation.input"]
+    span.set_attribute.assert_any_call("gen_ai.response.model", "gpt-4")
+    span.set_attribute.assert_any_call("gen_ai.usage.prompt_tokens", 1)
+    span.set_attribute.assert_any_call("gen_ai.usage.completion_tokens", 2)
+    span.set_attribute.assert_any_call("gen_ai.usage.total_tokens", 3)
+    output_attr = next(call.args[1] for call in span.set_attribute.call_args_list if call.args[0] == "langfuse.observation.output")
+    assert "ok" in output_attr
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_stream_sets_langfuse_output_when_enabled(service):
+    provider = _make_provider(provider_type=LLMProviderType.OPENAI)
+    model = _make_model(model_id="gpt-4")
+    service._resolve_model = MagicMock(return_value=(provider, model))
+
+    request = ChatCompletionRequest(model="gpt-4", messages=[ChatMessage(role="user", content="hi")], stream=True)
+    service._client = MagicMock()
+    service._client.stream = MagicMock(return_value=DummyStreamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}', "data: [DONE]"]))
+
+    span = MagicMock()
+    span_cm = MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))
+    create_span = MagicMock(return_value=span_cm)
+
+    with (
+        patch("mcpgateway.services.llm_proxy_service.create_span", create_span),
+        patch("mcpgateway.services.llm_proxy_service.is_input_capture_enabled", return_value=True),
+        patch("mcpgateway.services.llm_proxy_service.is_output_capture_enabled", return_value=True),
+        patch("mcpgateway.services.llm_proxy_service.set_span_attribute", side_effect=lambda target, key, value: target.set_attribute(key, value)),
+        patch("mcpgateway.services.llm_proxy_service.uuid.uuid4", return_value=SimpleNamespace(hex="abcd" * 8)),
+        patch("mcpgateway.services.llm_proxy_service.time.time", return_value=1),
+    ):
+        chunks = []
+        async for chunk in service.chat_completion_stream(MagicMock(), request):
+            chunks.append(chunk)
+
+    assert chunks[-1] == "data: [DONE]\n\n"
+    attrs = create_span.call_args[0][1]
+    assert attrs["llm.stream"] is True
+    output_attr = next(call.args[1] for call in span.set_attribute.call_args_list if call.args[0] == "langfuse.observation.output")
+    assert "choices" in output_attr

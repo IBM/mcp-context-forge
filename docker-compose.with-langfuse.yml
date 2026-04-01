@@ -1,0 +1,330 @@
+# ContextForge with Langfuse LLM Observability
+# This extends the main docker-compose.yml with Langfuse integration
+#
+# Langfuse provides: trace visualization, prompt management, evaluations,
+# cost tracking, and LLM analytics via its OpenTelemetry-compatible backend.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.with-langfuse.yml up -d
+#   # or use the Makefile shortcut:
+#   make langfuse-up
+#
+# Access:
+#   Langfuse UI:  http://localhost:3100
+#
+# Combined with monitoring stack:
+#   make langfuse-monitoring-up
+#   # Traces go to Langfuse (LLM analytics) alongside Grafana/Prometheus/Tempo
+#
+# Environment variables:
+#   LANGFUSE_PUBLIC_KEY         - Optional Langfuse project public key override
+#   LANGFUSE_SECRET_KEY         - Optional Langfuse project secret key override
+#   LANGFUSE_OTEL_ENDPOINT      - Optional OTLP/HTTP endpoint override for the gateway
+#   LANGFUSE_INIT_USER_EMAIL    - Optional admin email override
+#   LANGFUSE_INIT_USER_PASSWORD - Optional admin password override
+#
+# If project keys are not provided, this overlay uses local-only dev defaults:
+#   LANGFUSE_PUBLIC_KEY=pk-lf-contextforge
+#   LANGFUSE_SECRET_KEY=sk-lf-contextforge
+#
+# Internal Langfuse infrastructure credentials below also use local-only
+# defaults in this compose overlay. Override them if you need different values.
+
+###############################################################################
+#  VOLUMES - Langfuse-specific named volumes
+###############################################################################
+volumes:
+  langfuse-postgres-data:
+    driver: local
+  langfuse-clickhouse-data:
+    driver: local
+  langfuse-clickhouse-logs:
+    driver: local
+  langfuse-minio-data:
+    driver: local
+  langfuse-redis-data:
+    driver: local
+
+###############################################################################
+#  SERVICES
+#  NOTE: All service names use hyphens (not underscores) because the AWS S3
+#  SDK inside Langfuse validates hostnames and rejects underscores.
+###############################################################################
+services:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Enable the same lightweight MCP/A2A test targets on the Langfuse stack
+  # so end-to-end tool-call smoke flows can generate traces without relying
+  # on stale registrations from the separate testing profile.
+  # ──────────────────────────────────────────────────────────────────────
+  fast_test_server:
+    profiles: []
+
+  register_fast_test:
+    profiles: []
+
+  a2a_echo_agent:
+    profiles: []
+
+  register_a2a_echo:
+    profiles: []
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Override gateway to send OTEL traces to Langfuse
+  # Langfuse accepts OTLP/HTTP at /api/public/otel (gRPC not supported)
+  # ──────────────────────────────────────────────────────────────────────
+  gateway:
+    environment:
+      - OTEL_ENABLE_OBSERVABILITY=true
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-8}
+      - LANGFUSE_OTEL_ENDPOINT=${LANGFUSE_OTEL_ENDPOINT:-http://langfuse-web:3000/api/public/otel/v1/traces}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-contextforge}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-contextforge}
+      - OTEL_EMIT_LANGFUSE_ATTRIBUTES=${OTEL_EMIT_LANGFUSE_ATTRIBUTES:-true}
+      - OTEL_CAPTURE_IDENTITY_ATTRIBUTES=${OTEL_CAPTURE_IDENTITY_ATTRIBUTES:-true}
+      - OTEL_CAPTURE_INPUT_SPANS=${OTEL_CAPTURE_INPUT_SPANS:-tool.invoke,prompt.render,llm.proxy,a2a.invoke}
+      - OTEL_BSP_MAX_QUEUE_SIZE=${OTEL_BSP_MAX_QUEUE_SIZE:-32768}
+      - OTEL_BSP_MAX_EXPORT_BATCH_SIZE=${OTEL_BSP_MAX_EXPORT_BATCH_SIZE:-2048}
+      - OTEL_BSP_SCHEDULE_DELAY=${OTEL_BSP_SCHEDULE_DELAY:-1000}
+      - OTEL_BSP_MAX_CONCURRENT_EXPORTS=${OTEL_BSP_MAX_CONCURRENT_EXPORTS:-1}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-contextforge-gateway}
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=contextforge}
+    depends_on:
+      langfuse-web:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Langfuse Web - UI, API, and OTLP ingestion endpoint
+  # ──────────────────────────────────────────────────────────────────────
+  langfuse-web:
+    image: docker.io/langfuse/langfuse:3
+    restart: unless-stopped
+    networks: [mcpnet]
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-cache:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+    ports:
+      - "${LANGFUSE_PORT:-3100}:3000"  # Langfuse UI (remapped from 3000 to avoid Grafana conflict)
+    environment: &langfuse-env
+      # ── Core ──
+      NEXTAUTH_URL: ${LANGFUSE_URL:-http://localhost:${LANGFUSE_PORT:-3100}}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-langfuse-contextforge-secret}
+      SALT: ${LANGFUSE_SALT:-langfuse-contextforge-salt}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-true}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
+      # ── PostgreSQL ──
+      DATABASE_URL: postgresql://postgres:${LANGFUSE_POSTGRES_PASSWORD:-langfuse}@langfuse-db:5432/langfuse
+      # ── ClickHouse ──
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      # ── Redis ──
+      REDIS_HOST: langfuse-cache
+      REDIS_PORT: "6379"
+      REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-langfuse-redis-secret}
+      REDIS_TLS_ENABLED: "false"
+      # ── MinIO (S3-compatible object storage) ──
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minio}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minio}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_USE_AZURE_BLOB: "false"
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"
+      # ── Auto-provision org, project, and API keys on first boot ──
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-contextforge}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-ContextForge}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-contextforge-gateway}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-ContextForge Gateway}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-contextforge}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-contextforge}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@example.com}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-changeme}
+    healthcheck:
+      # Next.js binds to container hostname, not 127.0.0.1; use $(hostname) to resolve
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://$(hostname):3000/api/public/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Langfuse Worker - Async event processing (ClickHouse ingestion, evals)
+  # ──────────────────────────────────────────────────────────────────────
+  langfuse-worker:
+    image: docker.io/langfuse/langfuse-worker:3
+    restart: unless-stopped
+    networks: [mcpnet]
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      langfuse-cache:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${LANGFUSE_WORKER_PORT:-3130}:3030"  # Worker metrics (localhost only)
+    environment:
+      <<: *langfuse-env
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Langfuse PostgreSQL - Separate instance for Langfuse operational data
+  # (Langfuse schema is incompatible with ContextForge's)
+  # ──────────────────────────────────────────────────────────────────────
+  langfuse-db:
+    image: docker.io/postgres:${LANGFUSE_POSTGRES_VERSION:-17}
+    restart: unless-stopped
+    networks: [mcpnet]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-langfuse}
+      POSTGRES_DB: langfuse
+      TZ: UTC
+      PGTZ: UTC
+    # No host port binding - accessed only via Docker internal network
+    # For debugging: docker compose exec langfuse-db psql -U postgres langfuse
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ──────────────────────────────────────────────────────────────────────
+  # ClickHouse - OLAP database for Langfuse trace analytics
+  # ──────────────────────────────────────────────────────────────────────
+  langfuse-clickhouse:
+    image: docker.io/clickhouse/clickhouse-server
+    restart: unless-stopped
+    networks: [mcpnet]
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+      - langfuse-clickhouse-logs:/var/log/clickhouse-server
+    # No host port binding - accessed only via Docker internal network
+    # For debugging: docker compose exec langfuse-clickhouse clickhouse-client
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 1s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ──────────────────────────────────────────────────────────────────────
+  # MinIO - S3-compatible object storage for Langfuse events and media
+  # ──────────────────────────────────────────────────────────────────────
+  langfuse-minio:
+    image: cgr.dev/chainguard/minio
+    restart: unless-stopped
+    networks: [mcpnet]
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-miniosecret}
+    # No host port binding - accessed only via Docker internal network
+    # For debugging: docker compose exec langfuse-minio mc ls local/langfuse
+    volumes:
+      - langfuse-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1s
+      timeout: 5s
+      retries: 5
+      start_period: 1s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Langfuse Redis - Separate instance (Langfuse requires requirepass auth)
+  # ──────────────────────────────────────────────────────────────────────
+  langfuse-cache:
+    image: docker.io/redis:7
+    restart: unless-stopped
+    networks: [mcpnet]
+    command: >
+      --requirepass ${LANGFUSE_REDIS_AUTH:-langfuse-redis-secret}
+      --maxmemory-policy noeviction
+    # No host port binding - accessed only via Docker internal network
+    # For debugging: docker compose exec langfuse-cache redis-cli -a "$LANGFUSE_REDIS_AUTH"
+    volumes:
+      - langfuse-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M

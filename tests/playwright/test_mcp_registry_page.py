@@ -155,15 +155,15 @@ class TestMCPRegistryPage:
 
         # Get initial server count
         initial_count = mcp_registry_page.get_server_count()
+        assert initial_count > 0, "Registry should show at least one server before filtering"
 
-        # Search for a specific term
-        mcp_registry_page.search_servers("github")
+        # Search for a term that should not match any catalog entry.
+        mcp_registry_page.search_servers("__playwright_no_match__")
 
         # Get search results count
         search_count = mcp_registry_page.get_server_count()
 
-        # Search results should be less than or equal to initial count
-        assert search_count <= initial_count, "Search results should not exceed initial count"
+        assert search_count == 0, "A no-match query should hide all server cards"
 
     def test_clear_filters_functionality(self, mcp_registry_page: MCPRegistryPage):
         """Test clearing filters restores all servers."""

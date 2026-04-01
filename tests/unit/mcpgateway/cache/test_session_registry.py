@@ -868,6 +868,42 @@ async def test_handle_initialize_unsupported_version_warning(registry: SessionRe
     assert "Using non default protocol version: 999" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_handle_initialize_creates_observability_span(registry: SessionRegistry, monkeypatch):
+    entered = []
+
+    class _SpanCtx:
+        def __enter__(self):
+            entered.append("enter")
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            entered.append("exit")
+            return False
+
+    create_span = MagicMock()
+
+    def _fake_create_span(name, attributes):
+        create_span(name, attributes)
+        return _SpanCtx()
+
+    monkeypatch.setattr("mcpgateway.observability.create_span", _fake_create_span)
+
+    body = {"protocol_version": settings.protocol_version}
+    res = await registry.handle_initialize_logic(body, session_id="sess-1", server_id="server-1")
+
+    assert res.protocol_version == settings.protocol_version
+    assert entered == ["enter", "exit"]
+    create_span.assert_called_once_with(
+        "mcp.initialize",
+        {
+            "mcp.protocol_version": settings.protocol_version,
+            "mcp.session_id": "sess-1",
+            "server.id": "server-1",
+        },
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Backend initialization tests                                                #
 # --------------------------------------------------------------------------- #

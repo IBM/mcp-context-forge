@@ -43,7 +43,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -63,6 +63,8 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
+from mcpgateway.utils.trace_context import format_trace_team_scope
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 
 # Cache import (lazy to avoid circular dependencies)
@@ -1295,103 +1297,118 @@ class PromptService(BaseService):
             >>> prompts == [prompt_read_obj]
             True
         """
-        # Check cache for first page only (cursor=None)
-        # Skip caching when:
-        # - user_email is provided (team-filtered results are user-specific)
-        # - token_teams is set (scoped access, e.g., public-only or team-scoped tokens)
-        # - page-based pagination is used
-        # This prevents cache poisoning where admin results could leak to public-only requests
-        cache = _get_registry_cache()
-        if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit, visibility=visibility)
-            cached = await cache.get("prompts", filters_hash)
-            if cached is not None:
-                # Reconstruct PromptRead objects from cached dicts
-                cached_prompts = [PromptRead.model_validate(p) for p in cached["prompts"]]
-                return (cached_prompts, cached.get("next_cursor"))
+        with create_span(
+            "prompt.list",
+            {
+                "include_inactive": include_inactive,
+                "tags.count": len(tags) if tags else 0,
+                "gateway_id": gateway_id,
+                "limit": limit,
+                "page": page,
+                "per_page": per_page,
+                "user.email": user_email,
+                "team.scope": format_trace_team_scope(token_teams) if token_teams is not None else None,
+                "team.filter": team_id,
+                "visibility": visibility,
+            },
+        ):
+            # Check cache for first page only (cursor=None)
+            # Skip caching when:
+            # - user_email is provided (team-filtered results are user-specific)
+            # - token_teams is set (scoped access, e.g., public-only or team-scoped tokens)
+            # - page-based pagination is used
+            # This prevents cache poisoning where admin results could leak to public-only requests
+            cache = _get_registry_cache()
+            if cursor is None and user_email is None and token_teams is None and page is None:
+                filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit, visibility=visibility)
+                cached = await cache.get("prompts", filters_hash)
+                if cached is not None:
+                    # Reconstruct PromptRead objects from cached dicts
+                    cached_prompts = [PromptRead.model_validate(p) for p in cached["prompts"]]
+                    return (cached_prompts, cached.get("next_cursor"))
 
-        # Build base query with ordering and eager load gateway to avoid N+1
-        query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
+            # Build base query with ordering and eager load gateway to avoid N+1
+            query = select(DbPrompt).options(joinedload(DbPrompt.gateway)).order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
 
-        if not include_inactive:
-            query = query.where(DbPrompt.enabled)
+            if not include_inactive:
+                query = query.where(DbPrompt.enabled)
 
-        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
+            query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-        if visibility:
-            query = query.where(DbPrompt.visibility == visibility)
+            if visibility:
+                query = query.where(DbPrompt.visibility == visibility)
 
-        # Add gateway_id filtering if provided
-        if gateway_id:
-            if gateway_id.lower() == "null":
-                query = query.where(DbPrompt.gateway_id.is_(None))
+            # Add gateway_id filtering if provided
+            if gateway_id:
+                if gateway_id.lower() == "null":
+                    query = query.where(DbPrompt.gateway_id.is_(None))
+                else:
+                    query = query.where(DbPrompt.gateway_id == gateway_id)
+
+            # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
+            if tags:
+                query = query.where(json_contains_tag_expr(db, DbPrompt.tags, tags, match_any=True))
+
+            # Use unified pagination helper - handles both page and cursor pagination
+            pag_result = await unified_paginate(
+                db=db,
+                query=query,
+                page=page,
+                per_page=per_page,
+                cursor=cursor,
+                limit=limit,
+                base_url="/admin/prompts",  # Used for page-based links
+                query_params={"include_inactive": include_inactive} if include_inactive else {},
+            )
+
+            next_cursor = None
+            # Extract servers based on pagination type
+            if page is not None:
+                # Page-based: pag_result is a dict
+                prompts_db = pag_result["data"]
             else:
-                query = query.where(DbPrompt.gateway_id == gateway_id)
+                # Cursor-based: pag_result is a tuple
+                prompts_db, next_cursor = pag_result
 
-        # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
-        if tags:
-            query = query.where(json_contains_tag_expr(db, DbPrompt.tags, tags, match_any=True))
+            # Fetch team names for the prompts (common for both pagination types)
+            team_ids_set = {s.team_id for s in prompts_db if s.team_id}
+            team_map = {}
+            if team_ids_set:
+                teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+                team_map = {team.id: team.name for team in teams}
 
-        # Use unified pagination helper - handles both page and cursor pagination
-        pag_result = await unified_paginate(
-            db=db,
-            query=query,
-            page=page,
-            per_page=per_page,
-            cursor=cursor,
-            limit=limit,
-            base_url="/admin/prompts",  # Used for page-based links
-            query_params={"include_inactive": include_inactive} if include_inactive else {},
-        )
+            db.commit()  # Release transaction to avoid idle-in-transaction
 
-        next_cursor = None
-        # Extract servers based on pagination type
-        if page is not None:
-            # Page-based: pag_result is a dict
-            prompts_db = pag_result["data"]
-        else:
-            # Cursor-based: pag_result is a tuple
-            prompts_db, next_cursor = pag_result
+            # Convert to PromptRead (common for both pagination types)
+            result = []
+            for s in prompts_db:
+                try:
+                    s.team = team_map.get(s.team_id) if s.team_id else None
+                    result.append(self.convert_prompt_to_read(s, include_metrics=False))
+                except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                    logger.exception(f"Failed to convert prompt {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                    # Continue with remaining prompts instead of failing completely
+            # Return appropriate format based on pagination type
+            if page is not None:
+                # Page-based format
+                return {
+                    "data": result,
+                    "pagination": pag_result["pagination"],
+                    "links": pag_result["links"],
+                }
 
-        # Fetch team names for the prompts (common for both pagination types)
-        team_ids_set = {s.team_id for s in prompts_db if s.team_id}
-        team_map = {}
-        if team_ids_set:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
-            team_map = {team.id: team.name for team in teams}
+            # Cursor-based format
 
-        db.commit()  # Release transaction to avoid idle-in-transaction
+            # Cache first page results - only for non-user-specific/non-scoped queries
+            # Must match the same conditions as cache lookup to prevent cache poisoning
+            if cursor is None and user_email is None and token_teams is None:
+                try:
+                    cache_data = {"prompts": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
+                    await cache.set("prompts", cache_data, filters_hash)
+                except AttributeError:
+                    pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
 
-        # Convert to PromptRead (common for both pagination types)
-        result = []
-        for s in prompts_db:
-            try:
-                s.team = team_map.get(s.team_id) if s.team_id else None
-                result.append(self.convert_prompt_to_read(s, include_metrics=False))
-            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert prompt {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
-                # Continue with remaining prompts instead of failing completely
-        # Return appropriate format based on pagination type
-        if page is not None:
-            # Page-based format
-            return {
-                "data": result,
-                "pagination": pag_result["pagination"],
-                "links": pag_result["links"],
-            }
-
-        # Cursor-based format
-
-        # Cache first page results - only for non-user-specific/non-scoped queries
-        # Must match the same conditions as cache lookup to prevent cache poisoning
-        if cursor is None and user_email is None and token_teams is None:
-            try:
-                cache_data = {"prompts": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
-                await cache.set("prompts", cache_data, filters_hash)
-            except AttributeError:
-                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
-
-        return (result, next_cursor)
+            return (result, next_cursor)
 
     async def list_prompts_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -1530,69 +1547,79 @@ class PromptService(BaseService):
             >>> result == [prompt_read_obj]
             True
         """
-        # Eager load gateway to avoid N+1 when accessing gateway_slug
-        query = (
-            select(DbPrompt)
-            .options(joinedload(DbPrompt.gateway))
-            .join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id)
-            .where(server_prompt_association.c.server_id == server_id)
-        )
+        with create_span(
+            "prompt.list",
+            {
+                "server_id": server_id,
+                "include_inactive": include_inactive,
+                "include_metrics": include_metrics,
+                "user.email": user_email,
+                "team.scope": format_trace_team_scope(token_teams) if token_teams is not None else None,
+            },
+        ):
+            # Eager load gateway to avoid N+1 when accessing gateway_slug
+            query = (
+                select(DbPrompt)
+                .options(joinedload(DbPrompt.gateway))
+                .join(server_prompt_association, DbPrompt.id == server_prompt_association.c.prompt_id)
+                .where(server_prompt_association.c.server_id == server_id)
+            )
 
-        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
-        if include_metrics:
-            query = query.options(selectinload(DbPrompt.metrics), selectinload(DbPrompt.metrics_hourly))
-        if not include_inactive:
-            query = query.where(DbPrompt.enabled)
+            # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+            if include_metrics:
+                query = query.options(selectinload(DbPrompt.metrics), selectinload(DbPrompt.metrics_hourly))
+            if not include_inactive:
+                query = query.where(DbPrompt.enabled)
 
-        # Add visibility filtering if user context OR token_teams provided
-        # This ensures unauthenticated requests with token_teams=[] only see public prompts
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            elif user_email:
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
+            # Add visibility filtering if user context OR token_teams provided
+            # This ensures unauthenticated requests with token_teams=[] only see public prompts
+            if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
+                # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+                if token_teams is not None:
+                    team_ids = token_teams
+                elif user_email:
+                    team_service = TeamManagementService(db)
+                    user_teams = await team_service.get_user_teams(user_email)
+                    team_ids = [team.id for team in user_teams]
+                else:
+                    team_ids = []
 
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
+                # Check if this is a public-only token (empty teams array)
+                # Public-only tokens can ONLY see public resources - no owner access
+                is_public_only_token = token_teams is not None and len(token_teams) == 0
 
-            access_conditions = [
-                DbPrompt.visibility == "public",
-            ]
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(DbPrompt.owner_email == user_email)
-            if team_ids:
-                access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
-            query = query.where(or_(*access_conditions))
+                access_conditions = [
+                    DbPrompt.visibility == "public",
+                ]
+                # Only include owner access for non-public-only tokens with user_email
+                if not is_public_only_token and user_email:
+                    access_conditions.append(DbPrompt.owner_email == user_email)
+                if team_ids:
+                    access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
 
-        # Cursor-based pagination logic can be implemented here in the future.
-        logger.debug(cursor)
-        prompts = db.execute(query).scalars().all()
+            # Cursor-based pagination logic can be implemented here in the future.
+            logger.debug(cursor)
+            prompts = db.execute(query).scalars().all()
 
-        # Batch fetch team names to avoid N+1 queries
-        prompt_team_ids = {p.team_id for p in prompts if p.team_id}
-        team_map = {}
-        if prompt_team_ids:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(prompt_team_ids), EmailTeam.is_active.is_(True))).all()
-            team_map = {str(team.id): team.name for team in teams}
+            # Batch fetch team names to avoid N+1 queries
+            prompt_team_ids = {p.team_id for p in prompts if p.team_id}
+            team_map = {}
+            if prompt_team_ids:
+                teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(prompt_team_ids), EmailTeam.is_active.is_(True))).all()
+                team_map = {str(team.id): team.name for team in teams}
 
-        db.commit()  # Release transaction to avoid idle-in-transaction
+            db.commit()  # Release transaction to avoid idle-in-transaction
 
-        result = []
-        for t in prompts:
-            try:
-                t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                result.append(self.convert_prompt_to_read(t, include_metrics=include_metrics))
-            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
-                # Continue with remaining prompts instead of failing completely
-        return result
+            result = []
+            for t in prompts:
+                try:
+                    t.team = team_map.get(str(t.team_id)) if t.team_id else None
+                    result.append(self.convert_prompt_to_read(t, include_metrics=include_metrics))
+                except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                    logger.exception(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                    # Continue with remaining prompts instead of failing completely
+            return result
 
     async def _record_prompt_metric(self, db: Session, prompt: DbPrompt, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
@@ -1809,17 +1836,18 @@ class PromptService(BaseService):
                 db_span_id = None
 
         # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
-        with create_span(
-            "prompt.render",
-            {
-                "prompt.id": prompt_id,
-                "arguments_count": len(arguments) if arguments else 0,
-                "user": user or "anonymous",
-                "server_id": server_id,
-                "tenant_id": tenant_id,
-                "request_id": request_id or "none",
-            },
-        ) as span:
+        span_attributes = {
+            "prompt.id": prompt_id,
+            "arguments_count": len(arguments) if arguments else 0,
+            "user": user or "anonymous",
+            "server_id": server_id,
+            "tenant_id": tenant_id,
+            "request_id": request_id or "none",
+        }
+        if is_input_capture_enabled("prompt.render"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload(arguments or {})
+
+        with create_span("prompt.render", span_attributes) as span:
             try:
                 # Check if any prompt hooks are registered to avoid unnecessary context creation
                 has_pre_fetch = self._plugin_manager and self._plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH)
@@ -1930,9 +1958,7 @@ class PromptService(BaseService):
                         messages = self._parse_messages(rendered)
                         result = PromptResult(messages=messages, description=prompt.description)
                     except Exception as e:
-                        if span:
-                            span.set_attribute("error", True)
-                            span.set_attribute("error.message", str(e))
+                        set_span_error(span, e)
                         raise PromptError(f"Failed to process prompt: {str(e)}")
 
                 if has_post_fetch:
@@ -1984,10 +2010,15 @@ class PromptService(BaseService):
 
                 # Set success attributes on span
                 if span:
-                    span.set_attribute("success", True)
-                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                    set_span_attribute(span, "success", True)
+                    set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
+                    set_span_attribute(span, "langfuse.observation.prompt.name", prompt.name)
+                    if getattr(prompt, "version", None) is not None:
+                        set_span_attribute(span, "langfuse.observation.prompt.version", int(prompt.version))
                     if result and hasattr(result, "messages"):
-                        span.set_attribute("messages.count", len(result.messages))
+                        set_span_attribute(span, "messages.count", len(result.messages))
+                        if is_output_capture_enabled("prompt.render"):
+                            set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(result))
 
                 success = True
                 logger.info(f"Retrieved prompt: {prompt.id} successfully")

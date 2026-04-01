@@ -62,7 +62,7 @@ from urllib.parse import urlparse
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
-from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
+from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Only configure basic logging if no handlers exist yet
@@ -1783,13 +1783,36 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Observability (OpenTelemetry)
+    deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")
     otel_enable_observability: bool = Field(default=False, description="Enable OpenTelemetry observability")
     otel_traces_exporter: str = Field(default="otlp", description="Traces exporter: otlp, jaeger, zipkin, console, none")
     otel_exporter_otlp_endpoint: Optional[str] = Field(default=None, description="OTLP endpoint (e.g., http://localhost:4317)")
     otel_exporter_otlp_protocol: str = Field(default="grpc", description="OTLP protocol: grpc or http")
     otel_exporter_otlp_insecure: bool = Field(default=True, description="Use insecure connection for OTLP")
     otel_exporter_otlp_headers: Optional[str] = Field(default=None, description="OTLP headers (comma-separated key=value)")
+    otel_emit_langfuse_attributes: Optional[bool] = Field(
+        default=None,
+        description="Emit Langfuse-specific span attributes. Defaults to auto-enable when a Langfuse OTLP endpoint is configured.",
+    )
+    otel_capture_identity_attributes: Optional[bool] = Field(
+        default=None,
+        description="Capture user/team identity span attributes. Defaults to auto-enable when Langfuse-specific attributes are emitted.",
+    )
+    otel_copy_resource_attrs_to_spans: bool = Field(default=False, description="Copy selected OTEL resource attributes onto spans")
+    otel_redact_fields: str = Field(
+        default="password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key",
+        description="Comma-separated trace payload field names to redact before export",
+    )
+    otel_max_trace_payload_size: int = Field(default=32768, ge=256, description="Maximum serialized trace payload size in characters")
+    otel_capture_input_spans: str = Field(default="", description="Comma-separated span names allowed to capture input payloads")
+    otel_capture_output_spans: str = Field(default="", description="Comma-separated span names allowed to capture output payloads")
+    langfuse_otel_endpoint: Optional[str] = Field(default=None, description="Langfuse OTLP/HTTP endpoint override")
+    langfuse_public_key: Optional[SecretStr] = Field(default=None, description="Langfuse project public key for derived OTLP auth")
+    langfuse_secret_key: Optional[SecretStr] = Field(default=None, description="Langfuse project secret key for derived OTLP auth")
+    langfuse_otel_auth: Optional[SecretStr] = Field(default=None, description="Base64-encoded Langfuse OTLP basic auth override")
     otel_exporter_jaeger_endpoint: Optional[str] = Field(default=None, description="Jaeger endpoint")
+    otel_exporter_jaeger_user: Optional[str] = Field(default=None, description="Jaeger collector username")
+    otel_exporter_jaeger_password: Optional[SecretStr] = Field(default=None, description="Jaeger collector password")
     otel_exporter_zipkin_endpoint: Optional[str] = Field(default=None, description="Zipkin endpoint")
     otel_service_name: str = Field(default="mcp-gateway", description="Service name for traces")
     otel_resource_attributes: Optional[str] = Field(default=None, description="Resource attributes (comma-separated key=value)")

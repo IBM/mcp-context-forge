@@ -15,7 +15,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway import observability
+from mcpgateway.config import get_settings
 from mcpgateway.observability import create_span, init_telemetry, trace_operation
+from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 
 
 class TestObservability:
@@ -23,31 +26,54 @@ class TestObservability:
 
     def setup_method(self):
         """Reset environment before each test."""
+        get_settings.cache_clear()
         # Clear relevant environment variables
         env_vars = [
             "OTEL_ENABLE_OBSERVABILITY",
             "OTEL_TRACES_EXPORTER",
             "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_HEADERS",
+            "OTEL_EMIT_LANGFUSE_ATTRIBUTES",
+            "OTEL_CAPTURE_IDENTITY_ATTRIBUTES",
+            "OTEL_CAPTURE_INPUT_SPANS",
+            "OTEL_CAPTURE_OUTPUT_SPANS",
             "OTEL_SERVICE_NAME",
             "OTEL_RESOURCE_ATTRIBUTES",
             "OTEL_COPY_RESOURCE_ATTRS_TO_SPANS",
+            "OTEL_EXPORTER_JAEGER_USER",
+            "OTEL_EXPORTER_JAEGER_PASSWORD",
+            "DEPLOYMENT_ENV",
+            "ENVIRONMENT",
+            "LANGFUSE_OTEL_ENDPOINT",
+            "LANGFUSE_PUBLIC_KEY",
+            "LANGFUSE_SECRET_KEY",
+            "LANGFUSE_OTEL_AUTH",
         ]
         for var in env_vars:
             os.environ.pop(var, None)
+        clear_trace_context()
 
     @staticmethod
     def _enable_observability() -> None:
         """Enable OpenTelemetry for tests that exercise initialization paths."""
         os.environ["OTEL_ENABLE_OBSERVABILITY"] = "true"
 
+    @staticmethod
+    def _enable_langfuse_span_attrs() -> None:
+        """Enable Langfuse-specific and identity span attributes for tests."""
+        os.environ["OTEL_EMIT_LANGFUSE_ATTRIBUTES"] = "true"
+        os.environ["OTEL_CAPTURE_IDENTITY_ATTRIBUTES"] = "true"
+
     def teardown_method(self):
         """Clean up after each test."""
+        get_settings.cache_clear()
         # Reset global tracer
         # First-Party
         import mcpgateway.observability
 
         # pylint: disable=protected-access
         mcpgateway.observability._TRACER = None
+        clear_trace_context()
 
     def test_init_telemetry_disabled_via_env(self):
         """Test that telemetry can be disabled via environment variable."""
@@ -178,7 +204,7 @@ class TestObservability:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "api-key=secret,x-auth=token123"
 
-        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER") as mock_exporter:
+        with patch("mcpgateway.observability.HTTP_EXPORTER") as mock_exporter:
             with patch("mcpgateway.observability.TracerProvider"):
                 with patch("mcpgateway.observability.BatchSpanProcessor"):
                     init_telemetry()
@@ -187,6 +213,185 @@ class TestObservability:
                     call_kwargs = mock_exporter.call_args[1]
                     assert call_kwargs["headers"]["api-key"] == "secret"
                     assert call_kwargs["headers"]["x-auth"] == "token123"
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_langfuse_endpoint_without_auth_raises(self):
+        """Langfuse OTLP must fail closed when no auth material is configured."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["LANGFUSE_OTEL_ENDPOINT"] = "https://cloud.langfuse.com/api/public/otel/v1/traces"
+
+        with pytest.raises(RuntimeError, match="valid Basic Authorization"):
+            init_telemetry()
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_langfuse_keys_derive_auth_header(self):
+        """Langfuse project keys should derive the OTLP basic auth header automatically."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["LANGFUSE_OTEL_ENDPOINT"] = "https://cloud.langfuse.com/api/public/otel/v1/traces"
+        os.environ["LANGFUSE_PUBLIC_KEY"] = "pk-lf-test-public"
+        os.environ["LANGFUSE_SECRET_KEY"] = "sk-lf-test-secret"
+
+        with patch("mcpgateway.observability.HTTP_EXPORTER") as mock_exporter:
+            with patch("mcpgateway.observability.TracerProvider"):
+                with patch("mcpgateway.observability.BatchSpanProcessor"):
+                    init_telemetry()
+
+        call_kwargs = mock_exporter.call_args[1]
+        assert call_kwargs["headers"]["Authorization"] == "Basic cGstbGYtdGVzdC1wdWJsaWM6c2stbGYtdGVzdC1zZWNyZXQ="
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_langfuse_merges_explicit_headers_with_derived_auth(self):
+        """Langfuse auth should be merged into explicit OTLP headers when missing."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["LANGFUSE_OTEL_ENDPOINT"] = "https://cloud.langfuse.com/api/public/otel/v1/traces"
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "x-trace=abc"
+        os.environ["LANGFUSE_PUBLIC_KEY"] = "pk-lf-test-public"
+        os.environ["LANGFUSE_SECRET_KEY"] = "sk-lf-test-secret"
+
+        with patch("mcpgateway.observability.HTTP_EXPORTER") as mock_exporter:
+            with patch("mcpgateway.observability.TracerProvider"):
+                with patch("mcpgateway.observability.BatchSpanProcessor"):
+                    init_telemetry()
+
+        call_kwargs = mock_exporter.call_args[1]
+        assert call_kwargs["headers"]["x-trace"] == "abc"
+        assert call_kwargs["headers"]["Authorization"] == "Basic cGstbGYtdGVzdC1wdWJsaWM6c2stbGYtdGVzdC1zZWNyZXQ="
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_langfuse_non_auth_headers_still_raise(self):
+        """Langfuse OTLP should reject explicit headers that omit Authorization."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["LANGFUSE_OTEL_ENDPOINT"] = "https://cloud.langfuse.com/api/public/otel/v1/traces"
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "x-trace=abc"
+
+        with pytest.raises(RuntimeError, match="valid Basic Authorization"):
+            init_telemetry()
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_langfuse_non_basic_auth_still_raises(self):
+        """Langfuse OTLP should reject Authorization headers that are not Basic auth."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["LANGFUSE_OTEL_ENDPOINT"] = "https://cloud.langfuse.com/api/public/otel/v1/traces"
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "Authorization=Bearer abc"
+
+        with pytest.raises(RuntimeError, match="valid Basic Authorization"):
+            init_telemetry()
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_langfuse_invalid_basic_auth_still_raises(self):
+        """Langfuse OTLP should reject malformed Basic auth headers."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["LANGFUSE_OTEL_ENDPOINT"] = "https://cloud.langfuse.com/api/public/otel/v1/traces"
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "Authorization=Basic not-base64"
+
+        with pytest.raises(RuntimeError, match="valid Basic Authorization"):
+            init_telemetry()
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_langfuse_endpoint_forces_http_protocol(self):
+        """Langfuse endpoints should use the HTTP OTLP exporter path."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
+        os.environ["LANGFUSE_OTEL_ENDPOINT"] = "https://cloud.langfuse.com/api/public/otel/v1/traces"
+        os.environ["LANGFUSE_PUBLIC_KEY"] = "pk-lf-test-public"
+        os.environ["LANGFUSE_SECRET_KEY"] = "sk-lf-test-secret"
+
+        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER") as mock_grpc_exporter:
+            with patch("mcpgateway.observability.HTTP_EXPORTER") as mock_http_exporter:
+                with patch("mcpgateway.observability.TracerProvider"):
+                    with patch("mcpgateway.observability.BatchSpanProcessor"):
+                        init_telemetry()
+
+        mock_grpc_exporter.assert_not_called()
+        mock_http_exporter.assert_called_once()
+
+    def test_observability_helper_branches(self, monkeypatch):
+        """Exercise helper branches used by OTEL and Langfuse configuration."""
+        assert observability._sanitize_span_exception_message(None) == ""
+
+        monkeypatch.setattr(observability, "sanitize_trace_text", lambda _value: "   ")
+        monkeypatch.setattr(observability, "sanitize_for_log", lambda value: value)
+        assert observability._sanitize_span_exception_message(ValueError("secret")) == "ValueError"
+
+        monkeypatch.setattr(observability, "urlparse", MagicMock(side_effect=ValueError("boom")))
+        assert observability._is_langfuse_otlp_endpoint("https://langfuse.example.com/api/public/otel/v1/traces") is True
+
+        os.environ["LANGFUSE_OTEL_AUTH"] = "explicit-auth"
+        get_settings.cache_clear()
+        assert observability._resolve_langfuse_basic_auth() == "explicit-auth"
+
+        parsed = observability._parse_otlp_headers("Authorization=Basic abc, invalid-header, x-test =  value ")
+        assert parsed == {"Authorization": "Basic abc", "x-test": "value"}
+        assert observability._get_header_case_insensitive(parsed, "authorization") == "Basic abc"
+        assert observability._get_header_case_insensitive(parsed, "missing") is None
+
+        observability._set_header_case_insensitive(parsed, "AUTHORIZATION", "Basic def")
+        assert parsed["Authorization"] == "Basic def"
+        observability._set_header_case_insensitive(parsed, "x-new", "123")
+        assert parsed["x-new"] == "123"
+
+    def test_span_attribute_policy_and_exception_fallback_branches(self):
+        """Cover attribute-gating and sanitized exception-event fallback paths."""
+        clear_trace_context()
+        span = MagicMock()
+
+        assert observability._should_emit_span_attribute("user.email") is False
+        observability.set_span_attribute(span, "user.email", "user@example.com")
+        span.set_attribute.assert_not_called()
+
+        observability.set_span_attribute(None, "tool.name", "demo")
+        observability._set_pre_sanitized_span_attribute(None, "tool.name", "demo")
+        observability._record_sanitized_exception_event(None, ValueError, "boom")
+
+        class BrokenException(Exception):
+            def __init__(self, _message):
+                raise RuntimeError("cannot instantiate")
+
+        fallback_span = MagicMock()
+        del fallback_span.add_event
+        observability._record_sanitized_exception_event(fallback_span, BrokenException, "boom")
+        fallback_span.record_exception.assert_called_once()
+        recorded_exc = fallback_span.record_exception.call_args.args[0]
+        assert isinstance(recorded_exc, Exception)
+        assert str(recorded_exc) == "boom"
+
+    def test_derive_langfuse_trace_name_variants(self):
+        """Derive Langfuse-friendly names for the major traced operation families."""
+        assert observability._derive_langfuse_trace_name("tool.invoke", {"tool.name": "clock"}) == "Tool: clock"
+        assert observability._derive_langfuse_trace_name("tool.list", {}) == "Tools"
+        assert observability._derive_langfuse_trace_name("prompt.list", {}) == "Prompts"
+        assert observability._derive_langfuse_trace_name("resource.read", {"resource.uri": "time://formats"}) == "Resource: time://formats"
+        assert observability._derive_langfuse_trace_name("resource.list", {}) == "Resources"
+        assert observability._derive_langfuse_trace_name("resource_template.list", {}) == "Resource Templates"
+        assert observability._derive_langfuse_trace_name("root.list", {}) == "Roots"
+        assert observability._derive_langfuse_trace_name("llm.proxy", {"gen_ai.request.model": "gpt-5"}) == "LLM Proxy: gpt-5"
+        assert observability._derive_langfuse_trace_name("llm.chat", {"gen_ai.request.model": "gpt-5-mini"}) == "LLM Chat: gpt-5-mini"
+        assert observability._derive_langfuse_trace_name("a2a.invoke", {"a2a.agent.name": "echo-agent"}) == "A2A: echo-agent"
+
+    @patch("mcpgateway.observability._TRACER")
+    def test_create_span_swallow_trace_context_injection_errors(self, mock_tracer, monkeypatch):
+        """create_span should tolerate trace-context auto-injection failures."""
+        self._enable_langfuse_span_attrs()
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+        mock_tracer.start_as_current_span.return_value = mock_context
+
+        monkeypatch.setattr(observability, "_derive_langfuse_trace_name", MagicMock(side_effect=RuntimeError("inject-failed")))
+
+        with patch.object(observability.logger, "debug") as mock_debug:
+            with create_span("test.operation", {"tool.name": "clock"}) as span:
+                assert span is mock_span
+
+        mock_debug.assert_called()
 
     def test_create_span_no_tracer(self):
         """Test create_span when tracer is not initialized."""
@@ -217,6 +422,83 @@ class TestObservability:
             # Verify attributes were set
             span.set_attribute.assert_any_call("key1", "value1")
             span.set_attribute.assert_any_call("key2", 42)
+
+    @patch("mcpgateway.observability._TRACER")
+    def test_create_span_auto_injects_trace_context(self, mock_tracer):
+        """create_span should inject trace/user/session metadata into spans."""
+        os.environ["DEPLOYMENT_ENV"] = "staging"
+        self._enable_langfuse_span_attrs()
+        set_trace_context_from_teams(["team-a", "team-b"], user_email="user@example.com", is_admin=True, auth_method="jwt", team_name="Team A")
+        set_trace_session_id("session-123")
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+        mock_tracer.start_as_current_span.return_value = mock_context
+
+        with patch("mcpgateway.observability.get_correlation_id", return_value="corr-1"):
+            with create_span("test.operation") as span:
+                assert span is mock_span
+
+        mock_span.set_attribute.assert_any_call("correlation_id", "corr-1")
+        mock_span.set_attribute.assert_any_call("request_id", "corr-1")
+        mock_span.set_attribute.assert_any_call("user.email", "user@example.com")
+        mock_span.set_attribute.assert_any_call("langfuse.user.id", "user@example.com")
+        mock_span.set_attribute.assert_any_call("user.is_admin", True)
+        mock_span.set_attribute.assert_any_call("team.scope", "team-a,team-b")
+        mock_span.set_attribute.assert_any_call("team.name", "Team A")
+        mock_span.set_attribute.assert_any_call("auth.method", "jwt")
+        mock_span.set_attribute.assert_any_call("langfuse.session.id", "session-123")
+        mock_span.set_attribute.assert_any_call("langfuse.environment", "staging")
+        mock_span.set_attribute.assert_any_call("langfuse.trace.tags", ["team:team-a", "auth:jwt", "env:staging"])
+        mock_span.set_attribute.assert_any_call("langfuse.trace.name", "test.operation")
+        mock_span.set_attribute.assert_any_call("langfuse.observation.level", "DEFAULT")
+
+    @patch("mcpgateway.observability._TRACER")
+    def test_create_span_sanitizes_url_like_prompt_ids_in_trace_name(self, mock_tracer):
+        """Prompt-derived Langfuse trace names should not leak URL query secrets."""
+        self._enable_langfuse_span_attrs()
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+        mock_tracer.start_as_current_span.return_value = mock_context
+
+        with create_span("prompt.render", {"prompt.id": "https://prompt.example.com/item?api_key=secret123"}) as span:
+            assert span is mock_span
+
+        mock_span.set_attribute.assert_any_call("langfuse.trace.name", "Prompt: https://prompt.example.com/item?api_key=REDACTED")
+
+    @patch("mcpgateway.observability._TRACER")
+    def test_create_span_omits_langfuse_and_identity_metadata_by_default(self, mock_tracer):
+        """Non-Langfuse spans should not emit Langfuse or identity metadata by default."""
+        set_trace_context_from_teams(["team-a"], user_email="user@example.com", is_admin=True, auth_method="jwt", team_name="Team A")
+        set_trace_session_id("session-123")
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+        mock_tracer.start_as_current_span.return_value = mock_context
+
+        with create_span("test.operation") as span:
+            assert span is mock_span
+
+        mock_span.set_attribute.assert_any_call("auth.method", "jwt")
+        for disallowed_key in (
+            "user.email",
+            "langfuse.user.id",
+            "team.scope",
+            "team.name",
+            "langfuse.session.id",
+            "langfuse.environment",
+            "langfuse.trace.tags",
+            "langfuse.trace.name",
+            "langfuse.observation.level",
+        ):
+            assert all(call.args[0] != disallowed_key for call in mock_span.set_attribute.call_args_list)
 
     @pytest.mark.skip(reason="Mock doesn't properly simulate SpanWithAttributes wrapper behavior")
     def test_create_span_with_exception(self):
@@ -285,7 +567,52 @@ class TestObservability:
 
         mock_span.set_attribute.assert_any_call("status", "error")
         mock_span.set_attribute.assert_any_call("error.message", "Test error")
-        mock_span.record_exception.assert_called_once()
+        mock_span.add_event.assert_called_once()
+        assert mock_span.record_exception.call_count == 0
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.observability._TRACER")
+    async def test_trace_operation_decorator_sanitizes_exception_message(self, mock_tracer):
+        """trace_operation should sanitize exception text before storing it."""
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+        mock_tracer.start_as_current_span.return_value = mock_context
+
+        @trace_operation("test.operation")
+        async def test_func():
+            raise ValueError("boom https://api.example.com?api_key=secret123\nCRITICAL")
+
+        with pytest.raises(ValueError):
+            await test_func()
+
+        error_message = next(call.args[1] for call in mock_span.set_attribute.call_args_list if call.args[0] == "error.message")
+        assert "secret123" not in error_message
+        assert "REDACTED" in error_message
+        assert "\n" not in error_message
+
+    @pytest.mark.asyncio
+    @patch("mcpgateway.observability._TRACER")
+    async def test_trace_operation_decorator_redacts_free_text_secret_assignments(self, mock_tracer):
+        """trace_operation should redact free-text key/value secrets before storing them."""
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+        mock_tracer.start_as_current_span.return_value = mock_context
+
+        @trace_operation("test.operation")
+        async def test_func():
+            raise ValueError('boom token=supersecret authorization:"Bearer abc123"')
+
+        with pytest.raises(ValueError):
+            await test_func()
+
+        error_message = next(call.args[1] for call in mock_span.set_attribute.call_args_list if call.args[0] == "error.message")
+        assert "supersecret" not in error_message
+        assert "abc123" not in error_message
+        assert "token=***" in error_message
 
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.JAEGER_EXPORTER", None)
@@ -552,26 +879,33 @@ class TestObservability:
 
         mock_logger.debug.assert_called()
 
-    def test_create_span_returns_span_context_when_no_attributes(self):
-        """Test create_span returns the raw span context when no attributes exist."""
+    def test_create_span_returns_wrapped_context_when_auto_attributes_exist(self):
+        """create_span wraps the context when auto-injected attributes are present."""
         # First-Party
         import mcpgateway.observability
+        self._enable_langfuse_span_attrs()
 
+        mock_span = MagicMock()
         mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
         mock_tracer = MagicMock()
         mock_tracer.start_as_current_span.return_value = mock_context
         # pylint: disable=protected-access
         mcpgateway.observability._TRACER = mock_tracer
 
         with patch("mcpgateway.observability.get_correlation_id", return_value=None):
-            context = create_span("test.operation")
+            with create_span("test.operation") as span:
+                assert span is mock_span
 
-        assert context is mock_context
+        mock_tracer.start_as_current_span.assert_called_once_with("test.operation")
+        mock_span.set_attribute.assert_any_call("langfuse.environment", "development")
 
     def test_span_with_attributes_records_exception_and_status(self):
         """Test SpanWithAttributes records errors and sets status."""
         # First-Party
         import mcpgateway.observability
+        self._enable_langfuse_span_attrs()
 
         class DummyStatusCode:
             OK = "ok"
@@ -599,13 +933,61 @@ class TestObservability:
                         with create_span("test.operation", {"key": "value"}):
                             raise ValueError("boom")
 
-        mock_span.record_exception.assert_called()
+        mock_span.add_event.assert_called_once()
+        assert mock_span.record_exception.call_count == 0
         mock_span.set_attribute.assert_any_call("error", True)
         mock_span.set_attribute.assert_any_call("error.type", "ValueError")
         mock_span.set_attribute.assert_any_call("error.message", "boom")
+        mock_span.set_attribute.assert_any_call("langfuse.observation.level", "ERROR")
+        mock_span.set_attribute.assert_any_call("langfuse.observation.status_message", "boom")
         status_arg = mock_span.set_status.call_args[0][0]
         assert isinstance(status_arg, DummyStatus)
         assert status_arg.code == DummyStatusCode.ERROR
+
+    def test_span_with_attributes_sanitizes_and_truncates_exception_message(self):
+        """SpanWithAttributes should sanitize and bound exception messages."""
+        # First-Party
+        import mcpgateway.observability
+        self._enable_langfuse_span_attrs()
+
+        class DummyStatusCode:
+            OK = "ok"
+            ERROR = "error"
+
+        class DummyStatus:
+            def __init__(self, code, description=None):
+                self.code = code
+                self.description = description
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+
+        mock_tracer = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_context
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = mock_tracer
+
+        message = "boom https://api.example.com?api_key=secret123\n" + ("x" * 80)
+        with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
+            with patch("mcpgateway.observability.Status", DummyStatus):
+                with patch("mcpgateway.observability.StatusCode", DummyStatusCode):
+                    with patch("mcpgateway.observability._MAX_SPAN_EXCEPTION_MESSAGE_LENGTH", 48):
+                        with pytest.raises(ValueError):
+                            with create_span("test.operation", {"key": "value"}):
+                                raise ValueError(message)
+
+        error_message = next(call.args[1] for call in mock_span.set_attribute.call_args_list if call.args[0] == "error.message")
+        status_message = next(call.args[1] for call in mock_span.set_attribute.call_args_list if call.args[0] == "langfuse.observation.status_message")
+        assert error_message == status_message
+        assert "secret123" not in error_message
+        assert "\n" not in error_message
+        assert len(error_message) <= 48
+        if len(error_message) == 48:
+            assert error_message.endswith("...")
+        status_arg = mock_span.set_status.call_args[0][0]
+        assert status_arg.description == error_message
 
     def test_span_with_attributes_sets_ok_status(self):
         """Test SpanWithAttributes sets OK status on success."""

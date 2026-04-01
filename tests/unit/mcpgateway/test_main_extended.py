@@ -111,7 +111,7 @@ from mcpgateway.main import (
     update_tool,
     validate_security_configuration,
 )
-from mcpgateway.plugins.framework import PluginError
+from mcpgateway.plugins.framework import PluginError, PromptHookType, ResourceHookType
 from mcpgateway.schemas import PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
@@ -379,6 +379,7 @@ class TestInternalTrustedMcpTransportBridge:
                     {
                         "email": "user@example.com",
                         "teams": ["team-a"],
+                        "auth_method": "jwt",
                         "is_authenticated": True,
                         "is_admin": False,
                         "permission_is_admin": False,
@@ -418,6 +419,7 @@ class TestInternalTrustedMcpTransportBridge:
         assert observed["modified_path"] == "/servers/server-1/mcp"
         assert observed["user_context"]["email"] == "user@example.com"
         assert observed["user_context"]["teams"] == ["team-a"]
+        assert observed["user_context"]["auth_method"] == "jwt"
         assert events[0]["status"] == 204
 
     @pytest.mark.asyncio
@@ -904,6 +906,22 @@ class TestMcpSerialization:
         """Unknown objects should serialize to an empty MCP payload."""
         assert _serialize_mcp_tool_definition(object()) == {}
 
+    def test_serialize_mcp_tool_definition_normalizes_null_description(self):
+        """MCP tool payloads should always expose a string description."""
+        payload = _serialize_mcp_tool_definition(
+            {
+                "name": "test-json-tool",
+                "description": None,
+                "inputSchema": {"type": "object"},
+            }
+        )
+
+        assert payload == {
+            "name": "test-json-tool",
+            "description": "",
+            "inputSchema": {"type": "object"},
+        }
+
     def test_serialize_legacy_tool_payloads_preserves_dicts_and_unknowns(self):
         """Legacy payload serialization should preserve dicts and tolerate unknown objects."""
         payloads = _serialize_legacy_tool_payloads([{"id": "tool-1"}, object()])
@@ -975,6 +993,33 @@ class TestInternalMcpHelperCoverage:
         assert forwarded["is_admin"] is True
         assert request.state.token_teams == ["team-a"]
         assert getattr(request.state, "_mcp_internal_auth_context")["_rust_session_validated"] is True
+
+    def test_build_internal_mcp_forwarded_user_sets_trace_context(self):
+        """Trusted forwarded auth should populate trace context for downstream spans."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_scope, get_trace_user_email
+
+        clear_trace_context()
+        request = MagicMock(spec=Request)
+        request.headers = _trusted_internal_mcp_headers(
+            {
+                "email": "trace@example.com",
+                "teams": ["team-x"],
+                "is_authenticated": True,
+                "is_admin": False,
+                "permission_is_admin": False,
+                "auth_method": "jwt",
+            }
+        )
+        request.client = SimpleNamespace(host="127.0.0.1")
+        request.state = SimpleNamespace()
+
+        _build_internal_mcp_forwarded_user(request)
+
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_auth_method() == "jwt"
+        assert get_trace_team_scope() == "team-x"
+        clear_trace_context()
 
     @pytest.mark.asyncio
     async def test_handle_internal_mcp_tools_call_metric_records_buffered_metrics(self):
@@ -7047,10 +7092,66 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.plugin_manager", None),
         ):
             response = await handler(request)
 
         assert response.status_code == 204
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    @pytest.mark.parametrize(
+        ("handler", "hook_types", "expected_reason"),
+        [
+            (
+                handle_internal_mcp_resources_read_authz,
+                {
+                    ResourceHookType.RESOURCE_PRE_FETCH,
+                    ResourceHookType.RESOURCE_POST_FETCH,
+                },
+                "resource-hooks-configured",
+            ),
+            (
+                handle_internal_mcp_prompts_get_authz,
+                {
+                    PromptHookType.PROMPT_PRE_FETCH,
+                    PromptHookType.PROMPT_POST_FETCH,
+                },
+                "prompt-hooks-configured",
+            ),
+        ],
+    )
+    async def test_server_scoped_internal_mcp_authz_wrappers_return_forwarding_hint_when_hooks_active(
+        self,
+        handler,
+        hook_types,
+        expected_reason,
+    ):
+        request = self._make_request({"jsonrpc": "2.0", "id": "1", "method": "noop", "params": {}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-server-id": "srv-1",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com"}).encode()).decode().rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        mock_plugin_manager = MagicMock()
+        mock_plugin_manager.has_hooks_for.side_effect = lambda hook_type: hook_type in hook_types
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
+            patch("mcpgateway.main.plugin_manager", mock_plugin_manager),
+        ):
+            response = await handler(request)
+
+        assert response.status_code == 200
+        assert json.loads(response.body.decode()) == {
+            "directExecutionEligible": False,
+            "fallbackReason": expected_reason,
+        }
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called_once()
 
@@ -7938,7 +8039,12 @@ class TestRpcHandling:
             response = await handle_internal_mcp_tools_call_resolve(request)
 
         assert response.status_code == 403
-        assert json.loads(response.body.decode())["code"] == -32003
+        payload = json.loads(response.body.decode())
+        assert payload["jsonrpc"] == "2.0"
+        assert payload["id"] == "resolve-2"
+        assert payload["error"]["code"] == -32003
+        assert payload["error"]["message"] == "Access denied"
+        assert payload["error"]["data"] == {"method": "tools/call"}
 
     async def test_handle_internal_mcp_tools_call_resolve_commits_success_and_invalidates_on_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "resolve-3", "method": "tools/call", "params": {"name": "echo"}})
@@ -9170,17 +9276,19 @@ class TestRpcHandling:
         assert result["error"]["message"] == "Not authorized to cancel this run"
 
     @pytest.mark.asyncio
-    async def test_handle_rpc_notifications_cancelled_denies_unknown_run_for_non_admin(self):
+    async def test_handle_rpc_notifications_cancelled_accepts_unknown_run_as_noop(self):
         payload_cancel = {"jsonrpc": "2.0", "id": "33", "method": "notifications/cancelled", "params": {"requestId": "unknown-run", "reason": "stop"}}
         request_cancel = self._make_request(payload_cancel)
 
         with (
             patch("mcpgateway.main.cancellation_service.get_status", new=AsyncMock(return_value=None)),
+            patch("mcpgateway.main.cancellation_service.cancel_run", new=AsyncMock(return_value=False)) as cancel_run,
             patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
         ):
             result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com", "is_admin": False})
 
-        assert result["error"]["message"] == "Not authorized to cancel this run"
+        assert result["result"] == {}
+        cancel_run.assert_awaited_once_with("unknown-run", reason="stop")
 
 
 class TestA2AListAndGet:
@@ -9488,6 +9596,24 @@ class TestMessageEndpointElicitation:
             await message_endpoint(request, "server-1", user={"email": "user@example.com"})
         assert excinfo.value.status_code == 403
         assert excinfo.value.detail == "Session owner metadata unavailable"
+
+    async def test_message_endpoint_sets_trace_session_id_before_authorization(self, monkeypatch):
+        """message_endpoint should capture session_id even when the owner check fails."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_session_id
+
+        clear_trace_context()
+        request = MagicMock(spec=Request)
+        request.query_params = {"session_id": "session-trace"}
+
+        monkeypatch.setattr("mcpgateway.main.session_registry.get_session_owner", AsyncMock(return_value="other@example.com"))
+        monkeypatch.setattr("mcpgateway.main._read_request_json", AsyncMock(return_value={"hello": "world"}))
+
+        with pytest.raises(HTTPException):
+            await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+
+        assert get_trace_session_id() == "session-trace"
+        clear_trace_context()
 
 
 class TestRemainingCoverageGaps:

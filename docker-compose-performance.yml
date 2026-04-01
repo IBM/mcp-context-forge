@@ -984,7 +984,7 @@ services:
   # Completes the Grafana observability stack: Prometheus (metrics) + Loki (logs) + Tempo (traces)
   # ──────────────────────────────────────────────────────────────────────
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:${TEMPO_IMAGE_TAG:-2.10.0}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -1305,9 +1305,22 @@ services:
             print(f'❌ Registration failed: {e}')
             sys.exit(1)
 
+        # Force immediate discovery before polling for synced catalog entries.
+        try:
+            refresh_result = api_request_with_retry(
+                'POST',
+                f'/gateways/{gateway_id}/tools/refresh?include_resources=true&include_prompts=true',
+                retries=20,
+                delay=2,
+                retry_statuses=(401, 409, 502, 503),
+            )
+            print(f'Refresh response: {refresh_result}')
+        except Exception as e:
+            print(f'Note: manual refresh did not complete immediately: {e}')
+
         # Wait for tools to be synced from the gateway
         print('Waiting for tools/resources/prompts to sync...')
-        for i in range(30):
+        for i in range(60):
             time.sleep(1)
             try:
                 tools = api_request('GET', '/tools')
@@ -1318,9 +1331,10 @@ services:
                     break
             except Exception as e:
                 pass
-            print(f'Waiting for sync... ({i+1}/30)')
+            print(f'Waiting for sync... ({i+1}/60)')
         else:
-            print('⚠️ No tools synced, continuing anyway...')
+            print('❌ Tools from fast_time gateway did not sync in time')
+            sys.exit(1)
 
         # Fetch all tools, resources, and prompts
         # Note: Tools use gatewayId (camelCase), resources/prompts from catalog have no gatewayId
@@ -1335,6 +1349,10 @@ services:
             print(f'Found tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
         except Exception as e:
             print(f'Failed to fetch tools: {e}')
+
+        if not tool_ids:
+            print('❌ fast_time gateway sync completed without any tools; aborting virtual server creation')
+            sys.exit(1)
 
         try:
             resources = api_request('GET', '/resources')

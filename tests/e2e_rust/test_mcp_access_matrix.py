@@ -278,7 +278,9 @@ def _assert_formats_resource(result: dict[str, Any]) -> None:
     content = contents[0]
     assert content["uri"] == "time://formats"
 
-    payload = json.loads(content["text"])
+    text = content["text"]
+    json_start = min(index for index in (text.find("{"), text.find("[")) if index != -1)
+    payload = json.loads(text[json_start:])
     assert set(payload["output_formats"]) >= {"iso8601", "rfc3339", "unix"}
     example_formats = {example["format"] for example in payload["examples"]}
     assert {"ISO 8601", "RFC 3339", "Unix Timestamp"} <= example_formats
@@ -305,7 +307,7 @@ def _assert_tool_call_success(result: dict[str, Any]) -> None:
     assert not result.get("isError", False), result
     content = result.get("content", [])
     assert len(content) == 1, content
-    text = content[0]["text"]
+    text = content[0]["text"].splitlines()[0]
     parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     assert parsed.tzinfo is not None
 

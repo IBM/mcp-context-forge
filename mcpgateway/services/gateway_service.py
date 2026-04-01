@@ -92,7 +92,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
@@ -3301,8 +3301,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             elapsed = time.monotonic() - start_time
 
             if batch_span:
-                batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
-                batch_span.set_attribute("check.completed", True)
+                set_span_attribute(batch_span, "check.duration_ms", int(elapsed * 1000))
+                set_span_attribute(batch_span, "check.completed", True)
 
             logger.debug(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
 
@@ -3442,8 +3442,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     # Get user-specific OAuth token
                                     if not user_email:
                                         if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", "User email required for OAuth token")
+                                            set_span_attribute(span, "health.status", "unhealthy")
+                                            set_span_error(span, "User email required for OAuth token")
                                         await self._handle_gateway_failure(gateway)
                                         return
 
@@ -3453,15 +3453,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 else:
                                     if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", "No valid OAuth token for user")
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "No valid OAuth token for user")
                                     await self._handle_gateway_failure(gateway)
                                     return
                             except Exception as e:
                                 logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                 if span:
-                                    span.set_attribute("health.status", "unhealthy")
-                                    span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                    set_span_attribute(span, "health.status", "unhealthy")
+                                    set_span_error(span, "Failed to obtain stored OAuth token")
                                 await self._handle_gateway_failure(gateway)
                                 return
                         else:
@@ -3471,8 +3471,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 headers["Authorization"] = f"Bearer {access_token}"
                             except Exception as e:
                                 if span:
-                                    span.set_attribute("health.status", "unhealthy")
-                                    span.set_attribute("error.message", str(e))
+                                    set_span_attribute(span, "health.status", "unhealthy")
+                                    set_span_error(span, e)
                                 await self._handle_gateway_failure(gateway)
                                 return
                     else:
@@ -3492,7 +3492,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                             if span:
-                                span.set_attribute("http.status_code", response.status_code)
+                                set_span_attribute(span, "http.status_code", response.status_code)
                     elif (gateway_transport).lower() == "streamablehttp":
                         # Use session pool if enabled for faster health checks
                         use_pool = False
@@ -3589,13 +3589,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             logger.warning(f"Failed to refresh tools for gateway {gateway_name}: {refresh_error}")
 
                     if span:
-                        span.set_attribute("health.status", "healthy")
-                        span.set_attribute("success", True)
+                        set_span_attribute(span, "health.status", "healthy")
+                        set_span_attribute(span, "success", True)
 
                 except Exception as e:
                     if span:
-                        span.set_attribute("health.status", "unhealthy")
-                        span.set_attribute("error.message", str(e))
+                        set_span_attribute(span, "health.status", "unhealthy")
+                        set_span_error(span, e)
 
                     # Set the logger as debug as this check happens for each interval
                     logger.debug(f"Health check failed for gateway {gateway_name}: {e}")
