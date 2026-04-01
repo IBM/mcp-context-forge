@@ -147,3 +147,69 @@ class TestAdminUI:
         admin_page.page.set_viewport_size({"width": 1280, "height": 800})
         admin_page.page.wait_for_timeout(300)
         expect(sidebar).to_be_visible()
+
+    def test_scroll_reset_on_tab_navigation(self, admin_page: AdminPage):
+        """Test that tab navigation resets scroll position to top (#3748)."""
+        admin_page.navigate()
+
+        admin_page.click_servers_tab()
+        admin_page.page.wait_for_selector("#catalog-panel", state="visible", timeout=10000)
+
+        main_container = admin_page.page.locator("[data-scroll-container]")
+        expect(main_container).to_be_attached()
+
+        # Inject a tall spacer so the container is guaranteed to be scrollable
+        # regardless of how much real content is loaded.
+        admin_page.page.evaluate(
+            """() => {
+                const container = document.querySelector('[data-scroll-container]');
+                if (container) {
+                    const spacer = document.createElement('div');
+                    spacer.id = '_scroll_test_spacer';
+                    spacer.style.height = '5000px';
+                    container.appendChild(spacer);
+                }
+            }"""
+        )
+
+        # Scroll down and wait for the browser to apply it
+        admin_page.page.evaluate(
+            """() => {
+                const container = document.querySelector('[data-scroll-container]');
+                if (container) { container.scrollTop = 500; }
+            }"""
+        )
+        admin_page.page.wait_for_function(
+            "document.querySelector('[data-scroll-container]').scrollTop > 0",
+            timeout=5000,
+        )
+
+        # Switch tab — showTab() should reset scroll via requestAnimationFrame
+        admin_page.click_tools_tab()
+        admin_page.page.wait_for_selector("#tools-panel", state="visible", timeout=10000)
+
+        # Wait for the RAF-driven scroll reset rather than a fixed sleep
+        admin_page.page.wait_for_function(
+            "document.querySelector('[data-scroll-container]').scrollTop === 0",
+            timeout=5000,
+        )
+
+        # Second round: verify consistency across another tab pair
+        admin_page.page.evaluate(
+            """() => {
+                const container = document.querySelector('[data-scroll-container]');
+                if (container) { container.scrollTop = 300; }
+            }"""
+        )
+        admin_page.page.wait_for_function(
+            "document.querySelector('[data-scroll-container]').scrollTop > 0",
+            timeout=5000,
+        )
+
+        admin_page.click_gateways_tab()
+        admin_page.page.wait_for_selector("#gateways-panel", state="visible", timeout=10000)
+
+        admin_page.page.wait_for_function(
+            "document.querySelector('[data-scroll-container]').scrollTop === 0",
+            timeout=5000,
+        )
