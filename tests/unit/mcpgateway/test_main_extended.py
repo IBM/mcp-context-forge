@@ -10044,7 +10044,7 @@ class TestRemainingCoverageGaps:
 
         # Check overall status
         assert result["status"] == "healthy"
-        
+
         # Check MCP runtime fields
         assert result["mcp_runtime"]["mode"] == "python-rust-built-disabled"
         assert result["mcp_runtime"]["mounted"] == "python"
@@ -10080,7 +10080,7 @@ class TestRemainingCoverageGaps:
                 return None
 
         monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
-        
+
         # Configure Redis to be enabled - but /health should not check it
         monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
         monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
@@ -10090,7 +10090,7 @@ class TestRemainingCoverageGaps:
 
         # Check overall status - should be healthy (Redis not checked)
         assert result["status"] == "healthy"
-        
+
         # Verify no status_items in response (simple dict format)
         assert "status_items" not in result
         assert "mcp_runtime" in result
@@ -10260,12 +10260,12 @@ class TestRemainingCoverageGaps:
                 return None
 
         monkeypatch.setattr(main_mod, "SessionLocal", lambda: FakeSession())
-        
+
         # Mock Redis availability check to raise an exception
         async def mock_is_redis_available_exception():
             raise RuntimeError("Redis connection timeout")
         monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available_exception)
-        
+
         # Configure Redis to be enabled for this test
         monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
         monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
@@ -10276,16 +10276,16 @@ class TestRemainingCoverageGaps:
         # Check overall status - should be unready due to Redis failure
         assert result.status == "unready"
         assert response_obj.status_code == 503
-        
+
         # Check status_items
         assert len(result.status_items) == 2
-        
+
         # Check Database status - should be healthy
         db_status = next((item for item in result.status_items if item.name == "Database"), None)
         assert db_status is not None
         assert db_status.status_code == 200
         assert db_status.message == "Database Connection Successful"
-        
+
         # Check cache status - should be unhealthy due to exception
         cache_status = next((item for item in result.status_items if item.name == "Cache"), None)
         assert cache_status is not None
@@ -10315,7 +10315,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "is_redis_available", mock_is_redis_available)
         
         # Configure Redis to be enabled for this test
-        monkeypatch.setattr(main_mod.settings, "cache_type", "Cache Connection Successful")
+        monkeypatch.setattr(main_mod.settings, "cache_type", "redis")
         monkeypatch.setattr(main_mod.settings, "redis_url", "redis://localhost:6379/0")
 
         response_obj = FastAPIResponse()
@@ -10326,6 +10326,7 @@ class TestRemainingCoverageGaps:
         assert response_obj.status_code == 200
         
         # Check status_items for Database and Redis
+        print("iiiitemmmms", result)
         assert len(result.status_items) == 2
         
         # Check Database status
@@ -10338,7 +10339,7 @@ class TestRemainingCoverageGaps:
         redis_status = next((item for item in result.status_items if item.name == "Cache"), None)
         assert redis_status is not None
         assert redis_status.status_code == 200
-        assert redis_status.message == "ready"
+        assert redis_status.message == "Cache Connection Successful"
 
 
     async def test_sse_endpoint_cookie_auth_and_disconnect_cleanup(self, monkeypatch):
