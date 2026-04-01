@@ -1574,6 +1574,7 @@ async def test_streamable_http_auth_requires_auth_for_mcp_message(monkeypatch):
 async def test_streamable_http_auth_requires_auth_for_servers_mcp_sse(monkeypatch):
     """Auth should require authentication for /servers/{id}/mcp/sse paths."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
     scope = _make_scope("/servers/test-server-id/mcp/sse")
     called = []
 
@@ -1593,6 +1594,7 @@ async def test_streamable_http_auth_requires_auth_for_servers_mcp_sse(monkeypatc
 async def test_streamable_http_auth_requires_auth_for_servers_mcp_message(monkeypatch):
     """Auth should require authentication for /servers/{id}/mcp/message paths."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
     scope = _make_scope("/servers/test-server-id/mcp/message")
     called = []
 
@@ -1672,6 +1674,7 @@ async def test_streamable_http_auth_allows_mcp_message_with_valid_token(monkeypa
 async def test_streamable_http_auth_requires_auth_for_trailing_slash_variants(monkeypatch, path):
     """Auth must not be bypassed by appending a trailing slash to MCP transport paths."""
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
     scope = _make_scope(path)
     called = []
 
@@ -1772,6 +1775,107 @@ async def test_streamable_http_auth_no_authorization_permissive_mode(monkeypatch
     assert user_ctx.get("email") is None
     assert user_ctx.get("teams") == []  # Public-only
     assert user_ctx.get("is_authenticated") is False
+
+
+# --- Auth bypass regression tests for /mcp/{server_id} (Fixes #3752, #3812) ---
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_mcp_server_id_path_requires_auth_strict(monkeypatch):
+    """Regression: /mcp/{server_id} MUST enforce auth in strict mode.
+
+    Before fix, the auth gate only matched paths ending with /mcp. Since
+    /mcp/{server_id} ends with the server ID (not /mcp), authenticate()
+    returned True immediately — skipping ALL authentication.  (Fixes #3812)
+    """
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
+
+    scope = _make_scope("/mcp/abc123def")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called and called[0]["type"] == "http.response.start"
+    assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_mcp_server_id_path_permissive_public_only(monkeypatch):
+    """Regression: /mcp/{server_id} in permissive mode gets public-only scope, not full access."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
+
+    scope = _make_scope("/mcp/abc123def")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is True
+    assert called == []
+
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("teams") == []  # Public-only
+    assert user_ctx.get("is_authenticated") is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/mcp/test", "/mcp/../admin", "/mcp/nonexistent-id"])
+async def test_streamable_http_auth_mcp_subpath_not_skipped(monkeypatch, path):
+    """Regression: arbitrary /mcp/* sub-paths must NOT skip auth."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+    monkeypatch.setattr(tr, "_check_server_oauth_enforcement", AsyncMock(return_value=None))
+
+    scope = _make_scope(path)
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is False
+    assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_oauth_server_returns_resource_metadata_in_strict_mode(monkeypatch):
+    """Per-server OAuth runs before global strict-mode check so resource_metadata is included.
+
+    Before fix, strict mode (mcp_require_auth=True) returned a generic
+    WWW-Authenticate: Bearer without resource_metadata URL, preventing
+    MCP clients from discovering the OAuth server.  (Fixes #3752)
+    """
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    scope = _make_scope("/servers/abc123def/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send)
+    finally:
+        tr._oauth_checked_var.reset(token)
+    assert result is False
+    assert called[0]["status"] == 401
+    # Key assertion: resource_metadata URL must be present even in strict mode
+    www_auth = dict(called[0].get("headers", [])).get(b"www-authenticate", b"").decode()
+    assert "resource_metadata=" in www_auth
 
 
 @pytest.mark.asyncio
