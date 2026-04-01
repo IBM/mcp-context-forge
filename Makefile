@@ -1116,9 +1116,9 @@ generate-report:                           ## Display most recent load test repo
 # 📊 REST API POPULATION - Populate via HTTP endpoints (full write path)
 # =============================================================================
 # help: 📊 REST API POPULATION
-# help: populate-small       - Populate via REST API (100 users, ~3K entities, ~2 min)
-# help: populate-medium      - Populate via REST API (10K users, ~300K entities, ~1 hr)
-# help: populate-large       - Populate via REST API (500K users, ~13M entities, ~4-12 hrs)
+# help: populate-small       - Populate via REST API (100 users, ~3K entities, ~20 min)
+# help: populate-medium      - Populate via REST API (10K users, ~300K entities, ~12 hr)
+# help: populate-large       - Populate via REST API (500K users, ~13M entities, ~12-24 hrs)
 # help: populate-dry         - Preview what would be created (no requests sent)
 # help: populate-verify      - Verify populated data via GET endpoints
 # help: populate-clean       - Delete all loadtest.example.com entities via API
@@ -1163,6 +1163,62 @@ populate-large:                            ## Populate via REST API - large (500
 			python -m tests.populate --profile large"; \
 		echo ""; \
 		echo "✅ Large API population complete!"; \
+		echo "📄 Report: reports/large_populate_report.json"; \
+	else \
+		echo "❌ Cancelled"; \
+		exit 1; \
+	fi
+
+# =============================================================================
+# 🚀 BULK DATABASE POPULATION - Direct DB inserts (bypass write path)
+# =============================================================================
+# help: 🚀 BULK DATABASE POPULATION
+# help: populate-small-bulk   - Bulk insert (100 users, ~5K entities, ~14s)
+# help: populate-medium-bulk  - Bulk insert (10K users, ~2.1M entities, ~41min)
+# help: populate-large-bulk   - Bulk insert (100K users, ~21M entities)
+
+.PHONY: populate-small-bulk populate-medium-bulk populate-large-bulk
+
+populate-small-bulk:                       ## Populate via bulk DB inserts - small (100 users) - FAST
+	@echo "⚡ Populating via BULK mode (small profile)..."
+	@echo "   Target: 100 users, ~5K entities"
+	@echo "   Time: ~14 seconds (7.5x faster than API mode)"
+	@echo "   ⚠️  Bypasses API validation - for test data only"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile small --mode bulk"
+	@echo ""
+	@echo "✅ Small bulk population complete!"
+	@echo "📄 Report: reports/small_populate_report.json"
+
+populate-medium-bulk:                      ## Populate via bulk DB inserts - medium (10K users) - FAST
+	@echo "⚡ Populating via BULK mode (medium profile)..."
+	@echo "   Target: 10K users, ~2.1M entities"
+	@echo "   Time: ~41 minutes (17x faster than API mode)"
+	@echo "   ⚠️  Bypasses API validation - for test data only"
+	@echo "   ⚠️  Recommended: PostgreSQL backend"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile medium --mode bulk"
+	@echo ""
+	@echo "✅ Medium bulk population complete!"
+	@echo "📄 Report: reports/medium_populate_report.json"
+
+populate-large-bulk:                       ## Populate via bulk DB inserts - large (100K users) - FAST
+	@echo "⚡ Populating via BULK mode (large profile)..."
+	@echo "   Target: 100K users, ~21M entities"
+	@echo "   Time: ~6-8 hours (estimated)"
+	@echo "   ⚠️  Bypasses API validation - for test data only"
+	@echo "   ⚠️  REQUIRED: PostgreSQL backend"
+	@echo ""
+	@read -p "This will create millions of records. Continue? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		test -d "$(VENV_DIR)" || $(MAKE) venv; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+			python -m tests.populate --profile large --mode bulk"; \
+		echo ""; \
+		echo "✅ Large bulk population complete!"; \
 		echo "📄 Report: reports/large_populate_report.json"; \
 	else \
 		echo "❌ Cancelled"; \

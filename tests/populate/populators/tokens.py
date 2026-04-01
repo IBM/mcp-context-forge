@@ -98,9 +98,8 @@ class TokenPopulator(BasePopulator):
                     self.progress_tracker.update(self.get_name(), self.progress_update_frequency)
                     self.progress_tracker.refresh()
 
-        for batch_start in range(0, user_count, self.batch_concurrency):
-            batch_end = min(batch_start + self.batch_concurrency, user_count)
-            await asyncio.gather(*[_create_tokens_for_user(i) for i in range(batch_start, batch_end)])
+        # Process all users concurrently (APIClient semaphore controls concurrency)
+        await asyncio.gather(*[_create_tokens_for_user(i) for i in range(user_count)])
 
         if self.progress_tracker:
             remainder = update_count % self.progress_update_frequency

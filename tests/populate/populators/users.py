@@ -4,10 +4,13 @@
 # Standard
 import asyncio
 import logging
+import uuid
 from typing import Any, Dict, List
 
 # Local
 from .base import BasePopulator
+from mcpgateway.db import EmailUser, utc_now
+from mcpgateway.services.argon2_service import Argon2PasswordService
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,11 @@ class UserPopulator(BasePopulator):
         admin_percent = self.get_scale_config("users_admin_percent", 5)
         admin_count = max(1, int(count * admin_percent / 100))
 
+        # Use bulk mode if enabled
+        if self.use_bulk_mode:
+            return await self._populate_bulk(count, admin_count)
+
+        # REST API mode (original implementation)
         created = 0
         errors = 0
         login_errors = 0
@@ -96,11 +104,9 @@ class UserPopulator(BasePopulator):
                 self.progress_tracker.refresh()
 
         # Process in batches
-        for batch_start in range(0, count, self.batch_concurrency):
-            batch_end = min(batch_start + self.batch_concurrency, count)
-            await asyncio.gather(*[_create_and_login(i) for i in range(batch_start, batch_end)])
+        await asyncio.gather(*[_create_and_login(i) for i in range(count)])
 
-        # Final progress update
+        #  Process all users concurrently (semaphore in APIClient controls actual concurrency)
         if self.progress_tracker:
             remainder = update_count % self.progress_update_frequency
             if remainder > 0:
@@ -121,3 +127,64 @@ class UserPopulator(BasePopulator):
             "tokens_obtained": len(self.client.user_tokens),
             "ids": emails,
         }
+
+    async def _populate_bulk(self, count: int, admin_count: int) -> Dict[str, Any]:
+        """Bulk insert users directly into database for performance."""
+        # Generate password hash once (reuse for all users)
+        argon2_service = Argon2PasswordService()
+        password_hash = argon2_service.hash_password(DEFAULT_PASSWORD)
+
+        # Build user mappings
+        mappings = []
+        emails = []
+
+        for i in range(count):
+            email = f"user{i + 1}@{self.email_domain}"
+            is_admin = i < admin_count
+            full_name = self.faker.name()
+
+            mappings.append({
+                "email": email,
+                "password_hash": password_hash,
+                "full_name": full_name,
+                "is_admin": is_admin,
+                "is_active": True,
+                "auth_provider": "local",
+                "password_hash_type": "argon2id",
+                "failed_login_attempts": 0,
+                "password_change_required": False,
+                "created_at": utc_now(),
+                "updated_at": utc_now(),
+                "password_changed_at": utc_now(),
+            })
+            emails.append(email)
+
+        # Bulk insert
+        result = self._bulk_insert_mappings(EmailUser, mappings, return_id_field="email")
+
+        # Store user emails in existing_data for downstream populators
+        self.existing_data["user_emails"] = emails
+        self.existing_data["admin_emails"] = emails[:admin_count]
+
+        # After bulk insert, log in users to get tokens (hybrid mode)
+        login_errors = 0
+        for email in emails:
+            try:
+                resp = await self.client.post(
+                    "/auth/email/login",
+                    json={"email": email, "password": DEFAULT_PASSWORD},
+                    expected_status=[200, 201],
+                )
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    token = data.get("access_token")
+                    if token:
+                        self.client.user_tokens[email] = token
+            except Exception as exc:
+                login_errors += 1
+                logger.debug(f"Failed to login user {email}: {exc}")
+
+        result["login_errors"] = login_errors
+        result["tokens_obtained"] = len(self.client.user_tokens)
+
+        return result

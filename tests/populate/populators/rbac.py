@@ -17,19 +17,19 @@ CUSTOM_ROLES = [
         "name": "loadtest_operator",
         "description": "Load test operator with read/execute access",
         "scope": "global",
-        "permissions": ["tools.read", "tools.execute", "resources.read", "prompts.read"],
+        "permissions": ["tools.read", "tools.execute", "resources.read", "prompts.read", "tokens.create", "tokens.read"],
     },
     {
         "name": "loadtest_analyst",
         "description": "Load test analyst with read-only access",
         "scope": "global",
-        "permissions": ["tools.read", "resources.read", "prompts.read", "servers.read"],
+        "permissions": ["tools.read", "resources.read", "prompts.read", "servers.read", "tokens.create", "tokens.read"],
     },
     {
         "name": "loadtest_deployer",
         "description": "Load test deployer with server management access",
         "scope": "team",
-        "permissions": ["servers.read", "servers.create", "servers.update", "gateways.read", "gateways.create"],
+        "permissions": ["servers.read", "servers.create", "servers.update", "gateways.read", "gateways.create", "tokens.create", "tokens.read"],
     },
 ]
 

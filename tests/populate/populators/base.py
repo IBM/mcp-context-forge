@@ -14,6 +14,7 @@ from faker import Faker
 # Local
 from ..api_client import APIClient
 from ..utils.progress import MultiProgressTracker
+from mcpgateway.db import SessionLocal, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,10 @@ class BasePopulator(ABC):
     Each populator creates entities via HTTP POST to the actual gateway
     endpoints, exercising the full write path including validation,
     auth middleware, RBAC, and side effects.
+
+    Supports two modes:
+    - REST API mode: Full integration testing with validation/RBAC (default)
+    - Bulk DB mode: Direct SQLAlchemy inserts for performance (use_bulk_mode=True)
     """
 
     def __init__(
@@ -34,6 +39,7 @@ class BasePopulator(ABC):
         existing_data: Optional[Dict[str, Any]] = None,
         progress_tracker: Optional[MultiProgressTracker] = None,
         dry_run: bool = False,
+        use_bulk_mode: bool = False,
     ):
         self.client = client
         self.config = config
@@ -41,9 +47,11 @@ class BasePopulator(ABC):
         self.existing_data = existing_data if existing_data is not None else {}
         self.progress_tracker = progress_tracker
         self.dry_run = dry_run
+        self.use_bulk_mode = use_bulk_mode
         self.email_domain = config.get("global", {}).get("email_domain", "loadtest.example.com")
         self.batch_concurrency = config.get("concurrency", {}).get("batch_size", 50)
         self.progress_update_frequency = config.get("global", {}).get("progress_update_frequency", 10)
+        self.bulk_batch_size = config.get("concurrency", {}).get("bulk_batch_size", 10000)
 
         # Results tracking
         self.created_count = 0
@@ -165,11 +173,75 @@ class BasePopulator(ABC):
             batch = payloads[i : i + self.batch_concurrency]
             await asyncio.gather(*[_create_one(p) for p in batch])
 
+
         # Final progress update for remainder
         if self.progress_tracker:
             remainder = update_count % self.progress_update_frequency
             if remainder > 0:
                 self.progress_tracker.update(self.get_name(), remainder, errors=errors)
+
+        self.created_count = created
+        self.error_count = errors
+        self.created_ids = ids
+
+        return {"created": created, "errors": errors, "ids": ids}
+
+    def _bulk_insert_mappings(
+        self,
+        model_class: Any,
+        mappings: List[Dict[str, Any]],
+        return_id_field: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Bulk insert records directly into database using SQLAlchemy.
+
+        This bypasses the HTTP API layer for maximum performance, inserting
+        records in batches using bulk_insert_mappings(). Use this for large-scale
+        data seeding where validation/RBAC checks are not needed.
+
+        Args:
+            model_class: SQLAlchemy model class (e.g., EmailUser, EmailTeam)
+            mappings: List of dictionaries with column names and values
+            return_id_field: Optional field name to extract IDs from mappings
+
+        Returns:
+            Dictionary with created/errors/ids counts
+        """
+        created = 0
+        errors = 0
+        ids: List[str] = []
+        total = len(mappings)
+
+        try:
+            with SessionLocal() as session:
+                # Process in batches to avoid memory issues
+                for i in range(0, total, self.bulk_batch_size):
+                    batch = mappings[i : i + self.bulk_batch_size]
+
+                    try:
+                        # Use bulk_insert_mappings for maximum performance
+                        session.bulk_insert_mappings(model_class, batch)
+                        session.commit()
+
+                        batch_created = len(batch)
+                        created += batch_created
+
+                        # Extract IDs if requested
+                        if return_id_field:
+                            ids.extend([m[return_id_field] for m in batch if return_id_field in m])
+
+                        # Update progress
+                        if self.progress_tracker:
+                            self.progress_tracker.update(self.get_name(), batch_created, errors=0)
+                            self.progress_tracker.refresh()
+
+                    except Exception as exc:
+                        session.rollback()
+                        errors += len(batch)
+                        logger.error(f"Bulk insert batch failed for {self.get_name()}: {exc}")
+
+        except Exception as exc:
+            logger.error(f"Bulk insert failed for {self.get_name()}: {exc}")
+            errors = total
 
         self.created_count = created
         self.error_count = errors
