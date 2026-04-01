@@ -258,8 +258,8 @@ plugins:
   - name: RateLimiterPlugin_sliding_window
     kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — sliding window algorithm
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -276,8 +276,8 @@ plugins:
   - name: RateLimiterPlugin_token_bucket
     kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — token bucket algorithm
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -294,8 +294,8 @@ plugins:
   - name: RateLimiterPlugin_redis_fixed_window
     kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — fixed window algorithm, Redis backend
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -315,8 +315,8 @@ plugins:
   - name: RateLimiterPlugin_redis_sliding_window
     kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — sliding window algorithm, Redis backend
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive
@@ -336,8 +336,8 @@ plugins:
   - name: RateLimiterPlugin_redis_token_bucket
     kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — token bucket algorithm, Redis backend
-    version: 0.1.0
-    author: Pratik Gandhi
+    version: 0.0.2
+    author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
     mode: permissive

@@ -395,7 +395,17 @@ install_plugin_requirements() {
 
     if [[ "${RELOAD_PLUGIN_REQUIREMENTS_TXT}" = "true" && -f "${PLUGIN_REQUIREMENTS_TXT_PATH}" ]]; then
         echo "🧩 Installing plugin packages from ${PLUGIN_REQUIREMENTS_TXT_PATH}..."
-        /app/.venv/bin/pip install --no-cache-dir -r "${PLUGIN_REQUIREMENTS_TXT_PATH}"
+        local max_retries=3
+        local attempt=1
+        while (( attempt <= max_retries )); do
+            if /app/.venv/bin/pip install --no-cache-dir -r "${PLUGIN_REQUIREMENTS_TXT_PATH}"; then
+                return 0
+            fi
+            echo "⚠️  Plugin package install attempt ${attempt}/${max_retries} failed"
+            (( attempt++ ))
+            (( attempt <= max_retries )) && sleep 2
+        done
+        echo "⚠️  Plugin package install failed after ${max_retries} attempts; continuing without plugin packages"
     fi
 }
 

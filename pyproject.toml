@@ -258,6 +258,12 @@ templating = [
     "cookiecutter>=2.7.1",
 ]
 
+# External plugin packages (optional)
+# Install with: pip install mcp-contextforge-gateway[plugins]
+plugins = [
+    "cpex-rate-limiter>=0.0.2",
+]
+
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [

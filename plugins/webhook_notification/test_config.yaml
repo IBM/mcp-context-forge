@@ -16,11 +16,11 @@ plugins:
       block_on_detection: false
       log_detections: true
 
-  # Rate Limiter Plugin (will generate rate limit violations)
+  # Rate Limiter Plugin (requires cpex-rate-limiter package)
   - name: "RateLimiter"
     kind: "cpex_rate_limiter.RateLimiterPlugin"
     hooks: ["tool_pre_invoke"]
-    mode: "permissive"  # Don't block for testing
+    mode: "disabled"
     priority: 200
     config:
       by_user: "5/m"  # Low limit for easy testing

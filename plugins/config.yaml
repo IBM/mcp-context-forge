@@ -204,7 +204,7 @@ plugins:
     conditions: []
     config: {}
 
-  # Rate limiter (fixed window, Redis-backed for shared state across instances)
+  # Rate limiter (cpex-rate-limiter package)
   - name: "RateLimiterPlugin"
     kind: "cpex_rate_limiter.RateLimiterPlugin"
     description: "Per-user/tenant/tool rate limits"

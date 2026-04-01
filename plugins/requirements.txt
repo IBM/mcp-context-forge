@@ -1,1 +1,7 @@
-cpex-rate-limiter>=0.0.2
+# Runtime plugin package overrides.
+# This file is NOT used during container build (see pyproject.toml [plugins] extra).
+# It is used by docker-entrypoint.sh when RELOAD_PLUGIN_REQUIREMENTS_TXT=true
+# to re-install or override plugin packages at container startup without rebuilding.
+#
+# Example:
+#   cpex-rate-limiter>=0.0.3
