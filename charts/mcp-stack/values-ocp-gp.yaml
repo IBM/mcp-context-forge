@@ -81,7 +81,7 @@ mcpContextForge:
           conditions: []
           config:
             backend: "redis"
-            redis_url: "redis://gp-context-forge-mcp-stack-redis:6379/0"
+            redis_url: "redis://:change-me-redis@gp-context-forge-mcp-stack-redis:6379/0"
             redis_key_prefix: "rl"
             redis_fallback: true
             by_user: "30/m"
@@ -307,3 +307,33 @@ route:
 # --- Fast Time Server ---
 mcpFastTimeServer:
   enabled: true
+
+# --- Testing / Registration ---
+testing:
+  enabled: true
+  registration:
+    enabled: true
+    image:
+      repository: ghcr.io/ibm/mcp-context-forge
+      tag: latest
+    jwt:
+      username: admin@example.com
+      expirationMinutes: 10080
+      secret: "gp-context-forge-jwt-secret-key-longer-than-32-bytes"
+  fastTime:
+    register:
+      enabled: true
+      createVirtualServer: true
+  fastTestServer:
+    enabled: true
+    image:
+      repository: docker.io/gandhipratik203/fast-test-server
+      tag: latest
+  fastTest:
+    register:
+      enabled: true
+  a2a:
+    register:
+      enabled: false
+  a2aEchoAgent:
+    enabled: false
