@@ -370,3 +370,4 @@ tools_rust/mcp_runtime/perf.data*
 tests/jmeter/results/*.jtl
 tests/jmeter/results/*/
 .jmeter/
+.bob
