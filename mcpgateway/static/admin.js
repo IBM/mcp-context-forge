@@ -20971,7 +20971,11 @@ async function refreshToolsForSelectedGateways(buttonEl) {
         typeof getSelectedGatewayIds === "function"
             ? getSelectedGatewayIds()
             : [];
-    if (!gwIds.length) {
+
+    // Filter out the REST/A2A sentinel ("null") — it has no MCP server to refresh.
+    const realGwIds = gwIds.filter((id) => id !== "null");
+
+    if (!realGwIds.length) {
         showErrorMessage("Select at least one MCP gateway first.");
         return;
     }
@@ -20986,7 +20990,7 @@ async function refreshToolsForSelectedGateways(buttonEl) {
     let failed = 0;
 
     await Promise.allSettled(
-        gwIds.map(async (gid) => {
+        realGwIds.map(async (gid) => {
             try {
                 const res = await fetch(
                     `${window.ROOT_PATH}/gateways/${gid}/tools/refresh`,
@@ -21023,13 +21027,12 @@ async function refreshToolsForSelectedGateways(buttonEl) {
         showSuccessMessage(deltaMsg);
     }
 
-    // Reload the tools selector via HTMX to pick up newly discovered tools.
-    // Try the edit-form container first, then fall back to the add-form container.
-    const container =
-        safeGetElement("edit-server-tools", true) ??
-        safeGetElement("associatedTools", true);
-    if (container) {
-        htmx.trigger(container, "load");
+    // Reload the tools selector to pick up newly discovered tools.
+    // Use reloadAssociatedItems which correctly determines whether the
+    // edit modal or create form is active, and issues a proper htmx.ajax
+    // reload with the right container and gateway filter.
+    if (typeof reloadAssociatedItems === "function") {
+        reloadAssociatedItems();
     }
 }
 
