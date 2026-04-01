@@ -457,7 +457,10 @@ class TestHealthAndInfrastructure:
         """Test the basic health check endpoint."""
         response = test_client.get("/health")
         assert response.status_code == 200
-        assert response.json()["status"] == "healthy"
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert "is_leader" in data
+        assert isinstance(data["is_leader"], bool)
 
     def test_ready_check(self, test_client):
         """Test the readiness check endpoint."""
@@ -465,7 +468,8 @@ class TestHealthAndInfrastructure:
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
 
-    def test_health_check_db_error(self):
+    @pytest.mark.asyncio
+    async def test_health_check_db_error(self):
         """Test health check error path with rollback failure."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
@@ -491,7 +495,7 @@ class TestHealthAndInfrastructure:
 
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
-            response = mcpgateway_main.healthcheck()
+            response = await mcpgateway_main.healthcheck()
         assert response["status"] == "unhealthy"
         assert session.invalidate_called is True
 

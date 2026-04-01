@@ -10317,11 +10317,12 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 # Healthcheck      #
 ####################
 @app.get("/health")
-def healthcheck(response: Response = None):
+async def healthcheck(response: Response = None):
     """
     Perform a basic health check to verify database connectivity.
+    Now includes leader status for cluster monitoring.
 
-    Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
+    Async function to allow checking Redis leader status.
     Uses a dedicated session to avoid cross-thread issues and double-commit
     from get_db dependency. All DB operations happen in the same thread.
 
@@ -10329,16 +10330,27 @@ def healthcheck(response: Response = None):
         response: Optional response object used to attach runtime-mode headers.
 
     Returns:
-        A dictionary with the health status and optional error message.
+        A dictionary with the health status, leader status, and optional error message.
     """
     db = SessionLocal()
     try:
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
+
+        # Check leader status using async method
+        is_leader = False
+        if hasattr(gateway_service, "is_leader"):
+            try:
+                is_leader = await gateway_service.is_leader()
+            except Exception:
+                # Fallback to False if leader check fails (e.g., in test environments)
+                is_leader = False
+
         if response is not None:
             _apply_runtime_mode_headers(response)
-        return {"status": "healthy", "mcp_runtime": _mcp_runtime_status_payload()}
+
+        return {"status": "healthy", "is_leader": is_leader, "mcp_runtime": _mcp_runtime_status_payload()}
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -10352,7 +10364,8 @@ def healthcheck(response: Response = None):
         logger.error(error_message)
         if response is not None:
             _apply_runtime_mode_headers(response)
-        return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
+
+        return {"status": "unhealthy", "is_leader": False, "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
     finally:
         db.close()
 

@@ -45,9 +45,11 @@ Examples:
 import asyncio
 import binascii
 from datetime import datetime, timezone
+import json
 import logging
 import mimetypes
 import os
+import socket
 import ssl
 import tempfile
 import time
@@ -471,15 +473,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Leader election settings from config
         if self.redis_url and REDIS_AVAILABLE:
-            self._instance_id = str(uuid.uuid4())  # Unique ID for this process
+            # Metadata for this instance
+            self._instance_metadata = {"instance_id": str(uuid.uuid4()), "port": settings.port, "pid": os.getpid(), "hostname": socket.gethostname()}
+            self._instance_id = self._instance_metadata["instance_id"]
             self._leader_key = settings.redis_leader_key
             self._leader_ttl = settings.redis_leader_ttl
             self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
             self._leader_heartbeat_task: Optional[asyncio.Task] = None
             self._follower_election_task: Optional[asyncio.Task] = None
 
-            # Log instance mapping for debugging
-            logger.info(f"Instance started: instance_id={self._instance_id}, port={settings.port}, pid={os.getpid()}")
+            # Log instance mapping
+            logger.info(f"Instance started: {json.dumps(self._instance_metadata)}")
 
         # Always initialize file lock as fallback (used if Redis connection fails at runtime)
         if settings.cache_type != "none":
@@ -587,7 +591,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 raise ConnectionError(f"Redis ping failed: {e}") from e
 
-            is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
+            # Store all instance metadate in redis
+            is_leader = await self._redis_client.set(self._leader_key, json.dumps(self._instance_metadata), ex=self._leader_ttl, nx=True)
             if is_leader:
                 logger.info("Acquired Redis leadership. Starting health check and heartbeat tasks.")
                 self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
@@ -653,7 +658,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     return 0
                 end
                 """
-                result = await self._redis_client.eval(release_script, 1, self._leader_key, self._instance_id)
+                result = await self._redis_client.eval(release_script, 1, self._leader_key, json.dumps(self._instance_metadata))
                 if result:
                     logger.info("Released Redis leadership on shutdown")
             except Exception as e:
@@ -3941,8 +3946,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     continue
 
                 # Check if we're still the leader
-                current_leader = await self._redis_client.get(self._leader_key)
-                if current_leader != self._instance_id:
+                current_leader_raw = await self._redis_client.get(self._leader_key)
+                if current_leader_raw:
+                    try:
+                        current_leader_data = json.loads(current_leader_raw)
+                        current_leader_id = current_leader_data.get("instance_id")
+                    except (json.JSONDecodeError, AttributeError):
+                        # Fallback for old UUID-only format
+                        current_leader_id = current_leader_raw
+                else:
+                    current_leader_id = None
+
+                if current_leader_id != self._instance_id:
                     logger.info("Lost Redis leadership, stopping heartbeat")
                     self._start_follower_election()
                     return
@@ -3985,7 +4000,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     continue
 
                 # Attempt to acquire leadership
-                is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
+                is_leader = await self._redis_client.set(self._leader_key, json.dumps(self._instance_metadata), ex=self._leader_ttl, nx=True)
 
                 if is_leader:
                     logger.info("Acquired Redis leadership via follower election. Starting health check and heartbeat.")
@@ -4034,8 +4049,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if self._redis_client and settings.cache_type == "redis":
                     # Redis-based leader check (async, decode_responses=True returns strings)
                     # Note: Leader key TTL refresh is handled by _run_leader_heartbeat task
-                    current_leader = await self._redis_client.get(self._leader_key)
-                    if current_leader != self._instance_id:
+                    current_leader_raw = await self._redis_client.get(self._leader_key)
+                    if current_leader_raw:
+                        try:
+                            current_leader_data = json.loads(current_leader_raw)
+                            current_leader_id = current_leader_data.get("instance_id")
+                        except (json.JSONDecodeError, AttributeError):
+                            # Fallback for old UUID-only format
+                            current_leader_id = current_leader_raw
+                    else:
+                        current_leader_id = None
+
+                    if current_leader_id != self._instance_id:
                         return
 
                     # Run health checks
@@ -4086,6 +4111,67 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except Exception as e:
                 logger.error(f"Unexpected error in health check loop: {str(e)}")
                 await asyncio.sleep(self._health_check_interval)
+
+    def is_leader_sync(self) -> bool:
+        """Check if this instance is the current leader (synchronous version for health checks).
+
+        Returns:
+            bool: True if this instance holds the leader lock, False otherwise.
+        """
+        if not self._redis_client or not hasattr(self, "_leader_key"):
+            # Fallback to file lock for non-Redis setups
+            return True
+
+        try:
+            # Use sync Redis client method if available
+            import redis
+            if isinstance(self._redis_client, redis.asyncio.Redis):
+                # For async Redis client, we can't do sync call - return True as fallback
+                return True
+            
+            # For sync Redis client (shouldn't happen in current setup, but safe fallback)
+            current_leader_raw = self._redis_client.get(self._leader_key)
+            if not current_leader_raw:
+                return False
+
+            try:
+                current_leader_data = json.loads(current_leader_raw)
+                current_leader_id = current_leader_data.get("instance_id")
+            except (json.JSONDecodeError, AttributeError):
+                # Fallback for old UUID-only format
+                current_leader_id = current_leader_raw
+
+            return current_leader_id == self._instance_id
+        except Exception as e:
+            logger.warning(f"Error checking leader status: {e}")
+            return True  # Fail open for health checks
+
+    async def is_leader(self) -> bool:
+        """Check if this instance is the current leader (async version).
+
+        Returns:
+            bool: True if this instance holds the leader lock, False otherwise.
+        """
+        if not self._redis_client or not hasattr(self, "_leader_key"):
+            # Fallback to file lock for non-Redis setups
+            return True
+
+        try:
+            current_leader_raw = await self._redis_client.get(self._leader_key)
+            if not current_leader_raw:
+                return False
+
+            try:
+                current_leader_data = json.loads(current_leader_raw)
+                current_leader_id = current_leader_data.get("instance_id")
+            except (json.JSONDecodeError, AttributeError):
+                # Fallback for old UUID-only format
+                current_leader_id = current_leader_raw
+
+            return current_leader_id == self._instance_id
+        except Exception as e:
+            logger.warning(f"Error checking leader status: {e}")
+            return False
 
     def _get_auth_headers(self) -> Dict[str, str]:
         """Get default headers for gateway requests (no authentication).

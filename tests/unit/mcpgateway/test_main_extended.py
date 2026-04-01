@@ -9657,7 +9657,8 @@ class TestRemainingCoverageGaps:
         assert sess.invalidated is True
         assert sess.closed is True
 
-    def test_healthcheck_invalidate_failure_is_best_effort(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_healthcheck_invalidate_failure_is_best_effort(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -9683,12 +9684,13 @@ class TestRemainingCoverageGaps:
         sess = FakeSession()
         monkeypatch.setattr(main_mod, "SessionLocal", lambda: sess)
 
-        result = main_mod.healthcheck()
+        result = await main_mod.healthcheck()
         assert result["status"] == "unhealthy"
         assert "db down" in result["error"]
         assert sess.closed is True
 
-    def test_healthcheck_reports_runtime_mode_and_headers(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_healthcheck_reports_runtime_mode_and_headers(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -9708,7 +9710,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", False)
 
         response = FastAPIResponse()
-        result = main_mod.healthcheck(response)
+        result = await main_mod.healthcheck(response)
 
         assert result["status"] == "healthy"
         assert result["mcp_runtime"]["mode"] == "python-rust-built-disabled"
@@ -9863,7 +9865,8 @@ class TestRemainingCoverageGaps:
         assert payload["rust_affinity_core_enabled"] is False
         assert payload["session_auth_reuse_mode"] == "python"
 
-    def test_healthcheck_unhealthy_applies_runtime_headers(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_healthcheck_unhealthy_applies_runtime_headers(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
 
@@ -9881,7 +9884,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.settings, "experimental_rust_mcp_runtime_enabled", True)
 
         response = FastAPIResponse()
-        result = main_mod.healthcheck(response)
+        result = await main_mod.healthcheck(response)
 
         assert result["status"] == "unhealthy"
         assert response.headers["x-contextforge-mcp-runtime-mode"] == "rust-managed"
