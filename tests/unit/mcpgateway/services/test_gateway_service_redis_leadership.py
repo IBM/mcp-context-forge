@@ -165,7 +165,18 @@ class TestRunFollowerElection:
                 with patch("asyncio.sleep", new_callable=AsyncMock):
                     await service._run_follower_election("test@example.com")  # pylint: disable=protected-access
 
-        redis_mock.set.assert_called_once_with("test:leader", "test-instance", ex=15, nx=True)
+        # Verify Redis set was called with JSON metadata instead of plain UUID
+        redis_mock.set.assert_called_once()
+        call_args = redis_mock.set.call_args
+        assert call_args[0][0] == "test:leader"  # key
+        # Second argument should be JSON string with instance metadata
+        import json
+        metadata = json.loads(call_args[0][1])
+        assert "instance_id" in metadata
+        assert "port" in metadata
+        assert "pid" in metadata
+        assert "hostname" in metadata
+        assert call_args[1] == {"ex": 15, "nx": True}  # kwargs
         assert service._health_check_task is not None  # pylint: disable=protected-access
         assert service._leader_heartbeat_task is not None  # pylint: disable=protected-access
 
@@ -369,3 +380,129 @@ class TestFollowerElectionCancelsStale:
                     await service._run_follower_election("test@example.com")  # pylint: disable=protected-access
 
         done_task.cancel.assert_not_called()
+
+
+
+class TestGatewayServiceInitialization:
+    """Tests for GatewayService initialization with instance metadata."""
+
+    def test_init_with_invalid_port(self):
+        """Test GatewayService initialization with invalid port value."""
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.port = "invalid"
+            mock_settings.platform_admin_email = "admin@test.com"
+            
+            service = GatewayService()
+            
+            # Should default to 0 when port conversion fails
+            assert service._instance_metadata["port"] == 0
+            assert "instance_id" in service._instance_metadata
+            assert "pid" in service._instance_metadata
+            assert "hostname" in service._instance_metadata
+
+    def test_init_with_none_port(self):
+        """Test GatewayService initialization with None port value."""
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.port = None
+            mock_settings.platform_admin_email = "admin@test.com"
+            
+            service = GatewayService()
+            
+            # Should default to 0 when port is None
+            assert service._instance_metadata["port"] == 0
+            assert "instance_id" in service._instance_metadata
+            assert "pid" in service._instance_metadata
+            assert "hostname" in service._instance_metadata
+
+    def test_init_with_valid_port(self):
+        """Test GatewayService initialization with valid port value."""
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.port = "8080"
+            mock_settings.platform_admin_email = "admin@test.com"
+            
+            service = GatewayService()
+            
+            # Should convert port to int
+            assert service._instance_metadata["port"] == 8080
+            assert "instance_id" in service._instance_metadata
+            assert "pid" in service._instance_metadata
+            assert "hostname" in service._instance_metadata
+
+
+class TestIsLeaderMethod:
+    """Tests for is_leader() method."""
+
+    @pytest.mark.asyncio
+    async def test_is_leader_with_json_metadata(self):
+        """Test is_leader() correctly parses JSON metadata from Redis."""
+        import json
+        
+        redis_mock = AsyncMock()
+        metadata = {
+            "instance_id": "test-id-123",
+            "port": 8001,
+            "pid": 12345,
+            "hostname": "test-host"
+        }
+        redis_mock.get = AsyncMock(return_value=json.dumps(metadata))
+        
+        service = _make_service(redis_client=redis_mock, instance_id="test-id-123")
+        
+        result = await service.is_leader()
+        
+        assert result is True
+        redis_mock.get.assert_called_once_with("test:leader")
+
+    @pytest.mark.asyncio
+    async def test_is_leader_with_legacy_uuid(self):
+        """Test is_leader() handles legacy UUID-only format."""
+        redis_mock = AsyncMock()
+        redis_mock.get = AsyncMock(return_value="test-id-123")  # Plain UUID string
+        
+        service = _make_service(redis_client=redis_mock, instance_id="test-id-123")
+        
+        result = await service.is_leader()
+        
+        assert result is True
+        redis_mock.get.assert_called_once_with("test:leader")
+
+    @pytest.mark.asyncio
+    async def test_is_leader_returns_false_when_not_leader(self):
+        """Test is_leader() returns False when instance is not the leader."""
+        import json
+        
+        redis_mock = AsyncMock()
+        metadata = {
+            "instance_id": "other-id-456",
+            "port": 8002,
+            "pid": 67890,
+            "hostname": "other-host"
+        }
+        redis_mock.get = AsyncMock(return_value=json.dumps(metadata))
+        
+        service = _make_service(redis_client=redis_mock, instance_id="test-id-123")
+        
+        result = await service.is_leader()
+        
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_is_leader_returns_false_when_no_leader(self):
+        """Test is_leader() returns False when no leader exists in Redis."""
+        redis_mock = AsyncMock()
+        redis_mock.get = AsyncMock(return_value=None)
+        
+        service = _make_service(redis_client=redis_mock, instance_id="test-id-123")
+        
+        result = await service.is_leader()
+        
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_is_leader_returns_false_when_redis_unavailable(self):
+        """Test is_leader() returns False when Redis client is unavailable."""
+        service = _make_service(redis_client=None, instance_id="test-id-123")
+        
+        result = await service.is_leader()
+        
+        assert result is False
