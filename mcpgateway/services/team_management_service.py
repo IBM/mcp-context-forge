@@ -158,10 +158,6 @@ class _Unset:
         """Make the sentinel falsy so truthiness checks treat it as not provided.
 
         Returns:
-            bool: Always ``False`` for the unset sentinel.
-        """Return False so UNSET is falsy.
-
-        Returns:
             bool: Always ``False``.
         """
         return False
