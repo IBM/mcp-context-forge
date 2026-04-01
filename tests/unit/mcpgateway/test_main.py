@@ -500,6 +500,33 @@ class TestHealthAndInfrastructure:
         assert session.invalidate_called is True
 
     @pytest.mark.asyncio
+    async def test_health_check_leader_exception(self):
+        """Test health check when is_leader() raises an exception."""
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+
+        class DummySession:
+            def execute(self, *_args, **_kwargs):
+                pass
+
+            def commit(self):
+                pass
+
+            def close(self):
+                pass
+
+        session = DummySession()
+        
+        # Mock gateway_service to raise exception on is_leader()
+        with patch("mcpgateway.main.SessionLocal", return_value=session):
+            with patch("mcpgateway.main.gateway_service") as mock_gateway:
+                mock_gateway.is_leader.side_effect = Exception("Redis connection failed")
+                response = await mcpgateway_main.healthcheck()
+        
+        assert response["status"] == "healthy"
+        assert response["is_leader"] is False  # Should fallback to False on exception
+
+    @pytest.mark.asyncio
     async def test_ready_check_db_error(self):
         """Test readiness check error path with rollback failure."""
         # First-Party

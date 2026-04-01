@@ -478,12 +478,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         except (ValueError, TypeError):
             port_value = 0
 
-        self._instance_metadata = {
-            "instance_id": str(uuid.uuid4()),
-            "port": port_value,
-            "pid": os.getpid(),
-            "hostname": socket.gethostname()
-        }
+        self._instance_metadata = {"instance_id": str(uuid.uuid4()), "port": port_value, "pid": os.getpid(), "hostname": socket.gethostname()}
         self._instance_id = self._instance_metadata["instance_id"]
 
         # Leader election settings from config
@@ -4131,8 +4126,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             bool: True if this instance holds the leader lock, False otherwise.
         """
         if not self._redis_client or not hasattr(self, "_leader_key"):
-            # Fallback to file lock for non-Redis setups
-            return True
+            # Redis unavailable - cannot verify leadership in cluster mode
+            return False
 
         try:
             current_leader_raw = await self._redis_client.get(self._leader_key)
