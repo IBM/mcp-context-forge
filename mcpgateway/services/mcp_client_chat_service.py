@@ -130,11 +130,11 @@ def _set_usage_attributes(span: Any, ai_message: Any) -> None:
     output_tokens = usage.get("output_tokens")
     total_tokens = usage.get("total_tokens")
     if input_tokens is not None:
-        span.set_attribute("gen_ai.usage.prompt_tokens", input_tokens)
+        set_span_attribute(span, "gen_ai.usage.prompt_tokens", input_tokens)
     if output_tokens is not None:
-        span.set_attribute("gen_ai.usage.completion_tokens", output_tokens)
+        set_span_attribute(span, "gen_ai.usage.completion_tokens", output_tokens)
     if total_tokens is not None:
-        span.set_attribute("gen_ai.usage.total_tokens", total_tokens)
+        set_span_attribute(span, "gen_ai.usage.total_tokens", total_tokens)
 
 
 class ChatProcessingError(RuntimeError):

@@ -216,7 +216,7 @@ def sanitize_trace_text(text: str) -> str:
     """
     _ensure_loaded()
     sanitized = sanitize_exception_message(text)
-    sanitized = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+(?=$|[\s,;])", r"\1 ***", sanitized)
+    sanitized = re.sub(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+(?=$|[\s,;\x27\x22])", r"\1 ***", sanitized)
 
     for quoted_pattern, bare_pattern in _TEXT_REDACT_PATTERNS:
         sanitized = quoted_pattern.sub(r"\1***\3", sanitized)

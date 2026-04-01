@@ -31,7 +31,9 @@ use opentelemetry_otlp::{
     Protocol, SpanExporter, WithExportConfig, WithHttpConfig, WithTonicConfig,
 };
 use opentelemetry_sdk::{
-    Resource, propagation::TraceContextPropagator, runtime,
+    Resource,
+    propagation::TraceContextPropagator,
+    runtime,
     trace::{
         BatchConfigBuilder, SdkTracerProvider,
         span_processor_with_async_runtime::BatchSpanProcessor as AsyncBatchSpanProcessor,
@@ -43,8 +45,7 @@ use tonic::metadata::{MetadataMap, MetadataValue};
 use tracing::{Span, span};
 use tracing_opentelemetry::{OpenTelemetrySpanExt, layer as otel_layer};
 use tracing_subscriber::{
-    EnvFilter, Layer, Registry, filter, layer::SubscriberExt,
-    util::SubscriberInitExt,
+    EnvFilter, Layer, Registry, filter, layer::SubscriberExt, util::SubscriberInitExt,
 };
 
 use crate::InternalAuthContext;
@@ -146,9 +147,8 @@ pub fn init_tracing(log_filter: &str) -> Result<ObservabilityHandle, String> {
 
     let provider = build_tracer_provider(&config)?;
     let tracer = provider.tracer("contextforge-rust-runtime");
-    let otel_filter = filter::filter_fn(|metadata| {
-        metadata.is_span() && metadata.target() == OTEL_SPAN_TARGET
-    });
+    let otel_filter =
+        filter::filter_fn(|metadata| metadata.is_span() && metadata.target() == OTEL_SPAN_TARGET);
     let subscriber = Registry::default()
         .with(fmt_layer)
         .with(otel_layer().with_tracer(tracer).with_filter(otel_filter));
@@ -183,8 +183,7 @@ pub(crate) fn trace_request_context(
     auth_context: Option<&InternalAuthContext>,
 ) -> TraceRequestContext {
     let correlation_id = correlation_id_from_headers(incoming_headers);
-    let request_id = request_id_from_headers(incoming_headers)
-        .or_else(|| correlation_id.clone());
+    let request_id = request_id_from_headers(incoming_headers).or_else(|| correlation_id.clone());
 
     let Some(auth_context) = auth_context else {
         return TraceRequestContext {
@@ -867,7 +866,12 @@ fn sanitize_url_for_logging(url: &str) -> String {
     let sensitive_names = static_sensitive_params()
         .iter()
         .cloned()
-        .chain(config().raw_redact_fields.iter().map(|value| value.to_lowercase()))
+        .chain(
+            config()
+                .raw_redact_fields
+                .iter()
+                .map(|value| value.to_lowercase()),
+        )
         .collect::<HashSet<_>>();
 
     let sanitized_query = parsed
@@ -920,14 +924,15 @@ fn url_regex() -> &'static Regex {
 
 fn bearer_regex() -> &'static Regex {
     BEARER_REGEX.get_or_init(|| {
-        Regex::new(r"(?i)\b(Bearer|Basic)\s+([A-Za-z0-9._~+/=-]+)([\s,;]|$)")
+        Regex::new(r#"(?i)\b(Bearer|Basic)\s+([A-Za-z0-9._~+/=-]+)([\s,;'"]|$)"#)
             .expect("valid bearer regex")
     })
 }
 
 fn repeated_redaction_regex() -> &'static Regex {
-    REPEATED_REDACTION_REGEX
-        .get_or_init(|| Regex::new(r"\*\*\*(?:\s+\*\*\*)+").expect("valid repeated redaction regex"))
+    REPEATED_REDACTION_REGEX.get_or_init(|| {
+        Regex::new(r"\*\*\*(?:\s+\*\*\*)+").expect("valid repeated redaction regex")
+    })
 }
 
 fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
@@ -951,10 +956,8 @@ fn build_text_redaction_patterns(raw_redact_fields: &[String]) -> Vec<TextRedact
                     r#"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*['"])([^'"]*)(['"])"#
                 ))
                 .expect("valid quoted field redaction regex"),
-                bare: Regex::new(&format!(
-                    r"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*)([^\s,;]+)"
-                ))
-                .expect("valid bare field redaction regex"),
+                bare: Regex::new(&format!(r"(?i)(\b{key_pattern}\b\s*(?:=|:)\s*)([^\s,;]+)"))
+                    .expect("valid bare field redaction regex"),
             }
         })
         .collect()
@@ -1311,8 +1314,8 @@ mod tests {
         sanitize_trace_text, sanitize_url_for_logging, serialize_trace_payload,
         trace_request_context, validate_langfuse_configuration,
     };
-    use axum::http::{HeaderMap, HeaderValue};
     use crate::InternalAuthContext;
+    use axum::http::{HeaderMap, HeaderValue};
     use serde_json::{Value, json};
     use std::collections::HashMap;
 
@@ -1361,10 +1364,9 @@ mod tests {
 
     #[test]
     fn serialize_trace_payload_sanitizes_top_level_string_content() {
-        let serialized =
-            serialize_trace_payload(&Value::String(
-                "Bearer abc123 https://x.test/path?token=secret456".to_string(),
-            ));
+        let serialized = serialize_trace_payload(&Value::String(
+            "Bearer abc123 https://x.test/path?token=secret456".to_string(),
+        ));
         assert!(!serialized.contains("abc123"));
         assert!(!serialized.contains("secret456"));
         assert!(serialized.contains("Bearer ***"));
@@ -1442,7 +1444,10 @@ mod tests {
             correlation_id_from_headers(&headers).as_deref(),
             Some("corr-123")
         );
-        assert_eq!(request_id_from_headers(&headers).as_deref(), Some("req-456"));
+        assert_eq!(
+            request_id_from_headers(&headers).as_deref(),
+            Some("req-456")
+        );
     }
 
     #[test]

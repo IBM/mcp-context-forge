@@ -1982,8 +1982,8 @@ class ResourceService(BaseService):
                                 return None
 
                         if span:
-                            span.set_attribute("success", True)
-                            span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                            set_span_attribute(span, "success", True)
+                            set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
                         resource_text = ""
                         if (gateway_transport).lower() == "sse":
@@ -2402,10 +2402,10 @@ class ResourceService(BaseService):
 
                 # Set success attributes on span
                 if span:
-                    span.set_attribute("success", True)
-                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                    set_span_attribute(span, "success", True)
+                    set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
                     if content:
-                        span.set_attribute("content.size", len(str(content)))
+                        set_span_attribute(span, "content.size", len(str(content)))
 
                 success = True
                 # Return standardized content without breaking callers that expect passthrough

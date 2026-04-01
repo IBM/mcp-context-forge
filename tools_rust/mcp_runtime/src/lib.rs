@@ -76,10 +76,10 @@ use rmcp::{
 
 use crate::config::{ListenTarget, RuntimeConfig};
 use crate::observability::{
-    derive_langfuse_trace_name, inject_current_trace_context, is_input_capture_enabled,
-    is_output_capture_enabled, serialize_trace_payload, set_langfuse_trace_name,
-    set_span_attribute, set_span_error, start_child_span, start_root_span,
-    trace_request_context, TraceRequestContext,
+    TraceRequestContext, derive_langfuse_trace_name, inject_current_trace_context,
+    is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload,
+    set_langfuse_trace_name, set_span_attribute, set_span_error, start_child_span, start_root_span,
+    trace_request_context,
 };
 
 const JSONRPC_VERSION: &str = "2.0";
@@ -5938,7 +5938,10 @@ fn prompt_arguments_from_schema(argument_schema: Option<Value>) -> Vec<Value> {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct DirectExecutionAuthorization {
-    #[serde(default = "default_direct_execution_eligible", alias = "directExecutionEligible")]
+    #[serde(
+        default = "default_direct_execution_eligible",
+        alias = "directExecutionEligible"
+    )]
     direct_execution_eligible: bool,
     #[serde(default, alias = "fallbackReason")]
     fallback_reason: Option<String>,
@@ -8098,12 +8101,7 @@ async fn handle_tools_call(
             set_span_attribute(&root_span_for_body, "server_id", server_id);
         }
 
-        if !plan.eligible
-            || !matches!(
-                plan.transport.as_deref(),
-                Some("streamablehttp" | "sse")
-            )
-        {
+        if !plan.eligible || !matches!(plan.transport.as_deref(), Some("streamablehttp" | "sse")) {
             if let Some(reason) = plan.fallback_reason.as_deref() {
                 info!("Rust MCP direct tools/call falling back to Python: {reason}");
                 set_span_attribute(
@@ -8236,10 +8234,7 @@ async fn resolve_tools_call(
     // Do not cache plans that ran pre-invoke hooks — hook results depend on
     // per-call arguments (e.g. wxo_connection_id) and must be resolved fresh.
     if plan.eligible
-        && matches!(
-            plan.transport.as_deref(),
-            Some("streamablehttp" | "sse")
-        )
+        && matches!(plan.transport.as_deref(), Some("streamablehttp" | "sse"))
         && !plan.has_pre_invoke_hooks
     {
         state.resolved_tool_call_plans().lock().await.insert(
@@ -8468,7 +8463,9 @@ fn record_tools_call_metric(
     let state = state.clone();
     let incoming_headers = incoming_headers.clone();
     tokio::spawn(async move {
-        if let Err(err) = send_tools_call_metric_to_backend(&state, &incoming_headers, &payload).await {
+        if let Err(err) =
+            send_tools_call_metric_to_backend(&state, &incoming_headers, &payload).await
+        {
             warn!("{err}");
         }
     });
@@ -8618,7 +8615,8 @@ async fn execute_tools_call_direct(
             .await?;
 
             if !tool_response.status().is_success() {
-                let session_key = build_upstream_session_key(downstream_session_id.as_deref(), plan)?;
+                let session_key =
+                    build_upstream_session_key(downstream_session_id.as_deref(), plan)?;
                 state
                     .upstream_tool_sessions()
                     .lock()
@@ -8659,7 +8657,11 @@ async fn execute_tools_call_direct(
                 if let Some(policy) = plan.post_invoke_retry_policy.as_ref()
                     && let Some(delay_ms) = retry_delay_for_transport_error(policy, retry_attempt)
                 {
-                    set_span_attribute(&root_span, "contextforge.rust.retry.delay_ms", delay_ms as i64);
+                    set_span_attribute(
+                        &root_span,
+                        "contextforge.rust.retry.delay_ms",
+                        delay_ms as i64,
+                    );
                     retry_attempt += 1;
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     continue;
@@ -8680,19 +8682,32 @@ async fn execute_tools_call_direct(
                         request_started.elapsed().as_secs_f64() * 1000.0,
                     );
                     set_span_error(&root_span, &err, Some("ToolInvocationError"));
-                    return Ok(jsonrpc_tool_invocation_error_response(request.id.clone(), &err));
+                    return Ok(jsonrpc_tool_invocation_error_response(
+                        request.id.clone(),
+                        &err,
+                    ));
                 }
                 return Err(err);
             }
         };
 
         match gateway_result {
-            EitherToolsCallResponse::Finished((response, success, error_message, output_payload, retry_payload)) => {
+            EitherToolsCallResponse::Finished((
+                response,
+                success,
+                error_message,
+                output_payload,
+                retry_payload,
+            )) => {
                 if let Some(policy) = plan.post_invoke_retry_policy.as_ref()
                     && let Some(payload) = retry_payload.as_ref()
                     && let Some(delay_ms) = retry_delay_for_payload(policy, payload, retry_attempt)
                 {
-                    set_span_attribute(&root_span, "contextforge.rust.retry.delay_ms", delay_ms as i64);
+                    set_span_attribute(
+                        &root_span,
+                        "contextforge.rust.retry.delay_ms",
+                        delay_ms as i64,
+                    );
                     retry_attempt += 1;
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     continue;
@@ -8708,7 +8723,11 @@ async fn execute_tools_call_direct(
                 );
 
                 if retry_attempt > 0 {
-                    set_span_attribute(&root_span, "contextforge.rust.retry.count", retry_attempt as i64);
+                    set_span_attribute(
+                        &root_span,
+                        "contextforge.rust.retry.count",
+                        retry_attempt as i64,
+                    );
                 }
                 set_span_attribute(&root_span, "success", success);
                 set_span_attribute(
@@ -8751,12 +8770,14 @@ async fn execute_tools_call_direct(
                         .map_err(|err| format!("direct tools/call decode failed: {err}"))?;
 
                     if let Some(policy) = plan.post_invoke_retry_policy.as_ref()
-                        && let Some(delay_ms) = retry_delay_for_payload(policy, &payload, retry_attempt)
+                        && let Some(delay_ms) =
+                            retry_delay_for_payload(policy, &payload, retry_attempt)
                     {
                         return Ok::<_, String>(PostProcessOutcome::Retry(delay_ms));
                     }
 
-                    let (success, error_message) = classify_tools_call_metric_outcome(status, &payload);
+                    let (success, error_message) =
+                        classify_tools_call_metric_outcome(status, &payload);
                     record_tools_call_metric(
                         state,
                         incoming_headers,
@@ -8767,7 +8788,11 @@ async fn execute_tools_call_direct(
                     );
 
                     if retry_attempt > 0 {
-                        set_span_attribute(&root_span_for_post_process, "contextforge.rust.retry.count", retry_attempt as i64);
+                        set_span_attribute(
+                            &root_span_for_post_process,
+                            "contextforge.rust.retry.count",
+                            retry_attempt as i64,
+                        );
                     }
                     set_span_attribute(&root_span_for_post_process, "success", success);
                     set_span_attribute(
@@ -8778,7 +8803,11 @@ async fn execute_tools_call_direct(
                     if let Some(error_message) = error_message.as_deref()
                         && !success
                     {
-                        set_span_error(&root_span_for_post_process, error_message, Some("ToolInvocationError"));
+                        set_span_error(
+                            &root_span_for_post_process,
+                            error_message,
+                            Some("ToolInvocationError"),
+                        );
                     }
                     if success && is_output_capture_enabled("tool.invoke") {
                         let output_payload = payload
@@ -8811,7 +8840,11 @@ async fn execute_tools_call_direct(
 
                 match post_process_outcome {
                     PostProcessOutcome::Retry(delay_ms) => {
-                        set_span_attribute(&root_span, "contextforge.rust.retry.delay_ms", delay_ms as i64);
+                        set_span_attribute(
+                            &root_span,
+                            "contextforge.rust.retry.delay_ms",
+                            delay_ms as i64,
+                        );
                         retry_attempt += 1;
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                         continue;
@@ -8858,34 +8891,39 @@ async fn execute_tools_call_via_rmcp(
     let rmcp_client =
         get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version).await?;
 
-    let (response, success, error_message, output_payload, retry_payload) = match invoke_tools_call_via_rmcp(
-        rmcp_client.as_ref(),
-        request,
-        remote_tool_name,
-        plan.modified_args.as_ref(),
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(err) => {
-            state
-                .rmcp_upstream_clients()
-                .lock()
+    let (response, success, error_message, output_payload, retry_payload) =
+        match invoke_tools_call_via_rmcp(
+            rmcp_client.as_ref(),
+            request,
+            remote_tool_name,
+            plan.modified_args.as_ref(),
+        )
+        .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                state
+                    .rmcp_upstream_clients()
+                    .lock()
+                    .await
+                    .remove(&session_key);
+                let retried_client = get_or_create_rmcp_upstream_client(
+                    state,
+                    plan,
+                    &session_key,
+                    &protocol_version,
+                )
+                .await?;
+                invoke_tools_call_via_rmcp(
+                    retried_client.as_ref(),
+                    request,
+                    remote_tool_name,
+                    plan.modified_args.as_ref(),
+                )
                 .await
-                .remove(&session_key);
-            let retried_client =
-                get_or_create_rmcp_upstream_client(state, plan, &session_key, &protocol_version)
-                    .await?;
-            invoke_tools_call_via_rmcp(
-                retried_client.as_ref(),
-                request,
-                remote_tool_name,
-                plan.modified_args.as_ref(),
-            )
-            .await
-            .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
-        }
-    };
+                .map_err(|retry_err| format!("rmcp retry failed after {err}: {retry_err}"))?
+            }
+        };
 
     let mut response = response;
     if let Some(session_id) = downstream_session_id
@@ -8899,7 +8937,13 @@ async fn execute_tools_call_via_rmcp(
         HeaderName::from_static(UPSTREAM_CLIENT_HEADER),
         HeaderValue::from_static("rmcp"),
     );
-    Ok((response, success, error_message, output_payload, retry_payload))
+    Ok((
+        response,
+        success,
+        error_message,
+        output_payload,
+        retry_payload,
+    ))
 }
 
 async fn ensure_upstream_session(
@@ -9935,21 +9979,20 @@ mod unit_tests {
     use super::{
         AffinityForwardResponse, AppState, Bytes, CLIENT_ERROR_DETAIL,
         DirectExecutionAuthorization, EventStoreReplayRequest, EventStoreStoreRequest,
-        INTERNAL_RUNTIME_AUTH_HEADER, InternalAuthContext,
-        InternalAuthenticateRequest, JsonRpcRequest, RUNTIME_HEADER, RUNTIME_NAME, RuntimeConfig,
-        RuntimeError, RuntimeSessionRecord, SessionAuthReuseMissReason, TrustedPeerAddr,
-        URL_SAFE_NO_PAD, accepts_sse, active_runtime_session_count,
-        affinity_forward_error_response, auth_binding_fingerprint,
-        authenticate_public_request_if_needed, authorize_server_method_via_backend,
-        batch_rejected_response, build_forwarded_sse_event, build_public_router,
-        can_reuse_session_auth, can_use_direct_prompts_get, can_use_direct_resources_read,
-        decode_request, decode_upstream_json_payload_bytes, derive_backend_authenticate_url,
-        derive_backend_completion_complete_url, derive_backend_initialize_url,
-        derive_backend_logging_set_level_url, derive_backend_notifications_cancelled_url,
-        derive_backend_notifications_initialized_url, derive_backend_notifications_message_url,
-        derive_backend_prompts_get_authz_url, derive_backend_prompts_get_url,
-        derive_backend_prompts_list_authz_url, derive_backend_prompts_list_url,
-        derive_backend_resource_templates_list_authz_url,
+        INTERNAL_RUNTIME_AUTH_HEADER, InternalAuthContext, InternalAuthenticateRequest,
+        JsonRpcRequest, RUNTIME_HEADER, RUNTIME_NAME, RuntimeConfig, RuntimeError,
+        RuntimeSessionRecord, SessionAuthReuseMissReason, TrustedPeerAddr, URL_SAFE_NO_PAD,
+        accepts_sse, active_runtime_session_count, affinity_forward_error_response,
+        auth_binding_fingerprint, authenticate_public_request_if_needed,
+        authorize_server_method_via_backend, batch_rejected_response, build_forwarded_sse_event,
+        build_public_router, can_reuse_session_auth, can_use_direct_prompts_get,
+        can_use_direct_resources_read, decode_request, decode_upstream_json_payload_bytes,
+        derive_backend_authenticate_url, derive_backend_completion_complete_url,
+        derive_backend_initialize_url, derive_backend_logging_set_level_url,
+        derive_backend_notifications_cancelled_url, derive_backend_notifications_initialized_url,
+        derive_backend_notifications_message_url, derive_backend_prompts_get_authz_url,
+        derive_backend_prompts_get_url, derive_backend_prompts_list_authz_url,
+        derive_backend_prompts_list_url, derive_backend_resource_templates_list_authz_url,
         derive_backend_resource_templates_list_url, derive_backend_resources_list_authz_url,
         derive_backend_resources_list_url, derive_backend_resources_read_authz_url,
         derive_backend_resources_read_url, derive_backend_resources_subscribe_url,

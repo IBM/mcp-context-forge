@@ -1419,10 +1419,10 @@ class A2AAgentService(BaseService):
                     },
                 )
                 if span:
-                    span.set_attribute("success", True)
+                    set_span_attribute(span, "success", True)
             except PermissionError:
                 if span:
-                    span.set_attribute("error", True)
+                    set_span_attribute(span, "error", True)
                 db.rollback()
                 raise
 
@@ -1682,8 +1682,8 @@ class A2AAgentService(BaseService):
                 except Exception as ts_error:
                     logger.warning(f"Failed to update last_interaction for '{agent_name}': {ts_error}")
                 if span:
-                    span.set_attribute("success", success)
-                    span.set_attribute("duration.ms", response_time * 1000)
+                    set_span_attribute(span, "success", success)
+                    set_span_attribute(span, "duration.ms", response_time * 1000)
 
         return response or {"error": error_message}
 

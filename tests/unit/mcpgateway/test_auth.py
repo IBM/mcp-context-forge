@@ -237,7 +237,7 @@ class TestGetCurrentUser:
 
         jwt_payload = {"sub": "test@example.com", "jti": "token_id_456", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
-        caplog.set_level(logging.WARNING)
+        caplog.set_level(logging.WARNING, logger="mcpgateway.auth")
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", side_effect=Exception("Database error")):
@@ -648,7 +648,7 @@ class TestGetCurrentUser:
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.config.settings.require_user_in_db", True):
-                        with caplog.at_level(logging.WARNING):
+                        with caplog.at_level(logging.WARNING, logger="mcpgateway.auth"):
                             with pytest.raises(HTTPException):
                                 await get_current_user(credentials=credentials)
 

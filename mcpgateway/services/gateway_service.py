@@ -3301,8 +3301,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             elapsed = time.monotonic() - start_time
 
             if batch_span:
-                batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
-                batch_span.set_attribute("check.completed", True)
+                set_span_attribute(batch_span, "check.duration_ms", int(elapsed * 1000))
+                set_span_attribute(batch_span, "check.completed", True)
 
             logger.debug(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
 
