@@ -3341,3 +3341,540 @@ class TestSetAgentStateToolCascade:
 
         with pytest.raises(RuntimeError, match="DB write failed"):
             await service.set_agent_state(mock_db, "a1", activate=False)
+
+
+# ---------------------------------------------------------------------------
+# New method coverage tests
+# ---------------------------------------------------------------------------
+
+
+class TestCancelTask:
+    """Unit tests for A2AAgentService.cancel_task."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def _make_task(self, state: str = "submitted"):
+        task = MagicMock()
+        task.task_id = "task-1"
+        task.a2a_agent_id = "agent-1"
+        task.state = state
+        task.completed_at = None
+        return task
+
+    def test_cancel_active_task(self, service, mock_db):
+        """Task found in non-terminal state is set to canceled and returned as dict."""
+        task = self._make_task("submitted")
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = task
+        mock_db.query.return_value = mock_query
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        expected = {"task_id": "task-1", "state": "canceled"}
+        with patch("mcpgateway.schemas.A2ATaskRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = expected
+            result = service.cancel_task(mock_db, "task-1")
+
+        assert task.state == "canceled"
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once_with(task)
+        assert result == expected
+
+    def test_cancel_already_terminal_task(self, service, mock_db):
+        """Task already in terminal state is returned as-is without modification."""
+        task = self._make_task("completed")
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = task
+        mock_db.query.return_value = mock_query
+
+        expected = {"task_id": "task-1", "state": "completed"}
+        with patch("mcpgateway.schemas.A2ATaskRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = expected
+            result = service.cancel_task(mock_db, "task-1")
+
+        assert task.state == "completed"
+        mock_db.commit.assert_not_called()
+        assert result == expected
+
+    def test_cancel_task_not_found_returns_none(self, service, mock_db):
+        """Returns None when the task does not exist."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db.query.return_value = mock_query
+
+        result = service.cancel_task(mock_db, "missing-task")
+
+        assert result is None
+
+    def test_cancel_task_with_agent_id_filter(self, service, mock_db):
+        """agent_id parameter adds an extra filter clause."""
+        task = self._make_task("submitted")
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = task
+        mock_db.query.return_value = mock_query
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        with patch("mcpgateway.schemas.A2ATaskRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {"state": "canceled"}
+            service.cancel_task(mock_db, "task-1", agent_id="agent-1")
+
+        # filter called twice: once for task_id, once for agent_id
+        assert mock_query.filter.call_count == 2
+
+
+class TestPushConfigCRUD:
+    """Unit tests for push notification config CRUD methods."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def _config_data(self):
+        return {
+            "a2a_agent_id": "agent-1",
+            "task_id": "task-1",
+            "webhook_url": "https://example.com/webhook",
+            "auth_token": "secret-token",
+            "events": ["state_change"],
+            "enabled": True,
+        }
+
+    def test_create_push_config(self, service, mock_db):
+        """create_push_config adds a record and returns a dict."""
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        expected = {"id": "cfg-1", "task_id": "task-1"}
+        with (
+            patch("mcpgateway.db.A2APushNotificationConfig") as mock_model,
+            patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv,
+        ):
+            cfg_instance = MagicMock()
+            mock_model.return_value = cfg_instance
+            mock_mv.return_value.model_dump.return_value = expected
+
+            result = service.create_push_config(mock_db, self._config_data())
+
+        mock_db.add.assert_called_once_with(cfg_instance)
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once_with(cfg_instance)
+        assert result == expected
+
+    def test_get_push_config_found(self, service, mock_db):
+        """get_push_config returns a dict when config exists."""
+        cfg = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = cfg
+        mock_db.query.return_value = mock_query
+
+        expected = {"id": "cfg-1", "task_id": "task-1"}
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = expected
+            result = service.get_push_config(mock_db, "task-1")
+
+        assert result == expected
+
+    def test_get_push_config_not_found(self, service, mock_db):
+        """get_push_config returns None when no config exists for the task."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db.query.return_value = mock_query
+
+        result = service.get_push_config(mock_db, "missing-task")
+
+        assert result is None
+
+    def test_get_push_config_with_agent_id(self, service, mock_db):
+        """agent_id adds a second filter clause to get_push_config."""
+        cfg = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = cfg
+        mock_db.query.return_value = mock_query
+
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.return_value.model_dump.return_value = {}
+            service.get_push_config(mock_db, "task-1", agent_id="agent-1")
+
+        assert mock_query.filter.call_count == 2
+
+    def test_list_push_configs_returns_list(self, service, mock_db):
+        """list_push_configs returns a list of serialized config dicts."""
+        cfg1 = MagicMock()
+        cfg2 = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [cfg1, cfg2]
+        mock_db.query.return_value = mock_query
+
+        row1 = {"id": "c1", "task_id": "t1"}
+        row2 = {"id": "c2", "task_id": "t2"}
+        with patch("mcpgateway.schemas.A2APushNotificationConfigRead.model_validate") as mock_mv:
+            mock_mv.side_effect = [
+                MagicMock(model_dump=MagicMock(return_value=row1)),
+                MagicMock(model_dump=MagicMock(return_value=row2)),
+            ]
+            result = service.list_push_configs(mock_db)
+
+        assert result == [row1, row2]
+
+    def test_list_push_configs_with_filters(self, service, mock_db):
+        """list_push_configs applies agent_id and task_id filters."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = []
+        mock_db.query.return_value = mock_query
+
+        service.list_push_configs(mock_db, agent_id="agent-1", task_id="task-1")
+
+        assert mock_query.filter.call_count == 2
+
+    def test_delete_push_config_found(self, service, mock_db):
+        """delete_push_config deletes the record and returns True."""
+        cfg = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = cfg
+        mock_db.query.return_value = mock_query
+        mock_db.delete = MagicMock()
+        mock_db.commit = MagicMock()
+
+        result = service.delete_push_config(mock_db, "cfg-1")
+
+        mock_db.delete.assert_called_once_with(cfg)
+        mock_db.commit.assert_called_once()
+        assert result is True
+
+    def test_delete_push_config_not_found(self, service, mock_db):
+        """delete_push_config returns False when the config does not exist."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db.query.return_value = mock_query
+
+        result = service.delete_push_config(mock_db, "missing-cfg")
+
+        mock_db.delete.assert_not_called()
+        assert result is False
+
+
+class TestFlushAndReplayEvents:
+    """Unit tests for flush_events and replay_events."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def test_flush_events_inserts_and_returns_count(self, service, mock_db):
+        """flush_events batch-inserts all events and returns the count."""
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+
+        events = [
+            {"task_id": "t1", "event_id": "e1", "sequence": 1, "event_type": "status_update", "payload": {"state": "running"}},
+            {"task_id": "t1", "event_id": "e2", "sequence": 2, "event_type": "status_update", "payload": None},
+        ]
+
+        with patch("mcpgateway.db.A2ATaskEvent") as mock_model:
+            mock_model.side_effect = [MagicMock(), MagicMock()]
+            count = service.flush_events(mock_db, events)
+
+        assert count == 2
+        assert mock_db.add.call_count == 2
+        mock_db.commit.assert_called_once()
+
+    def test_flush_events_empty_list(self, service, mock_db):
+        """flush_events with an empty list commits and returns 0."""
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+
+        count = service.flush_events(mock_db, [])
+
+        assert count == 0
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_called_once()
+
+    def test_replay_events_returns_ordered_list(self, service, mock_db):
+        """replay_events returns events with sequence > after_sequence, ordered by sequence."""
+        ev1 = MagicMock()
+        ev2 = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [ev1, ev2]
+        mock_db.query.return_value = mock_query
+
+        row1 = {"id": "r1", "sequence": 5}
+        row2 = {"id": "r2", "sequence": 6}
+        with patch("mcpgateway.schemas.A2ATaskEventRead.model_validate") as mock_mv:
+            mock_mv.side_effect = [
+                MagicMock(model_dump=MagicMock(return_value=row1)),
+                MagicMock(model_dump=MagicMock(return_value=row2)),
+            ]
+            result = service.replay_events(mock_db, "t1", after_sequence=4)
+
+        assert result == [row1, row2]
+        mock_query.filter.assert_called_once()
+        mock_query.order_by.assert_called_once()
+        mock_query.limit.assert_called_once()
+
+    def test_replay_events_empty(self, service, mock_db):
+        """replay_events returns an empty list when no events qualify."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = []
+        mock_db.query.return_value = mock_query
+
+        result = service.replay_events(mock_db, "t1", after_sequence=999)
+
+        assert result == []
+
+
+class TestPublishA2AInvalidation:
+    """Unit tests for the module-level _publish_a2a_invalidation async function."""
+
+    async def test_publishes_when_redis_available(self):
+        """Message is published to Redis when a client is available."""
+        mock_redis = AsyncMock()
+        mock_redis.publish = AsyncMock()
+
+        # get_redis_client is imported locally inside the function, so patch at its source.
+        mock_get_redis = AsyncMock(return_value=mock_redis)
+        with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
+            from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
+
+            await _publish_a2a_invalidation("agent_updated", agent_id="a1")
+
+        mock_get_redis.assert_awaited_once()
+        mock_redis.publish.assert_awaited_once()
+        channel, payload_bytes = mock_redis.publish.call_args[0]
+        assert channel == "mcpgw:a2a:invalidate"
+        assert "agent_updated" in payload_bytes
+
+    async def test_no_error_when_redis_unavailable(self):
+        """No exception is raised when Redis client returns None."""
+        mock_get_redis = AsyncMock(return_value=None)
+        with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
+            from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
+
+            # Must not raise
+            await _publish_a2a_invalidation("agent_deleted", agent_id="a99")
+
+    async def test_no_error_on_redis_exception(self):
+        """Exception from Redis publish is silently swallowed."""
+        mock_redis = AsyncMock()
+        mock_redis.publish = AsyncMock(side_effect=ConnectionError("redis down"))
+
+        mock_get_redis = AsyncMock(return_value=mock_redis)
+        with patch("mcpgateway.utils.redis_client.get_redis_client", mock_get_redis):
+            from mcpgateway.services.a2a_service import _publish_a2a_invalidation  # noqa: PLC0415
+
+            await _publish_a2a_invalidation("agent_created", agent_id="a2")
+
+
+class TestShadowModeComparison:
+    """Unit tests for the shadow mode comparison block inside invoke_agent."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    def _make_agent(self):
+        return SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+        )
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_shadow_mode_matching_responses(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Shadow mode: Rust and Python agree → debug log, no warning."""
+        agent = self._make_agent()
+        response_body = {"result": "ok"}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(status_code=200, json=MagicMock(return_value=response_body))
+        mock_get_client.return_value = mock_client
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": response_body, "text": ""})
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+        mock_db.commit = MagicMock()
+
+        result = await service.invoke_agent(mock_db, "ag", {})
+
+        assert result == response_body
+        rust_runtime.invoke.assert_awaited_once()
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_shadow_mode_status_mismatch(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Shadow mode: status codes differ → Python result returned, no exception raised."""
+        agent = self._make_agent()
+        response_body = {"result": "ok"}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(status_code=200, json=MagicMock(return_value=response_body))
+        mock_get_client.return_value = mock_client
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(return_value={"status_code": 500, "json": None, "text": "error"})
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+        mock_db.commit = MagicMock()
+
+        result = await service.invoke_agent(mock_db, "ag", {})
+
+        assert result == response_body
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_shadow_mode_payload_mismatch(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Shadow mode: status matches but payloads differ → Python result returned, no exception."""
+        agent = self._make_agent()
+        py_body = {"result": "python"}
+        rust_body = {"result": "rust"}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(status_code=200, json=MagicMock(return_value=py_body))
+        mock_get_client.return_value = mock_client
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": rust_body, "text": ""})
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+        mock_db.commit = MagicMock()
+
+        result = await service.invoke_agent(mock_db, "ag", {})
+
+        assert result == py_body
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_shadow_mode_rust_invoke_exception_swallowed(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Shadow mode: exception from Rust invoke is swallowed, Python result returned."""
+        agent = self._make_agent()
+        response_body = {"result": "ok"}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = MagicMock(status_code=200, json=MagicMock(return_value=response_body))
+        mock_get_client.return_value = mock_client
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", False)
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(side_effect=RuntimeError("Rust unavailable"))
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+        mock_db.commit = MagicMock()
+
+        result = await service.invoke_agent(mock_db, "ag", {})
+
+        assert result == response_body
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_shadow_mode_not_triggered_when_delegate_enabled(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Shadow mode block is skipped when delegate_enabled=True (Rust handles the call)."""
+        agent = self._make_agent()
+
+        rust_runtime = MagicMock()
+        rust_runtime.invoke = AsyncMock(return_value={"status_code": 200, "json": {"ok": True}, "text": ""})
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_rust_a2a_runtime_client", lambda: rust_runtime)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_enabled", True)
+        monkeypatch.setattr(settings, "experimental_rust_a2a_runtime_delegate_enabled", True)
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+        mock_db.commit = MagicMock()
+
+        result = await service.invoke_agent(mock_db, "ag", {})
+
+        # Only one invoke (delegated), not a second shadow invoke
+        assert rust_runtime.invoke.await_count == 1
+        assert result == {"ok": True}
+        mock_get_client.assert_not_called()
