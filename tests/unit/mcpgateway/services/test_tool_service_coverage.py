@@ -202,6 +202,7 @@ def _make_tool_update(**overrides) -> MagicMock:
         name=None,
         custom_name=None,
         displayName=None,
+        title=None,
         url=None,
         description=None,
         integration_type=None,
@@ -4244,6 +4245,7 @@ class TestUpdateToolBranches:
         tool_update.name = "new_name"
         tool_update.custom_name = None
         tool_update.displayName = "New Tool"
+        tool_update.title = None
         tool_update.url = None
         tool_update.description = "new desc"
         tool_update.integration_type = None
@@ -4302,6 +4304,7 @@ class TestUpdateToolBranches:
         tool_update.name = None
         tool_update.custom_name = None
         tool_update.displayName = None
+        tool_update.title = None
         tool_update.url = None
         tool_update.description = None
         tool_update.integration_type = None
@@ -4339,6 +4342,7 @@ class TestUpdateToolBranches:
         tool_update.name = "conflict_name"
         tool_update.custom_name = "conflict_name"
         tool_update.displayName = None
+        tool_update.title = None
         tool_update.url = None
         tool_update.description = None
         tool_update.integration_type = None
@@ -4710,6 +4714,7 @@ class TestUpdateToolBranches:
 
         tool_update = MagicMock(spec=ToolUpdate)
         tool_update.name = None
+        tool_update.title = None
 
         db = MagicMock()
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), patch("mcpgateway.services.permission_service.PermissionService") as mock_ps:

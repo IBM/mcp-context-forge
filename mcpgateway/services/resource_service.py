@@ -773,6 +773,7 @@ class ResourceService(BaseService):
                             if conflict_strategy == "update":
                                 # Update existing resource
                                 existing_resource.name = resource.name
+                                existing_resource.title = getattr(resource, "title", None)
                                 existing_resource.description = resource.description
                                 existing_resource.mime_type = resource.mime_type
                                 existing_resource.size = getattr(resource, "size", None)

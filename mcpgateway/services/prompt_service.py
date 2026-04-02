@@ -1077,6 +1077,7 @@ class PromptService(BaseService):
                                 continue
                             if conflict_strategy == "update":
                                 # Update existing prompt
+                                existing_prompt.title = getattr(prompt, "title", None)
                                 existing_prompt.description = prompt.description
                                 existing_prompt.template = prompt.template
                                 # Clear template cache to reduce memory growth

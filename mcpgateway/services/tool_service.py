@@ -1721,6 +1721,7 @@ class ToolService(BaseService):
                 if conflict_strategy == "update":
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
+                    existing_tool.title = tool.title
                     existing_tool.url = str(tool.url)
                     existing_tool.description = tool.description
                     if getattr(existing_tool, "original_description", None) is None:
