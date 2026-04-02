@@ -597,16 +597,12 @@ fn process_container<'py>(
                 above || below
             }
             LimitMode::Token => {
-                // Only check token limits for MCP content, not plain text (match Python)
-                match context {
-                    ProcessingContext::PlainText => false,  // Ignore token limits for plain text
-                    ProcessingContext::McpContent => {
-                        let est_tokens = py_len / cfg.chars_per_token.max(1);
-                        let above = cfg.max_tokens.is_some_and(|m| est_tokens > m);
-                        let below = cfg.min_tokens > 0 && est_tokens < cfg.min_tokens;
-                        above || below
-                    }
-                }
+                // Check token limits for all strings when in token mode
+                // limit_mode is the sole determinant of which limits to enforce
+                let est_tokens = py_len / cfg.chars_per_token.max(1);
+                let above = cfg.max_tokens.is_some_and(|m| est_tokens > m);
+                let below = cfg.min_tokens > 0 && est_tokens < cfg.min_tokens;
+                above || below
             }
         };
 
@@ -642,15 +638,11 @@ fn process_container<'py>(
                 (below, above)
             }
             LimitMode::Token => {
-                // Only check token limits for MCP content, not plain text (match Python)
-                match context {
-                    ProcessingContext::PlainText => (false, false),  // Ignore token limits
-                    ProcessingContext::McpContent => {
-                        let below = cfg.min_tokens > 0 && token_count < cfg.min_tokens;
-                        let above = cfg.max_tokens.is_some_and(|m| token_count > m);
-                        (below, above)
-                    }
-                }
+                // Check token limits for all strings when in token mode
+                // limit_mode is the sole determinant of which limits to enforce
+                let below = cfg.min_tokens > 0 && token_count < cfg.min_tokens;
+                let above = cfg.max_tokens.is_some_and(|m| token_count > m);
+                (below, above)
             }
         };
 
