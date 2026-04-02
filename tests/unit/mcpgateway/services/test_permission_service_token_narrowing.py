@@ -543,10 +543,12 @@ async def test_narrowed_token_includes_specified_teams(svc, mock_db):
 
 @pytest.mark.asyncio
 async def test_explicit_team_id_rejects_public_only_token(svc, mock_db):
-    """_get_user_roles rejects explicit team_id when token_teams=[] (public-only).
+    """_get_user_roles excludes team-scoped roles when token_teams=[] (public-only).
 
-    Public-only tokens must never access team-specific roles, even when
-    an explicit team_id is provided in the request.
+    Public-only tokens must never access team-specific roles, even when an explicit
+    team_id is provided.  Global and personal roles are still queried so that
+    platform-wide permissions (e.g. teams.join via platform_viewer) remain available
+    without granting membership-derived rights in the target team.
     """
     mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
 
@@ -557,8 +559,14 @@ async def test_explicit_team_id_rejects_public_only_token(svc, mock_db):
         token_teams=[],  # Public-only
     )
 
-    assert result == [], "Public-only token must reject explicit team_id lookups"
-    assert not mock_db.execute.called, "Should short-circuit before querying DB"
+    assert result == [], "Public-only token must not return team-specific roles"
+
+    # Global/personal roles are still queried — verify no team-scoped condition
+    # for the out-of-scope team appears in the compiled query.
+    assert mock_db.execute.called, "DB should be queried for global/personal roles"
+    query_arg = mock_db.execute.call_args[0][0]
+    compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+    assert "team-a" not in compiled, "team-scoped roles for the out-of-scope team must not be queried"
 
 
 @pytest.mark.asyncio
