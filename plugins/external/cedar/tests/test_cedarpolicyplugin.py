@@ -640,3 +640,310 @@ async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
     assert allow_count == 2
     assert deny_count == 1
     assert redact_count == 1
+
+
+# ---------------------------------------------------------------------------
+# http_auth_check_permission tests
+# ---------------------------------------------------------------------------
+
+CEDAR_HTTP_POLICY = [
+    {
+        "principal": 'Role::"data_scientist"',
+        "action": ['Action::"data:read"', 'Action::"tools:read"'],
+        "resource": 'Resource::"*"',
+    },
+    {
+        "principal": 'Role::"team_admin"',
+        "action": ['Action::"data:read"', 'Action::"security:read"', 'Action::"tools:read"'],
+        "resource": 'Resource::"*"',
+    },
+]
+
+
+def _make_cedar_http_plugin(policy=None, mode="permissive"):
+    """Helper: build a CedarPolicyPlugin configured for HTTP permission checks."""
+    config = PluginConfig(
+        name="test-cedar-http",
+        kind="cedarpolicyplugin.plugin.CedarPolicyPlugin",
+        hooks=["http_auth_check_permission"],
+        mode=mode,
+        config={"policy_lang": "cedar", "policy": policy if policy is not None else CEDAR_HTTP_POLICY},
+    )
+    return CedarPolicyPlugin(config)
+
+
+def _make_http_context():
+    return PluginContext(global_context=GlobalContext(request_id="test-req"))
+
+
+from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_cedar_http_auth_allow_matching_role_and_permission():
+    """data_scientist requesting data:read should be allowed."""
+    plugin = _make_cedar_http_plugin()
+    payload = HttpAuthCheckPermissionPayload(
+        user_email="alice@example.com",
+        permission="data:read",
+        resource_type="tool",
+        team_id="team1",
+        is_admin=False,
+        roles=["data_scientist"],
+        auth_method="jwt",
+        client_host="127.0.0.1",
+        user_agent="test",
+    )
+    result = await plugin.http_auth_check_permission(payload, _make_http_context())
+    assert result.continue_processing is True
+    assert result.modified_payload is None
+
+
+@pytest.mark.asyncio
+async def test_cedar_http_auth_deny_role_without_permission():
+    """viewer role has no Cedar permit — enforce mode must deny."""
+    plugin = _make_cedar_http_plugin(mode="enforce")
+    payload = HttpAuthCheckPermissionPayload(
+        user_email="bob@example.com",
+        permission="data:read",
+        resource_type="tool",
+        team_id="team1",
+        is_admin=False,
+        roles=["viewer"],
+        auth_method="jwt",
+        client_host="127.0.0.1",
+        user_agent="test",
+    )
+    result = await plugin.http_auth_check_permission(payload, _make_http_context())
+    assert result.continue_processing is False
+    assert result.modified_payload is not None
+    assert result.modified_payload.granted is False
+    assert result.modified_payload.reason is not None
+
+
+@pytest.mark.asyncio
+async def test_cedar_http_auth_admin_bypass_skips_cedar():
+    """is_admin=True must bypass Cedar entirely and allow."""
+    plugin = _make_cedar_http_plugin()
+    payload = HttpAuthCheckPermissionPayload(
+        user_email="admin@example.com",
+        permission="data:read",
+        resource_type="tool",
+        team_id="team1",
+        is_admin=True,
+        roles=[],
+        auth_method="jwt",
+        client_host="127.0.0.1",
+        user_agent="test",
+    )
+    result = await plugin.http_auth_check_permission(payload, _make_http_context())
+    assert result.continue_processing is True
+    assert result.modified_payload is None
+
+
+@pytest.mark.asyncio
+async def test_cedar_http_auth_no_policy_passes_through():
+    """When _cedar_policy is None (no compiled policy), must pass through without blocking."""
+    plugin = _make_cedar_http_plugin()
+    plugin._cedar_policy = None  # simulate unconfigured state
+    payload = HttpAuthCheckPermissionPayload(
+        user_email="carol@example.com",
+        permission="data:read",
+        resource_type="tool",
+        team_id="team1",
+        is_admin=False,
+        roles=["data_scientist"],
+        auth_method="jwt",
+        client_host="127.0.0.1",
+        user_agent="test",
+    )
+    result = await plugin.http_auth_check_permission(payload, _make_http_context())
+    assert result.continue_processing is True
+
+
+@pytest.mark.asyncio
+async def test_cedar_http_auth_any_role_allows_access():
+    """Any permitted role is sufficient: first role denied, second role allowed — should allow."""
+    plugin = _make_cedar_http_plugin(mode="enforce")
+    # viewer is denied; data_scientist is permitted for data:read
+    payload = HttpAuthCheckPermissionPayload(
+        user_email="dave@example.com",
+        permission="data:read",
+        resource_type="tool",
+        team_id="team1",
+        is_admin=False,
+        roles=["viewer", "data_scientist"],
+        auth_method="jwt",
+        client_host="127.0.0.1",
+        user_agent="test",
+    )
+    result = await plugin.http_auth_check_permission(payload, _make_http_context())
+    assert result.continue_processing is True
+    assert result.modified_payload is None
+
+
+@pytest.mark.asyncio
+async def test_cedar_http_auth_first_role_allows_short_circuits():
+    """When first role is permitted, remaining roles are not evaluated (any-allow wins)."""
+    plugin = _make_cedar_http_plugin(mode="enforce")
+    # First role is team_admin (has security:read permit), second is viewer (doesn't)
+    payload = HttpAuthCheckPermissionPayload(
+        user_email="dave@example.com",
+        permission="security:read",
+        resource_type="tool",
+        team_id="team1",
+        is_admin=False,
+        roles=["team_admin", "viewer"],
+        auth_method="jwt",
+        client_host="127.0.0.1",
+        user_agent="test",
+    )
+    result = await plugin.http_auth_check_permission(payload, _make_http_context())
+    assert result.continue_processing is True
+
+
+@pytest.mark.asyncio
+async def test_cedar_http_auth_permissive_mode_passes_through_on_denial():
+    """Permissive mode: even when Cedar denies all roles, the request passes through."""
+    plugin = _make_cedar_http_plugin(mode="permissive")
+    payload = HttpAuthCheckPermissionPayload(
+        user_email="eve@example.com",
+        permission="data:read",
+        resource_type="tool",
+        team_id="team1",
+        is_admin=False,
+        roles=["viewer"],
+        auth_method="jwt",
+        client_host="127.0.0.1",
+        user_agent="test",
+    )
+    result = await plugin.http_auth_check_permission(payload, _make_http_context())
+    # Permissive mode must not block, regardless of Cedar decision
+    assert result.continue_processing is True
+
+
+@pytest.mark.asyncio
+async def test_cedar_http_auth_no_roles_falls_back_to_user_principal():
+    """User with no roles falls back to User:: principal; no Cedar permit — enforce denies."""
+    plugin = _make_cedar_http_plugin(mode="enforce")
+    payload = HttpAuthCheckPermissionPayload(
+        user_email="frank@example.com",
+        permission="data:read",
+        resource_type="tool",
+        team_id="team1",
+        is_admin=False,
+        roles=[],
+        auth_method="jwt",
+        client_host="127.0.0.1",
+        user_agent="test",
+    )
+    result = await plugin.http_auth_check_permission(payload, _make_http_context())
+    assert result.continue_processing is False
+    assert result.modified_payload.granted is False
+
+
+# ---------------------------------------------------------------------------
+# tool_pre_invoke role-aware tests
+# ---------------------------------------------------------------------------
+
+CEDAR_TOOL_POLICY = [
+    {
+        "principal": 'Role::"data_scientist"',
+        "action": ['Action::"ping"', 'Action::"flaky_tool"'],
+        "resource": 'Server::"dummy-server"',
+    },
+    {
+        "principal": 'Role::"team_admin"',
+        "action": ['Action::"ping"', 'Action::"reset_counter"'],
+        "resource": 'Server::"dummy-server"',
+    },
+]
+
+
+def _make_cedar_tool_plugin(mode="enforce"):
+    config = PluginConfig(
+        name="test-cedar-tool",
+        kind="cedarpolicyplugin.plugin.CedarPolicyPlugin",
+        hooks=["tool_pre_invoke"],
+        mode=mode,
+        config={"policy_lang": "cedar", "policy": CEDAR_TOOL_POLICY},
+    )
+    return CedarPolicyPlugin(config)
+
+
+def _make_tool_context(user_dict, server_id="dummy-server"):
+    return PluginContext(global_context=GlobalContext(request_id="test-req", server_id=server_id, user=user_dict))
+
+
+@pytest.mark.asyncio
+async def test_tool_pre_invoke_role_allowed():
+    """data_scientist calling ping should be allowed."""
+    plugin = _make_cedar_tool_plugin()
+    payload = ToolPreInvokePayload(name="ping", args={})
+    context = _make_tool_context({"email": "alice@example.com", "is_admin": False, "roles": ["data_scientist"]})
+    result = await plugin.tool_pre_invoke(payload, context)
+    assert result.continue_processing is True
+    assert result.violation is None
+
+
+@pytest.mark.asyncio
+async def test_tool_pre_invoke_role_denied_enforce():
+    """viewer role has no Cedar tool permit — enforce mode blocks."""
+    plugin = _make_cedar_tool_plugin(mode="enforce")
+    payload = ToolPreInvokePayload(name="ping", args={})
+    context = _make_tool_context({"email": "bob@example.com", "is_admin": False, "roles": ["viewer"]})
+    result = await plugin.tool_pre_invoke(payload, context)
+    assert result.continue_processing is False
+    assert result.violation is not None
+
+
+@pytest.mark.asyncio
+async def test_tool_pre_invoke_role_denied_permissive():
+    """viewer role has no Cedar tool permit — permissive mode passes through."""
+    plugin = _make_cedar_tool_plugin(mode="permissive")
+    payload = ToolPreInvokePayload(name="ping", args={})
+    context = _make_tool_context({"email": "bob@example.com", "is_admin": False, "roles": ["viewer"]})
+    result = await plugin.tool_pre_invoke(payload, context)
+    assert result.continue_processing is True
+
+
+@pytest.mark.asyncio
+async def test_tool_pre_invoke_admin_bypass():
+    """Admin users bypass Cedar tool evaluation entirely."""
+    plugin = _make_cedar_tool_plugin(mode="enforce")
+    payload = ToolPreInvokePayload(name="ping", args={})
+    context = _make_tool_context({"email": "admin@example.com", "is_admin": True, "roles": []})
+    result = await plugin.tool_pre_invoke(payload, context)
+    assert result.continue_processing is True
+    assert result.violation is None
+
+
+@pytest.mark.asyncio
+async def test_tool_pre_invoke_any_role_allows():
+    """viewer + data_scientist: viewer denied, data_scientist allowed — should allow."""
+    plugin = _make_cedar_tool_plugin(mode="enforce")
+    payload = ToolPreInvokePayload(name="ping", args={})
+    context = _make_tool_context({"email": "carol@example.com", "is_admin": False, "roles": ["viewer", "data_scientist"]})
+    result = await plugin.tool_pre_invoke(payload, context)
+    assert result.continue_processing is True
+
+
+@pytest.mark.asyncio
+async def test_tool_pre_invoke_no_roles_denied():
+    """No roles falls back to User:: principal; not in policy — enforce blocks."""
+    plugin = _make_cedar_tool_plugin(mode="enforce")
+    payload = ToolPreInvokePayload(name="ping", args={})
+    context = _make_tool_context({"email": "nobody@example.com", "is_admin": False, "roles": []})
+    result = await plugin.tool_pre_invoke(payload, context)
+    assert result.continue_processing is False
+
+
+@pytest.mark.asyncio
+async def test_tool_pre_invoke_no_policy_passes_through():
+    """When _cedar_policy is None, tool_pre_invoke passes through."""
+    plugin = _make_cedar_tool_plugin(mode="enforce")
+    plugin._cedar_policy = None
+    payload = ToolPreInvokePayload(name="ping", args={})
+    context = _make_tool_context({"email": "alice@example.com", "is_admin": False, "roles": ["data_scientist"]})
+    result = await plugin.tool_pre_invoke(payload, context)
+    assert result.continue_processing is True

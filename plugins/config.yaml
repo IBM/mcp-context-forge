@@ -16,6 +16,55 @@ plugin_settings:
   include_user_info: false
 
 plugins:
+  # Cedar Policy Plugin - evaluates HTTP permission checks against Cedar policies
+  - name: "CedarPolicyPlugin"
+    kind: "cedarpolicyplugin.plugin.CedarPolicyPlugin"
+    description: "Evaluates user role-based permissions using Cedar policy language"
+    version: "0.1.0"
+    author: "ContextForge"
+    hooks: ["http_auth_check_permission", "tool_pre_invoke"]
+    tags: ["security", "cedar", "policy", "rbac", "auth"]
+    mode: "permissive"  # set to "enforce" to block on Deny
+    priority: 5
+    conditions: []
+    config:
+      policy_lang: "cedar"
+      # HTTP-level RBAC permits (used by http_auth_check_permission):
+      # Permit roles to perform gateway-level permission checks.
+      # Anything not permitted is implicitly denied.
+      #
+      # Tool-level permits (used by tool_pre_invoke):
+      # principal = Role::"<role>", action = Action::"<tool_name>", resource = Server::"<server_name>"
+      policy:
+        # HTTP-level: data_scientist can perform data:read permission checks
+        - principal: 'Role::"data_scientist"'
+          action: 'Action::"data:read"'
+          resource: 'Resource::"*"'
+        # HTTP-level: team_admin can perform multiple permission checks
+        - principal: 'Role::"team_admin"'
+          action:
+            - 'Action::"data:read"'
+            - 'Action::"security:read"'
+            - 'Action::"tools:read"'
+          resource: 'Resource::"*"'
+        # Tool-level: data_scientist can call ping and flaky_tool on any server
+        - principal: 'Role::"data_scientist"'
+          action:
+            - 'Action::"ping"'
+            - 'Action::"flaky_tool"'
+            - 'Action::"recovers_quickly"'
+          resource: 'Server::"*"'
+        # Tool-level: team_admin can call all dummy_mcp tools
+        - principal: 'Role::"team_admin"'
+          action:
+            - 'Action::"ping"'
+            - 'Action::"flaky_tool"'
+            - 'Action::"reset_counter"'
+            - 'Action::"status_code_tool"'
+            - 'Action::"recovers_quickly"'
+            - 'Action::"always_fails"'
+          resource: 'Server::"*"'
+
   # Argument Normalizer - stabilize inputs before anything else
   - name: "ArgumentNormalizer"
     kind: "plugins.argument_normalizer.argument_normalizer.ArgumentNormalizerPlugin"

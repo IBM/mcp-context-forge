@@ -1088,3 +1088,72 @@ class TestRedisMissCounts:
 
         assert result is None
         assert auth_cache._redis_miss_count == initial + 1
+
+
+class TestUserRolesListCache:
+    """Test get/set/invalidate_user_roles_list L1/L2 behaviour."""
+
+    @pytest.mark.asyncio
+    async def test_get_returns_none_on_miss(self, auth_cache):
+        """Fresh cache returns None for unknown user."""
+        result = await auth_cache.get_user_roles_list("test@example.com")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_set_then_get_returns_list_from_l1(self, auth_cache):
+        """Set populates L1; subsequent get returns the list without touching Redis."""
+        await auth_cache.set_user_roles_list("test@example.com", ["data_scientist", "team_admin"])
+        result = await auth_cache.get_user_roles_list("test@example.com")
+        assert result == ["data_scientist", "team_admin"]
+
+    @pytest.mark.asyncio
+    async def test_l2_hit_populates_l1_write_through(self, auth_cache, mock_redis):
+        """Redis hit returns JSON-encoded list and writes it through to L1."""
+        import json
+
+        mock_redis.get = AsyncMock(return_value=json.dumps(["data_scientist"]).encode())
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_roles_list("test@example.com")
+
+        assert result == ["data_scientist"]
+        # L1 should now be populated so a second call returns from L1
+        result2 = await auth_cache.get_user_roles_list("test@example.com")
+        assert result2 == ["data_scientist"]
+
+    @pytest.mark.asyncio
+    async def test_invalidate_clears_l1(self, auth_cache):
+        """After invalidation get returns None again."""
+        await auth_cache.set_user_roles_list("test@example.com", ["developer"])
+        await auth_cache.invalidate_user_roles_list("test@example.com")
+        result = await auth_cache.get_user_roles_list("test@example.com")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_invalidate_deletes_redis_key(self, auth_cache, mock_redis):
+        """Invalidate calls Redis delete for the roles_list key."""
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.invalidate_user_roles_list("test@example.com")
+        mock_redis.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_returns_none_when_cache_disabled(self):
+        """Disabled cache always returns None."""
+        cache = AuthCache(enabled=False)
+        result = await cache.get_user_roles_list("test@example.com")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_set_does_not_raise_when_disabled(self):
+        """set_user_roles_list on disabled cache completes without error."""
+        cache = AuthCache(enabled=False)
+        await cache.set_user_roles_list("test@example.com", ["viewer"])
+        result = await cache.get_user_roles_list("test@example.com")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_l2_invalid_json_returns_none(self, auth_cache, mock_redis):
+        """Corrupt Redis value is treated as miss (no crash)."""
+        mock_redis.get = AsyncMock(return_value=b"not-valid-json")
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.get_user_roles_list("test@example.com")
+        assert result is None

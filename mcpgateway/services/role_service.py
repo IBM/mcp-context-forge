@@ -628,6 +628,14 @@ class RoleService:
         self.db.commit()
         self.db.refresh(user_role)
 
+        # Invalidate roles list cache so next request fetches fresh roles from DB
+        try:
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            await auth_cache.invalidate_user_roles_list(user_email)
+        except Exception:  # nosec B110 - cache invalidation failure must never block the request
+            pass
+
         logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
         return user_role
 
@@ -670,6 +678,14 @@ class RoleService:
 
         user_role.is_active = False
         self.db.commit()
+
+        # Invalidate roles list cache so next request fetches fresh roles from DB
+        try:
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            await auth_cache.invalidate_user_roles_list(user_email)
+        except Exception:  # nosec B110 - cache invalidation failure must never block the request
+            pass
 
         logger.info(f"Revoked role {role_id} from {user_email} (scope: {scope}, scope_id: {scope_id})")
         return True

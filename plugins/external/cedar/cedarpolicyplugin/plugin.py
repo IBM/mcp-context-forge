@@ -29,6 +29,7 @@ from mcpgateway.plugins.framework import (
     PluginContext,
     PluginError,
     PluginErrorModel,
+    PluginMode,
     PluginViolation,
     PromptPosthookPayload,
     PromptPosthookResult,
@@ -45,6 +46,11 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokeResult,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
+)
+from mcpgateway.plugins.framework.hooks.http import (
+    HttpAuthCheckPermissionPayload,
+    HttpAuthCheckPermissionResult,
+    HttpAuthCheckPermissionResultPayload,
 )
 
 # Initialize logging service first
@@ -283,13 +289,14 @@ class CedarPolicyPlugin(Plugin):
         if context is None:
             context = {}
         user_role = None
-        if "tool" in hook_type:
+        _hook_lower = hook_type.lower()
+        if "tool" in _hook_lower:
             resource_expr = CedarResourceTemplates.SERVER.format(resource_type=resource)
-        elif "agent" in hook_type:
+        elif "agent" in _hook_lower:
             resource_expr = CedarResourceTemplates.AGENT.format(resource_type=resource)
-        elif "resource" in hook_type:
+        elif "resource" in _hook_lower:
             resource_expr = CedarResourceTemplates.RESOURCE.format(resource_type=resource)
-        elif "prompt" in hook_type:
+        elif "prompt" in _hook_lower:
             resource_expr = CedarResourceTemplates.PROMPT.format(resource_type=resource)
         else:
             logger.error(f"{CedarErrorCodes.UNSUPPORTED_RESOURCE_TYPE.value}: {hook_type}")
@@ -307,6 +314,49 @@ class CedarPolicyPlugin(Plugin):
         action_expr = f'Action::"{action}"'
         request = CedarInput(principal=principal_expr, action=action_expr, resource=resource_expr, context=context, correlation_id=correlation_id).model_dump()
         return request
+
+    def _preprocess_requests_for_roles(self, user: Any, action: str, resource: str, hook_type: str) -> list[dict]:
+        """Build one CedarInput per role the user holds, for role-aware evaluation.
+
+        Falls back to a User:: principal when the user has no roles assigned.
+        Used by hooks that need per-role any-allow semantics (e.g. tool_pre_invoke).
+
+        Args:
+            user: The user dict from global_context (must have 'email' and optionally 'roles', 'is_admin').
+            action: Cedar action string (e.g. the tool name).
+            resource: Cedar resource string (e.g. server id).
+            hook_type: Hook type string used to pick the resource template.
+
+        Returns:
+            List of CedarInput dicts, one per principal to evaluate.
+        """
+        if user is None:
+            user = {}
+        _hook_lower = hook_type.lower()
+        if "tool" in _hook_lower:
+            resource_expr = CedarResourceTemplates.SERVER.format(resource_type=resource)
+        elif "agent" in _hook_lower:
+            resource_expr = CedarResourceTemplates.AGENT.format(resource_type=resource)
+        elif "resource" in _hook_lower:
+            resource_expr = CedarResourceTemplates.RESOURCE.format(resource_type=resource)
+        elif "prompt" in _hook_lower:
+            resource_expr = CedarResourceTemplates.PROMPT.format(resource_type=resource)
+        else:
+            logger.error(f"{CedarErrorCodes.UNSUPPORTED_RESOURCE_TYPE.value}: {hook_type}")
+            raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSUPPORTED_RESOURCE_TYPE.value, plugin_name="CedarPolicyPlugin"))
+
+        action_expr = f'Action::"{action}"'
+        roles: list[str] = user.get("roles", []) if isinstance(user, dict) else []
+        if roles:
+            principals = [f'Role::"{r}"' for r in roles]
+        else:
+            email = user.get("email", "unknown") if isinstance(user, dict) else str(user)
+            principals = [f'User::"{email}"']
+
+        return [
+            CedarInput(principal=p, action=action_expr, resource=resource_expr, context={}).model_dump(exclude_none=True)
+            for p in principals
+        ]
 
     def _redact_output(self, payload: Any) -> Any:
         """Function that redacts the output of prompt, tool or resource
@@ -461,6 +511,11 @@ class CedarPolicyPlugin(Plugin):
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Plugin hook run before a tool is invoked.
 
+        Evaluates role-based Cedar policy for tool invocation using the same
+        any-allow semantics as http_auth_check_permission: if any of the user's
+        roles is permitted, the tool call proceeds.  Admin users bypass Cedar.
+        Permissive mode logs denials but never blocks.
+
         Args:
             payload: The tool payload to be analyzed.
             context: Contextual information about the hook call.
@@ -469,39 +524,75 @@ class CedarPolicyPlugin(Plugin):
             The result of the plugin's analysis, including whether the tool can proceed.
         """
         hook_type = ToolHookType.TOOL_PRE_INVOKE
-        logger.info(f"Processing {hook_type} for '{payload.args}' with {len(payload.args) if payload.args else 0}")
-        logger.info(f"Processing context {context}")
 
-        if not payload.args:
-            return ToolPreInvokeResult()
+        if not self._cedar_policy:
+            return ToolPreInvokeResult(continue_processing=True)
 
-        user = ""
+        user = context.global_context.user if context.global_context.user else {}
+
+        # Admins bypass Cedar evaluation
+        if isinstance(user, dict) and user.get("is_admin"):
+            logger.debug("[CedarPolicyPlugin] tool_pre_invoke: admin %s — bypassing Cedar", user.get("email"))
+            return ToolPreInvokeResult(continue_processing=True)
+
         server_id = ""
-        if context.global_context.user:
-            user = context.global_context.user
-
         if "gateway" in context.global_context.metadata and "name" in context.global_context.metadata["gateway"]:
             server_id = context.global_context.metadata["gateway"]["name"]
         else:
-            server_id = context.global_context.server_id
+            server_id = context.global_context.server_id or ""
 
-        if server_id:
-            request = self._preprocess_request(user, payload.name, server_id, hook_type)
-        else:
+        if not server_id:
             logger.error(f"{CedarErrorCodes.UNSPECIFIED_SERVER.value}")
             raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_SERVER.value, plugin_name="CedarPolicyPlugin"))
 
-        if self._cedar_policy:
-            decision = await self._evaluate_policy(request, self._cedar_policy)
-            if decision == "Deny":
-                violation = PluginViolation(
-                    reason=CedarResponseTemplates.CEDAR_REASON.format(hook_type=hook_type),
-                    description=CedarResponseTemplates.CEDAR_DESC.format(hook_type=hook_type),
-                    code=CedarCodes.DENIAL_CODE,
-                    details={},
-                )
-                return ToolPreInvokeResult(modified_payload=payload, violation=violation, continue_processing=False)
-        return ToolPreInvokeResult(continue_processing=True)
+        # Legacy jwt_info path: user is a string username (e.g. from older tests/setups)
+        if not isinstance(user, dict) and len(self.jwt_info) > 0 and "users" in self.jwt_info:
+            try:
+                single_req = self._preprocess_request(user, payload.name, server_id, str(hook_type), context={})
+                requests = [single_req]
+            except PluginError as exc:
+                logger.warning("[CedarPolicyPlugin] tool_pre_invoke jwt_info preprocess error: %s", exc)
+                requests = self._preprocess_requests_for_roles(user, payload.name, server_id, str(hook_type))
+        else:
+            requests = self._preprocess_requests_for_roles(user, payload.name, server_id, str(hook_type))
+
+        last_denying_principal = requests[0]["principal"] if requests else "unknown"
+        for cedar_request in requests:
+            try:
+                decision = await self._evaluate_policy(cedar_request, self._cedar_policy)
+            except PluginError as exc:
+                logger.warning("[CedarPolicyPlugin] tool_pre_invoke evaluation error principal=%s: %s — treating as Deny", cedar_request["principal"], exc)
+                decision = "Deny"
+
+            logger.info(
+                "[CedarPolicyPlugin] tool_pre_invoke: user=%s principal=%s tool=%s server=%s => %s",
+                user.get("email") if isinstance(user, dict) else user,
+                cedar_request["principal"],
+                payload.name,
+                server_id,
+                decision,
+            )
+
+            if decision != "Deny":
+                return ToolPreInvokeResult(continue_processing=True)
+
+            last_denying_principal = cedar_request["principal"]
+
+        # All roles denied
+        deny_reason = f"Cedar denied tool '{payload.name}' on server '{server_id}' for all roles (last principal: {last_denying_principal})"
+        logger.info("[CedarPolicyPlugin] tool_pre_invoke DENIED: %s", deny_reason)
+
+        if self._config.mode != PluginMode.ENFORCE:
+            logger.info("[CedarPolicyPlugin] Permissive mode — not enforcing Cedar denial for tool_pre_invoke")
+            return ToolPreInvokeResult(continue_processing=True)
+
+        violation = PluginViolation(
+            reason=CedarResponseTemplates.CEDAR_REASON.format(hook_type=hook_type),
+            description=deny_reason,
+            code=CedarCodes.DENIAL_CODE,
+            details={},
+        )
+        return ToolPreInvokeResult(modified_payload=payload, violation=violation, continue_processing=False)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked.
@@ -668,3 +759,82 @@ class CedarPolicyPlugin(Plugin):
                 raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value, plugin_name="CedarPolicyPlugin"))
 
         return ResourcePostFetchResult(continue_processing=True)
+
+    async def http_auth_check_permission(self, payload: HttpAuthCheckPermissionPayload, context: PluginContext) -> HttpAuthCheckPermissionResult:
+        """Cedar policy hook for HTTP permission checks.
+
+        Evaluates whether a user (by roles) may perform an action using the
+        Cedar policy defined in this plugin's config.  Each role the user holds
+        is evaluated independently — a Cedar Allow for *any* role is sufficient
+        to permit the action (fail-open per role, fail-closed only when all
+        roles are denied).
+
+        Permissive mode: logs the Cedar decision, always passes through.
+        Enforce mode: returns Deny if Cedar denies for *all* roles.
+
+        Args:
+            payload: Contains user_email, roles, permission, is_admin.
+            context: Plugin execution context.
+
+        Returns:
+            HttpAuthCheckPermissionResult.
+        """
+        if not self._cedar_policy:
+            logger.debug("[CedarPolicyPlugin] No cedar policy configured — skipping http_auth_check_permission")
+            return HttpAuthCheckPermissionResult(continue_processing=True)
+
+        # Admins bypass Cedar evaluation
+        if payload.is_admin:
+            logger.debug("[CedarPolicyPlugin] Admin %s — bypassing Cedar", payload.user_email)
+            return HttpAuthCheckPermissionResult(continue_processing=True)
+
+        action = f'Action::"{payload.permission}"'
+        resource = 'Resource::"*"'
+
+        # Evaluate each role; Allow for any role is sufficient
+        roles_to_check = payload.roles if payload.roles else []
+        # Fall back to user-principal evaluation when the user has no roles
+        principals = [f'Role::"{r}"' for r in roles_to_check] or [f'User::"{payload.user_email}"']
+
+        last_denying_principal = principals[0]
+        for principal in principals:
+            cedar_request = {"principal": principal, "action": action, "resource": resource, "context": {}}
+            try:
+                decision = await self._evaluate_policy(cedar_request, self._cedar_policy)
+            except PluginError as exc:
+                logger.warning(
+                    "[CedarPolicyPlugin] Evaluation error for %s/%s principal=%s: %s — treating as Deny",
+                    payload.user_email, payload.permission, principal, exc,
+                )
+                decision = "Deny"
+
+            logger.info(
+                "[CedarPolicyPlugin] http_auth: user=%s principal=%s permission=%s => %s",
+                payload.user_email,
+                principal,
+                payload.permission,
+                decision,
+            )
+
+            if decision != "Deny":
+                # At least one role is permitted — allow immediately
+                return HttpAuthCheckPermissionResult(continue_processing=True)
+
+            last_denying_principal = principal
+
+        # All role evaluations denied
+        deny_reason = f"Cedar denied '{payload.permission}' for all roles of {payload.user_email} (last principal: {last_denying_principal})"
+        logger.info("[CedarPolicyPlugin] http_auth DENIED: %s", deny_reason)
+
+        if self._config.mode != PluginMode.ENFORCE:
+            # Permissive / audit mode — log and pass through without blocking
+            logger.info("[CedarPolicyPlugin] Permissive mode — not enforcing Cedar denial for %s", payload.user_email)
+            return HttpAuthCheckPermissionResult(continue_processing=True)
+
+        return HttpAuthCheckPermissionResult(
+            continue_processing=False,
+            modified_payload=HttpAuthCheckPermissionResultPayload(
+                granted=False,
+                reason=deny_reason,
+            ),
+        )

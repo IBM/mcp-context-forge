@@ -653,6 +653,29 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 plugin_context_table = user_context.get("plugin_context_table")
                 plugin_global_context = user_context.get("plugin_global_context")
 
+                # Fetch the user's role names so plugins (e.g. Cedar) can act on them.
+                # Try the roles list cache first; fall back to DB on miss.
+                # The cache is invalidated on assign/revoke, so it is always fresh on normal paths.
+                # Failure is non-fatal — plugins still receive email and is_admin.
+                user_role_names: List[str] = []
+                try:
+                    from mcpgateway.cache.auth_cache import auth_cache as _rbac_auth_cache  # pylint: disable=import-outside-toplevel
+
+                    _cached_roles = await _rbac_auth_cache.get_user_roles_list(user_context["email"])
+                    if _cached_roles is not None:
+                        user_role_names = _cached_roles
+                    else:
+                        _db_for_roles = kwargs.get("db") or user_context.get("db")
+                        if _db_for_roles:
+                            _role_assignments = await PermissionService(_db_for_roles).get_user_roles(user_context["email"], team_id=team_id)
+                        else:
+                            with fresh_db_session() as _db_roles:
+                                _role_assignments = await PermissionService(_db_roles).get_user_roles(user_context["email"], team_id=team_id)
+                        user_role_names = [ur.role.name for ur in _role_assignments]
+                        await _rbac_auth_cache.set_user_roles_list(user_context["email"], user_role_names)
+                except Exception:  # nosec B110 - role fetch failure must never block the request
+                    pass
+
                 # Reuse existing global context from middleware if available for consistency
                 # Otherwise create a new one (fallback for cases where middleware didn't run)
                 if plugin_global_context:
@@ -662,7 +685,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     global_context = GlobalContext(
                         request_id=request_id,
                         server_id=None,
-                        tenant_id=None,
+                        tenant_id=team_id,
+                        user={
+                            "email": user_context["email"],
+                            "is_admin": user_context.get("is_admin", False),
+                            "roles": user_role_names,
+                            "team_id": team_id,
+                        },
                     )
 
                 # Invoke permission check hook, passing plugin contexts from HTTP_PRE_REQUEST hook
@@ -674,6 +703,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                         resource_type=resource_type,
                         team_id=team_id,
                         is_admin=user_context.get("is_admin", False),
+                        roles=user_role_names,
                         auth_method=user_context.get("auth_method"),
                         client_host=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),

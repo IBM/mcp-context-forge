@@ -95,7 +95,7 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError, PromptHookType, ResourceHookType
+from mcpgateway.plugins.framework import GlobalContext, HttpAuthCheckPermissionPayload, HttpHookType, PluginError, PluginManager, PluginViolationError, PromptHookType, ResourceHookType
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
@@ -1003,6 +1003,49 @@ async def _ensure_rpc_permission(user, db: Session, permission: str, method: str
 
     if permission == "admin.system_config" and _is_permission_admin_user(user):
         return
+
+    # Layer 2a: Plugin hook — HTTP_AUTH_CHECK_PERMISSION
+    # Mirrors the same hook invoked by @require_permission in rbac.py.
+    if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):
+        user_email = get_user_email(user) if not isinstance(user, dict) else (user.get("email") or "")
+        is_admin = _is_permission_admin_user(user)
+        user_role_names: list[str] = []
+        try:
+            from mcpgateway.cache.auth_cache import auth_cache as _rpc_auth_cache  # pylint: disable=import-outside-toplevel
+
+            _cached_roles = await _rpc_auth_cache.get_user_roles_list(user_email)
+            if _cached_roles is not None:
+                user_role_names = _cached_roles
+            else:
+                _role_assignments = await PermissionService(db).get_user_roles(user_email)
+                user_role_names = [ur.role.name for ur in _role_assignments]
+                await _rpc_auth_cache.set_user_roles_list(user_email, user_role_names)
+        except Exception:  # nosec B110 - role fetch failure must never block the request
+            pass
+        _rpc_global_ctx = GlobalContext(
+            request_id=getattr(request, "state", None) and getattr(request.state, "request_id", None) or "",
+            user={"email": user_email, "is_admin": is_admin, "roles": user_role_names},
+        )
+        _rpc_result, _ = await plugin_manager.invoke_hook(
+            HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
+            payload=HttpAuthCheckPermissionPayload(
+                user_email=user_email,
+                permission=permission,
+                resource_type="rpc",
+                is_admin=is_admin,
+                roles=user_role_names,
+                auth_method="rpc",
+            ),
+            global_context=_rpc_global_ctx,
+        )
+        if _rpc_result and _rpc_result.modified_payload and hasattr(_rpc_result.modified_payload, "granted"):
+            decision_reason = getattr(_rpc_result.modified_payload, "reason", None)
+            if _rpc_result.modified_payload.granted is False:
+                logger.warning(
+                    "RPC permission denied by plugin: method=%s permission=%s user=%s reason=%s",
+                    method, permission, user_email, decision_reason,
+                )
+                raise JSONRPCError(-32003, _ACCESS_DENIED_MSG, {"method": method})
 
     # Layer 2: RBAC check
     # Session tokens have no explicit team_id, so check across all team-scoped roles.
