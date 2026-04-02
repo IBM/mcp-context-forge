@@ -385,6 +385,7 @@ class Settings(BaseSettings):
     sso_entra_graph_api_enabled: bool = Field(default=True, description="Enable Microsoft Graph fallback for EntraID groups overage claims")
     sso_entra_graph_api_timeout: int = Field(default=10, ge=1, le=120, description="Timeout in seconds for Microsoft Graph group fallback requests")
     sso_entra_graph_api_max_groups: int = Field(default=0, ge=0, description="Maximum groups to keep from Graph fallback (0 = no limit)")
+    sso_entra_team_mapping: Dict[str, Any] = Field(default_factory=dict, description="Map EntraID groups to ContextForge teams (JSON: {group_id: {team_id: ..., role: member|owner}})")
 
     sso_adfs_enabled: bool = Field(default=False, description="Enable ADFS OIDC authentication")
     sso_adfs_client_id: Optional[str] = Field(default=None, description="ADFS OAuth client ID")
