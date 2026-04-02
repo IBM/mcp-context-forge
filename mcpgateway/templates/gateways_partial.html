@@ -68,8 +68,8 @@
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Test</button>
 
-              {% if gateway.authType == 'oauth' and can_modify %}
-              <!-- OAuth Authorize -->
+              {% if gateway.authType == 'oauth' %}
+              <!-- OAuth Authorize (accessible to all authenticated users with gateway access) -->
               <a
                 href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
                 @click="menuOpen = false"
