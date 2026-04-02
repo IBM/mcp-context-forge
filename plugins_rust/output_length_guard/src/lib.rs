@@ -514,6 +514,37 @@ enum ProcessResult<'py> {
     /// A violation was triggered (block mode).
     Violation(ViolationInfo),
 }
+/// Generate a formatted text representation of structured data.
+/// Matches Python's _generate_text_representation behavior.
+///
+/// For simple strings, returns them directly without JSON encoding.
+/// Uses Python's json.dumps for clean, readable formatting of lists and dicts.
+fn generate_text_representation(py: Python, data: &Bound<'_, PyAny>) -> PyResult<String> {
+    // Special case: simple string - return as-is without JSON encoding
+    if let Ok(s) = data.extract::<String>() {
+        return Ok(s);
+    }
+
+    // Use JSON for lists and dicts for clean formatting
+    if data.cast::<PyDict>().is_ok() || data.cast::<PyList>().is_ok() {
+        // Import json module
+        let json_module = py.import("json")?;
+        let dumps = json_module.getattr("dumps")?;
+
+        // Call json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("ensure_ascii", false)?;
+        kwargs.set_item("separators", (",", ":"))?;
+
+        let json_str = dumps.call((data,), Some(&kwargs))?;
+        return json_str.extract::<String>();
+    }
+
+    // For other types, use repr
+    let repr_str = data.repr()?;
+    Ok(repr_str.to_string())
+}
+
 
 /// Determine the processing context for a container.
 /// This ensures Rust behavior matches Python's token-mode semantics.
@@ -882,24 +913,80 @@ fn process_container<'py>(
             return Ok(ProcessResult::Unchanged);
         }
 
+        // Check if this is an MCP result with content and structuredContent
+        let has_content = dict.contains("content").unwrap_or(false);
+        let has_structured = dict.contains("structuredContent").unwrap_or(false)
+            || dict.contains("structured_content").unwrap_or(false);
+
+        // Special handling for MCP results with structuredContent
+        if has_content && has_structured {
+            let struct_key = if dict.contains("structuredContent").unwrap_or(false) {
+                "structuredContent"
+            } else {
+                "structured_content"
+            };
+
+            // Get and process structuredContent
+            if let Some(structured_value) = dict.get_item(struct_key)? {
+                let struct_path = if path.is_empty() {
+                    struct_key.to_string()
+                } else {
+                    format!("{path}.{struct_key}")
+                };
+
+                match process_container(py, &structured_value, cfg, &struct_path, depth + 1, context)? {
+                    ProcessResult::Violation(v) => return Ok(ProcessResult::Violation(v)),
+                    ProcessResult::Modified(processed_struct) => {
+                        // Create new result dict
+                        let new_dict = PyDict::new(py);
+
+                        // Copy all items from original dict
+                        for (key, value) in dict.iter() {
+                            new_dict.set_item(&key, value)?;
+                        }
+
+                        // Update structuredContent with processed version
+                        new_dict.set_item(struct_key, &processed_struct)?;
+
+                        // Regenerate content[0].text from processed structuredContent
+                        let new_text = generate_text_representation(py, &processed_struct)?;
+                        let content_item = PyDict::new(py);
+                        content_item.set_item("type", "text")?;
+                        content_item.set_item("text", new_text)?;
+
+                        let content_list = PyList::empty(py);
+                        content_list.append(content_item)?;
+                        new_dict.set_item("content", content_list)?;
+
+                        return Ok(ProcessResult::Modified(new_dict.into_any()));
+                    }
+                    ProcessResult::Unchanged => {
+                        // structuredContent unchanged, no need to regenerate content
+                        return Ok(ProcessResult::Unchanged);
+                    }
+                }
+            }
+        }
+
+        // Normal dict processing (not MCP result or no structuredContent)
         let mut any_modified = false;
         let new_dict = PyDict::new(py);
 
         for (key, value) in dict.iter() {
             let key_str: String = key.extract::<String>().unwrap_or_else(|_| format!("{key}"));
-            
+
             // Check if this is a metadata key - preserve unchanged (match Python)
             if METADATA_KEYS.contains(&key_str.as_str()) {
                 new_dict.set_item(&key, value)?;
                 continue;
             }
-            
+
             let value_path = if path.is_empty() {
                 key_str.clone()
             } else {
                 format!("{path}.{key_str}")
             };
-            
+
             // Determine context for nested processing
             // If key is "content", switch to McpContent context
             let nested_context = if key_str == "content" {
@@ -965,7 +1052,7 @@ impl OutputLengthGuardEngine {
     ) -> PyResult<(PyObject, bool, PyObject)> {
         // Determine initial context based on container structure
         let context = determine_context(container);
-        
+
         match process_container(py, container, &self.cfg, "", 0, context)? {
             ProcessResult::Unchanged => Ok((py.None(), false, py.None())),
             ProcessResult::Modified(new_val) => Ok((new_val.unbind(), true, py.None())),
