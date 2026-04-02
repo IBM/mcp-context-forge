@@ -43,6 +43,7 @@ class TestAgentsUI:
         """Test that the add agent form is visible and has correct title."""
         # Navigate to agents tab
         agents_page.navigate_to_agents_tab()
+        agents_page.wait_for_agents_panel_loaded()
 
         # Verify form is visible
         expect(agents_page.add_agent_form).to_be_visible()

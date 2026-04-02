@@ -109,7 +109,12 @@ def _goto_admin(page: Page, url: str) -> None:
     elements (e.g. [data-testid="servers-tab"]) and JS initialisation,
     so networkidle is redundant and stalls under SSE/setInterval traffic.
     """
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    except Exception as e:
+        if "ERR_TOO_MANY_REDIRECTS" in str(e):
+            raise AssertionError(f"Admin page redirect loop detected at {url}. Server may be in a bad state or auth is misconfigured.") from e
+        raise
 
 
 def _submit_login_and_wait(page: Page, login_page, email: str, password: str) -> Optional[int]:
@@ -284,7 +289,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     # Wait for JS initialization (showTab + HTMX) before any tab clicks
     try:
         page.wait_for_function(
-            "typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'",
+            "typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
             timeout=30000,
         )
     except PlaywrightTimeoutError:
@@ -298,9 +303,18 @@ def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, 
 
     token = API_TOKEN
     if not token and not DISABLE_JWT_FALLBACK:
-        # Generate a fallback token for testing if none provided
+        # Generate a fallback admin token for testing if none provided
         try:
-            token = _create_jwt_token({"sub": ADMIN_EMAIL})
+            token = _create_jwt_token(
+                {"sub": ADMIN_EMAIL},
+                user_data={
+                    "email": ADMIN_EMAIL,
+                    "full_name": "Test Admin",
+                    "is_admin": True,
+                    "auth_provider": "test",
+                },
+                teams=None,  # Admin bypass: null teams with is_admin=true
+            )
         except Exception:
             pass  # Use empty if generation fails
 
@@ -525,7 +539,7 @@ def test_agent_data():
 # These are real, publicly available MCP servers that can be used for testing
 VALID_MCP_SERVER_URLS = [
     "https://docs.mcp.cloudflare.com/sse",
-    "https://www.javadocs.dev/mcp",
+    "https://mcp.deepwiki.com/sse",
     "https://mcp.openzeppelin.com/contracts/cairo/mcp",
     "https://mcp.openzeppelin.com/contracts/stylus/mcp",
     "https://mcp.openzeppelin.com/contracts/stellar/mcp",
@@ -537,8 +551,9 @@ VALID_MCP_SERVER_URLS = [
 def test_gateway_data():
     """Provide test data for gateway creation."""
     unique_id = uuid.uuid4()
-    # Use specific URL for simple gateway test
-    url = VALID_MCP_SERVER_URLS[0]
+    # Use unique localhost URL to avoid conflicts and external service failures
+    port = 49152 + (hash(str(unique_id)) % 16384)
+    url = f"http://127.0.0.1:{port}"
 
     return {
         "name": f"test-gateway-{unique_id}",
@@ -554,8 +569,9 @@ def test_gateway_data():
 def test_gateway_with_basic_auth_data():
     """Provide test data for gateway with basic authentication."""
     unique_id = uuid.uuid4()
-    # Use specific URL for basic auth test (index 1 after removing Astro)
-    url = VALID_MCP_SERVER_URLS[1]
+    # Use unique localhost URL to avoid conflicts and external service failures
+    port = 49152 + (hash(str(unique_id)) % 16384)
+    url = f"http://127.0.0.1:{port}"
 
     return {
         "name": f"test-gateway-basic-{unique_id}",
@@ -574,8 +590,9 @@ def test_gateway_with_basic_auth_data():
 def test_gateway_with_bearer_auth_data():
     """Provide test data for gateway with bearer token authentication."""
     unique_id = uuid.uuid4()
-    # Use specific URL for bearer auth test
-    url = VALID_MCP_SERVER_URLS[2]
+    # Use unique localhost URL to avoid conflicts and external service failures
+    port = 49152 + (hash(str(unique_id)) % 16384)
+    url = f"http://127.0.0.1:{port}"
 
     return {
         "name": f"test-gateway-bearer-{unique_id}",
@@ -593,8 +610,9 @@ def test_gateway_with_bearer_auth_data():
 def test_gateway_with_oauth_data():
     """Provide test data for gateway with OAuth 2.0 authentication."""
     unique_id = uuid.uuid4()
-    # Use specific URL for OAuth test
-    url = VALID_MCP_SERVER_URLS[3]
+    # Use unique localhost URL to avoid conflicts and external service failures
+    port = 49152 + (hash(str(unique_id)) % 16384)
+    url = f"http://127.0.0.1:{port}"
 
     return {
         "name": f"test-gateway-oauth-{unique_id}",
@@ -606,6 +624,7 @@ def test_gateway_with_oauth_data():
         "auth_type": "oauth",
         "oauth_grant_type": "client_credentials",
         "oauth_issuer": "http://localhost:3003",
+        "oauth_token_url": "http://localhost:3003/token",
         "oauth_client_id": "test-client-id",
         "oauth_client_secret": "test-client-secret",
         "oauth_scopes": "openid profile email",

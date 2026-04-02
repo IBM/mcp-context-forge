@@ -61,9 +61,20 @@ jobs:
           version: "0.9.2"
           python-version: "3.12"
 
+      - name: 🟢 Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
       - name: 📦 Install gateway dependencies
         run: |
           make venv install
+
+      - name: 🏗️ Build admin UI bundle
+        run: |
+          npm ci
+          npm run vite:build
 
       - name: 🎭 Run make serve + CI smoke tests
         shell: bash

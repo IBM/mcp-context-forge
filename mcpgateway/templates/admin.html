@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); return false } })() }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { Admin?.logRestrictedContext(e); return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); } })"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { Admin?.logRestrictedContext(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -235,25 +235,7 @@
         newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
 
         const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        safeReplaceState({}, '', newUrl);
-      }
-
-      // One-time debug notice for restricted iframe contexts (e.g. sandboxed iframes)
-      var _restrictedContextLogged = false;
-      function _logRestrictedContext(e) {
-        if (!_restrictedContextLogged) {
-          _restrictedContextLogged = true;
-          console.debug('Running in restricted context — storage/history APIs unavailable:', e.message);
-        }
-      }
-
-      // Safe wrapper for history.replaceState — skips in restricted contexts
-      function safeReplaceState(data, title, url) {
-        try {
-          window.history.replaceState(data, title, url);
-        } catch (e) {
-          _logRestrictedContext(e);
-        }
+        Admin?.safeReplaceState?.({}, '', newUrl);
       }
     </script>
 
@@ -345,7 +327,7 @@
       crossorigin="anonymous">
     </script>
     {% endif %}
-    <script src="{{ root_path }}/static/admin.js"></script>
+    <script src="{{ root_path }}/static/{{ bundle_js }}"></script>
     {% if is_admin %}
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script src="{{ root_path }}/static/flame-graph.js?v=1"></script>
@@ -486,7 +468,7 @@
             <a href="#overview" id="tab-overview" data-testid="overview-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('overview')">
+               onclick="Admin.showTab('overview')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Overview</span>
             </a>
@@ -502,7 +484,7 @@
             <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('gateways')">
+               onclick="Admin.showTab('gateways')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
               <span x-show="!sidebarCollapsed">MCP Servers</span>
             </a>
@@ -511,7 +493,7 @@
             <a href="#catalog" id="tab-catalog" data-testid="servers-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('catalog')">
+               onclick="Admin.showTab('catalog')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
               <span x-show="!sidebarCollapsed">Virtual Servers</span>
             </a>
@@ -520,7 +502,7 @@
             <a href="#tools" id="tab-tools" data-testid="tools-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('tools')">
+               onclick="Admin.showTab('tools')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🛠️</span>
               <span x-show="!sidebarCollapsed">Tools</span>
             </a>
@@ -528,7 +510,7 @@
             <a href="#tool-ops" id="tab-tool-ops" data-testid="tool-ops-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('tool-ops')">
+               onclick="Admin.showTab('tool-ops')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">ToolOps</span>
             </a>
@@ -538,7 +520,7 @@
             <a href="#prompts" id="tab-prompts"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('prompts')">
+               onclick="Admin.showTab('prompts')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">💬</span>
               <span x-show="!sidebarCollapsed">Prompts</span>
             </a>
@@ -547,7 +529,7 @@
             <a href="#resources" id="tab-resources"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('resources')">
+               onclick="Admin.showTab('resources')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📁</span>
               <span x-show="!sidebarCollapsed">Resources</span>
             </a>
@@ -556,7 +538,7 @@
             <a href="#roots" id="tab-roots"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('roots')">
+               onclick="Admin.showTab('roots')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌳</span>
               <span x-show="!sidebarCollapsed">Roots</span>
             </a>
@@ -565,7 +547,7 @@
             <a href="#mcp-registry" id="tab-mcp-registry" data-testid="mcp-registry-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('mcp-registry')">
+               onclick="Admin.showTab('mcp-registry')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📦</span>
               <span x-show="!sidebarCollapsed">MCP Registry</span>
             </a>
@@ -582,7 +564,7 @@
             <a href="#a2a-agents" id="tab-a2a-agents" data-testid="a2a-agents-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('a2a-agents')">
+               onclick="Admin.showTab('a2a-agents')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🤖</span>
               <span x-show="!sidebarCollapsed">Agents (A2A)</span>
             </a>
@@ -591,7 +573,7 @@
             <a href="#grpc-services" id="tab-grpc-services" data-testid="grpc-services-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('grpc-services')">
+               onclick="Admin.showTab('grpc-services')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔌</span>
               <span x-show="!sidebarCollapsed">gRPC Services</span>
             </a>
@@ -609,7 +591,7 @@
             <a href="#llm-chat" id="tab-llm-chat" data-testid="llm-chat-tab"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('llm-chat')">
+               onclick="Admin.showTab('llm-chat')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👨‍💻</span>
               <span x-show="!sidebarCollapsed">LLM Chat</span>
             </a>
@@ -618,7 +600,7 @@
             <a href="#llm-settings" id="tab-llm-settings"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('llm-settings')">
+               onclick="Admin.showTab('llm-settings')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">LLM Settings</span>
             </a>
@@ -636,7 +618,7 @@
             <a href="#metrics" id="tab-metrics"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('metrics')">
+               onclick="Admin.showTab('metrics')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
@@ -645,7 +627,7 @@
             <a href="#performance" id="tab-performance" data-testid="performance-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('performance')">
+               onclick="Admin.showTab('performance')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚡</span>
               <span x-show="!sidebarCollapsed">Performance</span>
             </a>
@@ -654,7 +636,7 @@
             <a href="#observability" id="tab-observability" data-testid="observability-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('observability')">
+               onclick="Admin.showTab('observability')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔍</span>
               <span x-show="!sidebarCollapsed">Observability</span>
             </a>
@@ -672,7 +654,7 @@
             <a href="#plugins" id="tab-plugins" data-testid="plugins-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('plugins')">
+               onclick="Admin.showTab('plugins')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
@@ -690,7 +672,7 @@
             <a href="#teams" id="tab-teams" data-testid="teams-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('teams')">
+               onclick="Admin.showTab('teams')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
@@ -699,7 +681,7 @@
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('users')">
+               onclick="Admin.showTab('users')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👤</span>
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
@@ -708,7 +690,7 @@
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('tokens')">
+               onclick="Admin.showTab('tokens')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🎫</span>
               <span x-show="!sidebarCollapsed">API Tokens</span>
             </a>
@@ -726,7 +708,7 @@
             <a href="#export-import" id="tab-export-import"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('export-import')">
+               onclick="Admin.showTab('export-import')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📤</span>
               <span x-show="!sidebarCollapsed">Export/Import</span>
             </a>
@@ -735,7 +717,7 @@
             <a href="#logs" id="tab-logs"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('logs')">
+               onclick="Admin.showTab('logs')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
               <span x-show="!sidebarCollapsed">System Logs</span>
             </a>
@@ -744,7 +726,7 @@
             <a href="#version-info" id="tab-version-info"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('version-info')">
+               onclick="Admin.showTab('version-info')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
@@ -753,7 +735,7 @@
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
-               onclick="showTab('maintenance')">
+               onclick="Admin.showTab('maintenance')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
@@ -820,7 +802,7 @@
               <button
                 type="button"
                 id="global-search-trigger"
-                onclick="openGlobalSearchModal()"
+                onclick="Admin.openGlobalSearchModal()"
                 class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:border-gray-400 dark:hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 title="Search across tools, prompts, resources, servers, gateways, and agents (Ctrl/Cmd+K)"
               >
@@ -856,12 +838,12 @@
                         // Remove stale/invalid team_id from URL to avoid confusing stale team scope behavior.
                         const cleanUrl = new URL(window.location.href);
                         cleanUrl.searchParams.delete('team_id');
-                        safeReplaceState({}, '', cleanUrl);
+                        Admin.safeReplaceState({}, '', cleanUrl);
                       }
                     }
                   },
                   loadTeams() {
-                    if (this.open) { window.loadTeamSelectorDropdown(); }
+                    if (this.open) { Admin.loadTeamSelectorDropdown(); }
                   }
                 }"
                 @click.away="open = false"
@@ -901,7 +883,7 @@
                       id="team-selector-search"
                       placeholder="Search teams..."
                       class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                      oninput="searchTeamSelector(this.value)"
+                      oninput="Admin.searchTeamSelector(this.value)"
                       @click.stop
                     />
                   </div>
@@ -981,7 +963,7 @@
 
         <!-- Global Search Modal -->
         <div id="global-search-modal" class="fixed inset-0 z-40 hidden" aria-hidden="true">
-          <div class="absolute inset-0 bg-black/40" onclick="closeGlobalSearchModal()"></div>
+          <div class="absolute inset-0 bg-black/40" onclick="Admin.closeGlobalSearchModal()"></div>
           <div class="relative max-w-3xl mx-auto mt-24 px-4">
             <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden">
               <div class="p-4 border-b border-gray-200 dark:border-gray-700">
@@ -1019,31 +1001,31 @@
               <!-- Quick Actions -->
               <div class="mb-4 flex gap-2 flex-wrap">
                 <button
-                  onclick="searchStructuredLogs()"
+                  onclick="Admin.searchStructuredLogs()"
                   class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
                   🔍 Search Logs
                 </button>
                 <button
-                  onclick="showCorrelationTrace()"
+                  onclick="Admin.showCorrelationTrace()"
                   class="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
                 >
                   🔗 Trace Correlation ID
                 </button>
                 <button
-                  onclick="showSecurityEvents()"
+                  onclick="Admin.showSecurityEvents()"
                   class="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                 >
                   🛡️ Security Events
                 </button>
                 <button
-                  onclick="showAuditTrail()"
+                  onclick="Admin.showAuditTrail()"
                   class="px-3 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
                 >
                   📝 Audit Trail
                 </button>
                 <button
-                  onclick="showPerformanceMetrics()"
+                  onclick="Admin.showPerformanceMetrics()"
                   class="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700"
                 >
                   ⚡ Performance
@@ -1062,7 +1044,7 @@
                   <select
                     id="performance-aggregation-select"
                     class="px-3 py-2 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
-                    onchange="handlePerformanceAggregationChange(event)"
+                    onchange="Admin.handlePerformanceAggregationChange(event)"
                   >
                     <option value="5m">5 minutes</option>
                     <option value="24h">24 hours</option>
@@ -1080,7 +1062,7 @@
                   <select
                     id="log-level-filter"
                     class="mt-1 px-3 py-2 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
-                    onchange="searchStructuredLogs()"
+                    onchange="Admin.searchStructuredLogs()"
                   >
                     <option value="">All Levels</option>
                     <option value="DEBUG">Debug</option>
@@ -1099,7 +1081,7 @@
                   <select
                     id="log-component-filter"
                     class="mt-1 px-3 py-2 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
-                    onchange="searchStructuredLogs()"
+                    onchange="Admin.searchStructuredLogs()"
                   >
                     <option value="">All Components</option>
                     <option value="http_gateway">HTTP Gateway</option>
@@ -1205,7 +1187,7 @@
                 </div>
                 <div class="flex gap-2">
                   <button
-                    onclick="previousLogPage()"
+                    onclick="Admin.previousLogPage()"
                     id="prev-page"
                     class="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded disabled:opacity-50"
                     disabled
@@ -1213,7 +1195,7 @@
                     Previous
                   </button>
                   <button
-                    onclick="nextLogPage()"
+                    onclick="Admin.nextLogPage()"
                     id="next-page"
                     class="px-3 py-1 bg-gray-300 dark:bg-gray-600 rounded disabled:opacity-50"
                   >
@@ -1533,7 +1515,7 @@
                       id="import-preview-btn"
                       class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50"
                       disabled
-                      onclick="previewImport()"
+                      onclick="Admin.previewImport()"
                     >
                       📋 Selective Import
                     </button>
@@ -1750,7 +1732,7 @@
                             Virtual Servers
                           </h3>
                           <button onclick="
-                                loadVirtualServersForChat();
+                                Admin.loadVirtualServersForChat();
                                 event.stopPropagation();
                               "
                             class="text-xs px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded transition-colors">
@@ -1812,7 +1794,7 @@
                             Model</label>
                           <select id="llm-model-select"
                             class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 transition-colors"
-                            onchange="handleLLMModelChange()">
+                            onchange="Admin.handleLLMModelChange()">
                             <option value="">
                               Select Model (configure in Settings → LLM
                               Settings)
@@ -1915,7 +1897,7 @@
 
                 <!-- Right Section: Connection Buttons -->
                 <div class="flex items-center gap-2">
-                  <button type="button" id="llm-connect-btn" onclick="connectLLMChat()"
+                  <button type="button" id="llm-connect-btn" onclick="Admin.connectLLMChat()"
                     class="inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white text-sm font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                     disabled>
                     <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1925,7 +1907,7 @@
                     Connect
                   </button>
 
-                  <button type="button" id="llm-disconnect-btn" onclick="disconnectLLMChat()"
+                  <button type="button" id="llm-disconnect-btn" onclick="Admin.disconnectLLMChat()"
                     class="hidden inline-flex items-center justify-center px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white text-sm font-medium rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 shadow-sm">
                     <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -1972,13 +1954,13 @@
               <!-- Chat Input Area -->
               <div id="chat-input-container"
                 class="hidden border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-                <form id="chat-input-form" onsubmit="sendChatMessage(event)" class="p-4">
+                <form id="chat-input-form" onsubmit="Admin.sendChatMessage(event)" class="p-4">
                   <div class="flex items-end space-x-3">
                     <div class="flex-1 relative">
                       <textarea id="chat-input" rows="1"
                         placeholder="Type your message here... (Shift+Enter for new line)"
                         class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-4 py-3 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 resize-none transition-all"
-                        onkeydown="handleChatInputKeydown(event)" oninput="
+                        onkeydown="Admin.handleChatInputKeydown(event)" oninput="
                             this.style.height = 'auto';
                             this.style.height =
                               Math.min(this.scrollHeight, 120) + 'px';
@@ -2012,7 +1994,7 @@
           <div class="border-b border-gray-200 dark:border-gray-700 mb-6">
             <nav class="-mb-px flex space-x-8" aria-label="LLM Settings Tabs">
               <button
-                onclick="switchLLMSettingsTab('providers')"
+                onclick="Admin.switchLLMSettingsTab('providers')"
                 id="llm-settings-tab-providers"
                 class="llm-settings-tab border-b-2 border-indigo-500 py-4 px-1 text-sm font-medium text-indigo-600 dark:text-indigo-400"
               >
@@ -2022,7 +2004,7 @@
                 Providers
               </button>
               <button
-                onclick="switchLLMSettingsTab('models')"
+                onclick="Admin.switchLLMSettingsTab('models')"
                 id="llm-settings-tab-models"
                 class="llm-settings-tab border-b-2 border-transparent py-4 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
@@ -2032,7 +2014,7 @@
                 Models
               </button>
               <button
-                onclick="switchLLMSettingsTab('test')"
+                onclick="Admin.switchLLMSettingsTab('test')"
                 id="llm-settings-tab-test"
                 class="llm-settings-tab border-b-2 border-transparent py-4 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
@@ -2102,7 +2084,7 @@
         <!-- Add/Edit Provider Modal -->
         <div id="llm-provider-modal" class="fixed inset-0 z-40 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMProviderModal()"></div>
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="Admin.closeLLMProviderModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
             <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
               <form id="llm-provider-form" onsubmit="saveLLMProvider(event)">
@@ -2119,7 +2101,7 @@
                       </div>
                       <div>
                         <label for="llm-provider-type" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Provider Type *</label>
-                        <select id="llm-provider-type" name="provider_type" required onchange="onLLMProviderTypeChange()" class="mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
+                        <select id="llm-provider-type" name="provider_type" required onchange="Admin.onLLMProviderTypeChange()" class="mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
                           <option value="">Select provider type</option>
                           <option value="openai">OpenAI</option>
                           <option value="azure_openai">Azure OpenAI</option>
@@ -2188,7 +2170,7 @@
                   <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm">
                     Save Provider
                   </button>
-                  <button type="button" onclick="closeLLMProviderModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:bg-gray-600 dark:text-gray-200 dark:border-gray-500 dark:hover:bg-gray-500">
+                  <button type="button" onclick="Admin.closeLLMProviderModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:bg-gray-600 dark:text-gray-200 dark:border-gray-500 dark:hover:bg-gray-500">
                     Cancel
                   </button>
                 </div>
@@ -2200,7 +2182,7 @@
         <!-- Add/Edit Model Modal -->
         <div id="llm-model-modal" class="fixed inset-0 z-40 hidden overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
           <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeLLMModelModal()"></div>
+            <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="Admin.closeLLMModelModal()"></div>
             <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
             <div class="relative z-20 inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg text-left overflow-visible shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
               <form id="llm-model-form" onsubmit="saveLLMModel(event)">
@@ -2213,7 +2195,7 @@
                     <div class="grid grid-cols-2 gap-4">
                       <div>
                         <label for="llm-model-provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Provider *</label>
-                        <select id="llm-model-provider" name="provider_id" required onchange="onModelProviderChange()" class="mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
+                        <select id="llm-model-provider" name="provider_id" required onchange="Admin.onModelProviderChange()" class="mt-1 px-3 py-2 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
                           <option value="">Select provider</option>
                         </select>
                       </div>
@@ -2221,8 +2203,8 @@
                         <label for="llm-model-model-id" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Model ID *</label>
                         <div class="relative" id="llm-model-combobox-container">
                           <div class="flex mt-1">
-                            <input type="text" id="llm-model-model-id" name="model_id" required autocomplete="off" role="combobox" aria-expanded="false" aria-controls="llm-model-dropdown" aria-autocomplete="list" class="px-3 py-2 block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first..." oninput="llmModelComboboxFilter(this.value)" onfocus="llmModelComboboxOpen()" onclick="llmModelComboboxOpen()" onblur="setTimeout(llmModelComboboxClose, 150)" onkeydown="llmModelComboboxKeydown(event)">
-                            <button type="button" onclick="fetchModelsForModelModal()" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-gray-600 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-500" title="Fetch available models">
+                            <input type="text" id="llm-model-model-id" name="model_id" required autocomplete="off" role="combobox" aria-expanded="false" aria-controls="llm-model-dropdown" aria-autocomplete="list" class="px-3 py-2 block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first..." oninput="Admin.llmModelComboboxFilter(this.value)" onfocus="Admin.llmModelComboboxOpen()" onclick="Admin.llmModelComboboxOpen()" onblur="setTimeout(Admin.llmModelComboboxClose, 150)" onkeydown="Admin.llmModelComboboxKeydown(event)">
+                            <button type="button" onclick="Admin.fetchModelsForModelModal()" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-gray-600 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-500" title="Fetch available models">
                               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                               </svg>
@@ -2299,7 +2281,7 @@
                   <button type="submit" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:ml-3 sm:w-auto sm:text-sm">
                     Save Model
                   </button>
-                  <button type="button" onclick="closeLLMModelModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:bg-gray-600 dark:text-gray-200 dark:border-gray-500 dark:hover:bg-gray-500">
+                  <button type="button" onclick="Admin.closeLLMModelModal()" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:bg-gray-600 dark:text-gray-200 dark:border-gray-500 dark:hover:bg-gray-500">
                     Cancel
                   </button>
                 </div>
@@ -2342,7 +2324,7 @@
                 <span id="modal-server-name"></span> requires an API key to
                 connect.
               </p>
-              <form id="api-key-form" onsubmit="submitApiKeyForm(event)">
+              <form id="api-key-form" onsubmit="Admin.submitApiKeyForm(event)">
                 <input type="hidden" id="modal-server-id" />
                 <div class="mb-4">
                   <label class="block text-sm font-medium text-gray-700 mb-2">
@@ -2371,7 +2353,7 @@
                 <div class="flex justify-end gap-2">
                   <button
                     type="button"
-                    onclick="closeApiKeyModal()"
+                    onclick="Admin.closeApiKeyModal()"
                     class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
                   >
                     Cancel
@@ -2445,14 +2427,14 @@
                   data-testid="search-input"
                   placeholder="Search servers..."
                   class="w-64 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                  oninput="filterServerTable(this.value)"
+                  oninput="Admin.filterServerTable(this.value)"
                 />
               </div>
 
               <!-- Clear Button -->
               <button
                 id="catalog-clear-search"
-                onclick="clearSearch('catalog')"
+                onclick="Admin.clearSearch('catalog')"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -2767,14 +2749,14 @@
                     <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
-                        onclick="viewServer({{ server.id|tojson_attr }})"
+                        onclick="Admin.viewServer({{ server.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View server details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editServer({{ server.id|tojson_attr }})"
+                        onclick="Admin.editServer({{ server.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit server settings and configuration'"
                       >
@@ -2783,7 +2765,7 @@
 
                       <!-- Row 2: Export Config -->
                       <button
-                        onclick="showConfigSelectionModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
+                        onclick="Admin.showConfigSelectionModal({{ server.id|tojson_attr }}, {{ server.name|tojson_attr }})"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Generate client configuration files for this server'"
                       >
@@ -2797,7 +2779,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/state"
                           class="contents"
-                          onsubmit="return handleToggleSubmit(event, 'servers')"
+                          onsubmit="return Admin.handleToggleSubmit(event, 'servers')"
                         >
                           <input type="hidden" name="activate" value="false" />
                           <button
@@ -2813,7 +2795,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/state"
                           class="contents"
-                          onsubmit="return handleToggleSubmit(event, 'servers')"
+                          onsubmit="return Admin.handleToggleSubmit(event, 'servers')"
                         >
                           <input type="hidden" name="activate" value="true" />
                           <button
@@ -2829,7 +2811,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
                           class="contents"
-                          onsubmit="return handleDeleteSubmit(event, 'server', {{ server.name|tojson_attr }}, 'servers')"
+                          onsubmit="return Admin.handleDeleteSubmit(event, 'server', {{ server.name|tojson_attr }}, 'servers')"
                         >
                           <button
                             type="submit"
@@ -2856,7 +2838,7 @@
           <form
             method="POST"
             id="add-server-form"
-            onreset="document.getElementById('associatedTools').selectedIndex = -1;"
+            onreset="Admin.safeGetElement('associatedTools').selectedIndex = -1;"
           >
             <div class="grid grid-cols-1 gap-7">
               <div>
@@ -3013,7 +2995,7 @@
                     hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
-                    hx-on::after-swap="initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
+                    hx-on::after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
                   >
                     <!-- Tools will be loaded via HTMX -->
                     <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3085,7 +3067,7 @@
                   hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on::after-swap="initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
+                  hx-on::after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
                 >
                   <!-- Resources will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3152,7 +3134,7 @@
                   hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on::after-swap="initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
+                  hx-on::after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
                 >
                   <!-- Prompts will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -3317,7 +3299,7 @@
                   name="oauth_enabled"
                   id="server-oauth-enabled"
                   class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                  onchange="document.getElementById('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                  onchange="Admin.safeGetElement('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
                 />
                 <label
                   for="server-oauth-enabled"
@@ -3471,7 +3453,7 @@
               </div>
               <button
                 id="tools-clear-search"
-                onclick="clearSearch('tools')"
+                onclick="Admin.clearSearch('tools')"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -3732,7 +3714,7 @@
                       />
                       <div
                         id="dropdown-file-drop-zone"
-                        onclick="document.getElementById('dropdown-file-input').click()"
+                        onclick="Admin.safeGetElement('dropdown-file-input').click()"
                         class="cursor-pointer"
                       >
                         <svg
@@ -3914,7 +3896,7 @@
                   id="integrationType"
                   name="integrationType"
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                  onchange="updateRequestTypeOptions()"
+                  onchange="Admin.updateRequestTypeOptions()"
                 >
                   <option value="REST">REST</option>
                 </select>
@@ -4083,7 +4065,7 @@
                     </label>
                     <button
                       type="button"
-                      onclick="addAuthHeader('auth-headers-container')"
+                      onclick="Admin.addAuthHeader('auth-headers-container')"
                       class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                       <svg
@@ -4491,7 +4473,7 @@
               </div>
               <button
                 id="resources-clear-search"
-                onclick="clearSearch('resources')"
+                onclick="Admin.clearSearch('resources')"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -4743,7 +4725,7 @@
               </div>
               <button
                 id="prompts-clear-search"
-                onclick="clearSearch('prompts')"
+                onclick="Admin.clearSearch('prompts')"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -5034,7 +5016,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <button
                 id="gateways-clear-search"
-                onclick="clearSearch('gateways')"
+                onclick="Admin.clearSearch('gateways')"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -5313,7 +5295,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: Test -->
                       <button
-                        onclick="testGateway({{ gateway.url|tojson_attr }})"
+                        onclick="Admin.testGateway({{ gateway.url|tojson_attr }})"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Test connection to this MCP Server'"
                       >
@@ -5330,7 +5312,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         🔐 Authorize
                       </a>
                       <button
-                        onclick="fetchToolsForGateway({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }})"
+                        onclick="Admin.fetchToolsForGateway({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }})"
                         class="flex items-center justify-center px-1 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'🔧 Fetch Tools from MCP Server'"
                         id="fetch-tools-{{ gateway.id }}"
@@ -5340,14 +5322,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                       <!-- Row 3: View | Edit -->
                       <button
-                        onclick="viewGateway({{ gateway.id|tojson_attr }})"
+                        onclick="Admin.viewGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editGateway({{ gateway.id|tojson_attr }})"
+                        onclick="Admin.editGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit gateway settings and configuration'"
                       >
@@ -5356,14 +5338,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       {% else %}
                       <!-- Row 2: View | Edit (for non-OAuth) -->
                       <button
-                        onclick="viewGateway({{ gateway.id|tojson_attr }})"
+                        onclick="Admin.viewGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View gateway details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editGateway({{ gateway.id|tojson_attr }})"
+                        onclick="Admin.editGateway({{ gateway.id|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit gateway settings and configuration'"
                       >
@@ -5378,7 +5360,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
-                          onsubmit="return handleToggleSubmit(event, 'gateways')"
+                          onsubmit="return Admin.handleToggleSubmit(event, 'gateways')"
                         >
                           <input type="hidden" name="activate" value="false" />
                           <button
@@ -5394,7 +5376,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
-                          onsubmit="return handleToggleSubmit(event, 'gateways')"
+                          onsubmit="return Admin.handleToggleSubmit(event, 'gateways')"
                         >
                           <input type="hidden" name="activate" value="true" />
                           <button
@@ -5410,7 +5392,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete"
                           class="contents"
-                          onsubmit="return handleSubmitWithConfirmation(event, 'gateways')"
+                          onsubmit="return Admin.handleSubmitWithConfirmation(event, 'gateways')"
                         >
                           <button
                             type="submit"
@@ -5674,7 +5656,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </label>
                     <button
                       type="button"
-                      onclick="addAuthHeader('auth-headers-container-gw')"
+                      onclick="Admin.addAuthHeader('auth-headers-container-gw')"
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                       <svg
@@ -6044,14 +6026,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 id="upload-ca-certificate"
                 name="ca_certificates[]"
                 class="hidden"
-                onchange="validateCACertFiles(event)"
+                onchange="Admin.validateCACertFiles(event)"
                 accept=".pem,.crt,.cer,.cert,application/x-x509-ca-certificate"
                 multiple
               />
               <div
                 id="ca-certificate-upload-drop-zone"
                 class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-gray-400 dark:hover:border-gray-500 cursor-pointer"
-                onclick="document.getElementById('upload-ca-certificate').click()"
+                onclick="Admin.safeGetElement('upload-ca-certificate').click()"
               >
                 <div class="space-y-2">
                   <svg
@@ -6142,33 +6124,33 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   id="team-search"
                   placeholder="Find teams..."
                   class="block w-full px-3 py-2 border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                  oninput="serverSideTeamSearch(this.value)"
+                  oninput="Admin.serverSideTeamSearch(this.value)"
                 />
               </div>
               <div class="flex gap-2">
                 <button
-                  onclick="filterByRelationship('all')"
+                  onclick="Admin.filterByRelationship('all')"
                   class="filter-btn active px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="all"
                 >
                   All Teams
                 </button>
                 <button
-                  onclick="filterByRelationship('owner')"
+                  onclick="Admin.filterByRelationship('owner')"
                   class="filter-btn px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="owner"
                 >
                   I Own
                 </button>
                 <button
-                  onclick="filterByRelationship('member')"
+                  onclick="Admin.filterByRelationship('member')"
                   class="filter-btn px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="member"
                 >
                   I'm a Member
                 </button>
                 <button
-                  onclick="filterByRelationship('public')"
+                  onclick="Admin.filterByRelationship('public')"
                   class="filter-btn px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="public"
                 >
@@ -6705,7 +6687,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <button
                 id="tokens-clear-search"
-                onclick="clearSearch('tokens')"
+                onclick="Admin.clearSearch('tokens')"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -6838,7 +6820,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <button
                 id="a2a-agents-clear-search"
-                onclick="clearSearch('a2a-agents')"
+                onclick="Admin.clearSearch('a2a-agents')"
                 class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -7065,7 +7047,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </label>
                     <button
                       type="button"
-                      onclick="addAuthHeader('auth-headers-container-a2a')"
+                      onclick="Admin.addAuthHeader('auth-headers-container-a2a')"
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                       <svg
@@ -7652,7 +7634,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   id="grpc-tls-enabled"
                   name="tls_enabled"
                   class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                  onchange="toggleGrpcTlsFields()"
+                  onchange="Admin.toggleGrpcTlsFields()"
                 />
                 <label
                   for="grpc-tls-enabled"
@@ -7833,7 +7815,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </button>
                     </form>
                     <button
-                      onclick="viewGrpcMethods({{ service.id|tojson_attr }})"
+                      onclick="Admin.viewGrpcMethods({{ service.id|tojson_attr }})"
                       class="px-3 py-1 text-sm font-medium bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200"
                     >
                       View Methods
@@ -7927,14 +7909,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <div class="grid grid-cols-2 gap-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
-                        onclick="viewRoot({{ root.uri|tojson_attr }})"
+                        onclick="Admin.viewRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
                         x-tooltip="'💡View root directory details and configuration'"
                       >
                         View
                       </button>
                       <button
-                        onclick="editRoot({{ root.uri|tojson_attr }})"
+                        onclick="Admin.editRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
                         x-tooltip="'💡Edit root directory settings and configuration'"
                       >
@@ -7943,7 +7925,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                       <!-- Row 2: Export | Delete -->
                       <button
-                        onclick="exportRoot({{ root.uri|tojson_attr }})"
+                        onclick="Admin.exportRoot({{ root.uri|tojson_attr }})"
                         class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Export root directory configuration'"
                       >
@@ -7953,7 +7935,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         method="POST"
                         action="{{ root_path }}/admin/roots/{{ root.uri }}/delete"
                         class="contents"
-                        onsubmit="return handleSubmitWithConfirmation(event, 'roots')"
+                        onsubmit="return Admin.handleSubmitWithConfirmation(event, 'roots')"
                       >
                         <button
                           type="submit"
@@ -7981,7 +7963,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             method="POST"
             action="{{ root_path }}/admin/roots"
             id="add-root-form"
-            onsubmit="return handleToggleSubmit(event, 'roots')"
+            onsubmit="return Admin.handleToggleSubmit(event, 'roots')"
           >
             <div class="grid grid-cols-1 gap-7">
               <div>
@@ -8069,28 +8051,28 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="border-b border-gray-200 dark:border-gray-700 mb-4">
             <nav class="-mb-px flex space-x-8" aria-label="Top Performers Tabs">
               <button
-                onclick="switchTopPerformersTab('tools')"
+                onclick="Admin.switchTopPerformersTab('tools')"
                 id="top-performers-tab-tools"
                 class="top-performers-tab border-b-2 border-indigo-500 py-2 px-1 text-sm font-medium text-indigo-600 dark:text-indigo-400"
               >
                 Tools
               </button>
               <button
-                onclick="switchTopPerformersTab('resources')"
+                onclick="Admin.switchTopPerformersTab('resources')"
                 id="top-performers-tab-resources"
                 class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
                 Resources
               </button>
               <button
-                onclick="switchTopPerformersTab('prompts')"
+                onclick="Admin.switchTopPerformersTab('prompts')"
                 id="top-performers-tab-prompts"
                 class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
                 Prompts
               </button>
               <button
-                onclick="switchTopPerformersTab('servers')"
+                onclick="Admin.switchTopPerformersTab('servers')"
                 id="top-performers-tab-servers"
                 class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
               >
@@ -8204,7 +8186,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             >
               <button
                 type="button"
-                onclick="closeModal('tool-modal')"
+                onclick="Admin.closeModal('tool-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -8275,14 +8257,14 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     <div class="flex justify-between mt-6">
       <button
         type="button"
-        onclick="generateTestCases()"
+        onclick="Admin.generateTestCases()"
         id="generate-btn"
         class="w-1/2 mr-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
       >
         Generate
       </button>
       <button
-          onclick="closeModal('testcase-gen-modal')"
+          onclick="Admin.closeModal('testcase-gen-modal')"
           class="w-1/2 ml-2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
         >
           Close
@@ -8353,7 +8335,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
     <div class="flex justify-between mt-6">
       <button
         type="button"
-        onclick="generateBulkTestCases()"
+        onclick="Admin.generateBulkTestCases()"
         id="bulk-generate-btn"
         class="w-1/2 mr-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
       >
@@ -8361,7 +8343,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </button>
       <button
         type="button"
-        onclick="closeModal('bulk-testcase-gen-modal');"
+        onclick="Admin.closeModal('bulk-testcase-gen-modal');"
           class="w-1/2 ml-2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
         >
           Close
@@ -8423,7 +8405,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       <!-- Close Button -->
       <div class="flex justify-center mt-6">
         <button
-          onclick="closeModal('description-view-modal')"
+          onclick="Admin.closeModal('description-view-modal')"
           type="button"
           id="close-description-view"
           class="w-1/2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
@@ -8447,7 +8429,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           Test Tool
         </h2>
         <button
-          onclick="closeModal('tool-validation-modal')"
+          onclick="Admin.closeModal('tool-validation-modal')"
           class="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
         >
           ✕
@@ -8465,7 +8447,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       ></div>
       <button
                 type="button"
-                onclick="closeModal('tool-validation-modal', 'tool-validation-result')"
+                onclick="Admin.closeModal('tool-validation-modal', 'tool-validation-result')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -8534,7 +8516,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 <div class="mt-4">
                   <button
                     type="button"
-                    onclick="runToolTest()"
+                    onclick="Admin.runToolTest()"
                     class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
                   >
                     Run Tool
@@ -8556,7 +8538,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('tool-test-modal', 'tool-test-result')"
+                onclick="Admin.closeModal('tool-test-modal', 'tool-test-result')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -8801,7 +8783,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         </label>
                         <button
                           type="button"
-                          onclick="addAuthHeader('edit-auth-headers-container')"
+                          onclick="Admin.addAuthHeader('edit-auth-headers-container')"
                           class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                         >
                           <svg
@@ -8907,7 +8889,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="closeModal('tool-edit-modal')"
+                      onclick="Admin.closeModal('tool-edit-modal')"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -8956,7 +8938,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('resource-modal')"
+                onclick="Admin.closeModal('resource-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -9003,7 +8985,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 <!-- Test Button -->
                 <button
                   type="button"
-                  onclick="runResourceTest()"
+                  onclick="Admin.runResourceTest()"
                   class="mt-4 inline-flex items-center px-3 py-2 border border-transparent
                         text-sm leading-4 font-medium rounded-md text-white
                         bg-indigo-600 hover:bg-indigo-700 focus:outline-none
@@ -9038,7 +9020,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('resource-test-modal')"
+                onclick="Admin.closeModal('resource-test-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border
                       border-gray-300 shadow-sm px-4 py-2 bg-white text-base
                       font-medium text-gray-700 hover:bg-gray-50
@@ -9228,7 +9210,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="closeModal('resource-edit-modal')"
+                      onclick="Admin.closeModal('resource-edit-modal')"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -9274,7 +9256,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('prompt-modal')"
+                onclick="Admin.closeModal('prompt-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -9453,7 +9435,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="closeModal('prompt-edit-modal')"
+                      onclick="Admin.closeModal('prompt-edit-modal')"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -9519,7 +9501,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     </h4>
                     <button
                       type="button"
-                      onclick="runPromptTest()"
+                      onclick="Admin.runPromptTest()"
                       class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                       Render Prompt
@@ -9568,7 +9550,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('prompt-test-modal')"
+                onclick="Admin.closeModal('prompt-test-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -9605,7 +9587,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('gateway-modal')"
+                onclick="Admin.closeModal('gateway-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -9706,7 +9688,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 id="gateway-test-content-type"
                 name="content_type"
                 class="mt-1 px-3 py-2 block w-full rounded-md shadow-sm p-1 bg-gray-200 dark:bg-gray-800"
-                onchange="updateBodyLabel()"
+                onchange="Admin.updateBodyLabel()"
               >
                 <option value="application/json">application/json</option>
                 <option value="application/x-www-form-urlencoded">application/x-www-form-urlencoded</option>
@@ -10021,7 +10003,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           </label>
                           <button
                             type="button"
-                            onclick="addAuthHeader('auth-headers-container-gw-edit')"
+                            onclick="Admin.addAuthHeader('auth-headers-container-gw-edit')"
                             class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                           >
                             <svg
@@ -10308,7 +10290,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="closeModal('gateway-edit-modal')"
+                      onclick="Admin.closeModal('gateway-edit-modal')"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -10460,7 +10442,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Headers</label>
                             <button
                               type="button"
-                              onclick="addAuthHeader('auth-headers-container-a2a-edit')"
+                              onclick="Admin.addAuthHeader('auth-headers-container-a2a-edit')"
                               class="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md
                                     text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             >
@@ -10836,7 +10818,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       <div class="mt-6 flex justify-end space-x-3">
                         <button
                           type="button"
-                          onclick="closeModal('a2a-edit-modal')"
+                          onclick="Admin.closeModal('a2a-edit-modal')"
                           class="px-4 py-2 border rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300"
                         >
                           Cancel
@@ -10885,7 +10867,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('server-modal')"
+                onclick="Admin.closeModal('server-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -11168,7 +11150,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
+                        hx-on::after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
                       >
                         <!-- Tools will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11243,7 +11225,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
+                        hx-on::after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
                       >
                         <!-- Resources will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11310,7 +11292,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
+                        hx-on::after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
                       >
                         <!-- Prompts will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11367,7 +11349,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       name="oauth_enabled"
                       id="edit-server-oauth-enabled"
                       class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      onchange="document.getElementById('edit-server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                      onchange="Admin.safeGetElement('edit-server-oauth-config-section').classList.toggle('hidden', !this.checked)"
                     />
                     <label
                       for="edit-server-oauth-enabled"
@@ -11440,7 +11422,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="closeModal('server-edit-modal')"
+                      onclick="Admin.closeModal('server-edit-modal')"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -11486,7 +11468,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('agent-modal')"
+                onclick="Admin.closeModal('agent-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -11600,7 +11582,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <div class="space-y-3">
                 <button
                   id="stdio-config-btn"
-                  onclick="generateAndShowConfig('stdio')"
+                  onclick="Admin.generateAndShowConfig('stdio')"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <span class="text-2xl mr-3">▶️</span>
@@ -11616,7 +11598,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
                 <button
                   id="sse-config-btn"
-                  onclick="generateAndShowConfig('sse')"
+                  onclick="Admin.generateAndShowConfig('sse')"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <span class="text-2xl mr-3">🌐</span>
@@ -11632,7 +11614,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
                 <button
                   id="http-config-btn"
-                  onclick="generateAndShowConfig('http')"
+                  onclick="Admin.generateAndShowConfig('http')"
                   class="w-full flex items-center p-4 text-left border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <span class="text-2xl mr-3">🔗</span>
@@ -11652,7 +11634,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('config-selection-modal')"
+                onclick="Admin.closeModal('config-selection-modal')"
                 class="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Cancel
@@ -11686,7 +11668,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   <span id="config-display-title">Client Configuration</span>
                 </h3>
                 <button
-                  onclick="copyConfigToClipboard()"
+                  onclick="Admin.copyConfigToClipboard()"
                   class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                   📋 Copy to Clipboard
@@ -11724,20 +11706,20 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse"
             >
               <button
-                onclick="downloadConfig()"
+                onclick="Admin.downloadConfig()"
                 class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:ml-3 sm:w-auto sm:text-sm"
               >
                 💾 Download JSON
               </button>
               <button
-                onclick="goBackToSelection()"
+                onclick="Admin.goBackToSelection()"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 ← Back
               </button>
               <button
                 type="button"
-                onclick="closeModal('config-display-modal')"
+                onclick="Admin.closeModal('config-display-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -11777,7 +11759,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('root-details-modal')"
+                onclick="Admin.closeModal('root-details-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -11844,7 +11826,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="closeModal('root-edit-modal')"
+                      onclick="Admin.closeModal('root-edit-modal')"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -11863,7 +11845,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
     <!-- Scripts -->
-    <script>
+    <script defer>
       // User creation form event handler
       document.addEventListener('DOMContentLoaded', function() {
         const createUserForm = document.getElementById('create-user-form');
@@ -11884,19 +11866,19 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       });
 
       // Build mapping objects using your existing tools, resources, and prompts arrays
-      window.toolMapping = {};
+      Admin.toolMapping = {};
       {% for tool in tools %}
-      window.toolMapping[{{ tool.id|tojson }}] = {{ tool.name|tojson }};
+      Admin.toolMapping[{{ tool.id|tojson }}] = {{ tool.name|tojson }};
       {% endfor %}
 
-      window.resourceMapping = {};
+      Admin.resourceMapping = {};
       {% for resource in resources %}
-      window.resourceMapping[{{ resource.id|tojson }}] = {{ resource.name|tojson }};
+      Admin.resourceMapping[{{ resource.id|tojson }}] = {{ resource.name|tojson }};
       {% endfor %}
 
-      window.promptMapping = {};
+      Admin.promptMapping = {};
       {% for prompt in prompts %}
-      window.promptMapping[{{ prompt.id|tojson }}] = {{ (prompt.displayName or prompt.originalName or prompt.name)|tojson }};
+      Admin.promptMapping[{{ prompt.id|tojson }}] = {{ (prompt.displayName or prompt.originalName or prompt.name)|tojson }};
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
@@ -11938,7 +11920,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const cleanUrl = new URL(window.location);
             cleanUrl.searchParams.delete('error');
             cleanUrl.searchParams.delete('success');
-            safeReplaceState({}, '', cleanUrl);
+            Admin.safeReplaceState({}, '', cleanUrl);
           }, 5000);
         }
       })();
@@ -11976,138 +11958,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       }
 
-      function reloadAllResourceSections(teamId) {
-        // delegate to the implementation in admin.js
-        if (window.reloadAllResourceSections) {
-          return window.reloadAllResourceSections(teamId);
-        } else {
-          console.warn('reloadAllResourceSections implementation not available.');
-        }
-      }
-
-      function updateSectionHeaders(teamId) {
-  const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways', 'a2a-agents'];
-
-        sections.forEach(section => {
-          const header = document.querySelector('#' + section + '-section h2');
-          if (header) {
-            // Remove existing team badge
-            const existingBadge = header.querySelector('.team-badge');
-            if (existingBadge) {
-              existingBadge.remove();
-            }
-
-            // Add team badge if team is selected
-            if (teamId && teamId !== '') {
-              const teamName = getTeamNameById(teamId);
-              if (teamName) {
-                const badge = document.createElement('span');
-                badge.className = 'team-badge inline-flex items-center px-2 py-1 ml-2 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full';
-                badge.textContent = teamName;
-                header.appendChild(badge);
-              }
-            }
-          }
-        });
-      }
-
-      function updateSectionDisplay(sectionType, items) {
-        const tbody = document.querySelector('#' + sectionType + '-section tbody');
-        if (!tbody) return;
-
-        // Clear existing rows
-        tbody.innerHTML = '';
-
-        // Add new rows
-        items.forEach(item => {
-          const row = createRowElement(sectionType, item);
-          tbody.appendChild(row);
-        });
-      }
-
-      function createRowElement(sectionType, item) {
-        const row = document.createElement('tr');
-        // XSS SAFETY: All user-provided data is escaped via escapeHtml() before being inserted into innerHTML.
-        // This pattern (escape then innerHTML) is safe as long as escapeHtml() is always called on untrusted data.
-        // DO NOT remove escapeHtml() calls - they prevent XSS attacks from malicious database content.
-
-
-        // Create row content based on section type
-        if (sectionType === 'tools') {
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || item.customName || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.url || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
-          `;
-        } else if (sectionType === 'resources') {
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.uri || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
-          `;
-        } else if (sectionType === 'prompts') {
-          const argsText = item.arguments ? item.arguments.map(arg => escapeHtml(arg.name)).join(', ') : '';
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${argsText}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
-          `;
-        } else if (sectionType === 'servers') {
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
-          `;
-        } else if (sectionType === 'gateways') {
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.host || '')}:${escapeHtml(item.port || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
-          `;
-        }
-
-        else if (sectionType === 'a2a-agents') {
-          // Build a row matching the table columns for A2A agents
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(item.id)}</td>
-            <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm font-medium text-gray-900 dark:text-gray-200">${escapeHtml(item.name || '')}</div>
-              <div class="text-sm text-gray-600 dark:text-gray-400">${escapeHtml(decodeHtml(item.description || ''))}</div>
-              <div class="mt-1">
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">${escapeHtml(item.ownerEmail || '')}</span>
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 ml-2">${escapeHtml(item.team || '')}</span>
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 ml-2">${escapeHtml((item.visibility || 'Private').charAt(0).toUpperCase() + (item.visibility || 'private').slice(1))}</span>
-              </div>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.endpointUrl || item.endpoint || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.agentType || item.type || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.enabled || item.isActive || item.is_active)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
-          `;
-        }
-
-        return row;
-      }
-
       function createTagsSpan(tags) {
         if (!tags || tags.length === 0) {
           return '<span class="text-gray-500 dark:text-gray-300 text-xs">None</span>';
@@ -12115,265 +11965,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         return tags.map(tag => `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">${escapeHtml(tag)}</span>`).join('');
       }
 
-      function createStatusSpan(isActive) {
-        if (isActive) {
-          return '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>';
-        } else {
-          return '<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>';
-        }
-      }
-
-      function createActionButtons(sectionType, item) {
-        // Map UI sectionType to backend path when needed (a2a-agents -> a2a)
-        const backendPath = sectionType === 'a2a-agents' ? 'a2a' : sectionType;
-
-        const isActiveFlag = item.isActive || item.enabled || item.is_active;
-        const activeButton = isActiveFlag ?
-          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/state" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
-            <input type="hidden" name="activate" value="false" />
-            <button type="submit" class="text-yellow-600 hover:text-yellow-900">Deactivate</button>
-          </form>` :
-          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/state" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
-            <input type="hidden" name="activate" value="true" />
-            <button type="submit" class="text-blue-600 hover:text-blue-900">Activate</button>
-          </form>`;
-
-        let buttons = activeButton;
-
-        // Add specific buttons based on section type
-        if (sectionType === 'tools') {
-          buttons += `<button onclick="invokeTool('${item.name}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">Invoke</button>`;
-        } else if (sectionType === 'prompts') {
-          buttons += `<button onclick="viewPrompt('${item.id}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">View</button>`;
-        } else if (sectionType === 'servers') {
-          buttons += `<button onclick="viewServer('${item.id}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">View</button>`;
-        } else if (sectionType === 'a2a-agents') {
-          // Add A2A-specific Edit and Test buttons
-          const agentName = item.name || '';
-          const endpoint = item.endpointUrl || item.endpoint || '';
-          buttons += `<button onclick="editA2AAgent('${item.id}')" class="text-green-600 hover:text-green-900 mr-2">Edit</button>`;
-          buttons += `<button onclick="testA2AAgent('${item.id}', '${escapeHtml(agentName)}', '${escapeHtml(endpoint)}')" class="text-blue-600 hover:text-blue-900 mr-2">Test</button>`;
-        }
-
-        // Show Edit/Delete buttons - check ownership, admin status, and team owner permissions
-        const itemOwner = item.owner_email || item.ownerEmail;
-        const isDirectOwner = itemOwner === window.CURRENT_USER;
-        const isPlatformAdmin = window.IS_ADMIN;
-
-        // Check if user is team owner for team-scoped resources
-        // Note: Check both team_id (snake_case) and teamId (camelCase from model_dump(by_alias=True))
-        let isTeamOwner = false;
-        const itemTeamId = item.team_id || item.teamId;
-        if (item.visibility === 'team' && itemTeamId && window.USER_TEAMS) {
-          const userTeam = window.USER_TEAMS.find(t => t.id === itemTeamId);
-          isTeamOwner = userTeam && userTeam.role === 'owner';
-        }
-
-        // User can edit if: platform admin, direct owner, or team owner for team resources
-        const canEdit = isPlatformAdmin || isDirectOwner || isTeamOwner;
-
-        // Edit button
-        const editDisabled = canEdit ? '' : 'disabled';
-        const editTitle = canEdit ? '' : 'title="You can only edit resources you own or resources in teams you manage"';
-        const editClass = canEdit ? 'text-green-600 hover:text-green-900' : 'text-gray-400 cursor-not-allowed';
-        // Edit button: special-case for a2a-agents to call editA2AAgent
-        let editOnclick;
-        if (sectionType === 'a2a-agents') {
-          editOnclick = canEdit ? `onclick="editA2AAgent('${item.id}')"` : 'onclick="return false;"';
-        } else {
-          editOnclick = canEdit ? `onclick="edit${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
-        }
-        buttons += `<button ${editDisabled} ${editTitle} ${editOnclick} class="${editClass} mr-2">Edit</button>`;
-
-        // Delete button
-        const deleteDisabled = canEdit ? '' : 'disabled';
-        const deleteTitle = canEdit ? '' : 'title="You can only delete resources you own or resources in teams you manage"';
-        const deleteClass = canEdit ? 'text-red-600 hover:text-red-900' : 'text-gray-400 cursor-not-allowed';
-        // Delete: use form POST for backend actions; for a2a map to backendPath
-        if (canEdit) {
-          buttons += `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/delete" class="inline" onsubmit="return confirm('Are you sure you want to delete this item?')"><button type="submit" class="text-red-600 hover:text-red-900">Delete</button></form>`;
-        } else {
-          buttons += `<button disabled title="You can only delete resources you own or resources in teams you manage" class="text-gray-400 cursor-not-allowed">Delete</button>`;
-        }
-
-        return buttons;
-      }
-
-
-
-      // Permission Management Functions
-      function refreshVisibilityRules() {
-        console.log('Refreshing visibility rules...');
-        const tableBody = document.getElementById('visibility-rules-table');
-
-        if (tableBody) {
-          tableBody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-sm text-gray-500 dark:text-gray-400">Resource visibility management is available in the main admin panels (Tools, Resources, Prompts, Servers, Gateways). Use the individual panels to modify resource visibility settings.</td></tr>';
-        }
-      }
-
-      function displayVisibilityRules(rules) {
-        const tableBody = document.getElementById('visibility-rules-table');
-
-        if (rules.length === 0) {
-          tableBody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-sm text-gray-500 dark:text-gray-400">No resources found</td></tr>';
-          return;
-        }
-
-        tableBody.innerHTML = '';
-        rules.forEach(rule => {
-          const row = document.createElement('tr');
-          const teamName = rule.team_id ? getTeamNameById(rule.team_id) || rule.team_id : 'None';
-
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${rule.name}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 capitalize">${rule.type}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${teamName}</td>
-            <td class="px-6 py-4 whitespace-nowrap">
-              <select class="text-xs px-2 py-1 rounded ${getVisibilityBadgeClass(rule.visibility)}" onchange="updateResourceVisibility('${rule.type}', '${rule.id}', this.value)">
-                <option value="private" ${rule.visibility === 'private' ? 'selected' : ''}>Private</option>
-                <option value="team" ${rule.visibility === 'team' ? 'selected' : ''}>Team</option>
-                <option value="public" ${rule.visibility === 'public' ? 'selected' : ''}>Public</option>
-              </select>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-              <button onclick="editResourcePermissions('${rule.type}', '${rule.id}')" class="text-indigo-600 hover:text-indigo-900 mr-2">Edit</button>
-            </td>
-          `;
-          tableBody.appendChild(row);
-        });
-      }
-
-      function getVisibilityBadgeClass(visibility) {
-        switch(visibility) {
-          case 'private': return 'bg-red-100 text-red-800';
-          case 'team': return 'bg-blue-100 text-blue-800';
-          case 'public': return 'bg-green-100 text-green-800';
-          default: return 'bg-gray-100 text-gray-800';
-        }
-      }
-
-      function updateResourceVisibility(type, id, visibility) {
-        console.log(`Updating ${type} ${id} visibility to ${visibility}`);
-        // TODO: Make API call to update resource visibility
-        alert(`Visibility update logged. ${type} ${id} → ${visibility}`);
-      }
-
-      function editResourcePermissions(type, id) {
-        console.log(`Editing permissions for ${type} ${id}`);
-        alert(`Permission editing for ${type} resources coming soon`);
-      }
-
-      function bulkUpdateVisibility() {
-        const visibility = prompt('Enter visibility level (private, team, public):');
-        if (!visibility || !['private', 'team', 'public'].includes(visibility.toLowerCase())) {
-          alert('Invalid visibility level. Please enter: private, team, or public');
-          return;
-        }
-
-        if (!confirm(`Are you sure you want to set ALL resources to ${visibility}? This will affect all tools, resources, prompts, servers, and gateways.`)) {
-          return;
-        }
-
-        console.log('Bulk updating all resources to visibility:', visibility);
-
-        // TODO: Implement actual bulk update API call
-        alert(`Bulk visibility update to "${visibility}" logged to console. API integration pending.`);
-
-        // Refresh the rules table to show changes
-        setTimeout(refreshVisibilityRules, 1000);
-      }
-
       {% if is_admin %}
-      function openInviteUserModal() {
-        console.log('Opening invite user modal...');
-
-        // Populate existing users dropdown
-        const userSelect = document.getElementById('invite-user-select');
-        userSelect.innerHTML = '<option value="">Select existing user...</option>';
-
-        // Load users from API
-        const headers = {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        };
-
-        // Add authentication if available
-        let token = null;
-        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
-        if (token) {
-          headers['Authorization'] = `Bearer ${token}`;
-        }
-
-        fetch(window.ROOT_PATH + '/admin/users?format=json', { headers })
-          .then(response => {
-            if (response.ok) {
-              return response.json();
-            }
-            throw new Error(`HTTP ${response.status}`);
-          })
-          .then(data => {
-            if (data.users && Array.isArray(data.users)) {
-              const activeUsers = data.users.filter(user => user.is_active);
-              activeUsers.forEach(user => {
-                const option = document.createElement('option');
-                option.value = user.email;
-                option.textContent = `${user.full_name || user.email} (${user.email})`;
-                userSelect.appendChild(option);
-              });
-            }
-          })
-          .catch(error => {
-            console.warn('Could not load users:', error);
-          });
-
-        // Populate teams dropdown
-        const teamSelect = document.getElementById('invite-team');
-        teamSelect.innerHTML = '<option value="">Select a team...</option>';
-
-        // Try to get teams data from multiple sources
-        let teamsData = [];
-
-        // Method 1: Direct access to global data (most reliable)
-        if (window.USER_TEAMS_DATA && Array.isArray(window.USER_TEAMS_DATA)) {
-          teamsData = window.USER_TEAMS_DATA;
-          console.log('Found teams in window.USER_TEAMS_DATA:', teamsData.length);
-        }
-        // Method 2: Alpine.js component (backup)
-        else {
-          console.log('Trying Alpine.js component...');
-          const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
-          if (teamSelector && teamSelector._x_dataStack && teamSelector._x_dataStack[0]) {
-            const alpineData = teamSelector._x_dataStack[0];
-            if (alpineData.teams && Array.isArray(alpineData.teams)) {
-              teamsData = alpineData.teams;
-              console.log('Found teams in Alpine.js:', teamsData.length);
-            }
-          }
-        }
-
-        // Populate the dropdown with found teams
-        if (teamsData.length > 0) {
-          teamsData.forEach(team => {
-            const option = document.createElement('option');
-            option.value = team.id;
-            option.textContent = team.name || `Team ${team.id}`;
-            teamSelect.appendChild(option);
-          });
-          console.log(`Populated ${teamsData.length} teams in invite modal`);
-        } else {
-          console.warn('No teams data found for invite modal');
-          // Add a message option to indicate the issue
-          const option = document.createElement('option');
-          option.value = '';
-          option.textContent = 'No teams available';
-          option.disabled = true;
-          teamSelect.appendChild(option);
-        }
-
-        // Show modal
-        document.getElementById('invite-user-modal').classList.remove('hidden');
-      }
-
       function closeInviteUserModal() {
         document.getElementById('invite-user-modal').classList.add('hidden');
         document.getElementById('invite-user-form').reset();
@@ -12523,7 +12115,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         // Add authentication if available
         let token = null;
-        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { Admin.logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -12646,173 +12238,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       }
 
       {% endif %}
-      function exportPermissions() {
-        console.log('Exporting permissions...');
-
-        // Collect all current permission data
-  const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways', 'a2a-agents'];
-        let exportData = {
-          export_date: new Date().toISOString(),
-          permissions: []
-        };
-
-        // Load and export current permissions
-        Promise.all(
-          sections.map(section =>
-            fetch(window.ROOT_PATH + '/admin/sections/' + section)
-              .then(response => response.json())
-              .catch(error => ({ [section]: [] }))
-          )
-        ).then(results => {
-          results.forEach((data, index) => {
-            const section = sections[index];
-            if (data[section]) {
-              data[section].forEach(item => {
-                exportData.permissions.push({
-                  id: item.id,
-                  name: item.name,
-                  type: section.slice(0, -1),
-                  team_id: item.team_id || null,
-                  visibility: item.visibility || 'private',
-                  owner_email: item.owner_email || null
-                });
-              });
-            }
-          });
-
-          // Create and download JSON file
-          const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `permissions-export-${new Date().toISOString().split('T')[0]}.json`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-
-          alert('Permissions exported successfully!');
-        });
-      }
-
-      function auditPermissions() {
-        console.log('Auditing permissions...');
-
-  const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways', 'a2a-agents'];
-        let auditResults = {
-          total_resources: 0,
-          private_resources: 0,
-          team_resources: 0,
-          public_resources: 0,
-          unassigned_resources: 0,
-          resource_breakdown: {}
-        };
-
-        Promise.all(
-          sections.map(section =>
-            fetch(window.ROOT_PATH + '/admin/sections/' + section)
-              .then(response => response.json())
-              .catch(error => ({ [section]: [] }))
-          )
-        ).then(results => {
-          results.forEach((data, index) => {
-            const section = sections[index];
-            const sectionType = section.slice(0, -1);
-            auditResults.resource_breakdown[sectionType] = {
-              total: 0,
-              private: 0,
-              team: 0,
-              public: 0,
-              unassigned: 0
-            };
-
-            if (data[section]) {
-              data[section].forEach(item => {
-                auditResults.total_resources++;
-                auditResults.resource_breakdown[sectionType].total++;
-
-                const visibility = item.visibility || 'private';
-                auditResults[visibility + '_resources']++;
-                auditResults.resource_breakdown[sectionType][visibility]++;
-
-                if (!item.team_id && !item.owner_email) {
-                  auditResults.unassigned_resources++;
-                  auditResults.resource_breakdown[sectionType].unassigned++;
-                }
-              });
-            }
-          });
-
-          // Display audit results
-          let auditHtml = `
-            <div style="background: white; padding: 20px; border-radius: 8px; max-width: 600px; margin: 20px auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-              <h3 style="margin-bottom: 15px; color: #333;">🔍 Permission Audit Results</h3>
-              <p><strong>Total Resources:</strong> ${auditResults.total_resources}</p>
-              <p><strong>Private:</strong> ${auditResults.private_resources} | <strong>Team:</strong> ${auditResults.team_resources} | <strong>Public:</strong> ${auditResults.public_resources}</p>
-              <p><strong>Unassigned:</strong> ${auditResults.unassigned_resources}</p>
-              <hr style="margin: 15px 0;">
-              <h4>Breakdown by Type:</h4>
-          `;
-
-          Object.entries(auditResults.resource_breakdown).forEach(([type, stats]) => {
-            auditHtml += `<p><strong>${type}:</strong> ${stats.total} (Private: ${stats.private}, Team: ${stats.team}, Public: ${stats.public})</p>`;
-          });
-
-          auditHtml += `</div>`;
-
-          const auditWindow = window.open('', '_blank', 'width=650,height=500');
-          auditWindow.document.write(`
-            <html><head><title>Permission Audit</title></head><body>
-            ${auditHtml}
-            <div style="text-align: center; margin-top: 20px;">
-              <button onclick="window.print()" style="padding: 10px 20px; background: #4F46E5; color: white; border: none; border-radius: 4px; cursor: pointer;">Print Report</button>
-              <button onclick="window.close()" style="padding: 10px 20px; background: #6B7280; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px;">Close</button>
-            </div>
-            </body></html>
-          `);
-        });
-      }
-
-      function makeAllResourcesPrivate() {
-        if (confirm('Are you sure you want to make all resources private? This will affect all users and restrict access to resource owners only.')) {
-          console.log('Making all resources private...');
-
-          // TODO: Implement actual API call to update all resources to private
-          alert('All resources set to private visibility. API integration pending - change logged to console.');
-
-          // Refresh the visibility rules to show changes
-          setTimeout(refreshVisibilityRules, 1000);
-        }
-      }
-
-      function makeTeamResourcesVisible() {
-        const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
-        let currentTeam = null;
-
-        if (teamSelector && teamSelector._x_dataStack && teamSelector._x_dataStack[0].selectedTeam) {
-          currentTeam = teamSelector._x_dataStack[0].selectedTeam;
-        }
-
-        if (!currentTeam) {
-          alert('Please select a team first using the team selector in the header.');
-          return;
-        }
-
-        if (confirm(`Make all resources visible to team "${teamSelector._x_dataStack[0].selectedTeamName}"? This will set team visibility for all resources.`)) {
-          console.log(`Making all resources visible to team: ${currentTeam}`);
-
-          // TODO: Implement actual API call to update resources to team visibility
-          alert(`All resources set to team visibility for selected team. API integration pending - change logged to console.`);
-
-          // Refresh the visibility rules to show changes
-          setTimeout(refreshVisibilityRules, 1000);
-        }
-      }
-
-
-      // Cleaned up - old functions removed
-
-      // addTagToFilter function moved to admin.js
 
       // Initialize tag suggestions when page loads - using functions from admin.js
       document.addEventListener('DOMContentLoaded', function() {
@@ -12973,7 +12398,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         try {
           // Use the same auth approach as other admin endpoints
           const headers = {};
-          const token = getAuthToken();
+          const token = Admin.getAuthToken();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -13024,7 +12449,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       async function showLogFiles() {
         try {
           const headers = {};
-          const token = getAuthToken();
+          const token = Admin.getAuthToken();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -13064,7 +12489,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           ${(file.size / 1024).toFixed(1)} KB - ${new Date(file.modified).toLocaleString()}
                         </div>
                       </div>
-                      <button onclick="downloadLogFile('${file.name}')"
+                      <button onclick="Admin.downloadLogFile('${file.name}')"
                               class="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
                         Download
                       </button>
@@ -13089,64 +12514,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       }
 
-      async function downloadLogFile(filename) {
-        try {
-          const headers = {};
-          const token = getAuthToken();
-          if (token) {
-            headers["Authorization"] = `Bearer ${token}`;
-          }
-
-          const response = await fetch(
-            `${window.ROOT_PATH || ""}/admin/logs/file?filename=${encodeURIComponent(filename)}`,
-            {
-              headers: headers,
-              credentials: "same-origin",
-            },
-          );
-
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.detail || `HTTP ${response.status}`);
-          }
-
-          const blob = await response.blob();
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          window.URL.revokeObjectURL(url);
-
-          // Close the modal if it exists
-          const modal = document.querySelector(".fixed.inset-0");
-          if (modal) modal.remove();
-
-          showSuccessMessage(`Downloaded: ${filename}`);
-        } catch (error) {
-          console.error("Error downloading log file:", error);
-          showErrorMessage(error.message || "Failed to download log file");
-        }
-      }
-
-      function previousLogPage() {
-        if (currentLogPage > 0) {
-          currentLogPage--;
-          refreshLogs();
-        }
-      }
-
-      function nextLogPage() {
-        currentLogPage++;
-        refreshLogs();
-      }
-
       function escapeHtml(text) {
         const div = document.createElement("div");
         div.textContent = text;
         return div.innerHTML;
+      }
+
+      /**
+       * Decode HTML entities back to their original characters.
+       * Used when populating form fields to prevent double-encoding.
+       * @param {string} html - The HTML-encoded string
+       * @returns {string} Decoded string
+       */
+      function decodeHtml(html) {
+          if (html === null || html === undefined) {
+              return "";
+          }
+          const txt = document.createElement("textarea");
+          txt.innerHTML = html;
+          return txt.value;
       }
 
       // Add event listeners for log filters
@@ -13161,7 +12547,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           if (element) {
             element.addEventListener("change", () => {
               currentLogPage = 0;
-              refreshLogs();
+              Admin.refreshLogs();
             });
 
             // For search input, debounce
@@ -13171,7 +12557,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 clearTimeout(timeout);
                 timeout = setTimeout(() => {
                   currentLogPage = 0;
-                  refreshLogs();
+                  Admin.refreshLogs();
                 }, 500);
               });
             }
@@ -13182,7 +12568,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const logsTab = document.getElementById("tab-logs");
         if (logsTab) {
           logsTab.addEventListener("click", () => {
-            setTimeout(refreshLogs, 100);
+            setTimeout(Admin.refreshLogs, 100);
           });
         }
 
@@ -14703,7 +14089,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="document.getElementById('team-edit-modal').classList.add('hidden')"
+          onclick="Admin.safeGetElement('team-edit-modal').classList.add('hidden')"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14729,7 +14115,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="document.getElementById('team-join-requests-modal').classList.add('hidden')"
+          onclick="Admin.safeGetElement('team-join-requests-modal').classList.add('hidden')"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14744,7 +14130,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               Team Join Requests
             </h3>
             <button
-              onclick="document.getElementById('team-join-requests-modal').classList.add('hidden')"
+              onclick="Admin.safeGetElement('team-join-requests-modal').classList.add('hidden')"
               class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
               <svg
@@ -15133,7 +14519,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const activeFilterBtn = document.querySelector('.filter-btn.active');
         const relationship = activeFilterBtn ? activeFilterBtn.getAttribute('data-filter') : 'all';
 
-        // Preserve current pagination state (use inline getPaginationParams)
+        // Preserve current pagination state (use inline Admin.getPaginationParams)
         const paginationState = getPaginationParams('teams');
         const params = new URLSearchParams();
         params.set('page', paginationState.page);
@@ -15182,7 +14568,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       });
 
       // NOTE: Select All / Clear All handlers for Resources and Prompts are now handled
-      // by initResourceSelect() and initPromptSelect() functions in admin.js.
+      // by Admin.initResourceSelect() and Admin.initPromptSelect() functions in admin.js.
       // Those functions properly fetch ALL IDs from the server and maintain state,
       // so items that load via pagination are also included in the selection.
       // The handlers are attached via HTMX's hx-on::after-swap attribute.

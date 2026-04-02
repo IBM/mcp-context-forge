@@ -19176,12 +19176,15 @@ class TestTemplateButtonGating:
 
     def test_admin_js_toggle_submit_injects_csrf_token(self):
         """handleToggleSubmit should inject CSRF token into the FormData before fetch()."""
-        admin_js_path = settings.static_dir / "admin.js"
-        admin_js = admin_js_path.read_text(encoding="utf-8")
+        # admin.js was modularised; the CSRF-injection logic now lives in the
+        # formHandlers module under mcpgateway/admin_ui/.  The bundle is minified
+        # so exact-string assertions must target the source module instead.
+        form_handlers_path = settings.static_dir.parent / "admin_ui" / "formHandlers.js"
+        form_handlers_js = form_handlers_path.read_text(encoding="utf-8")
         # handleToggleSubmit uses fetch() and injects the CSRF token directly
         # into FormData via getCookie rather than via the old DOM helper.
-        assert 'getCookie("mcpgateway_csrf_token")' in admin_js
-        assert 'formData.set("csrf_token", csrfToken)' in admin_js
+        assert 'getCookie("mcpgateway_csrf_token")' in form_handlers_js
+        assert 'formData.set("csrf_token", csrfToken)' in form_handlers_js
 
     def test_admin_modal_backdrops_disable_pointer_events(self):
         """Modal backdrop wrappers should not block interactions with modal buttons."""
@@ -21392,6 +21395,14 @@ class TestPaginationSwapStyle:
 
         templates_dir = str(Path(__file__).resolve().parents[3] / "mcpgateway" / "templates")
         env = Environment(loader=FileSystemLoader(templates_dir))
+
+        def tojson_attr(value: object) -> str:
+            import json as _json
+            s = _json.dumps(value)
+            s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
+            return s
+
+        env.filters["tojson_attr"] = tojson_attr
         template = env.get_template("pagination_controls.html")
         ctx = {
             "pagination": {
@@ -21412,14 +21423,14 @@ class TestPaginationSwapStyle:
         return template.render(**ctx)
 
     def test_default_swap_is_innerhtml(self):
-        """Without hx_swap set, swapStyle defaults to innerHTML."""
+        """Without hx_swap set, data-hx-swap defaults to innerHTML."""
         html = self._render_pagination_controls()
-        assert "swapStyle: 'innerHTML'" in html
+        assert 'data-hx-swap="innerHTML"' in html
 
     def test_outerhtml_swap_when_set(self):
-        """When hx_swap='outerHTML', swapStyle is outerHTML."""
+        """When hx_swap='outerHTML', data-hx-swap is outerHTML."""
         html = self._render_pagination_controls(hx_swap="outerHTML")
-        assert "swapStyle: 'outerHTML'" in html
+        assert 'data-hx-swap="outerHTML"' in html
 
     @pytest.mark.parametrize(
         "partial_template",

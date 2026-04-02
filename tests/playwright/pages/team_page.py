@@ -181,7 +181,7 @@ class TeamPage(BasePage):
                 self.page.wait_for_selector("#teams-loading.htmx-request", timeout=3000)
             except PlaywrightTimeoutError:
                 # Fallback: explicitly trigger server-side teams search refresh.
-                self.page.evaluate("window.serverSideTeamSearch && window.serverSideTeamSearch('')")
+                self.page.evaluate("window.Admin.serverSideTeamSearch && window.Admin.serverSideTeamSearch('')")
 
             self.page.wait_for_function(
                 "() => !document.querySelector('#teams-loading.htmx-request')",

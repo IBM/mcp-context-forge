@@ -5,6 +5,25 @@
 ###############################################################################
 ARG ENABLE_RUST=false
 
+###########################
+# Frontend builder stage
+###########################
+FROM node:lts-alpine AS frontend-builder
+WORKDIR /app
+
+# Copy package.json and package-lock.json
+COPY package.json package-lock.json ./
+
+# Install frontend dependencies
+RUN npm install --frozen-lockfile
+
+# Copy frontend source files
+COPY mcpgateway/admin_ui/ mcpgateway/admin_ui/
+COPY vite.config.js ./
+
+# Run Vite build (cleans old bundles and generates fresh manifest)
+RUN npm run vite:build
+
 FROM quay.io/pypa/manylinux2014:2026.03.06-3 AS rust-builder-base
 ARG ENABLE_RUST
 
@@ -86,6 +105,9 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 
 # Copy project files into container
 COPY . /app
+
+# Copy frontend build artifacts from frontend-builder stage
+COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
 
 # Copy Rust plugin wheels from builder (if any exist)
 COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/

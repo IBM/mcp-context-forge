@@ -12,162 +12,19 @@
 -->
 
 <div
+  x-data="Admin.paginationData()"
   data-base-url="{{ base_url }}"
-  data-extra-params="{{ query_params | default({}) | tojson | forceescape }}"
-  x-data="{
-  currentPage: {{ pagination.page }},
-  perPage: {{ pagination.per_page }},
-  totalItems: {{ pagination.total_items }},
-  totalPages: {{ pagination.total_pages }},
-  hasNext: {{ 'true' if pagination.has_next else 'false' }},
-  hasPrev: {{ 'true' if pagination.has_prev else 'false' }},
-  pageItems: {{ pagination.page_items if pagination.page_items is not none else 'null' }},
-  targetSelector: '{{ hx_target|default('#tools-table') }}',
-  swapStyle: '{{ hx_swap|default('innerHTML') }}',
-  tableName: '{{ table_name|default('') }}',
-  baseUrl: '',
-
-  init() {
-    this._rootEl = $el;
-    this.baseUrl = $el.dataset.baseUrl || '';
-    if (!this.tableName) return;
-    const urlParams = new URLSearchParams(window.location.search);
-    const prefix = this.tableName + '_';
-    const urlPageSize = parseInt(urlParams.get(prefix + 'size'), 10);
-    if (urlPageSize && [10, 25, 50, 100, 200, 500].includes(urlPageSize)) {
-      this.perPage = urlPageSize;
-    }
-  },
-
-  goToPage(page) {
-    if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
-      this.currentPage = page;
-      this.loadPage(page);
-    }
-  },
-
-  prevPage() {
-    if (this.hasPrev) {
-      this.goToPage(this.currentPage - 1);
-    }
-  },
-
-  nextPage() {
-    if (this.hasNext) {
-      this.goToPage(this.currentPage + 1);
-    }
-  },
-
-  changePageSize(size) {
-    this.perPage = parseInt(size, 10);
-    this.currentPage = 1;
-    this.loadPage(1);
-  },
-
-  updateBrowserUrl(page, includeInactive) {
-    if (!this.tableName) return;
-    const currentUrl = new URL(window.location.href);
-    const newParams = new URLSearchParams(currentUrl.searchParams);
-    const prefix = this.tableName + '_';
-
-    newParams.set(prefix + 'page', page);
-    newParams.set(prefix + 'size', this.perPage);
-    if (includeInactive !== undefined) {
-      newParams.set(prefix + 'inactive', includeInactive.toString());
-    }
-
-    const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-    safeReplaceState({}, '', newUrl);
-  },
-
-  loadPage(page) {
-    const url = new URL(this.baseUrl, window.location.origin);
-    url.searchParams.set('page', page);
-    url.searchParams.set('per_page', this.perPage);
-
-    let checkboxId = this.targetSelector
-      .replace('#', 'show-inactive-')
-      .replace(/-table-body$/, '')
-      .replace(/-table$/, '')
-      .replace(/-list-container$/, '');
-    if (checkboxId === 'show-inactive-agents') {
-      checkboxId = 'show-inactive-a2a-agents';
-    }
-    const checkbox = document.getElementById(checkboxId);
-    let includeInactive = undefined;
-    if (checkbox) {
-      includeInactive = checkbox.checked;
-      url.searchParams.set('include_inactive', includeInactive.toString());
-    }
-
-    // Preserve extra server-side query params (team_id, gateway_id, q, tags, etc.)
-    // Stored in a data attribute to avoid double-quote conflicts inside x-data.
-    const extraParams = JSON.parse(this._rootEl.dataset.extraParams || '{}');
-    Object.entries(extraParams).forEach(([k, v]) => {
-      if (k !== 'include_inactive' && v !== null && v !== undefined) {
-        url.searchParams.set(k, String(v));
-      }
-    });
-
-    // Read live search/tag filters: DOM inputs are primary (always current),
-    // URL params (written by updatePanelSearchStateInUrl) are fallback only
-    // when the DOM element is not found (bookmarked URL, restricted iframe,
-    // or search-input ID mismatch like catalog/a2a-agents).
-    const currentUrlParams = new URLSearchParams(window.location.search);
-    if (this.tableName) {
-      const searchInput = document.getElementById(this.tableName + '-search-input');
-      const tagInput = document.getElementById(this.tableName + '-tag-filter');
-
-      const livePrefix = this.tableName + '_';
-
-      // When the input element exists, trust its value even if empty (user
-      // may have intentionally cleared the filter).  Only fall back to URL
-      // params when the element itself is absent.
-      const finalQuery = searchInput !== null
-        ? searchInput.value.trim()
-        : (currentUrlParams.get(livePrefix + 'q') || '');
-      const finalTags = tagInput !== null
-        ? tagInput.value.trim()
-        : (currentUrlParams.get(livePrefix + 'tags') || '');
-
-      if (finalQuery) {
-        url.searchParams.set('q', finalQuery);
-      } else {
-        url.searchParams.delete('q');
-      }
-      if (finalTags) {
-        url.searchParams.set('tags', finalTags);
-      } else {
-        url.searchParams.delete('tags');
-      }
-    }
-
-    // Preserve team_id from current URL (if present) - this ensures team filter
-    // is maintained during pagination
-    const teamIdFromUrl = currentUrlParams.get('team_id');
-    if (teamIdFromUrl && !extraParams.team_id) {
-      url.searchParams.set('team_id', teamIdFromUrl);
-    }
-
-    this.updateBrowserUrl(page, includeInactive);
-
-    const targetElement = document.querySelector(this.targetSelector);
-    if (targetElement) {
-      const panel = targetElement.closest('.tab-panel, .bg-white, .shadow');
-      if (panel) {
-        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else {
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }
-
-    htmx.ajax('GET', url.toString(), {
-      target: this.targetSelector,
-      swap: this.swapStyle,
-      indicator: '{{ hx_indicator|default('#loading') }}'
-    });
-  }
-}"
+  data-current-page="{{ pagination.page }}"
+  data-per-page="{{ pagination.per_page }}"
+  data-total-items="{{ pagination.total_items }}"
+  data-total-pages="{{ pagination.total_pages }}"
+  data-has-next="{{ 'true' if pagination.has_next else 'false' }}"
+  data-has-prev="{{ 'true' if pagination.has_prev else 'false' }}"
+  data-hx-target="{{ hx_target | default('#tools-table') }}"
+  data-hx-swap="{{ hx_swap | default('innerHTML') }}"
+  data-table-name="{{ table_name | default('') }}"
+  data-hx-indicator="{{ hx_indicator | default('#loading') }}"
+  data-extra-params="{{ (query_params if query_params is defined and query_params else {}) | tojson_attr }}"
   class="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700"
 >
   <!-- Page Size Selector -->
@@ -319,27 +176,3 @@
     </span>
   </div>
 </div>
-
-<!-- Keyboard Navigation Support -->
-<script>
-  document.addEventListener("alpine:init", () => {
-    // Add keyboard shortcuts for pagination
-    document.addEventListener("keydown", (e) => {
-      // Only handle if not in an input field
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")
-        return;
-
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        // Trigger previous page - the Alpine.js component will check hasPrev
-        const prevBtn = document.querySelector('[\\@click="prevPage()"]');
-        if (prevBtn && !prevBtn.disabled) prevBtn.click();
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        // Trigger next page - the Alpine.js component will check hasNext
-        const nextBtn = document.querySelector('[\\@click="nextPage()"]');
-        if (nextBtn && !nextBtn.disabled) nextBtn.click();
-      }
-    });
-  });
-</script>

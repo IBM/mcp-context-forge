@@ -99,6 +99,26 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
 FROM rust-builder-base AS rust-builder
 
 ###########################
+# Frontend builder stage
+###########################
+FROM node:lts-alpine AS frontend-builder
+WORKDIR /app
+
+# Copy package.json and package-lock.json
+COPY package.json package-lock.json ./
+
+# Install frontend dependencies
+RUN npm install --frozen-lockfile
+
+# Copy frontend source files
+COPY mcpgateway/admin_ui/ mcpgateway/admin_ui/
+COPY vite.config.js ./
+
+# Run Vite build
+RUN npm run vite:build
+
+
+###########################
 # Builder stage
 ###########################
 FROM registry.access.redhat.com/ubi10/ubi:10.1-1772441712 AS builder
@@ -150,6 +170,12 @@ COPY pyproject.toml /app/
 # ----------------------------------------------------------------------------
 COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
 COPY --from=rust-builder /build/tools_rust/mcp_runtime/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
+
+# ----------------------------------------------------------------------------
+# Copy frontend build artifacts from frontend-builder stage
+# ----------------------------------------------------------------------------
+COPY --from=frontend-builder /app/mcpgateway/static/ /app/mcpgateway/static/
+
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment

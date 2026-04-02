@@ -52,7 +52,7 @@
               <button
                 type="button"
                 role="menuitem"
-                @click="menuOpen = false; testGateway({{ gateway.url|tojson_attr }})"
+                @click="menuOpen = false; Admin.testGateway({{ gateway.url|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Test</button>
 
@@ -72,7 +72,7 @@
                 type="button"
                 role="menuitem"
                 id="refresh-tools-{{ gateway.id }}"
-                @click="menuOpen = false; refreshGatewayTools({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }}, $event.currentTarget)"
+                @click="menuOpen = false; Admin.refreshGatewayTools({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }}, $event.currentTarget)"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                 x-tooltip="'{% if gateway.toolCount == 0 %}First-time fetch from MCP server{% else %}Re-fetch latest tools from MCP server{% endif %}'"
               >{% if gateway.toolCount == 0 %}Fetch Tools{% else %}Refresh Tools{% endif %}</button>
@@ -84,7 +84,7 @@
               <button
                 type="button"
                 role="menuitem"
-                @click="menuOpen = false; viewGateway({{ gateway.id|tojson_attr }})"
+                @click="menuOpen = false; Admin.viewGateway({{ gateway.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >View</button>
 
@@ -93,14 +93,14 @@
               <button
                 type="button"
                 role="menuitem"
-                @click="menuOpen = false; editGateway({{ gateway.id|tojson_attr }})"
+                @click="menuOpen = false; Admin.editGateway({{ gateway.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
 
               <hr class="border-gray-200 dark:border-gray-600 my-1">
 
               <!-- Activate / Deactivate -->
-              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'gateways')">
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'gateways')">
                 <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
                 <button
                   type="submit"
@@ -110,7 +110,7 @@
               </form>
 
               <!-- Delete -->
-              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'gateway', {{ gateway_label|tojson_attr }}, 'gateways')">
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return Admin.handleDeleteSubmit(event, 'gateway', {{ gateway_label|tojson_attr }}, 'gateways')">
                 <button
                   type="submit"
                   role="menuitem"
