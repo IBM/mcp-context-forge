@@ -3772,7 +3772,8 @@ class ToolService(BaseService):
                     if access_token:
                         headers = {"Authorization": f"Bearer {access_token}"}
                     else:
-                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+                        authorize_url = f"{str(settings.app_domain).rstrip('/')}{settings.app_root_path}/oauth/authorize/{gateway_id_str}"
+                        raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit {authorize_url} to complete OAuth flow.")
                 except Exception as e:
                     logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
@@ -4859,7 +4860,8 @@ class ToolService(BaseService):
                                     headers = {"Authorization": f"Bearer {access_token}"}
                                 else:
                                     # User hasn't authorized this gateway yet
-                                    raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit /oauth/authorize/{gateway_id_str} to complete OAuth flow.")
+                                    authorize_url = f"{str(settings.app_domain).rstrip('/')}{settings.app_root_path}/oauth/authorize/{gateway_id_str}"
+                                    raise ToolInvocationError(f"Please authorize {gateway_name} first. Visit {authorize_url} to complete OAuth flow.")
                             except Exception as e:
                                 logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
