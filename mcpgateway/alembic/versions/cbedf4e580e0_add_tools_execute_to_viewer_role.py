@@ -2,7 +2,7 @@
 """Add tools.execute permission to team-scoped viewer role.
 
 Revision ID: cbedf4e580e0
-Revises: 615af4ab94b4
+Revises: a7f3c9e1b2d4
 Create Date: 2026-03-27 09:27:13.137867
 
 Backfills the tools.execute permission into the team-scoped viewer role
@@ -25,7 +25,7 @@ from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "cbedf4e580e0"
-down_revision: Union[str, Sequence[str], None] = "615af4ab94b4"
+down_revision: Union[str, Sequence[str], None] = "a7f3c9e1b2d4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
