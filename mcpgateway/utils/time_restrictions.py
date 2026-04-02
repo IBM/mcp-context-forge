@@ -115,7 +115,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
             detail="Token has invalid time restriction format: timezone must be a string",
         )
 
-    if not isinstance(allowed_days, list):
+    if not isinstance(allowed_days, list) or not all(isinstance(d, str) for d in allowed_days):
         logger.warning(
             "Invalid type for days in time_restrictions",
             extra={
@@ -126,7 +126,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token has invalid time restriction format: days must be a list",
+            detail="Token has invalid time restriction format: days must be a list of strings",
         )
 
     # SECURITY: Fail closed on half-configured time windows.

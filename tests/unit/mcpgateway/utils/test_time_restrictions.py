@@ -368,7 +368,7 @@ class TestValidateTimeRestrictions:
             validate_time_restrictions(payload)
 
         assert exc_info.value.status_code == 403
-        assert "days must be a list" in exc_info.value.detail
+        assert "days must be a list of strings" in exc_info.value.detail
 
     def test_int_days_denies(self):
         """Test that integer days is rejected."""
@@ -378,7 +378,27 @@ class TestValidateTimeRestrictions:
             validate_time_restrictions(payload)
 
         assert exc_info.value.status_code == 403
-        assert "days must be a list" in exc_info.value.detail
+        assert "days must be a list of strings" in exc_info.value.detail
+
+    def test_non_string_entries_in_days_denies(self):
+        """Test that non-string entries inside days list are rejected (fail-closed)."""
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "09:00", "end_time": "17:00", "timezone": "UTC", "days": [123, None]}}}
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "days must be a list of strings" in exc_info.value.detail
+
+    def test_mixed_valid_and_invalid_type_in_days_denies(self):
+        """Test that a mix of strings and non-strings in days is rejected."""
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "09:00", "end_time": "17:00", "timezone": "UTC", "days": ["Monday", 123]}}}
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "days must be a list of strings" in exc_info.value.detail
 
     # --- Overnight window + days semantics ---
 
