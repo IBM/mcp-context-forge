@@ -22,22 +22,22 @@ global:
 
 # --- Gateway ---
 mcpContextForge:
-  replicaCount: 4                          # start with 4, HPA scales up to 10
+  replicaCount: 3                          # 3 replicas × 8 CPU = 24 CPU (matches benchmark)
 
   hpa:
     enabled: true
-    minReplicas: 4
+    minReplicas: 3
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
 
   resources:
     limits:
+      cpu: "8"
+      memory: 8Gi
+    requests:
       cpu: "4"
       memory: 4Gi
-    requests:
-      cpu: "1"
-      memory: 1Gi
 
   pluginConfig:
     enabled: false                         # disabled for benchmark
@@ -234,6 +234,7 @@ mcpContextForge:
   config:
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"    # needed for in-cluster MCP server registration
     LOG_LEVEL: INFO
+    GUNICORN_WORKERS: "4"                  # match CPU cores for throughput
 
   secret:
     JWT_SECRET_KEY: "gp-context-forge-jwt-secret-key-longer-than-32-bytes"
@@ -265,6 +266,13 @@ redis:
   image:
     repository: docker.io/library/redis
     tag: 7-alpine
+  resources:
+    limits:
+      cpu: "2"
+      memory: 2Gi
+    requests:
+      cpu: "1"
+      memory: 1Gi
   persistence:
     enabled: true
     size: 1Gi
@@ -276,6 +284,13 @@ nginxProxy:
   image:
     repository: docker.io/nginxinc/nginx-unprivileged
     tag: alpine
+  resources:
+    limits:
+      cpu: "4"
+      memory: 1Gi
+    requests:
+      cpu: "2"
+      memory: 512Mi
   containerPort: 8080                      # nginx-unprivileged listens on 8080
   persistence:
     enabled: false                         # no PV needed for cache
