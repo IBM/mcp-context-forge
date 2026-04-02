@@ -4396,15 +4396,16 @@ class ToolService(BaseService):
                                     pass
 
                             if use_pool and pool is not None:
-                                # Pooled path: Inject trace context into headers before pooling
-                                # The pool pins headers at transport creation, so trace propagation
-                                # must happen before calling pool.session()
-                                pooled_headers = inject_trace_context_headers(headers)
-                                if correlation_id and pooled_headers:
-                                    pooled_headers["X-Correlation-ID"] = correlation_id
+                                # Pooled path: do NOT inject per-request trace headers
+                                # The pool reuses transports with pinned headers, so injecting
+                                # traceparent/X-Correlation-ID would cause the first request's
+                                # trace context to be replayed on later unrelated requests,
+                                # corrupting distributed traces and leaking correlation IDs.
+                                # Trade-off: pooled sessions gain 10-20x latency improvement
+                                # but lose distributed trace propagation to upstream servers.
                                 async with pool.session(
                                     url=server_url,
-                                    headers=pooled_headers,
+                                    headers=headers,
                                     transport_type=TransportType.SSE,
                                     httpx_client_factory=get_httpx_client_factory,
                                     user_identity=app_user_email,
@@ -4577,17 +4578,18 @@ class ToolService(BaseService):
                                     pass
 
                             if use_pool and pool is not None:
-                                # Pooled path: Inject trace context into headers before pooling
-                                # The pool pins headers at transport creation, so trace propagation
-                                # must happen before calling pool.session()
-                                pooled_headers = inject_trace_context_headers(headers)
-                                if correlation_id and pooled_headers:
-                                    pooled_headers["X-Correlation-ID"] = correlation_id
+                                # Pooled path: do NOT inject per-request trace headers
+                                # The pool reuses transports with pinned headers, so injecting
+                                # traceparent/X-Correlation-ID would cause the first request's
+                                # trace context to be replayed on later unrelated requests,
+                                # corrupting distributed traces and leaking correlation IDs.
+                                # Trade-off: pooled sessions gain 10-20x latency improvement
+                                # but lose distributed trace propagation to upstream servers.
                                 # Determine transport type based on current transport setting
                                 pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
                                 async with pool.session(
                                     url=server_url,
-                                    headers=pooled_headers,
+                                    headers=headers,
                                     transport_type=pool_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
                                     user_identity=app_user_email,

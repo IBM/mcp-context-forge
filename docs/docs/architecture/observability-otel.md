@@ -41,7 +41,7 @@ http.request (root span)
 
 ```bash
 # Enable OTEL tracing
-OBSERVABILITY_ENABLED=true
+OTEL_ENABLE_OBSERVABILITY=true
 
 # Exporter configuration
 OTEL_EXPORTER_TYPE=otlp                           # otlp, jaeger, zipkin, console
@@ -107,37 +107,61 @@ This ensures:
 
 ## Session Pooling with Tracing
 
-### Design Decision
+### Design Decision and Trade-off
 
-**Previous Behavior (Incorrect):**
+**Current Behavior:**
 ```python
-# Session pool was disabled during tracing
-if settings.mcp_session_pool_enabled and not tracing_active:
-    use_pool = True
-```
-
-**Current Behavior (Correct):**
-```python
-# Session pool works with tracing
+# Session pool enabled, but trace headers NOT injected
 if settings.mcp_session_pool_enabled:
-    pooled_headers = inject_trace_context_headers(headers)
-    async with pool.session(url=server_url, headers=pooled_headers) as pooled:
-        # Trace context flows through pooled session
+    # Use base headers without trace context injection
+    async with pool.session(url=server_url, headers=headers) as pooled:
+        # Pool provides 10-20x latency improvement
+        # But trace context does NOT propagate to upstream
 ```
 
-### Why This Matters
+### Why Trace Headers Are Not Injected
 
-1. **Performance**: Session pooling provides 10-20x latency improvement
-2. **Trace Continuity**: Trace context must propagate through pooled sessions
-3. **Header Pinning**: MCP SDK pins headers at transport creation, so trace headers must be injected before pooling
+The MCP SDK pins headers at transport creation time. If we inject per-request trace headers (`traceparent`, `X-Correlation-ID`) before pooling:
+
+1. **Trace Corruption**: The first request's trace context gets pinned to the transport
+2. **Context Leakage**: Later unrelated requests reuse the same trace ID
+3. **Broken Distributed Tracing**: Upstream servers see wrong parent spans
+4. **Correlation ID Leakage**: Different requests appear correlated when they're not
+
+### The Trade-off
+
+| Aspect | Pooled Sessions | Non-Pooled Sessions |
+|--------|----------------|---------------------|
+| **Latency** | 10-20x faster (reuse connection) | Slower (new connection each time) |
+| **Trace Propagation** | ❌ No upstream propagation | ✅ Full W3C trace context |
+| **Correlation IDs** | ❌ Not sent to upstream | ✅ Sent per-request |
+| **Use Case** | High-throughput, internal tracing | Distributed tracing across services |
+
+### When to Use Each
+
+**Use Session Pooling** (default):
+- High request volume to same MCP servers
+- Internal observability is sufficient
+- 10-20x latency improvement is critical
+- Upstream servers don't need trace context
+
+**Disable Session Pooling** (for distributed tracing):
+```bash
+MCP_SESSION_POOL_ENABLED=false
+```
+- Need end-to-end distributed tracing
+- Upstream MCP servers participate in traces
+- Correlation IDs must reach upstream
+- Latency is acceptable trade-off
 
 ### Implementation Details
 
 The session pool:
-- Accepts trace headers at session creation time
-- Pins headers to the transport for the session lifetime
-- Reuses sessions across requests with the same identity
-- Maintains trace context across pooled operations
+- Reuses transports with pinned headers (base headers only)
+- Does NOT inject per-request trace headers
+- Provides 10-20x latency improvement
+- Maintains internal trace context within gateway
+- Upstream servers do not receive trace propagation
 
 ## Security Considerations
 
