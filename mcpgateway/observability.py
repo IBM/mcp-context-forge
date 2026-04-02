@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 OTEL_AVAILABLE = False
 try:
     # Third-Party
+    from opentelemetry import baggage as otel_baggage
     from opentelemetry import trace
     from opentelemetry.propagate import extract as otel_extract
     from opentelemetry.propagate import inject as otel_inject
@@ -560,13 +561,13 @@ def otel_context_active() -> bool:
 
 
 def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
-    """Return a header carrier populated with the active W3C trace context.
+    """Return a header carrier populated with the active W3C trace context and baggage.
 
     Args:
         headers: Existing outbound headers to copy into the carrier before trace injection.
 
     Returns:
-        Dict[str, str]: Header mapping including any injected trace context.
+        Dict[str, str]: Header mapping including any injected trace context and baggage.
     """
 
     carrier = {str(key): str(value) for key, value in (headers or {}).items() if key and value}
@@ -576,6 +577,28 @@ def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) ->
         otel_inject(carrier=carrier)
     except Exception as exc:
         logger.debug("Failed to inject W3C trace context into outbound headers: %s", exc)
+
+    # Inject baggage if propagation is enabled
+    try:
+        # First-Party
+        from mcpgateway.config import settings
+
+        if settings.otel_baggage_enabled and settings.otel_baggage_propagate_to_external:
+            if OTEL_AVAILABLE and otel_baggage:
+                baggage_dict = otel_baggage.get_all()
+                if baggage_dict:
+                    # First-Party
+                    from mcpgateway.baggage import format_w3c_baggage_header, sanitize_baggage_for_propagation
+
+                    # Sanitize baggage before propagation
+                    sanitized_baggage = sanitize_baggage_for_propagation(baggage_dict)
+                    if sanitized_baggage:
+                        baggage_header = format_w3c_baggage_header(sanitized_baggage)
+                        carrier["baggage"] = baggage_header
+                        logger.debug(f"Injected {len(sanitized_baggage)} baggage entries into outbound headers")
+    except Exception as exc:
+        logger.debug("Failed to inject baggage into outbound headers: %s", exc)
+
     return carrier
 
 
@@ -1115,6 +1138,20 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
             attributes.setdefault("langfuse.trace.name", _derive_langfuse_trace_name(name, trace_name_attributes))
             attributes.setdefault("langfuse.observation.level", "DEFAULT")
     except Exception as exc:
+        logger.debug("Failed to auto-inject trace context into span: %s", exc)
+
+    # Auto-inject baggage as span attributes
+    try:
+        if OTEL_AVAILABLE and otel_baggage:
+            baggage_dict = otel_baggage.get_all()
+            if baggage_dict:
+                for key, value in baggage_dict.items():
+                    # Prefix baggage attributes to distinguish from direct attributes
+                    attributes.setdefault(f"baggage.{key}", value)
+                logger.debug(f"Injected {len(baggage_dict)} baggage entries as span attributes")
+    except Exception as exc:
+        logger.debug("Failed to inject baggage into span attributes: %s", exc)
+
         logger.debug("Failed to auto-inject trace context into span: %s", exc)
 
     # Start span and return the context manager

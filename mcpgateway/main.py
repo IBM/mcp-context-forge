@@ -3145,6 +3145,20 @@ if otel_tracing_enabled():
 else:
     logger.info("🧵 OTEL request tracing middleware disabled")
 
+# Add OpenTelemetry Baggage middleware when enabled
+# IMPORTANT: Must be registered AFTER OpenTelemetryRequestMiddleware so baggage is set in existing span context
+if settings.otel_baggage_enabled and otel_tracing_enabled():
+    # First-Party
+    from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
+
+    app.add_middleware(BaggageMiddleware)
+    logger.info("🧳 OTEL baggage middleware enabled for HTTP header extraction")
+elif settings.otel_baggage_enabled and not otel_tracing_enabled():
+    logger.warning("🧳 OTEL baggage enabled but tracing disabled - baggage will not be captured in spans")
+else:
+    logger.debug("🧳 OTEL baggage middleware disabled")
+
+
 # Database query logging middleware (for N+1 detection)
 if settings.db_query_log_enabled:
     # First-Party
