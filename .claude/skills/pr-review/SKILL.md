@@ -68,7 +68,10 @@ pollute the diff.
 Run all three fixers in one shot, scoped to changed Python files:
 
 ```bash
-make autoflake isort black TARGET="$(git diff origin/main --name-only | grep '\.py$' | xargs echo)"
+PY_FILES="$(git diff --diff-filter=d --name-only origin/main -- '*.py')"
+if [ -n "$PY_FILES" ]; then
+  make autoflake isort black TARGET="$PY_FILES"
+fi
 ```
 
 After fixing, re-run linters to confirm the findings are resolved. Report
@@ -157,9 +160,9 @@ Attribute findings to their source and resolve contradictions.
 
 ## Rules
 
-- **Do not modify files** except for targeted lint auto-fixes (`make black
-  TARGET=...`, `make isort TARGET=...`). Report all other findings for the
-  author to address.
+- **Do not modify files** except for targeted lint auto-fixes (`make autoflake
+  TARGET=...`, `make isort TARGET=...`, `make black TARGET=...`). Report all
+  other findings for the author to address.
 - Never mention Claude, Claude Code, or AI in any output.
 - Include exact linter commands and output so the author can reproduce.
 - Make suggestions concrete — name the method to extract, the class to create,
