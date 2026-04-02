@@ -590,6 +590,17 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                 "a2a_agents": "slug",
             }
 
+            def _like_safe(v: str) -> str:
+                """Escape SQL LIKE wildcard characters for safe use in LIKE patterns.
+
+                Args:
+                    v: The string value to escape.
+
+                Returns:
+                    The escaped string safe for use in SQL LIKE patterns.
+                """
+                return v.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
             for resource_name, resource_model in resource_types:
                 try:
                     # Find unassigned resources
@@ -607,10 +618,11 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                     original_values = {getattr(r, field) for r in unassigned if getattr(r, field) is not None}
 
                     # One query: fetch all names already taken in the admin team that match any
-                    # original value exactly or as a suffixed variant (value-N)
-                    def _like_safe(v: str) -> str:
-                        return v.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
-
+                    # original value exactly or as a suffixed variant (value-N).
+                    # NOTE: This intentionally omits gateway_id from the filter, making it
+                    # conservative — for Resource/Prompt models whose uniqueness also depends
+                    # on gateway_id, this may produce unnecessary renames but can never miss a
+                    # real conflict. That is the correct tradeoff for one-time bootstrap code.
                     existing_taken: set[str] = (
                         {
                             row[0]
