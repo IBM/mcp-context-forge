@@ -1289,8 +1289,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 invalidate_passthrough_header_caches()
 
-            # Invalidate registry cache and tool lookup cache for newly registered gateway tools/resources/prompts
-            # This ensures that subsequent list_tools and invoke_tool calls see the newly discovered items
+            # Invalidate caches for new gateway items
             cache = _get_registry_cache()
             if tools:
                 await cache.invalidate_tools()
@@ -1299,7 +1298,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if db_prompts:
                 await cache.invalidate_prompts()
 
-            # Invalidate tool lookup cache for this gateway
+            # Invalidate tool lookup cache
             tool_lookup_cache = _get_tool_lookup_cache()
             await tool_lookup_cache.invalidate_gateway(str(db_gateway.id))
 
