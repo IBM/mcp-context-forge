@@ -522,7 +522,7 @@ class ToolCreate(BaseModel):
         if v is None:
             return v
 
-        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
         # for inline code examples in tool descriptions.
         # When VALIDATION_STRICT=false these patterns produce a warning only so
         # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
@@ -1079,7 +1079,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         if v is None:
             return v
 
-        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
         # for inline code examples in tool descriptions.
         # When VALIDATION_STRICT=false these patterns produce a warning only so
         # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
@@ -3405,6 +3405,9 @@ class GatewayRead(BaseModelWithConfigDict):
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
+
+    # Tool count (populated from the tools relationship; 0 when not loaded)
+    tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
 
     @model_validator(mode="before")
     @classmethod

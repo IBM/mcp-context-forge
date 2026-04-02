@@ -92,7 +92,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
@@ -476,6 +476,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._leader_ttl = settings.redis_leader_ttl
             self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
             self._leader_heartbeat_task: Optional[asyncio.Task] = None
+            self._follower_election_task: Optional[asyncio.Task] = None
+
+            # Log instance mapping for debugging
+            logger.info(f"Instance started: instance_id={self._instance_id}, port={settings.port}, pid={os.getpid()}")
 
         # Always initialize file lock as fallback (used if Redis connection fails at runtime)
         if settings.cache_type != "none":
@@ -588,8 +592,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.info("Acquired Redis leadership. Starting health check and heartbeat tasks.")
                 self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
                 self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
+            else:
+                # Did not acquire leadership - start follower election loop
+                logger.info("Did not acquire leadership. Starting follower election loop.")
+                self._follower_election_task = asyncio.create_task(self._run_follower_election(user_email))
         else:
-            # Always create the health check task in filelock mode; leader check is handled inside.
+            # No Redis available - always create the health check task in filelock mode
             self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
 
     async def shutdown(self) -> None:
@@ -608,6 +616,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             >>> len(service._active_gateways)
             0
         """
+        # Cancel follower election FIRST to prevent it from spawning new
+        # health-check / heartbeat tasks while we are tearing down.
+        if getattr(self, "_follower_election_task", None):
+            self._follower_election_task.cancel()
+            try:
+                await self._follower_election_task
+            except asyncio.CancelledError:
+                pass
+
+        # Now safe to cancel health-check and heartbeat (handles may have been
+        # overwritten by follower election just before cancellation — that is fine,
+        # we always cancel whichever task the attribute currently points to).
         if self._health_check_task:
             self._health_check_task.cancel()
             try:
@@ -615,7 +635,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except asyncio.CancelledError:
                 pass
 
-        # Cancel leader heartbeat task if running
         if getattr(self, "_leader_heartbeat_task", None):
             self._leader_heartbeat_task.cancel()
             try:
@@ -3282,8 +3301,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             elapsed = time.monotonic() - start_time
 
             if batch_span:
-                batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
-                batch_span.set_attribute("check.completed", True)
+                set_span_attribute(batch_span, "check.duration_ms", int(elapsed * 1000))
+                set_span_attribute(batch_span, "check.completed", True)
 
             logger.debug(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
 
@@ -3423,8 +3442,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     # Get user-specific OAuth token
                                     if not user_email:
                                         if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", "User email required for OAuth token")
+                                            set_span_attribute(span, "health.status", "unhealthy")
+                                            set_span_error(span, "User email required for OAuth token")
                                         await self._handle_gateway_failure(gateway)
                                         return
 
@@ -3434,15 +3453,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 else:
                                     if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", "No valid OAuth token for user")
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "No valid OAuth token for user")
                                     await self._handle_gateway_failure(gateway)
                                     return
                             except Exception as e:
                                 logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                 if span:
-                                    span.set_attribute("health.status", "unhealthy")
-                                    span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                    set_span_attribute(span, "health.status", "unhealthy")
+                                    set_span_error(span, "Failed to obtain stored OAuth token")
                                 await self._handle_gateway_failure(gateway)
                                 return
                         else:
@@ -3452,8 +3471,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 headers["Authorization"] = f"Bearer {access_token}"
                             except Exception as e:
                                 if span:
-                                    span.set_attribute("health.status", "unhealthy")
-                                    span.set_attribute("error.message", str(e))
+                                    set_span_attribute(span, "health.status", "unhealthy")
+                                    set_span_error(span, e)
                                 await self._handle_gateway_failure(gateway)
                                 return
                     else:
@@ -3473,7 +3492,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                             if span:
-                                span.set_attribute("http.status_code", response.status_code)
+                                set_span_attribute(span, "http.status_code", response.status_code)
                     elif (gateway_transport).lower() == "streamablehttp":
                         # Use session pool if enabled for faster health checks
                         use_pool = False
@@ -3570,13 +3589,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             logger.warning(f"Failed to refresh tools for gateway {gateway_name}: {refresh_error}")
 
                     if span:
-                        span.set_attribute("health.status", "healthy")
-                        span.set_attribute("success", True)
+                        set_span_attribute(span, "health.status", "healthy")
+                        set_span_attribute(span, "success", True)
 
                 except Exception as e:
                     if span:
-                        span.set_attribute("health.status", "unhealthy")
-                        span.set_attribute("error.message", str(e))
+                        set_span_attribute(span, "health.status", "unhealthy")
+                        set_span_error(span, e)
 
                     # Set the logger as debug as this check happens for each interval
                     logger.debug(f"Health check failed for gateway {gateway_name}: {e}")
@@ -3901,34 +3920,87 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return self.convert_gateway_to_read(result)
 
     async def _run_leader_heartbeat(self) -> None:
-        """Run leader heartbeat loop to keep leader key alive.
+        """Run leader heartbeat loop with Redis reconnection support.
 
-        This runs independently from health checks to ensure the leader key
-        is refreshed frequently enough (every redis_leader_heartbeat_interval seconds)
-        to prevent expiration during long-running health check operations.
-
-        The loop exits if this instance loses leadership.
+        Refreshes the leader key TTL every heartbeat interval. Exits and starts
+        follower election if leadership is lost or after consecutive failures.
         """
+        consecutive_failures = 0
+        max_failures = 3
+
         while True:
             try:
                 await asyncio.sleep(self._leader_heartbeat_interval)
 
                 if not self._redis_client:
-                    return
+                    logger.warning("Redis client unavailable in heartbeat")
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_failures:
+                        logger.error("Lost Redis connection, stopping heartbeat")
+                        return
+                    continue
 
                 # Check if we're still the leader
                 current_leader = await self._redis_client.get(self._leader_key)
                 if current_leader != self._instance_id:
                     logger.info("Lost Redis leadership, stopping heartbeat")
+                    self._start_follower_election()
                     return
 
                 # Refresh the leader key TTL
                 await self._redis_client.expire(self._leader_key, self._leader_ttl)
                 logger.debug(f"Leader heartbeat: refreshed TTL to {self._leader_ttl}s")
+                consecutive_failures = 0
 
             except Exception as e:
-                logger.warning(f"Leader heartbeat error: {e}")
-                # Continue trying - the main health check loop will handle leadership loss
+                consecutive_failures += 1
+                logger.warning(f"Leader heartbeat error (failure {consecutive_failures}/{max_failures}): {e}")
+                if consecutive_failures >= max_failures:
+                    logger.error("Too many consecutive heartbeat failures, starting follower election")
+                    self._start_follower_election()
+                    return
+
+    def _start_follower_election(self) -> None:
+        """Start a follower election task if one is not already running."""
+        if self._follower_election_task is None or self._follower_election_task.done():
+            self._follower_election_task = asyncio.create_task(self._run_follower_election(settings.platform_admin_email))
+
+    async def _run_follower_election(self, user_email: str) -> None:
+        """Continuously attempt to acquire leadership when not the leader.
+
+        This runs on follower instances and polls Redis to claim leadership
+        when the current leader key expires or becomes available.
+
+        Args:
+            user_email: Email of the user for OAuth token lookup
+        """
+        retry_interval = max(1, self._leader_ttl // 3)  # Poll at 1/3 of TTL
+
+        while True:
+            try:
+                await asyncio.sleep(retry_interval)
+
+                if not self._redis_client:
+                    logger.warning("Redis client unavailable, cannot attempt election.")
+                    continue
+
+                # Attempt to acquire leadership
+                is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
+
+                if is_leader:
+                    logger.info("Acquired Redis leadership via follower election. Starting health check and heartbeat.")
+                    # Cancel stale tasks from a previous leadership period to prevent
+                    # orphaned loops running alongside the new ones.
+                    if self._health_check_task and not self._health_check_task.done():
+                        self._health_check_task.cancel()
+                    if getattr(self, "_leader_heartbeat_task", None) and not self._leader_heartbeat_task.done():
+                        self._leader_heartbeat_task.cancel()
+                    self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
+                    self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
+                    return  # Exit follower loop, now running as leader
+
+            except Exception as e:
+                logger.warning(f"Follower election error: {e}", exc_info=True)
 
     async def _run_health_checks(self, user_email: str) -> None:
         """Run health checks periodically,
@@ -4175,6 +4247,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["updated_at"] = getattr(gateway, "updated_at", None)
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
+
+        # Populate tool count from the eagerly-loaded tools relationship when available
+        tools_rel = gateway.__dict__.get("tools")
+        gateway_dict["tool_count"] = len(tools_rel) if tools_rel is not None else 0
 
         return GatewayRead.model_validate(gateway_dict).masked()
 

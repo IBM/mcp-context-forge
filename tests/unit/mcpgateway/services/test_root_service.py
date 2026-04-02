@@ -9,6 +9,7 @@ Authors: Mihai Criveti
 import asyncio
 import os
 from urllib.parse import urlparse
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
@@ -241,4 +242,19 @@ async def test_subscribe_changes_receives_events():
     assert events[0] == {"type": "root_added", "data": {"uri": r.uri, "name": r.name}}
     assert events[1] == {"type": "root_removed", "data": {"uri": r.uri}}
 
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_list_roots_creates_span():
+    service = RootService()
+    await service.add_root("http://example.com/root-one")
+
+    span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+    with patch("mcpgateway.services.root_service.create_span", return_value=span_cm) as mock_create_span:
+        roots = await service.list_roots()
+
+    assert len(roots) == 1
+    mock_create_span.assert_called_once_with("root.list", {"root.count": 1})
     await service.shutdown()

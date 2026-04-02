@@ -2,7 +2,16 @@
  * Unit tests for tab visibility behavior in admin.js.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
+import {
+    afterAll,
+    afterEach,
+    beforeAll,
+    beforeEach,
+    describe,
+    expect,
+    test,
+    vi,
+} from "vitest";
 import { cleanupAdminJs, loadAdminJs } from "./helpers/admin-env.js";
 
 let win;
@@ -96,7 +105,8 @@ describe("showTab hidden tab fallback", () => {
 
 describe("showTab idempotency", () => {
     test("does not re-process a tab that is already visible", () => {
-        const { panel: overviewPanel, link: overviewLink } = createTab("overview");
+        const { panel: overviewPanel, link: overviewLink } =
+            createTab("overview");
         createTab("gateways");
 
         win.showTab("overview");
@@ -274,8 +284,14 @@ describe("renderGlobalSearchResults hidden section filtering", () => {
         win.renderGlobalSearchResults({
             groups: [
                 { entity_type: "tools", items: [{ id: "t1", name: "Tool 1" }] },
-                { entity_type: "gateways", items: [{ id: "g1", name: "GW 1" }] },
-                { entity_type: "prompts", items: [{ id: "p1", name: "Prompt 1" }] },
+                {
+                    entity_type: "gateways",
+                    items: [{ id: "g1", name: "GW 1" }],
+                },
+                {
+                    entity_type: "prompts",
+                    items: [{ id: "p1", name: "Prompt 1" }],
+                },
             ],
         });
 
@@ -311,17 +327,18 @@ describe("runGlobalSearch visible entity filtering", () => {
         win.ROOT_PATH = "";
         win.IS_ADMIN = true;
         win.UI_HIDDEN_SECTIONS = ["tools", "prompts", "teams"];
-        const fetchSpy = vi
-            .spyOn(win, "fetchWithAuth")
-            .mockResolvedValue({
-                ok: true,
-                json: async () => ({ groups: [] }),
-            });
+        const fetchSpy = vi.spyOn(win, "fetchWithAuth").mockResolvedValue({
+            ok: true,
+            json: async () => ({ groups: [] }),
+        });
 
         await win.runGlobalSearch("gateway");
 
         expect(fetchSpy).toHaveBeenCalledTimes(1);
-        const requestUrl = new URL(fetchSpy.mock.calls[0][0], "http://localhost");
+        const requestUrl = new URL(
+            fetchSpy.mock.calls[0][0],
+            "http://localhost",
+        );
         expect(requestUrl.searchParams.get("entity_types")).toBe(
             "servers,gateways,resources,agents,users",
         );
@@ -349,7 +366,9 @@ describe("runGlobalSearch visible entity filtering", () => {
         await win.runGlobalSearch("anything");
 
         expect(fetchSpy).not.toHaveBeenCalled();
-        expect(container.innerHTML).toContain("No searchable sections are visible");
+        expect(container.innerHTML).toContain(
+            "No searchable sections are visible",
+        );
     });
 });
 
@@ -421,8 +440,10 @@ describe("resolveTabForNavigation", () => {
 
 describe("showTab normal navigation", () => {
     test("shows the requested visible tab and hides others", () => {
-        const { panel: overviewPanel, link: overviewLink } = createTab("overview");
-        const { panel: gatewaysPanel, link: gatewaysLink } = createTab("gateways");
+        const { panel: overviewPanel, link: overviewLink } =
+            createTab("overview");
+        const { panel: gatewaysPanel, link: gatewaysLink } =
+            createTab("gateways");
 
         win.showTab("gateways");
 
@@ -430,6 +451,61 @@ describe("showTab normal navigation", () => {
         expect(overviewPanel.classList.contains("hidden")).toBe(true);
         expect(gatewaysLink.classList.contains("active")).toBe(true);
         expect(overviewLink.classList.contains("active")).toBe(false);
+    });
+});
+
+describe("showTab scroll reset (#3748)", () => {
+    let originalRAF;
+
+    beforeEach(() => {
+        // JSDOM does not provide requestAnimationFrame; install a synchronous
+        // shim on the JSDOM window so the production code path executes.
+        originalRAF = win.requestAnimationFrame;
+        win.requestAnimationFrame = (cb) => {
+            cb();
+            return 0;
+        };
+    });
+    afterEach(() => {
+        win.requestAnimationFrame = originalRAF;
+    });
+
+    test("resets scrollTop on the data-scroll-container element when switching tabs", () => {
+        createTab("overview");
+        createTab("gateways");
+
+        const scrollContainer = doc.createElement("main");
+        scrollContainer.setAttribute("data-scroll-container", "");
+        scrollContainer.className = "overflow-y-auto";
+        scrollContainer.scrollTop = 500;
+        doc.body.appendChild(scrollContainer);
+
+        win.showTab("gateways");
+
+        expect(scrollContainer.scrollTop).toBe(0);
+    });
+
+    test("falls back to main.overflow-y-auto when data-scroll-container is absent", () => {
+        createTab("overview");
+        createTab("gateways");
+
+        const mainEl = doc.createElement("main");
+        mainEl.className = "overflow-y-auto";
+        mainEl.scrollTop = 300;
+        doc.body.appendChild(mainEl);
+
+        win.showTab("gateways");
+
+        expect(mainEl.scrollTop).toBe(0);
+    });
+
+    test("does not throw when no scroll container exists", () => {
+        createTab("overview");
+        createTab("gateways");
+
+        expect(() => {
+            win.showTab("gateways");
+        }).not.toThrow();
     });
 });
 

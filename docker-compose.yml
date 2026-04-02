@@ -22,6 +22,10 @@
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
 #
+#  Compose overlays (separate files):
+#  docker-compose.with-phoenix.yml:   Phoenix observability (OTEL traces)
+#  docker-compose.with-langfuse.yml:  Langfuse LLM observability (make langfuse-up)
+#
 #  TLS Quick Start:
 #    make compose-tls                    # HTTP:8080 + HTTPS:8443
 #    make compose-tls-https              # Force HTTPS (HTTP redirects)
@@ -71,7 +75,7 @@ services:
     image: mcpgateway/nginx-cache:latest
     restart: unless-stopped
     ports:
-      - "8080:80"                   # HTTP caching proxy (public-facing)
+      - "${NGINX_PORT:-8080}:80"                   # HTTP caching proxy (public-facing)
       # - "8443:443"                  # HTTPS caching proxy (public-facing)
     networks: [mcpnet]
     depends_on:
@@ -1001,8 +1005,8 @@ services:
 ###############################################################################
 #  MONITORING STACK (enabled with --profile monitoring)
 #  Usage: docker compose --profile monitoring up -d
-#  Access: Grafana http://localhost:3000 (admin/changeme)
-#          Prometheus http://localhost:9090
+#  Access: Grafana http://localhost:${GRAFANA_PORT:-3000} (admin/changeme)
+#          Prometheus http://localhost:${PROMETHEUS_PORT:-9090}
 ###############################################################################
 
   # ──────────────────────────────────────────────────────────────────────
@@ -1014,7 +1018,7 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "9187:9187"    # http://localhost:9187/metrics
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"    # http://localhost:${POSTGRES_EXPORTER_PORT:-9187}/metrics
     environment:
       - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp?sslmode=disable
       - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
@@ -1032,7 +1036,7 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "9121:9121"    # http://localhost:9121/metrics
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"    # http://localhost:${REDIS_EXPORTER_PORT:-9121}/metrics
     environment:
       - REDIS_ADDR=redis://redis:6379
     depends_on:
@@ -1049,7 +1053,7 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "9127:9127"    # http://localhost:9127/metrics
+      - "${PGBOUNCER_EXPORTER_PORT:-9127}:9127"    # http://localhost:${PGBOUNCER_EXPORTER_PORT:-9127}/metrics
     environment:
       - PGBOUNCER_EXPORTER_CONNECTION_STRING=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/pgbouncer?sslmode=disable
     depends_on:
@@ -1067,7 +1071,7 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "9113:9113"    # http://localhost:9113/metrics
+      - "${NGINX_EXPORTER_PORT:-9113}:9113"    # http://localhost:${NGINX_EXPORTER_PORT:-9113}/metrics
     command:
       - '-nginx.scrape-uri=http://nginx:80/nginx_status'
     depends_on:
@@ -1085,7 +1089,7 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "8085:8080"    # http://localhost:8085/metrics
+      - "${CADVISOR_PORT:-8085}:8080"    # http://localhost:${CADVISOR_PORT:-8085}/metrics
     privileged: true
     volumes:
       - /:/rootfs:ro
@@ -1131,7 +1135,7 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "9090:9090"    # http://localhost:9090
+      - "${PROMETHEUS_PORT:-9090}:9090"    # http://localhost:${PROMETHEUS_PORT:-9090}
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheusdata:/prometheus
@@ -1163,7 +1167,7 @@ services:
     networks: [mcpnet]
     user: "0"  # Run as root to avoid permission issues
     ports:
-      - "3100:3100"    # http://localhost:3100/ready
+      - "${LOKI_PORT:-3101}:3100"    # http://localhost:${LOKI_PORT:-3101}/ready
     volumes:
       - ./infra/monitoring/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
       - lokidata:/loki
@@ -1176,13 +1180,13 @@ services:
   # Query traces via Grafana Explore → Tempo datasource using TraceQL
   # ──────────────────────────────────────────────────────────────────────
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:${TEMPO_IMAGE_TAG:-2.10.0}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "3200:3200"      # Tempo HTTP API / query frontend
-      - "4317:4317"      # OTLP gRPC receiver
-      - "4318:4318"      # OTLP HTTP receiver
+      - "${TEMPO_PORT:-3200}:3200"      # Tempo HTTP API / query frontend
+      - "${TEMPO_OTLP_GRPC_PORT:-4317}:4317"      # OTLP gRPC receiver
+      - "${TEMPO_OTLP_HTTP_PORT:-4318}:4318"      # OTLP HTTP receiver
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
       - ./infra/monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
@@ -1221,7 +1225,7 @@ services:
     networks: [mcpnet]
     user: "0"  # Run as root to avoid permission issues with provisioning
     ports:
-      - "3000:3000"    # http://localhost:3000
+      - "${GRAFANA_PORT:-3000}:3000"    # http://localhost:${GRAFANA_PORT:-3000}
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=changeme
       - GF_USERS_ALLOW_SIGN_UP=false
@@ -1244,7 +1248,7 @@ services:
       - PGADMIN_DEFAULT_EMAIL=admin@example.com
       - PGADMIN_DEFAULT_PASSWORD=changeme
     ports:
-      - "5050:80"      # http://localhost:5050
+      - "${PGADMIN_PORT:-5050}:80"      # http://localhost:${PGADMIN_PORT:-5050}
     volumes:
       - pgadmindata:/var/lib/pgadmin
     networks: [mcpnet]
@@ -1264,7 +1268,7 @@ services:
       redis:
         condition: service_started
     ports:
-      - "8081:8081"    # http://localhost:8081
+      - "${REDIS_COMMANDER_PORT:-8081}:8081"    # http://localhost:${REDIS_COMMANDER_PORT:-8081}
     environment:
       - REDIS_HOSTS=local:redis:6379
       - HTTP_USER=admin
@@ -1477,17 +1481,18 @@ services:
         # Register fast_time_server with gateway using Streamable HTTP transport
         print('Registering fast_time_server with gateway (Streamable HTTP)...')
 
-        # First check if gateway already exists and delete it
+        # First check if gateway already exists. Reuse it on reruns so
+        # repeated compose up operations stay idempotent.
         gateway_id = None
         try:
             gateways = api_request_with_retry('GET', '/gateways')
             for gw in gateways:
                 if gw.get('name') == 'fast_time':
-                    print(f'Found existing gateway {gw[\"id\"]}, deleting...')
-                    api_request_with_retry('DELETE', f'/gateways/{gw[\"id\"]}', retry_statuses=(401, 502, 503))
-                    print('Deleted existing gateway')
+                    gateway_id = gw['id']
+                    print(f'Reusing existing gateway {gateway_id}')
+                    break
         except Exception as e:
-            print(f'Note: Could not check/delete existing gateway: {e}')
+            print(f'Note: Could not check existing gateway: {e}')
 
         # Delete existing virtual server if present (using fixed ID)
         VIRTUAL_SERVER_ID = '9779b6698cbd4b4995ee04a4fab38737'
@@ -1497,27 +1502,41 @@ services:
         except Exception as e:
             print(f'Note: No existing virtual server to delete (or error: {e})')
 
-        # Register the gateway
-        try:
-            result = api_request_with_retry('POST', '/gateways', {
-                'name': 'fast_time',
-                'url': 'http://fast_time_server:8080/http',
-                'transport': 'STREAMABLEHTTP'
-            })
-            print(f'Registration response: {result}')
-            if 'id' in result:
-                gateway_id = result['id']
-                print(f'✅ Successfully registered fast_time_server (gateway_id: {gateway_id})')
-            else:
-                print('❌ Registration failed - no ID in response')
+        # Register the gateway when it is not already present with synced tools.
+        if gateway_id is None:
+            try:
+                result = api_request_with_retry('POST', '/gateways', {
+                    'name': 'fast_time',
+                    'url': 'http://fast_time_server:8080/http',
+                    'transport': 'STREAMABLEHTTP'
+                })
+                print(f'Registration response: {result}')
+                if 'id' in result:
+                    gateway_id = result['id']
+                    print(f'✅ Successfully registered fast_time_server (gateway_id: {gateway_id})')
+                else:
+                    print('❌ Registration failed - no ID in response')
+                    sys.exit(1)
+            except Exception as e:
+                print(f'❌ Registration failed: {e}')
                 sys.exit(1)
+
+        # Force immediate discovery before polling for synced catalog entries.
+        try:
+            refresh_result = api_request_with_retry(
+                'POST',
+                f'/gateways/{gateway_id}/tools/refresh?include_resources=true&include_prompts=true',
+                retries=20,
+                delay=2,
+                retry_statuses=(401, 409, 502, 503),
+            )
+            print(f'Refresh response: {refresh_result}')
         except Exception as e:
-            print(f'❌ Registration failed: {e}')
-            sys.exit(1)
+            print(f'Note: manual refresh did not complete immediately: {e}')
 
         # Wait for tools to be synced from the gateway
         print('Waiting for tools/resources/prompts to sync...')
-        for i in range(30):
+        for i in range(60):
             time.sleep(1)
             try:
                 tools = api_request('GET', '/tools')
@@ -1528,12 +1547,14 @@ services:
                     break
             except Exception as e:
                 pass
-            print(f'Waiting for sync... ({i+1}/30)')
+            print(f'Waiting for sync... ({i+1}/60)')
         else:
-            print('⚠️ No tools synced, continuing anyway...')
+            print('❌ Tools from fast_time gateway did not sync in time')
+            sys.exit(1)
 
-        # Fetch all tools, resources, and prompts
-        # Note: Tools use gatewayId (camelCase), resources/prompts from catalog have no gatewayId
+        # Fetch all tools, resources, and prompts for the fast_time gateway only.
+        # API payloads may expose either gatewayId (camelCase) or gateway_id (snake_case)
+        # depending on the serializer path, so accept both.
         tool_ids = []
         resource_ids = []
         prompt_ids = []
@@ -1546,19 +1567,23 @@ services:
         except Exception as e:
             print(f'Failed to fetch tools: {e}')
 
+        if not tool_ids:
+            print('❌ fast_time gateway sync completed without any tools; aborting virtual server creation')
+            sys.exit(1)
+
         try:
             resources = api_request('GET', '/resources')
-            # Include all resources (from catalog)
-            resource_ids = [r['id'] for r in resources]
-            print(f'Found resources: {[r[\"name\"] for r in resources]}')
+            fast_time_resources = [r for r in resources if r.get('gatewayId') == gateway_id or r.get('gateway_id') == gateway_id]
+            resource_ids = [r['id'] for r in fast_time_resources]
+            print(f'Found resources: {[r[\"name\"] for r in fast_time_resources]}')
         except Exception as e:
             print(f'Failed to fetch resources: {e}')
 
         try:
             prompts = api_request('GET', '/prompts')
-            # Include all prompts (from catalog)
-            prompt_ids = [p['id'] for p in prompts]
-            print(f'Found prompts: {[p[\"name\"] for p in prompts]}')
+            fast_time_prompts = [p for p in prompts if p.get('gatewayId') == gateway_id or p.get('gateway_id') == gateway_id]
+            prompt_ids = [p['id'] for p in fast_time_prompts]
+            print(f'Found prompts: {[p[\"name\"] for p in fast_time_prompts]}')
         except Exception as e:
             print(f'Failed to fetch prompts: {e}')
 
@@ -2483,7 +2508,7 @@ services:
     image: mcpgateway/nginx-cache:latest
     restart: unless-stopped
     ports:
-      - "8080:80"                   # HTTP caching proxy (public-facing)
+      - "${NGINX_PORT:-8080}:80"                   # HTTP caching proxy (public-facing)
       - "8443:443"                  # HTTPS caching proxy (public-facing)
     networks: [mcpnet]
     environment:

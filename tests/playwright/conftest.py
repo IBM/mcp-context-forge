@@ -251,6 +251,17 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
         _set_admin_jwt_cookie(page, admin_email)
         _goto_admin(page, "/admin/")
         _wait_for_admin_transition(page)
+
+    if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
+        # Rarely the JWT-cookie path races with the login redirect. Fall back
+        # to the existing resilient form-login candidate flow instead of
+        # failing the fixture outright.
+        _goto_admin(page, "/admin")
+        _wait_for_admin_transition(page)
+        if login_page.is_on_login_page() or login_page.is_login_form_available():
+            if not _retry_ui_login_before_jwt(page, login_page, admin_email, settings, current_password):
+                raise AssertionError("Admin login failed after JWT fallback and form-login recovery.")
+
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=30000)
 
     # Wait for the application shell to load

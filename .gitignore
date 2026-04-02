@@ -77,6 +77,8 @@ pip-delete-this-directory.txt
 # ========================================
 # Testing & Coverage
 # ========================================
+output
+output/
 htmlcov
 htmlcov/
 .tox/
@@ -131,6 +133,7 @@ docs/docs/security/report.md
 # ========================================
 # IDE & Editor
 # ========================================
+.codex
 .vscode
 .vscode/
 .idea/

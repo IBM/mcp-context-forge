@@ -17,6 +17,7 @@ from functools import wraps
 import logging
 from typing import Callable, Generator, List, Optional
 import uuid
+import warnings
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -28,6 +29,14 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.utils.trace_context import (
+    clear_trace_context,
+    set_trace_auth_method,
+    set_trace_context_from_teams,
+    set_trace_team_scope,
+    set_trace_user_email,
+    set_trace_user_is_admin,
+)
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active
 
 logger = logging.getLogger(__name__)
@@ -39,14 +48,23 @@ _ACCESS_DENIED_MSG = "Access denied"
 security = HTTPBearer(auto_error=False)
 
 
-def get_db() -> Generator[Session, None, None]:
+def get_db(request: Request = None) -> Generator[Session, None, None]:
     """Get database session for dependency injection.
 
-    DEPRECATED: Use fresh_db_session() context manager instead to avoid session accumulation.
-    This function is kept for backwards compatibility with endpoints that still use Depends(get_db).
+    DEPRECATED: This function is deprecated and will be removed in a future version.
+    New code should use the request-scoped session from request.state.db or
+    get_db() from main.py.
 
-    Commits the transaction on successful completion to avoid implicit rollbacks
-    for read-only operations. Rolls back explicitly on exception.
+    For backwards compatibility, this function now reuses the middleware session
+    when available, eliminating duplicate session creation (Issue #3622).
+
+    **Migration Path**:
+    - Route handlers: Use `db: Session = Depends(get_db)` from main.py
+    - RBAC checks: Access request.state.db directly in middleware context
+
+    Args:
+        request: Optional FastAPI request object (automatically injected by FastAPI
+                 dependency system when used with Depends())
 
     Yields:
         Session: SQLAlchemy database session
@@ -54,19 +72,47 @@ def get_db() -> Generator[Session, None, None]:
     Raises:
         Exception: Re-raises any exception after rolling back the transaction.
 
+    Note:
+        When used as a FastAPI dependency via Depends(get_db), the request parameter
+        is automatically provided by FastAPI's dependency injection system.
+
     Examples:
         >>> gen = get_db()
         >>> db = next(gen)
         >>> hasattr(db, 'query')
         True
     """
-    db = SessionLocal()
+    warnings.warn(
+        "rbac.get_db() is deprecated. Use request.state.db or get_db() from main.py",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+    # Check if middleware already created a request-scoped session
+    # This matches the pattern from main.py:get_db() (line 3089)
+    db = None
+    owned = False
+
+    if request is not None:
+        db = getattr(request.state, "db", None)
+        if db is not None:
+            logger.debug(f"[RBAC] Reusing session from middleware: {id(db)}")
+
+    # Fallback: create own session (legacy behavior)
+    if db is None:
+        logger.debug("[RBAC] Creating new session (no middleware session available)")
+        db = SessionLocal()
+        owned = True
+
     try:
         yield db
-        db.commit()
+        # Only commit if we own the session (backwards compatibility)
+        if owned:
+            db.commit()
     except Exception:
         try:
-            db.rollback()
+            if owned:
+                db.rollback()
         except Exception:
             try:
                 db.invalidate()
@@ -74,7 +120,8 @@ def get_db() -> Generator[Session, None, None]:
                 pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
-        db.close()
+        if owned:
+            db.close()
 
 
 async def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
@@ -121,6 +168,18 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             async def protected_route(user = Depends(get_current_user_with_permissions)):
                 return {"user": user["email"]}
     """
+
+    def _set_trace_context_for_identity(*, email: Optional[str], is_admin: bool, auth_method: str, token_teams: Optional[List[str]] = None, team_scope_known: bool = False) -> None:
+        clear_trace_context()
+        set_trace_user_email(email)
+        set_trace_user_is_admin(is_admin)
+        set_trace_auth_method(auth_method)
+        trace_team_name = getattr(request.state, "trace_team_name", None)
+        if team_scope_known:
+            set_trace_context_from_teams(token_teams, user_email=email, is_admin=is_admin, auth_method=auth_method, team_name=trace_team_name)
+        elif is_admin:
+            set_trace_team_scope("admin")
+
     # Check for proxy authentication first (if MCP client auth is disabled)
     if not settings.mcp_client_auth_enabled:
         # Read plugin context from request.state for cross-hook context sharing
@@ -157,6 +216,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                         logger.debug(f"Could not lookup proxy user in DB: {e}")
                         # Continue with is_admin=False if lookup fails
 
+                _set_trace_context_for_identity(email=proxy_user, is_admin=is_admin, auth_method="proxy")
                 return {
                     "email": proxy_user,
                     "full_name": full_name,
@@ -189,6 +249,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
 
             # auth_required=false: allow anonymous access
 
+            _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",
@@ -220,6 +281,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 detail="Authentication required but no auth method configured",
             )
 
+        _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
         return {
             "email": "anonymous",
             "full_name": "Anonymous User",
@@ -280,6 +342,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         # AUTH_REQUIRED=false no longer implies admin access.
         # Preserve explicit unsafe override for local-only compatibility.
         if not settings.auth_required and getattr(settings, "allow_unauthenticated_admin", False) is True:
+            _set_trace_context_for_identity(email=settings.platform_admin_email, is_admin=True, auth_method="disabled")
             return {
                 "email": settings.platform_admin_email,
                 "full_name": "Platform Admin",
@@ -293,6 +356,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             }
 
         if not settings.auth_required:
+            _set_trace_context_for_identity(email="anonymous", is_admin=False, auth_method="anonymous", token_teams=[], team_scope_known=True)
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",

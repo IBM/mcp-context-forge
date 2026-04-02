@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 # First-Party
 from mcpgateway.common.models import Root
 from mcpgateway.config import settings
+from mcpgateway.observability import create_span
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -128,7 +129,8 @@ class RootService:
             >>> sorted([str(r.uri) for r in roots])
             ['file:///home', 'file:///tmp']
         """
-        return list(self._roots.values())
+        with create_span("root.list", {"root.count": len(self._roots)}):
+            return list(self._roots.values())
 
     async def add_root(self, uri: str, name: Optional[str] = None) -> Root:
         """Add a new root.

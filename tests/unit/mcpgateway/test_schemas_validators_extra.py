@@ -149,7 +149,7 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
         """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "> ", "< "]:
+        for pat in ["&&", "||", "$(", "> ", "< "]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolUpdate.validate_description(f"Valid prefix {pat} suffix")
 
@@ -159,17 +159,22 @@ class TestToolUpdateDescriptionValidationStrict:
         result = ToolUpdate.validate_description("pipe | grep")
         assert result is not None
 
+    def test_semicolon_allowed_in_strict_mode(self, monkeypatch):
+        """Semicolons are allowed because they appear in natural-language tool descriptions."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolUpdate.validate_description("Use this tool remotely; do not use it for local file operations")
+        assert result is not None
+
     @pytest.mark.parametrize(
         "description",
         [
             "run cmd1 && cmd2",
-            "end statement;",
             "try this || that",
             "expand $(cmd)",
             "Search docs > results",
             "read < file",
         ],
-        ids=["ampersand", "semicolon", "or", "subshell", "redirect_out", "redirect_in"],
+        ids=["ampersand", "or", "subshell", "redirect_out", "redirect_in"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""
@@ -206,7 +211,7 @@ class TestToolUpdateDescriptionValidationStrict:
     def test_forbidden_patterns_match_tool_create(self, monkeypatch):
         """Ensure ToolCreate and ToolUpdate reject the exact same set of forbidden patterns in strict mode."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        forbidden_patterns = ["&&", ";", "||", "$(", "> ", "< "]
+        forbidden_patterns = ["&&", "||", "$(", "> ", "< "]
         for pat in forbidden_patterns:
             payload = f"test {pat} injection"
             with pytest.raises(ValueError, match="unsafe characters"):
@@ -1090,7 +1095,7 @@ class TestToolCreateDescriptionValidationStrict:
     def test_forbidden_pattern_rejected_in_strict_mode(self, monkeypatch):
         """Descriptions with shell metacharacters raise ValueError when VALIDATION_STRICT=true."""
         monkeypatch.setattr(settings, "validation_strict", True)
-        for pat in ["&&", ";", "||", "$(", "> ", "< "]:
+        for pat in ["&&", "||", "$(", "> ", "< "]:
             with pytest.raises(ValueError, match="unsafe characters"):
                 ToolCreate.validate_description(f"Valid prefix {pat} suffix")
 
@@ -1100,17 +1105,22 @@ class TestToolCreateDescriptionValidationStrict:
         result = ToolCreate.validate_description("pipe | grep")
         assert result is not None
 
+    def test_semicolon_allowed_in_strict_mode(self, monkeypatch):
+        """Semicolons are allowed because they appear in natural-language tool descriptions."""
+        monkeypatch.setattr(settings, "validation_strict", True)
+        result = ToolCreate.validate_description("Use this tool remotely; do not use it for local file operations")
+        assert result is not None
+
     @pytest.mark.parametrize(
         "description",
         [
             "run cmd1 && cmd2",
-            "end statement;",
             "try this || that",
             "expand $(cmd)",
             "Search docs > results",
             "read < file",
         ],
-        ids=["ampersand", "semicolon", "or", "subshell", "redirect_out", "redirect_in"],
+        ids=["ampersand", "or", "subshell", "redirect_out", "redirect_in"],
     )
     def test_forbidden_pattern_allowed_in_non_strict_mode(self, monkeypatch, caplog, description):
         """Each forbidden pattern is accepted (with warning) when VALIDATION_STRICT=false."""

@@ -598,6 +598,13 @@ mcpContextForge:
     # Uncomment when enabling OTEL:
     # OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
     # OTEL_EXPORTER_OTLP_INSECURE: "false"
+    # OTEL_EMIT_LANGFUSE_ATTRIBUTES: ""     # empty = auto-enable only for Langfuse OTLP endpoints
+    # OTEL_CAPTURE_IDENTITY_ATTRIBUTES: ""  # empty = follow Langfuse attribute policy
+    # OTEL_COPY_RESOURCE_ATTRS_TO_SPANS: "false"
+    # OTEL_REDACT_FIELDS: "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key"
+    # OTEL_MAX_TRACE_PAYLOAD_SIZE: "32768"
+    # OTEL_CAPTURE_INPUT_SPANS: ""          # comma-separated allowlist, e.g. tool.invoke,prompt.render
+    # OTEL_CAPTURE_OUTPUT_SPANS: ""         # comma-separated allowlist, leave empty to disable output capture
     # OTEL_BSP_MAX_QUEUE_SIZE: "2048"
     # OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512"
     # OTEL_BSP_SCHEDULE_DELAY: "5000"
@@ -929,7 +936,13 @@ mcpContextForge:
     # ─ OpenTelemetry Endpoints (configure when OTEL_ENABLE_OBSERVABILITY=true) ─
     # OTEL_EXPORTER_OTLP_ENDPOINT: ""       # e.g., http://otel-collector:4317
     # OTEL_EXPORTER_OTLP_HEADERS: ""        # comma-separated key=value
+    # LANGFUSE_OTEL_ENDPOINT: ""            # e.g., https://cloud.langfuse.com/api/public/otel/v1/traces
+    # LANGFUSE_PUBLIC_KEY: ""               # Langfuse project public key for derived OTLP auth
+    # LANGFUSE_SECRET_KEY: ""               # Langfuse project secret key for derived OTLP auth
+    # LANGFUSE_OTEL_AUTH: ""                # optional base64(pk:sk) override; not needed when keys are set
     # OTEL_EXPORTER_JAEGER_ENDPOINT: ""
+    # OTEL_EXPORTER_JAEGER_USER: ""
+    # OTEL_EXPORTER_JAEGER_PASSWORD: ""
     # OTEL_EXPORTER_ZIPKIN_ENDPOINT: ""
     # OTEL_RESOURCE_ATTRIBUTES: ""
 

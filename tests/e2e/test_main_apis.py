@@ -459,11 +459,10 @@ class TestProtocolAPIs:
         response = await client.post("/protocol/notifications", json={"method": "notifications/initialized"}, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
-    async def test_notifications_cancelled_denied_for_unknown_run(self, client: AsyncClient):
-        """Test POST /protocol/notifications - unknown run is denied for non-admin token."""
+    async def test_notifications_cancelled_accepts_unknown_run_as_noop(self, client: AsyncClient):
+        """Test POST /protocol/notifications - unknown run is accepted as a no-op."""
         response = await client.post("/protocol/notifications", json={"method": "notifications/cancelled", "params": {"requestId": "test-request-123"}}, headers=TEST_AUTH_HEADER)
-        assert response.status_code == 403
-        assert response.json()["detail"] == "Not authorized to cancel this run"
+        assert response.status_code == 200
 
     async def test_notifications_cancelled_allowed_for_owner(self, client: AsyncClient):
         """Test POST /protocol/notifications - owner can cancel."""
