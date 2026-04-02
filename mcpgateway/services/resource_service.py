@@ -793,6 +793,7 @@ class ResourceService(BaseService):
                                 db_resource = DbResource(
                                     uri=new_uri,
                                     name=resource.name,
+                                    title=getattr(resource, "title", None),
                                     description=resource.description,
                                     mime_type=resource.mime_type,
                                     size=getattr(resource, "size", None),
@@ -821,6 +822,7 @@ class ResourceService(BaseService):
                             db_resource = DbResource(
                                 uri=resource.uri,
                                 name=resource.name,
+                                title=getattr(resource, "title", None),
                                 description=resource.description,
                                 mime_type=resource.mime_type,
                                 size=getattr(resource, "size", None),

@@ -1842,6 +1842,7 @@ class ToolService(BaseService):
             custom_name=name,
             custom_name_slug=slugify(name),
             display_name=tool.displayName or name,
+            title=tool.title,
             url=str(tool.url),
             description=tool.description,
             original_description=tool.description,
