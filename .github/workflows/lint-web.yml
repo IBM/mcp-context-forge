@@ -118,8 +118,11 @@ jobs:
           node-version: '20'
 
       # -----------------------------------------------------------
-      # 🔧  Configure npm registry
+      # 🔧  Configure npm
       # -----------------------------------------------------------
+      - name: 🔧  Upgrade npm to minimum required version
+        run: npm install -g npm@^11.10.0
+
       - name: 🔧  Configure npm registry
         run: npm config set registry https://registry.npmjs.org/
 

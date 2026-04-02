@@ -463,49 +463,67 @@ class GatewaysPage(BasePage):
         # and re-opening the gateways tab so subsequent assertions see the
         # canonical gateway list.
         if self.get_gateway_count() == 0:
+            # Clear URL search params before reloading so the x-init HTMX load
+            # does not re-apply the search term and leave the table empty again.
+            self.page.evaluate(
+                "window.history.replaceState({}, '', window.location.pathname + window.location.hash)"
+            )
             self.page.reload(wait_until="domcontentloaded")
             self.navigate_to_gateways_tab()
             self.wait_for_gateways_table_loaded()
 
     def clear_search(self) -> None:
-        """Clear the gateway search.
+        """Clear the gateway search by clicking the dedicated clear button.
 
-        Triggers an HTMX reload of the gateways table, then waits for
-        table/indicator settling.
+        Drains any in-flight HTMX requests first, then uses expect_response to
+        capture the HTMX GET response triggered by Admin.clearSearch so we know
+        the outerHTML swap has completed before returning.
         """
-        request_seen = False
-        try:
-            with self.page.expect_response(
-                lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
-                timeout=5000,
-            ):
-                self.click_locator(self.clear_search_btn)
-            request_seen = True
-        except PlaywrightTimeoutError:
-            pass
-
-        if not request_seen:
-            # Fallback: invoke the same clear function the button uses and
-            # explicitly wait for the partial reload request.
-            try:
-                with self.page.expect_response(
-                    lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
-                    timeout=5000,
-                ):
-                    self.page.evaluate("window.clearSearch && window.clearSearch('gateways')")
-                request_seen = True
-            except PlaywrightTimeoutError:
-                # Last-resort best effort: force a reload call even if request
-                # observation missed due timing.
-                self.page.evaluate(
-                    "() => { const el = document.getElementById('gateways-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('gateways'); } }",
-                )
-
+        # Drain any in-flight HTMX load so a stale response can't race with
+        # the clear request and overwrite the table back to 0 rows.
         self.page.wait_for_function(
             "() => !document.querySelector('#gateways-loading.htmx-request')",
             timeout=15000,
         )
-        self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
+
+        # Click the button inside expect_response so we reliably capture the
+        # HTMX GET request that Admin.clearSearch triggers via htmx.ajax.
+        try:
+            with self.page.expect_response(
+                lambda r: "/admin/gateways/partial" in r.url and r.request.method == "GET",
+                timeout=15000,
+            ):
+                self.click_locator(self.clear_search_btn)
+        except PlaywrightTimeoutError:
+            # Fallback: indicator-based wait if the response wasn't captured.
+            try:
+                self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=3000)
+            except PlaywrightTimeoutError:
+                pass
+
+        # expect_response resolves when the network response is received, but HTMX
+        # processes the response and does the outerHTML swap asynchronously. Wait for
+        # the loading indicator to clear, which confirms the swap has completed.
+        try:
+            self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=2000)
+        except PlaywrightTimeoutError:
+            pass  # Request may have already finished before we checked
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+        try:
+            # Wait for the new #gateways-table-body to be attached after the swap.
+            self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
+        except PlaywrightTimeoutError:
+            # Zero-result states or partial-swap races can leave the canonical
+            # table structure missing after a clear. Recover by reopening the
+            # gateways tab from a fresh admin navigation.
+            self.page.goto("/admin#gateways", wait_until="domcontentloaded")
+            if "/admin/login" in self.page.url:
+                return
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive gateways checkbox.
@@ -555,6 +573,11 @@ class GatewaysPage(BasePage):
         Returns:
             True if gateway exists, False otherwise
         """
+        # Wait for table body to be stable (no pending HTMX requests)
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=5000,
+        )
         # Use more specific selector to avoid strict mode violations
         return self.gateways_table_body.locator(f'tr:has-text("{gateway_name}")').count() > 0
 
@@ -621,18 +644,20 @@ class GatewaysPage(BasePage):
         self.click_locator(activate_btn)
 
     def _click_delete_and_wait(self, delete_btn, confirm: bool = True) -> None:
-        """Click a delete button, handle both confirmation dialogs, and wait for navigation.
+        """Click a delete button, handle the confirmation dialog, and wait for the table refresh.
 
-        handleDeleteSubmit shows TWO confirm() dialogs (delete + purge metrics).
-        form.submit() triggers a full page navigation (POST → 303 redirect).
-        We must use expect_navigation to detect the new page load, since
-        wait_for_load_state("domcontentloaded") returns immediately for the
-        already-loaded current page.
+        The gateway delete form uses handleSubmitWithConfirmation (one dialog) which calls
+        handleToggleSubmit. That handler POSTs via fetch(redirect:'manual') then refreshes
+        the table with htmx.ajax — no page navigation occurs.
+
+        Sets ``self.last_delete_status`` to the HTTP status code of the DELETE response
+        (or None when confirm=False / on exception).
 
         Args:
             delete_btn: Locator for the delete button to click
-            confirm: Whether to accept or dismiss the dialogs
+            confirm: Whether to accept or dismiss the dialog
         """
+        self.last_delete_status: int | None = None
 
         def _handle_dialog(dialog):
             if confirm:
@@ -644,8 +669,13 @@ class GatewaysPage(BasePage):
 
         try:
             if confirm:
-                with self.page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+                with self.page.expect_response(
+                    lambda r: "/delete" in r.url and r.request.method == "POST",
+                    timeout=30000,
+                ) as del_resp:
                     delete_btn.click(force=True)
+                self.last_delete_status = del_resp.value.status
+                self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
             else:
                 delete_btn.click(force=True)
                 self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=10000)
@@ -720,6 +750,9 @@ class GatewaysPage(BasePage):
 
         # Keep deleting until no more gateways with this URL exist
         while True:
+            if "/admin/login" in self.page.url:
+                return deleted_any
+
             # Search for the gateway by URL
             self.search_gateways(gateway_url)
             self.page.wait_for_timeout(500)
@@ -746,12 +779,15 @@ class GatewaysPage(BasePage):
                 logger.info("Deleted gateway '%s' with URL '%s'", gateway_name, gateway_url)
                 deleted_any = True
 
-                # Reload to see updated table — use tolerant navigation
+                # Delete submissions already navigate back through the admin UI.
+                # Avoid reloading the current POST result page; instead try a
+                # direct return to the gateways tab and stop if auth/session
+                # state has already moved us elsewhere after a successful
+                # delete.
                 try:
-                    self.page.reload(wait_until="domcontentloaded")
-                except PlaywrightTimeoutError:
                     self.page.goto("/admin#gateways", wait_until="domcontentloaded")
-                try:
+                    if "/admin/login" in self.page.url:
+                        return deleted_any
                     self.navigate_to_gateways_tab()
                     self.wait_for_gateways_table_loaded()
                 except (PlaywrightTimeoutError, AssertionError):
@@ -835,6 +871,32 @@ class GatewaysPage(BasePage):
             self.fill_locator(self.oauth_authorization_url_input, authorization_url)
         if redirect_uri:
             self.fill_locator(self.oauth_redirect_uri_input, redirect_uri)
+
+    def set_transport_http_bypass(self) -> None:
+        """Override the add-gateway form transport to 'HTTP' to bypass the SSE/StreamableHTTP
+        connection check in _initialize_gateway.
+
+        'HTTP' is a valid TransportType enum value that is not handled by the
+        if/elif transport chain in _initialize_gateway, so the backend returns
+        empty capabilities immediately without attempting any external connection.
+        This allows tests that care about auth configuration (not reachability) to
+        complete without a live gateway.
+        """
+        self.page.evaluate(
+            """() => {
+                const form = document.getElementById('add-gateway-form');
+                if (!form) return;
+                const select = form.querySelector('select[name="transport"]');
+                if (!select) return;
+                if (!select.querySelector('option[value="HTTP"]')) {
+                    const opt = document.createElement('option');
+                    opt.value = 'HTTP';
+                    opt.text = 'HTTP';
+                    select.appendChild(opt);
+                }
+                select.value = 'HTTP';
+            }"""
+        )
 
     def toggle_one_time_auth(self, enable: bool = True) -> None:
         """Toggle one-time authentication checkbox.
@@ -1114,7 +1176,7 @@ class GatewaysPage(BasePage):
         where HTMX table swap hasn't yet reconnected event listeners.
         """
         self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
-        self.page.wait_for_function("typeof window.viewGateway === 'function'", timeout=10000)
+        self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
 
         self.click_view_button(gateway_index)
         try:
@@ -1136,7 +1198,7 @@ class GatewaysPage(BasePage):
         """
         # Ensure gateway rows are present and JS handlers are ready
         self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
-        self.page.wait_for_function("typeof window.viewGateway === 'function'", timeout=10000)
+        self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
 
         self.click_edit_button(gateway_index)
         try:

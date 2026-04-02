@@ -5,7 +5,10 @@
 use axum::{
     Json, Router,
     http::{HeaderMap, StatusCode, Uri},
-    response::IntoResponse,
+    response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{any, delete, get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -15,6 +18,7 @@ use redis::AsyncCommands;
 use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
 use std::{
+    convert::Infallible,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -4066,7 +4070,7 @@ async fn representative_specialized_endpoints_wrap_success_and_error_payloads_in
         .send()
         .await
         .expect("resources/list error response");
-    assert_eq!(resources_err.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resources_err.status(), StatusCode::OK);
     let resources_err_body: Value = resources_err
         .json()
         .await
@@ -4107,7 +4111,7 @@ async fn representative_specialized_endpoints_wrap_success_and_error_payloads_in
         .send()
         .await
         .expect("prompts/get error response");
-    assert_eq!(prompts_err.status(), StatusCode::FORBIDDEN);
+    assert_eq!(prompts_err.status(), StatusCode::OK);
     let prompts_err_body: Value = prompts_err.json().await.expect("prompts/get error json");
     assert_eq!(prompts_err_body["jsonrpc"], json!("2.0"));
     assert_eq!(prompts_err_body["id"], json!(66));
@@ -4151,7 +4155,7 @@ async fn representative_specialized_endpoints_wrap_success_and_error_payloads_in
         .send()
         .await
         .expect("completion/complete error response");
-    assert_eq!(completion_err.status(), StatusCode::FORBIDDEN);
+    assert_eq!(completion_err.status(), StatusCode::OK);
     assert_eq!(
         completion_err
             .headers()
@@ -4643,6 +4647,97 @@ async fn tools_call_surfaces_backend_jsonrpc_errors_from_resolve() {
         body["error"]["message"],
         "Tool not found: nonexistent-tool-xyz"
     );
+    assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
+}
+
+#[tokio::test]
+async fn tools_call_surfaces_backend_permission_errors_from_resolve_without_fallback() {
+    let backend_fallback_calls = Arc::new(Mutex::new(0usize));
+    let backend = {
+        let backend_fallback_calls = backend_fallback_calls.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/tools/call/resolve",
+                post(move |Json(body): Json<Value>| async move {
+                    (
+                        StatusCode::FORBIDDEN,
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "id": body["id"],
+                            "error": {
+                                "code": -32003,
+                                "message": "Access denied",
+                                "data": {"method": "tools/call"}
+                            }
+                        })),
+                    )
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call",
+                post(move || {
+                    let backend_fallback_calls = backend_fallback_calls.clone();
+                    async move {
+                        *backend_fallback_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": 100,
+                            "result": {"unexpected": true}
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {
+                "name": "forbidden-tool",
+                "arguments": {}
+            }
+        }))
+        .send()
+        .await
+        .expect("tools/call response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-runtime")
+            .and_then(|value| value.to_str().ok()),
+        Some("rust")
+    );
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["error"]["code"], -32003);
+    assert_eq!(body["error"]["message"], "Access denied");
+    assert_eq!(body["error"]["data"]["method"], "tools/call");
     assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
 }
 
@@ -5616,6 +5711,198 @@ async fn tools_call_direct_execution_supports_sse_upstream_responses() {
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.expect("json body");
     assert_eq!(body["result"]["content"][0]["text"], "ok-sse-direct");
+    assert_eq!(*backend_resolve_calls.lock().expect("lock"), 1);
+    assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
+    assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);
+    assert_eq!(*upstream_tool_calls.lock().expect("lock"), 1);
+}
+
+#[tokio::test]
+async fn tools_call_uses_rust_direct_execution_for_sse_transport() {
+    let upstream_initialize_calls = Arc::new(Mutex::new(0usize));
+    let upstream_tool_calls = Arc::new(Mutex::new(0usize));
+    let backend_fallback_calls = Arc::new(Mutex::new(0usize));
+    let backend_resolve_calls = Arc::new(Mutex::new(0usize));
+    let (event_tx, _) = tokio::sync::broadcast::channel::<String>(8);
+
+    let upstream = {
+        let upstream_initialize_calls = upstream_initialize_calls.clone();
+        let upstream_tool_calls = upstream_tool_calls.clone();
+        let event_tx_for_sse = event_tx.clone();
+        let event_tx_for_post = event_tx.clone();
+        Router::new()
+            .route(
+                "/sse",
+                get(move || {
+                    let event_tx = event_tx_for_sse.clone();
+                    async move {
+                        let mut receiver = event_tx.subscribe();
+                        let event_stream = async_stream::stream! {
+                            yield Ok::<Event, Infallible>(
+                                Event::default()
+                                    .event("endpoint")
+                                    .data("/message?session_id=sse-upstream-session")
+                            );
+                            while let Ok(payload) = receiver.recv().await {
+                                yield Ok::<Event, Infallible>(
+                                    Event::default().event("message").data(payload)
+                                );
+                            }
+                        };
+                        Sse::new(event_stream)
+                            .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text(""))
+                            .into_response()
+                    }
+                }),
+            )
+            .route(
+                "/message",
+                post(move |uri: Uri, headers: HeaderMap, Json(body): Json<Value>| {
+                    let upstream_initialize_calls = upstream_initialize_calls.clone();
+                    let upstream_tool_calls = upstream_tool_calls.clone();
+                    let event_tx = event_tx_for_post.clone();
+                    async move {
+                        assert_eq!(uri.query(), Some("session_id=sse-upstream-session"));
+                        assert_eq!(
+                            headers
+                                .get("x-upstream-auth")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("rust-plan")
+                        );
+                        match body.get("method").and_then(Value::as_str) {
+                            Some("initialize") => {
+                                *upstream_initialize_calls.lock().expect("lock") += 1;
+                                let _ = event_tx.send(
+                                    json!({
+                                        "jsonrpc":"2.0",
+                                        "id": body["id"],
+                                        "result": {
+                                            "protocolVersion": "2025-11-25",
+                                            "serverInfo": {"name": "upstream", "version": "1.0.0"},
+                                            "capabilities": {}
+                                        }
+                                    })
+                                    .to_string(),
+                                );
+                                StatusCode::ACCEPTED.into_response()
+                            }
+                            Some("notifications/initialized") => StatusCode::ACCEPTED.into_response(),
+                            Some("tools/call") => {
+                                *upstream_tool_calls.lock().expect("lock") += 1;
+                                assert_eq!(body["params"]["name"], "echo_remote");
+                                let _ = event_tx.send(
+                                    json!({
+                                        "jsonrpc":"2.0",
+                                        "id": body["id"],
+                                        "result": {
+                                            "content": [{"type": "text", "text": "ok-sse-transport"}],
+                                            "isError": false
+                                        }
+                                    })
+                                    .to_string(),
+                                );
+                                StatusCode::ACCEPTED.into_response()
+                            }
+                            other => (
+                                StatusCode::BAD_REQUEST,
+                                Json(json!({"unexpected_method": other})),
+                            )
+                                .into_response(),
+                        }
+                    }
+                }),
+            )
+    };
+    let upstream_url = spawn_router(upstream).await;
+
+    let backend = {
+        let backend_fallback_calls = backend_fallback_calls.clone();
+        let backend_resolve_calls = backend_resolve_calls.clone();
+        let upstream_url = upstream_url.clone();
+        Router::new()
+            .route(
+                "/_internal/mcp/tools/call/resolve",
+                post(move |Json(body): Json<Value>| {
+                    let backend_resolve_calls = backend_resolve_calls.clone();
+                    let upstream_url = upstream_url.clone();
+                    async move {
+                        *backend_resolve_calls.lock().expect("lock") += 1;
+                        assert_eq!(body["params"]["name"], "echo");
+                        Json(json!({
+                            "eligible": true,
+                            "transport": "sse",
+                            "serverUrl": format!("{upstream_url}/sse"),
+                            "remoteToolName": "echo_remote",
+                            "headers": {"x-upstream-auth": "rust-plan"},
+                            "timeoutMs": 30000
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/_internal/mcp/tools/call",
+                post(move || {
+                    let backend_fallback_calls = backend_fallback_calls.clone();
+                    async move {
+                        *backend_fallback_calls.lock().expect("lock") += 1;
+                        Json(json!({
+                            "jsonrpc":"2.0",
+                            "id": 1,
+                            "result": {"unexpected": true}
+                        }))
+                    }
+                }),
+            )
+    };
+    let backend_url = spawn_router(backend).await;
+
+    let runtime = {
+        let config = RuntimeConfig {
+            backend_rpc_url: format!("{backend_url}/_internal/mcp/rpc"),
+            listen_http: "127.0.0.1:8787".to_string(),
+            listen_uds: None,
+            protocol_version: "2025-11-25".to_string(),
+            supported_protocol_versions: vec![],
+            server_name: "ContextForge".to_string(),
+            server_version: "0.1.0".to_string(),
+            instructions: "ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration.".to_string(),
+            request_timeout_ms: 30_000,
+            database_url: None,
+            db_pool_max_size: 20,
+            log_filter: "error".to_string(),
+            ..test_runtime_config()
+        };
+        build_router(AppState::new(&config).expect("state"))
+    };
+    let runtime_url = spawn_router(runtime).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{runtime_url}/mcp"))
+        .header("authorization", "Bearer test-token")
+        .header("x-contextforge-server-id", "server-1")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 52,
+            "method": "tools/call",
+            "params": {
+                "name": "echo",
+                "arguments": {"text": "hello"}
+            }
+        }))
+        .send()
+        .await
+        .expect("tools/call response");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-contextforge-mcp-upstream-client")
+            .and_then(|value| value.to_str().ok()),
+        Some("native")
+    );
+    let body: Value = response.json().await.expect("json body");
+    assert_eq!(body["result"]["content"][0]["text"], "ok-sse-transport");
     assert_eq!(*backend_resolve_calls.lock().expect("lock"), 1);
     assert_eq!(*backend_fallback_calls.lock().expect("lock"), 0);
     assert_eq!(*upstream_initialize_calls.lock().expect("lock"), 1);

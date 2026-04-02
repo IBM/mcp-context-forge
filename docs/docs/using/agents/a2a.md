@@ -228,15 +228,41 @@ Associate A2A agents with virtual servers to:
 
 ### Demo A2A Agent
 
-The repository includes a demo A2A agent with calculator and weather tools for local testing:
+The repository includes a demo A2A agent with calculator and weather tools for local testing.
+
+#### Prerequisites
+
+Before running the demo agent, ensure the following configuration:
+
+1. **Allow localhost in .env** (required for local agent registration)
+
+  ```bash
+  SSRF_ALLOW_LOCALHOST=true
+  ```
+
+  Restart ContextForge after adding this. The default blocks loopback addresses as an SSRF safeguard. This is intentional for production, but must be opted into locally.
+
+2. **Pass your admin email at runtime**
+
+  The script creates a JWT signed with your instance's secret. The token subject must match a user in the database (typically your `PLATFORM_ADMIN_EMAIL`). See the "Running the Demo" section below for the actual commands.
+
+#### Running the Demo
 
 ```bash
 # Terminal 1: Start ContextForge
 make dev
 
 # Terminal 2: Start the demo agent (auto-registers with ContextForge)
+# Override the token subject if your admin email differs from the default:
+#   export PLATFORM_ADMIN_EMAIL=you@example.com
 uv run python scripts/demo_a2a_agent.py
+
+# Optional: Generate a token for the curl test commands below
+export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+  --username "admin@example.com" --exp 60)
 ```
+
+Note: The script reads `JWT_SECRET_KEY` and `PLATFORM_ADMIN_EMAIL` from environment variables (defaults: `my-test-key…` and `admin@example.com`).
 
 The demo agent supports these query formats:
 
@@ -249,22 +275,22 @@ The demo agent supports these query formats:
 
 1. Go to `http://localhost:8000/admin`
 2. Click the "A2A Agents" tab
-3. Find "Demo Calculator Agent" and click **Test**
-4. Enter a query like `calc: 100/4+25` in the modal
-5. Click **Run Test** to see the result
+3. Add a new agent "demo-calculator-agent" with Endpoint URL of http://localhost:9100/run
+4. In "demo-calculator-agent" click on **Test**
+5. Enter a query like `calc: 100/4+25` in the modal
+6. Click **Run Test** to see the result
 
 **Test via API:**
 
 ```bash
 # Get a token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 60 --secret my-test-key-but-now-longer-than-32-bytes)
+  --username admin@example.com --exp 60)
 
-# Invoke the agent
 curl -X POST "http://localhost:8000/a2a/demo-calculator-agent/invoke" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query": "calc: 15*4+10"}'
+  -d '{"parameters": {"query": "calc: 15*4+10"}}'
 ```
 
 ### A2A SDK HelloWorld Sample

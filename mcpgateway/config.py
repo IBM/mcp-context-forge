@@ -62,7 +62,7 @@ from urllib.parse import urlparse
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
-from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
+from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Only configure basic logging if no handlers exist yet
@@ -365,8 +365,8 @@ class Settings(BaseSettings):
     )
     tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
     tool_description_forbidden_patterns: List[str] = Field(
-        default_factory=lambda: ["&&", ";", "||", "$(", "> ", "< "],
-        description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&",";"]\'.',
+        default_factory=lambda: ["&&", "||", "$(", "> ", "< "],
+        description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&","||"]\'.',
     )
 
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
@@ -385,6 +385,15 @@ class Settings(BaseSettings):
     sso_entra_graph_api_timeout: int = Field(default=10, ge=1, le=120, description="Timeout in seconds for Microsoft Graph group fallback requests")
     sso_entra_graph_api_max_groups: int = Field(default=0, ge=0, description="Maximum groups to keep from Graph fallback (0 = no limit)")
 
+    sso_adfs_enabled: bool = Field(default=False, description="Enable ADFS OIDC authentication")
+    sso_adfs_client_id: Optional[str] = Field(default=None, description="ADFS OAuth client ID")
+    sso_adfs_client_secret: Optional[SecretStr] = Field(default=None, description="ADFS OAuth client secret")
+    sso_adfs_authorization_url: Optional[str] = Field(default=None, description="ADFS authorization endpoint URL (e.g., https://adfs.example.com/adfs/oauth2/authorize/)")
+    sso_adfs_token_url: Optional[str] = Field(default=None, description="ADFS token endpoint URL (e.g., https://adfs.example.com/adfs/oauth2/token/)")
+    sso_adfs_issuer: Optional[str] = Field(default=None, description="ADFS issuer URL (e.g., https://adfs.example.com/adfs)")
+    sso_adfs_scope: Optional[str] = Field(default="openid profile email", description="ADFS OAuth scopes (space-separated)")
+    sso_adfs_display_name: Optional[str] = Field(default="ADFS Login", description="Display name shown on login page for ADFS")
+
     sso_generic_enabled: bool = Field(default=False, description="Enable generic OIDC provider (Keycloak, Auth0, etc.)")
     sso_generic_provider_id: Optional[str] = Field(default=None, description="Provider ID (e.g., 'keycloak', 'auth0', 'authentik')")
     sso_generic_display_name: Optional[str] = Field(default=None, description="Display name shown on login page")
@@ -401,12 +410,26 @@ class Settings(BaseSettings):
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
     sso_trusted_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
     sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
+    sso_auto_disable_unconfigured_providers: bool = Field(
+        default=False,
+        description=(
+            "Automatically disable SSO providers not present in environment configuration during bootstrap. "
+            "When enabled, providers configured in the database but missing from SSO_*_ENABLED environment variables "
+            "will be disabled. This enforces environment config as the single source of truth. "
+            "Default: false (preserves manually configured providers for backward compatibility)."
+        ),
+    )
 
     # SSO Admin Assignment Settings
     sso_auto_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
     sso_github_admin_orgs: Annotated[list[str], NoDecode] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
     sso_google_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
     sso_require_admin_approval: bool = Field(default=False, description="Require admin approval for new SSO registrations")
+
+    # ADFS-specific Settings
+    sso_adfs_default_email_domain: Optional[str] = Field(
+        default=None, description="Default email domain for ADFS when UPN is plain username (e.g., 'company.com' converts 'user123' to 'user123@company.com')"
+    )
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
@@ -649,6 +672,14 @@ class Settings(BaseSettings):
     mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         description="CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
+    )
+    mcpgateway_ui_hide_sections_admin: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=("CSV/JSON list of UI sections to hide for admin users. " "Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. " "When unset, admins see all sections."),
+    )
+    mcpgateway_ui_hide_header_items_admin: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description="CSV/JSON list of header items to hide for admin users. Same valid values as MCPGATEWAY_UI_HIDE_HEADER_ITEMS.",
     )
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
@@ -1783,13 +1814,36 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Observability (OpenTelemetry)
+    deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")
     otel_enable_observability: bool = Field(default=False, description="Enable OpenTelemetry observability")
     otel_traces_exporter: str = Field(default="otlp", description="Traces exporter: otlp, jaeger, zipkin, console, none")
     otel_exporter_otlp_endpoint: Optional[str] = Field(default=None, description="OTLP endpoint (e.g., http://localhost:4317)")
     otel_exporter_otlp_protocol: str = Field(default="grpc", description="OTLP protocol: grpc or http")
     otel_exporter_otlp_insecure: bool = Field(default=True, description="Use insecure connection for OTLP")
     otel_exporter_otlp_headers: Optional[str] = Field(default=None, description="OTLP headers (comma-separated key=value)")
+    otel_emit_langfuse_attributes: Optional[bool] = Field(
+        default=None,
+        description="Emit Langfuse-specific span attributes. Defaults to auto-enable when a Langfuse OTLP endpoint is configured.",
+    )
+    otel_capture_identity_attributes: Optional[bool] = Field(
+        default=None,
+        description="Capture user/team identity span attributes. Defaults to auto-enable when Langfuse-specific attributes are emitted.",
+    )
+    otel_copy_resource_attrs_to_spans: bool = Field(default=False, description="Copy selected OTEL resource attributes onto spans")
+    otel_redact_fields: str = Field(
+        default="password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key",
+        description="Comma-separated trace payload field names to redact before export",
+    )
+    otel_max_trace_payload_size: int = Field(default=32768, ge=256, description="Maximum serialized trace payload size in characters")
+    otel_capture_input_spans: str = Field(default="", description="Comma-separated span names allowed to capture input payloads")
+    otel_capture_output_spans: str = Field(default="", description="Comma-separated span names allowed to capture output payloads")
+    langfuse_otel_endpoint: Optional[str] = Field(default=None, description="Langfuse OTLP/HTTP endpoint override")
+    langfuse_public_key: Optional[SecretStr] = Field(default=None, description="Langfuse project public key for derived OTLP auth")
+    langfuse_secret_key: Optional[SecretStr] = Field(default=None, description="Langfuse project secret key for derived OTLP auth")
+    langfuse_otel_auth: Optional[SecretStr] = Field(default=None, description="Base64-encoded Langfuse OTLP basic auth override")
     otel_exporter_jaeger_endpoint: Optional[str] = Field(default=None, description="Jaeger endpoint")
+    otel_exporter_jaeger_user: Optional[str] = Field(default=None, description="Jaeger collector username")
+    otel_exporter_jaeger_password: Optional[SecretStr] = Field(default=None, description="Jaeger collector password")
     otel_exporter_zipkin_endpoint: Optional[str] = Field(default=None, description="Zipkin endpoint")
     otel_service_name: str = Field(default="mcp-gateway", description="Service name for traces")
     otel_resource_attributes: Optional[str] = Field(default=None, description="Resource attributes (comma-separated key=value)")
@@ -1931,6 +1985,8 @@ Disallow: /
         "insecure_queryparam_auth_allowed_hosts",
         "mcpgateway_ui_hide_sections",
         "mcpgateway_ui_hide_header_items",
+        "mcpgateway_ui_hide_sections_admin",
+        "mcpgateway_ui_hide_header_items_admin",
         "tool_description_forbidden_patterns",
         mode="before",
     )
@@ -1981,7 +2037,7 @@ Disallow: /
         """
         return [p for p in value if p and p.strip()]
 
-    @field_validator("mcpgateway_ui_hide_sections", mode="after")
+    @field_validator("mcpgateway_ui_hide_sections", "mcpgateway_ui_hide_sections_admin", mode="after")
     @classmethod
     def _validate_ui_hide_sections(cls, value: list[str]) -> list[str]:
         """Normalize and filter hidable UI sections.
@@ -2009,7 +2065,7 @@ Disallow: /
 
         return normalized
 
-    @field_validator("mcpgateway_ui_hide_header_items", mode="after")
+    @field_validator("mcpgateway_ui_hide_header_items", "mcpgateway_ui_hide_header_items_admin", mode="after")
     @classmethod
     def _validate_ui_hide_header_items(cls, value: list[str]) -> list[str]:
         """Normalize and filter hidable header items.

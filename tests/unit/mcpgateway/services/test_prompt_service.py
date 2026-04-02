@@ -726,6 +726,36 @@ class TestPromptService:
         span.set_attribute.assert_any_call("success", True)
 
     @pytest.mark.asyncio
+    async def test_get_prompt_sets_langfuse_prompt_linkage_attributes(self, prompt_service, test_db):
+        """Successful prompt rendering should link the Langfuse observation to the prompt version."""
+        # Standard
+        from contextlib import contextmanager
+
+        db_prompt = _build_db_prompt(name="greeting_prompt", template="Hello!")
+        db_prompt.version = 7
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+
+        span = MagicMock()
+
+        @contextmanager
+        def _span_cm(*_a, **_kw):
+            yield span
+
+        with (
+            patch("mcpgateway.services.prompt_service.create_span", _span_cm),
+            patch("mcpgateway.services.prompt_service.is_output_capture_enabled", return_value=True),
+            patch("mcpgateway.services.prompt_service.set_span_attribute", side_effect=lambda target, key, value: target.set_attribute(key, value)),
+            patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_metrics_buffer,
+        ):
+            mock_metrics_buffer.record_prompt_metric = Mock()
+            result = await prompt_service.get_prompt(test_db, "1", {})
+
+        assert result.messages[0].content.text == "Hello!"
+        span.set_attribute.assert_any_call("langfuse.observation.prompt.name", "greeting_prompt")
+        span.set_attribute.assert_any_call("langfuse.observation.prompt.version", 7)
+        assert any(call.args[0] == "langfuse.observation.output" for call in span.set_attribute.call_args_list)
+
+    @pytest.mark.asyncio
     async def test_get_prompt_observability_end_span_exception_is_caught(self, prompt_service, test_db):
         # Standard
         from contextlib import contextmanager
@@ -3270,3 +3300,51 @@ class TestListPromptsGatewayIdFilter:
             result, _ = await prompt_service.list_prompts(db, gateway_id=None)
 
         assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_creates_span(self, prompt_service):
+        db = MagicMock()
+        db.commit = Mock()
+        prompt = _build_db_prompt()
+        prompt.team_id = None
+
+        span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service.create_span", return_value=span_cm) as mock_create_span,
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch.object(prompt_service, "_apply_access_control", new=AsyncMock(side_effect=lambda query, *_args, **_kwargs: query)),
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache_fn.return_value = AsyncMock(hash_filters=MagicMock(return_value="h"), get=AsyncMock(return_value=None), set=AsyncMock())
+            mock_paginate.return_value = ([prompt], None)
+
+            result, _ = await prompt_service.list_prompts(db, user_email="user@example.com", token_teams=["team-1"], visibility="team")
+
+        assert result == ["converted"]
+        assert mock_create_span.call_args[0][0] == "prompt.list"
+        attrs = mock_create_span.call_args[0][1]
+        assert attrs["user.email"] == "user@example.com"
+        assert attrs["team.scope"] == "team-1"
+        assert attrs["visibility"] == "team"
+
+    @pytest.mark.asyncio
+    async def test_list_server_prompts_creates_span(self, prompt_service):
+        db = MagicMock()
+        db.commit = Mock()
+        db.execute.return_value.scalars.return_value.all.return_value = [MagicMock(team_id=None)]
+
+        span_cm = MagicMock(__enter__=MagicMock(return_value=None), __exit__=MagicMock(return_value=False))
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service.create_span", return_value=span_cm) as mock_create_span,
+        ):
+            result = await prompt_service.list_server_prompts(db, "server-1", user_email="user@example.com", token_teams=["team-1"])
+
+        assert result == ["converted"]
+        assert mock_create_span.call_args[0][0] == "prompt.list"
+        attrs = mock_create_span.call_args[0][1]
+        assert attrs["server_id"] == "server-1"
+        assert attrs["team.scope"] == "team-1"

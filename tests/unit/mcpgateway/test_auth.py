@@ -237,7 +237,7 @@ class TestGetCurrentUser:
 
         jwt_payload = {"sub": "test@example.com", "jti": "token_id_456", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
 
-        caplog.set_level(logging.WARNING)
+        caplog.set_level(logging.WARNING, logger="mcpgateway.auth")
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._check_token_revoked_sync", side_effect=Exception("Database error")):
@@ -648,7 +648,7 @@ class TestGetCurrentUser:
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
                 with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                     with patch("mcpgateway.config.settings.require_user_in_db", True):
-                        with caplog.at_level(logging.WARNING):
+                        with caplog.at_level(logging.WARNING, logger="mcpgateway.auth"):
                             with pytest.raises(HTTPException):
                                 await get_current_user(credentials=credentials)
 
@@ -3656,6 +3656,82 @@ class TestSessionTokenBranches:
         # intersection (["t1"]), to prevent cross-session cache poisoning.
         mock_cache.set_user_teams.assert_called_once_with("user@example.com:True", ["t1", "t2"])
 
+    @pytest.mark.asyncio
+    async def test_cache_hit_populates_trace_context(self, monkeypatch):
+        """Cache-hit auth should populate trace context for downstream spans."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_auth_method, get_trace_team_name, get_trace_team_scope, get_trace_user_email
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        payload = {
+            "sub": "trace@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "jti-trace",
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "auth_provider": "local"},
+        }
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "is_active": True},
+            personal_team_id="team-trace",
+        )
+        request = SimpleNamespace(state=SimpleNamespace(token_teams=["team-trace"]))
+
+        clear_trace_context()
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "trace@example.com"
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_auth_method() == "jwt"
+        assert get_trace_team_scope() == "public"
+        assert get_trace_team_name() is None
+        clear_trace_context()
+
+    @pytest.mark.asyncio
+    async def test_batched_auth_populates_primary_trace_team_name(self, monkeypatch):
+        """Batched auth should resolve and store the primary team display name."""
+        # First-Party
+        from mcpgateway.utils.trace_context import clear_trace_context, get_trace_team_name, get_trace_team_scope, get_trace_user_email
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
+        payload = {
+            "sub": "trace@example.com",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "jti-trace",
+            "token_use": "session",
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "auth_provider": "local"},
+        }
+        auth_ctx = {
+            "user": {"email": "trace@example.com", "full_name": "Trace User", "is_admin": False, "is_active": True},
+            "team_ids": ["team-trace"],
+            "team_names": {"team-trace": "Trace Team"},
+            "personal_team_id": "team-trace",
+            "is_token_revoked": False,
+        }
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        clear_trace_context()
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "trace@example.com"
+        assert get_trace_user_email() == "trace@example.com"
+        assert get_trace_team_scope() == "team-trace"
+        assert get_trace_team_name() == "Trace Team"
+        clear_trace_context()
+
 
 def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email():
     """Plugin-auth helper should reject empty or missing email claims."""
@@ -3664,3 +3740,53 @@ def test_resolve_plugin_authenticated_user_sync_returns_none_for_missing_email()
 
     assert auth_module._resolve_plugin_authenticated_user_sync({}) is None
     assert auth_module._resolve_plugin_authenticated_user_sync({"email": "   "}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_trace_team_name_prefers_db_name_for_session_tokens(monkeypatch):
+    """Session-token trace team names should prefer DB-authoritative values.
+
+    Args:
+        monkeypatch: Pytest fixture for patching team lookup behavior.
+    """
+    # First-Party
+    from mcpgateway.auth import resolve_trace_team_name
+
+    payload = {
+        "token_use": "session",
+        "teams": [{"id": "team-1", "name": "Claim Team"}],
+    }
+
+    monkeypatch.setattr("mcpgateway.auth._get_team_name_by_id_sync", lambda _team_id: "DB Team")
+
+    resolved = await resolve_trace_team_name(payload, ["team-1"])
+
+    assert resolved == "DB Team"
+
+
+@pytest.mark.asyncio
+async def test_resolve_trace_team_name_uses_preresolved_name_before_claims(monkeypatch):
+    """Batched DB names should win over JWT team display names.
+
+    Args:
+        monkeypatch: Pytest fixture for patching unexpected DB fallback calls.
+    """
+    # First-Party
+    from mcpgateway.auth import resolve_trace_team_name
+
+    payload = {
+        "teams": [{"id": "team-1", "name": "Claim Team"}],
+    }
+
+    def _unexpected_lookup(_team_id):
+        raise AssertionError("DB fallback should not run when batched team names are present")
+
+    monkeypatch.setattr("mcpgateway.auth._get_team_name_by_id_sync", _unexpected_lookup)
+
+    resolved = await resolve_trace_team_name(
+        payload,
+        ["team-1"],
+        preresolved_team_names={"team-1": "Batched Team"},
+    )
+
+    assert resolved == "Batched Team"

@@ -285,6 +285,16 @@ make test
 - Require green lint and tests before PR
 - Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
 
+### Tone for GitHub Comments
+
+When posting PR reviews, issue comments, or any public-facing text on GitHub, use a collaborative and constructive tone:
+
+- Lead with what's good before raising concerns.
+- Frame issues as questions or options ("worth considering", "a couple of approaches") rather than directives.
+- Remember contributors are people doing their jobs — be direct about problems without being harsh.
+- Categorize findings clearly (blocking, suggestions, minor notes) so the author knows what must change vs. what's optional.
+- Avoid sounding algorithmic or robotic; write the way a respectful senior colleague would in a code review.
+
 ## GitHub Issues (Brief)
 
 - Prefer issue templates in `.github/ISSUE_TEMPLATE/`: `bug-report-code.md`, `feature-request.md`, `docs-issue.md`, `testing--bug--unit--manual--or-new-test-.md`, `chore-task--devops--linting--maintenance-.md`.

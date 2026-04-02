@@ -372,6 +372,16 @@ def _extract_text_result(response: httpx.Response) -> str:
     return result.get("content", [{}])[0].get("text", "")
 
 
+def _extract_primary_text_line(response: httpx.Response) -> str:
+    """Extract the primary first line from a successful text response.
+
+    Plugin parity stacks may append deterministic sentinels after the primary
+    tool output; session-isolation freshness checks only care about the leading
+    timestamp payload.
+    """
+    return _extract_text_result(response).splitlines()[0]
+
+
 @pytest.fixture(scope="module")
 def admin_client() -> Generator[httpx.Client, None, None]:
     """Admin-authenticated API client for test setup and cleanup."""
@@ -563,7 +573,7 @@ class TestMcpSessionIsolation:
         tool_names = _extract_tool_names(_mcp_post(admin_token, server_id, method="tools/list", session_id=owner_session_id, request_id=6))
         time_tool = _find_tool_name(tool_names, "get-system-time")
 
-        first = _extract_text_result(
+        first = _extract_primary_text_line(
             _mcp_post(
                 admin_token,
                 server_id,
@@ -574,7 +584,7 @@ class TestMcpSessionIsolation:
             )
         )
         time.sleep(1.2)
-        second = _extract_text_result(
+        second = _extract_primary_text_line(
             _mcp_post(
                 admin_token,
                 server_id,

@@ -3882,6 +3882,155 @@ class TestUIVisibilityConfig:
         ]
         assert config["cookie_action"] == "set"
 
+    def test_get_ui_visibility_config_admin_uses_admin_vars(self, monkeypatch):
+        """Admin users should use _ADMIN hide lists, not the default ones."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert config["hidden_sections"] == ["maintenance"]
+        assert config["hidden_header_items"] == []
+
+    def test_get_ui_visibility_config_nonadmin_uses_default_vars(self, monkeypatch):
+        """Non-admin users should use the default hide lists."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=False)
+
+        assert config["hidden_sections"] == ["resources", "tools"]
+        assert config["hidden_header_items"] == ["logout"]
+
+    def test_get_ui_visibility_config_embedded_skips_admin(self, monkeypatch):
+        """Embedded mode defaults should NOT apply to admin users."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert "logout" not in config["hidden_header_items"]
+        assert "team_selector" not in config["hidden_header_items"]
+
+    def test_get_ui_visibility_config_embedded_applies_to_nonadmin(self, monkeypatch):
+        """Embedded mode defaults should apply to non-admin users."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=False)
+
+        assert "logout" in config["hidden_header_items"]
+        assert "team_selector" in config["hidden_header_items"]
+
+    def test_get_ui_visibility_config_admin_empty_means_see_all(self, monkeypatch):
+        """When admin hide lists are empty, admins see all sections."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources", "teams"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout", "team_selector"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert config["hidden_sections"] == []
+        assert config["hidden_header_items"] == []
+        assert config["hidden_tabs"] == []
+
+    def test_get_ui_visibility_config_admin_query_override_additive(self, monkeypatch):
+        """Query param overrides should be additive on admin hide list."""
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "tools"}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert config["hidden_sections"] == ["maintenance", "tools"]
+
+    def test_get_ui_visibility_config_default_is_admin_false(self, monkeypatch):
+        """Calling without is_admin should default to non-admin path (backward compat)."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == ["tools"]
+        assert config["hidden_header_items"] == ["logout"]
+
+    def test_get_ui_visibility_config_admin_cookie_override(self, monkeypatch):
+        """Admin cookie overrides should be additive to admin hide list."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "tools,resources"}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert set(config["hidden_sections"]) == {"maintenance", "tools", "resources"}
+
+    def test_get_ui_visibility_config_admin_query_overrides_cookie(self, monkeypatch):
+        """Admin query param should take precedence over cookie."""
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "users"}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources,teams"}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        # Query param is used instead of cookie, additive to admin config
+        assert set(config["hidden_sections"]) == {"maintenance", "users"}
+        assert config["cookie_action"] == "set"
+
 
 class TestAdminUIRoute:
     """Test the main admin UI route with enhanced coverage."""
@@ -4109,6 +4258,65 @@ class TestAdminUIRoute:
         assert any(UI_HIDE_SECTIONS_COOKIE_NAME in header for header in cookie_headers)
         # Verify cookie max_age is set
         assert any("Max-Age=" in header for header in cookie_headers if UI_HIDE_SECTIONS_COOKIE_NAME in header)
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_admin_user_uses_admin_visibility(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Admin user should use _ADMIN hide lists, not non-admin ones."""
+        mock_request.query_params = {}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+
+        monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+        # Non-admin: hide tools and resources
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        # Admin: only hide maintenance
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", False, raising=False)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+
+        context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+        # Admin should see admin hide list, not non-admin
+        assert "maintenance" in context["ui_hidden_sections"]
+        assert "tools" not in context["ui_hidden_sections"]
+        assert "resources" not in context["ui_hidden_sections"]
+        # Embedded-mode header defaults should NOT apply to admin
+        assert "logout" not in context["ui_hidden_header_items"]
+        assert "team_selector" not in context["ui_hidden_header_items"]
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
@@ -18968,12 +19176,15 @@ class TestTemplateButtonGating:
 
     def test_admin_js_toggle_submit_injects_csrf_token(self):
         """handleToggleSubmit should inject CSRF token into the FormData before fetch()."""
-        admin_js_path = settings.static_dir / "admin.js"
-        admin_js = admin_js_path.read_text(encoding="utf-8")
+        # admin.js was modularised; the CSRF-injection logic now lives in the
+        # formHandlers module under mcpgateway/admin_ui/.  The bundle is minified
+        # so exact-string assertions must target the source module instead.
+        form_handlers_path = settings.static_dir.parent / "admin_ui" / "formHandlers.js"
+        form_handlers_js = form_handlers_path.read_text(encoding="utf-8")
         # handleToggleSubmit uses fetch() and injects the CSRF token directly
         # into FormData via getCookie rather than via the old DOM helper.
-        assert 'getCookie("mcpgateway_csrf_token")' in admin_js
-        assert 'formData.set("csrf_token", csrfToken)' in admin_js
+        assert 'getCookie("mcpgateway_csrf_token")' in form_handlers_js
+        assert 'formData.set("csrf_token", csrfToken)' in form_handlers_js
 
     def test_admin_modal_backdrops_disable_pointer_events(self):
         """Modal backdrop wrappers should not block interactions with modal buttons."""
@@ -21184,6 +21395,14 @@ class TestPaginationSwapStyle:
 
         templates_dir = str(Path(__file__).resolve().parents[3] / "mcpgateway" / "templates")
         env = Environment(loader=FileSystemLoader(templates_dir))
+
+        def tojson_attr(value: object) -> str:
+            import json as _json
+            s = _json.dumps(value)
+            s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
+            return s
+
+        env.filters["tojson_attr"] = tojson_attr
         template = env.get_template("pagination_controls.html")
         ctx = {
             "pagination": {
@@ -21204,14 +21423,14 @@ class TestPaginationSwapStyle:
         return template.render(**ctx)
 
     def test_default_swap_is_innerhtml(self):
-        """Without hx_swap set, swapStyle defaults to innerHTML."""
+        """Without hx_swap set, data-hx-swap defaults to innerHTML."""
         html = self._render_pagination_controls()
-        assert "swapStyle: 'innerHTML'" in html
+        assert 'data-hx-swap="innerHTML"' in html
 
     def test_outerhtml_swap_when_set(self):
-        """When hx_swap='outerHTML', swapStyle is outerHTML."""
+        """When hx_swap='outerHTML', data-hx-swap is outerHTML."""
         html = self._render_pagination_controls(hx_swap="outerHTML")
-        assert "swapStyle: 'outerHTML'" in html
+        assert 'data-hx-swap="outerHTML"' in html
 
     @pytest.mark.parametrize(
         "partial_template",
