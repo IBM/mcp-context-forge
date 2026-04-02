@@ -37,6 +37,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import tempfile
 import time
 from typing import cast
@@ -45,7 +46,7 @@ from typing import cast
 from alembic import command
 from alembic.config import Config
 from filelock import FileLock
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, or_, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -579,23 +580,94 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
 
             total_assigned = 0
 
+            # Unique field per resource type that participates in the team-scoped unique constraint
+            unique_field: dict[str, str] = {
+                "servers": "name",
+                "tools": "name",
+                "resources": "uri",
+                "prompts": "name",
+                "gateways": "slug",
+                "a2a_agents": "slug",
+            }
+
+            def _like_safe(v: str) -> str:
+                """Escape SQL LIKE wildcard characters for safe use in LIKE patterns.
+
+                Args:
+                    v: The string value to escape.
+
+                Returns:
+                    The escaped string safe for use in SQL LIKE patterns.
+                """
+                return v.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
             for resource_name, resource_model in resource_types:
                 try:
                     # Find unassigned resources
                     unassigned = db.query(resource_model).filter((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None)) | (resource_model.visibility.is_(None))).all()
 
-                    if unassigned:
-                        logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to admin team")
+                    if not unassigned:
+                        continue
 
-                        for resource in unassigned:
-                            resource.team_id = personal_team.id
-                            resource.owner_email = admin_user.email
-                            resource.visibility = "public"  # Make visible to all users
-                            if hasattr(resource, "federation_source") and not resource.federation_source:
-                                resource.federation_source = "mcpgateway-0.7.0-migration"
+                    logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to admin team")
 
-                        db.commit()
-                        total_assigned += len(unassigned)
+                    field = unique_field[resource_name]
+                    field_col = getattr(resource_model, field)
+
+                    # Collect unique field values from the orphaned batch
+                    original_values = {getattr(r, field) for r in unassigned if getattr(r, field) is not None}
+
+                    # One query: fetch all names already taken in the admin team that match any
+                    # original value exactly or as a suffixed variant (value-N).
+                    # NOTE: This intentionally omits gateway_id from the filter, making it
+                    # conservative — for Resource/Prompt models whose uniqueness also depends
+                    # on gateway_id, this may produce unnecessary renames but can never miss a
+                    # real conflict. That is the correct tradeoff for one-time bootstrap code.
+                    existing_taken: set[str] = (
+                        {
+                            row[0]
+                            for row in db.query(field_col).filter(
+                                resource_model.team_id == personal_team.id,
+                                resource_model.owner_email == admin_user.email,
+                                or_(*[cond for v in original_values for cond in (field_col == v, field_col.like(f"{_like_safe(v)}-%", escape="\\"))]),
+                            )
+                        }
+                        if original_values
+                        else set()
+                    )
+
+                    # Pre-compile suffix regexes keyed by original value
+                    suffix_res = {v: re.compile(rf"^{re.escape(v)}-(\d+)$") for v in original_values}
+
+                    # Track names claimed within this batch to catch intra-batch duplicates
+                    batch_assigned: set[str] = set()
+
+                    for resource in unassigned:
+                        original_value = getattr(resource, field)
+
+                        if original_value is not None:
+                            taken = existing_taken | batch_assigned
+                            if original_value in taken:
+                                # Parse numeric suffixes from taken values to find next free one
+                                suffix_re = suffix_res[original_value]
+                                used = {int(m.group(1)) for v in taken if (m := suffix_re.match(v))}
+                                new_value = f"{original_value}-{(max(used) if used else 1) + 1}"
+                                logger.warning(
+                                    f"Name conflict for {SecurityValidator.sanitize_log_message(resource_name)} '{SecurityValidator.sanitize_log_message(original_value)}' — renaming to '{SecurityValidator.sanitize_log_message(new_value)}'"
+                                )
+                                setattr(resource, field, new_value)
+                                batch_assigned.add(new_value)
+                            else:
+                                batch_assigned.add(original_value)
+
+                        resource.team_id = personal_team.id
+                        resource.owner_email = admin_user.email
+                        resource.visibility = "public"  # Make visible to all users
+                        if hasattr(resource, "federation_source") and not resource.federation_source:
+                            resource.federation_source = "mcpgateway-0.7.0-migration"
+
+                    db.commit()
+                    total_assigned += len(unassigned)
 
                 except Exception as e:
                     logger.error(f"Failed to assign {SecurityValidator.sanitize_log_message(resource_name)}: {SecurityValidator.sanitize_log_message(str(e))}")
