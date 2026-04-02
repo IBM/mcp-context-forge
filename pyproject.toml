@@ -755,6 +755,8 @@ also_copy = ["plugins/", "pyproject.toml", "mutmut_config.py"]
 # --------------------------------------------------------------------
 [tool.coverage.run]
 source = ["mcpgateway"]
+parallel = true
+concurrency = ["thread", "multiprocessing"]
 omit = [
     "mcpgateway/alembic/*",
     "mcpgateway/tools/builder/*",

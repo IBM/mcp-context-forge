@@ -385,6 +385,15 @@ class Settings(BaseSettings):
     sso_entra_graph_api_timeout: int = Field(default=10, ge=1, le=120, description="Timeout in seconds for Microsoft Graph group fallback requests")
     sso_entra_graph_api_max_groups: int = Field(default=0, ge=0, description="Maximum groups to keep from Graph fallback (0 = no limit)")
 
+    sso_adfs_enabled: bool = Field(default=False, description="Enable ADFS OIDC authentication")
+    sso_adfs_client_id: Optional[str] = Field(default=None, description="ADFS OAuth client ID")
+    sso_adfs_client_secret: Optional[SecretStr] = Field(default=None, description="ADFS OAuth client secret")
+    sso_adfs_authorization_url: Optional[str] = Field(default=None, description="ADFS authorization endpoint URL (e.g., https://adfs.example.com/adfs/oauth2/authorize/)")
+    sso_adfs_token_url: Optional[str] = Field(default=None, description="ADFS token endpoint URL (e.g., https://adfs.example.com/adfs/oauth2/token/)")
+    sso_adfs_issuer: Optional[str] = Field(default=None, description="ADFS issuer URL (e.g., https://adfs.example.com/adfs)")
+    sso_adfs_scope: Optional[str] = Field(default="openid profile email", description="ADFS OAuth scopes (space-separated)")
+    sso_adfs_display_name: Optional[str] = Field(default="ADFS Login", description="Display name shown on login page for ADFS")
+
     sso_generic_enabled: bool = Field(default=False, description="Enable generic OIDC provider (Keycloak, Auth0, etc.)")
     sso_generic_provider_id: Optional[str] = Field(default=None, description="Provider ID (e.g., 'keycloak', 'auth0', 'authentik')")
     sso_generic_display_name: Optional[str] = Field(default=None, description="Display name shown on login page")
@@ -401,12 +410,26 @@ class Settings(BaseSettings):
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
     sso_trusted_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
     sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
+    sso_auto_disable_unconfigured_providers: bool = Field(
+        default=False,
+        description=(
+            "Automatically disable SSO providers not present in environment configuration during bootstrap. "
+            "When enabled, providers configured in the database but missing from SSO_*_ENABLED environment variables "
+            "will be disabled. This enforces environment config as the single source of truth. "
+            "Default: false (preserves manually configured providers for backward compatibility)."
+        ),
+    )
 
     # SSO Admin Assignment Settings
     sso_auto_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
     sso_github_admin_orgs: Annotated[list[str], NoDecode] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
     sso_google_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
     sso_require_admin_approval: bool = Field(default=False, description="Require admin approval for new SSO registrations")
+
+    # ADFS-specific Settings
+    sso_adfs_default_email_domain: Optional[str] = Field(
+        default=None, description="Default email domain for ADFS when UPN is plain username (e.g., 'company.com' converts 'user123' to 'user123@company.com')"
+    )
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")

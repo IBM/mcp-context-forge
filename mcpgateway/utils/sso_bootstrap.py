@@ -17,6 +17,7 @@ from typing import Any, Dict, List
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.services.sso_service import ADFS_PROVIDER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +287,31 @@ def get_predefined_sso_providers() -> List[Dict]:
         except Exception as e:
             logger.error(f"Error bootstrapping Keycloak provider: {type(e).__name__}: {e}", exc_info=True)
 
+    # ADFS Provider
+    if settings.sso_adfs_enabled and settings.sso_adfs_client_id and settings.sso_adfs_authorization_url and settings.sso_adfs_token_url:
+        display_name = settings.sso_adfs_display_name or "ADFS Login"
+
+        # ADFS uses OIDC but doesn't support GET on userinfo endpoint;
+        # user info is extracted from the ID token instead.
+        providers.append(
+            {
+                "id": ADFS_PROVIDER_ID,
+                "name": ADFS_PROVIDER_ID,
+                "display_name": display_name,
+                "provider_type": "oidc",
+                "client_id": settings.sso_adfs_client_id,
+                "client_secret": settings.sso_adfs_client_secret.get_secret_value() if settings.sso_adfs_client_secret else "",
+                "authorization_url": settings.sso_adfs_authorization_url,
+                "token_url": settings.sso_adfs_token_url,
+                "userinfo_url": settings.sso_adfs_token_url,  # Placeholder — not used for ADFS
+                "issuer": settings.sso_adfs_issuer,
+                "scope": settings.sso_adfs_scope or "openid profile email",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+            }
+        )
+
     # Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.)
     if settings.sso_generic_enabled and settings.sso_generic_client_id and settings.sso_generic_provider_id:
         provider_id = settings.sso_generic_provider_id
@@ -333,14 +359,26 @@ async def bootstrap_sso_providers() -> None:
     from mcpgateway.services.sso_service import SSOService
 
     providers = get_predefined_sso_providers()
-    if not providers:
-        return
 
     db = next(get_db())
     try:
         sso_service = SSOService(db)
 
+        # Get list of provider IDs from environment config
+        configured_provider_ids = {p["id"] for p in providers}
+
+        # Disable providers not in environment config (if feature flag is enabled).
+        # Controlled by SSO_AUTO_DISABLE_UNCONFIGURED_PROVIDERS (default: false)
+        # to preserve backward compatibility with manually configured providers.
+        if settings.sso_auto_disable_unconfigured_providers:
+            for existing_provider in sso_service.list_all_providers():
+                if existing_provider.id not in configured_provider_ids and existing_provider.is_enabled:
+                    await sso_service.update_provider(existing_provider.id, {"is_enabled": False})
+                    print(f"🔒 Disabled SSO provider (not in config): {existing_provider.display_name} (ID: {existing_provider.id})")
+
         for provider_config in providers:
+            # Ensure provider is enabled
+            provider_config["is_enabled"] = True
             # Check if provider already exists by ID or name (both have unique constraints)
             existing_by_id = sso_service.get_provider(provider_config["id"])
             existing_by_name = sso_service.get_provider_by_name(provider_config["name"])

@@ -906,6 +906,7 @@ mcpContextForge:
     SSO_KEYCLOAK_ENABLED: "false"
     SSO_ENTRA_ENABLED: "false"
     SSO_GENERIC_ENABLED: "false"
+    SSO_ADFS_ENABLED: "false"
     # See .env.example for full SSO_*_CLIENT_ID, SSO_*_CLIENT_SECRET, etc.
 
     # ─ Default Role Configuration ─

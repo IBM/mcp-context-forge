@@ -43,6 +43,21 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token
 # Logger
 logger = logging.getLogger(__name__)
 
+# Constants
+ADFS_PROVIDER_ID = "adfs"
+
+
+class SSOError(Exception):
+    """Base class for SSO-related errors."""
+
+
+class SSOAuthenticationError(SSOError):
+    """Raised when SSO authentication fails."""
+
+
+class SSOProviderConfigError(SSOError):
+    """Raised when SSO provider configuration is invalid or incomplete."""
+
 
 class _Unset(Enum):
     """Sentinel: distinguishes 'caller omitted the argument' from 'caller passed None'."""
@@ -437,6 +452,24 @@ class SSOService:
             []
         """
         stmt = select(SSOProvider).where(SSOProvider.is_enabled.is_(True))
+        result = self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    def list_all_providers(self) -> List[SSOProvider]:
+        """Get list of all SSO providers (enabled and disabled).
+
+        Returns:
+            List of all SSO providers
+
+        Examples:
+            Returns empty list when DB has no providers:
+            >>> from unittest.mock import MagicMock
+            >>> service = SSOService(MagicMock())
+            >>> service.db.execute.return_value.scalars.return_value.all.return_value = []
+            >>> service.list_all_providers()
+            []
+        """
+        stmt = select(SSOProvider)
         result = self.db.execute(stmt)
         return list(result.scalars().all())
 
@@ -1191,10 +1224,21 @@ class SSOService:
                     return None
                 verified_claims = await self._verify_oidc_id_token(provider, id_token, expected_nonce=callback_nonce)
                 if verified_claims is None:
-                    logger.error(f"id_token verification failed for provider {provider_id}")
-                    return None
-                token_data = dict(token_data)
-                token_data["_verified_id_token_claims"] = verified_claims
+                    # ADFS: on-prem deployments often lack a discoverable JWKS endpoint,
+                    # so verification may fail. Fall through to _get_user_info which
+                    # decodes the id_token received over the direct TLS channel.
+                    if provider.id == ADFS_PROVIDER_ID:
+                        logger.warning("OIDC id_token verification failed for ADFS provider %s; falling back to TLS-trust decode.", provider_id)
+                        # Mark that verification was attempted so _get_user_info
+                        # does not redundantly re-attempt it.
+                        token_data = dict(token_data)
+                        token_data["_adfs_verification_attempted"] = True
+                    else:
+                        logger.error("id_token verification failed for provider %s", provider_id)
+                        return None
+                else:
+                    token_data = dict(token_data)
+                    token_data["_verified_id_token_claims"] = verified_claims
 
             # Get user info from provider (pass full token_data for id_token parsing)
             user_info = await self._get_user_info(provider, token_data["access_token"], token_data, expected_nonce=callback_nonce)
@@ -1356,6 +1400,9 @@ class SSOService:
 
         Returns:
             User info dict or None if failed
+
+        Raises:
+            SSOProviderConfigError: If the ADFS provider is missing the required id_token.
         """
         # First-Party
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
@@ -1364,11 +1411,72 @@ class SSOService:
         verified_id_token_claims: Optional[Dict[str, Any]] = None
         if token_data and isinstance(token_data.get("_verified_id_token_claims"), dict):
             verified_id_token_claims = token_data.get("_verified_id_token_claims")
+        elif token_data and token_data.get("_adfs_verification_attempted"):
+            # ADFS verification was already attempted upstream in handle_oauth_callback_with_tokens
+            # and failed (on-prem ADFS without JWKS). Skip redundant re-attempt.
+            pass
         elif provider.provider_type == "oidc" and token_data and isinstance(token_data.get("id_token"), str):
             if expected_nonce is None:
                 logger.warning("Skipping OIDC id_token fallback verification for provider %s because expected nonce is unavailable.", provider.id)
             else:
                 verified_id_token_claims = await self._verify_oidc_id_token(provider, token_data["id_token"], expected_nonce=expected_nonce)
+
+        # ADFS does not support GET on the userinfo endpoint.
+        # Extract user info directly from the ID token instead.
+        # Prefer verified claims when available (ADFS with discoverable JWKS);
+        # fall back to unverified decode for on-prem ADFS without JWKS.
+        if provider.id == ADFS_PROVIDER_ID:
+            # Use verified claims if OIDC verification succeeded upstream
+            if verified_id_token_claims:
+                logger.debug("ADFS: using verified id_token claims (keys: %s)", list(verified_id_token_claims.keys()))
+                return self._normalize_user_info(provider, verified_id_token_claims)
+
+            # Fall back to unverified decode (on-prem ADFS without JWKS).
+            # The id_token was received server-to-server over TLS from the token
+            # endpoint, so we trust the transport.  We still validate aud, iss,
+            # exp, and nonce as defense-in-depth against token confusion.
+            if token_data and isinstance(token_data.get("id_token"), str):
+                id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+                if not id_token_claims:
+                    logger.error("Failed to decode ADFS ID token claims")
+                    return None
+
+                # Validate audience — must match our client_id
+                token_aud = id_token_claims.get("aud")
+                if isinstance(token_aud, list):
+                    aud_match = provider.client_id in token_aud
+                else:
+                    aud_match = token_aud == provider.client_id
+                if not aud_match:
+                    logger.error("ADFS id_token audience mismatch: expected %s, got %s", provider.client_id, token_aud)
+                    return None
+
+                # Validate issuer — must match configured issuer
+                if provider.issuer and id_token_claims.get("iss") != provider.issuer:
+                    logger.error("ADFS id_token issuer mismatch: expected %s, got %s", provider.issuer, id_token_claims.get("iss"))
+                    return None
+
+                # Validate expiration — reject missing or non-numeric exp
+                import time  # pylint: disable=import-outside-toplevel
+
+                exp = id_token_claims.get("exp")
+                if not isinstance(exp, (int, float)):
+                    logger.error("ADFS id_token missing or malformed exp claim: %r", exp)
+                    return None
+                if exp < time.time():
+                    logger.error("ADFS id_token has expired (exp=%s)", exp)
+                    return None
+
+                # Validate nonce — prevents replay attacks
+                if expected_nonce and id_token_claims.get("nonce") != expected_nonce:
+                    logger.error("ADFS id_token nonce mismatch")
+                    return None
+
+                logger.debug("ADFS: using decoded id_token claims with validated aud/iss/exp/nonce (keys: %s)", list(id_token_claims.keys()))
+                return self._normalize_user_info(provider, id_token_claims)
+
+            logger.error("ADFS provider requires id_token but none was provided in token_data")
+            raise SSOProviderConfigError("ADFS provider requires id_token in token response")
 
         response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
 
@@ -1396,6 +1504,62 @@ class SSOService:
         logger.error(f"User info request failed for {provider.name}: HTTP {response.status_code} - {response.text}")
 
         return None
+
+    def _get_default_email_domain(self, provider: SSOProvider) -> Optional[str]:
+        """Get default email domain from provider metadata or global settings.
+
+        Args:
+            provider: SSO provider instance
+
+        Returns:
+            Default email domain string, or None if not configured
+        """
+        metadata = provider.provider_metadata or {}
+        default_domain = metadata.get("default_email_domain")
+        if not default_domain:
+            default_domain = settings.sso_adfs_default_email_domain
+        return default_domain
+
+    def _normalize_adfs_email(self, raw_email: str, default_domain: Optional[str]) -> Optional[str]:
+        """Normalize ADFS email/UPN to standard email format.
+
+        ADFS may return UPN in various formats:
+        - user@domain.com (already valid email)
+        - DOMAIN\\username (Windows domain format)
+        - username (plain username without domain)
+
+        Args:
+            raw_email: Raw email/UPN string from ADFS claims
+            default_domain: Default email domain to append if needed
+
+        Returns:
+            Normalized email address, or None if normalization fails
+        """
+        if not raw_email:
+            return None
+
+        raw_email_str = str(raw_email).strip()
+
+        # Already a valid email format
+        if "@" in raw_email_str and "." in raw_email_str.split("@")[-1]:
+            return raw_email_str
+
+        # Handle DOMAIN\username format
+        if "\\" in raw_email_str:
+            username_part = raw_email_str.split("\\")[-1]
+            if default_domain:
+                return f"{username_part}@{default_domain}"
+            logger.warning("ADFS UPN in DOMAIN\\username format but no default_email_domain configured")
+            return None
+
+        # Handle plain username without domain
+        if "@" not in raw_email_str:
+            if default_domain:
+                return f"{raw_email_str}@{default_domain}"
+            logger.warning("ADFS UPN is plain username but no default_email_domain configured")
+            return None
+
+        return raw_email_str
 
     @staticmethod
     def _extract_groups_and_roles(user_data: Dict[str, Any], groups_claim: str = "groups") -> list[str]:
@@ -1580,6 +1744,46 @@ class SSOService:
                 full_name=user_data.get("name") or email,
                 provider_id=user_data.get("sub") or user_data.get("oid"),
                 username=username,
+            )
+
+        # Handle ADFS provider
+        if provider.id == ADFS_PROVIDER_ID:
+            # ADFS uses UPN (User Principal Name) as the primary identifier.
+            # Claim priority: email > preferred_username > upn > unique_name
+            raw_email = user_data.get("email") or user_data.get("preferred_username") or user_data.get("upn") or user_data.get("unique_name")
+
+            email = None
+            if raw_email:
+                default_domain = self._get_default_email_domain(provider)
+                email = self._normalize_adfs_email(str(raw_email), default_domain)
+
+            username = None
+            if email:
+                username = email.split("@")[0]
+            elif raw_email:
+                raw_str = str(raw_email).strip()
+                if "\\" in raw_str:
+                    username = raw_str.split("\\")[-1]
+                elif "@" in raw_str:
+                    username = raw_str.split("@")[0]
+                else:
+                    username = raw_str
+
+            full_name = user_data.get("name")
+            if not full_name and user_data.get("given_name") and user_data.get("family_name"):
+                full_name = f"{user_data.get('given_name')} {user_data.get('family_name')}"
+
+            adfs_groups = self._extract_groups_and_roles(user_data, groups_claim)
+
+            return self._build_normalized_user_info(
+                user_data,
+                ADFS_PROVIDER_ID,
+                adfs_groups,
+                email=email,
+                full_name=full_name or email or username,
+                provider_id=user_data.get("sub") or user_data.get("oid") or email or username,
+                username=username or email,
+                extra={"email_verified": True},  # ADFS tokens are trusted after successful authentication
             )
 
         # Generic OIDC format for all other providers.
@@ -1896,6 +2100,11 @@ class SSOService:
         Returns:
             True if user should be admin, False otherwise
         """
+        # Validate email format — reject admin checks for invalid emails
+        if not email or "@" not in email:
+            logger.warning("Invalid email format for admin check: %r. Rejecting admin privilege.", email)
+            return False
+
         # Check domain-based admin assignment
         domain = email.split("@")[1].lower()
         if domain in {d.lower() for d in settings.sso_auto_admin_domains}:

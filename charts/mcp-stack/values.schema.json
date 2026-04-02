@@ -2146,6 +2146,9 @@
             "SSO_OKTA_ENABLED": {
               "type": "string"
             },
+            "SSO_ADFS_ENABLED": {
+              "type": "string"
+            },
             "SSRF_BLOCKED_HOSTS": {
               "type": "string"
             },
