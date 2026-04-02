@@ -93,7 +93,7 @@ mcpContextForge:
           conditions: []
           config:
             backend: "redis"
-            redis_url: "redis://:changeme@gp-context-forge-mcp-stack-redis:6379/0"  # pragma: allowlist secret
+            redis_url: "redis://:change-me-redis@gp-context-forge-mcp-stack-redis:6379/0"  # pragma: allowlist secret
             redis_key_prefix: "rl"
             redis_fallback: true
             by_user: "30/m"
