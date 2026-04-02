@@ -32,14 +32,11 @@ use crate::types::{DimResult, EvalResult};
 // Backend selection
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 enum EngineBackend {
     Memory(Arc<MemoryStore>),
     Redis(Arc<RedisRateLimiter>),
 }
-
-// ---------------------------------------------------------------------------
-// Check descriptor — one entry per active dimension
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -60,11 +57,6 @@ pub struct RateLimiterEngine {
     config: EngineConfig,
     backend: EngineBackend,
     clock: Arc<dyn Clock>,
-}
-
-enum AsyncBackend {
-    Memory(Arc<MemoryStore>),
-    Redis(Arc<RedisRateLimiter>),
 }
 
 impl RateLimiterEngine {
@@ -93,18 +85,35 @@ impl RateLimiterEngine {
     /// - `redis_key_prefix`: key namespace prefix (default `"rl"`)
     #[new]
     pub fn new(config: &Bound<'_, PyDict>) -> PyResult<Self> {
-        let by_user: Option<String> = config.get_item("by_user")?.and_then(|v| v.extract().ok());
-        let by_tenant: Option<String> =
-            config.get_item("by_tenant")?.and_then(|v| v.extract().ok());
-        let algorithm: String = config
-            .get_item("algorithm")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or_else(|| "fixed_window".to_string());
+        let by_user: Option<String> = match config.get_item("by_user")? {
+            Some(v) if !v.is_none() => Some(v.extract::<String>().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err("by_user must be a string like '60/m'")
+            })?),
+            _ => None,
+        };
+        let by_tenant: Option<String> = match config.get_item("by_tenant")? {
+            Some(v) if !v.is_none() => Some(v.extract::<String>().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err("by_tenant must be a string like '600/m'")
+            })?),
+            _ => None,
+        };
+        let algorithm: String = match config.get_item("algorithm")? {
+            Some(v) if !v.is_none() => v.extract::<String>().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "algorithm must be a string ('fixed_window', 'sliding_window', or 'token_bucket')",
+                )
+            })?,
+            _ => "fixed_window".to_string(),
+        };
 
-        let by_tool: HashMap<String, String> = config
-            .get_item("by_tool")?
-            .and_then(|v| v.extract().ok())
-            .unwrap_or_default();
+        let by_tool: HashMap<String, String> = match config.get_item("by_tool")? {
+            Some(v) if !v.is_none() => v.extract::<HashMap<String, String>>().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "by_tool must be a dict of {tool_name: rate_string}",
+                )
+            })?,
+            _ => HashMap::new(),
+        };
 
         let engine_config = EngineConfig::new(
             by_user.as_deref(),
@@ -158,40 +167,24 @@ impl RateLimiterEngine {
     /// Python test mocks of `time.time()` propagate to header timestamps (CORR-02).
     ///
     /// Returns the most restrictive `EvalResult` across all dimensions (ARCH-02).
+    ///
+    /// **Warning:** For the Redis backend, this method calls `block_on` on a
+    /// dedicated Tokio runtime.  It must not be called from within an existing
+    /// Tokio runtime (e.g. from `pyo3-async-runtimes` worker threads) or it
+    /// will panic.  Use `evaluate_many_async` for async contexts instead.
     pub fn evaluate_many(
         &self,
         checks: Vec<(String, u64, u64)>,
         now_unix: i64,
     ) -> PyResult<EvalResult> {
-        Python::attach(|py| {
-            let dim_results: Vec<DimResult> = py
-                .detach(|| -> Result<Vec<DimResult>, String> {
-                    match &self.backend {
-                        EngineBackend::Memory(store) => {
-                            let now_mono = self.clock.now_monotonic();
-                            Ok(checks
-                                .into_iter()
-                                .map(|(key, limit_count, window_nanos)| {
-                                    store.check_and_increment(
-                                        &key,
-                                        limit_count,
-                                        window_nanos,
-                                        self.config.algorithm,
-                                        now_mono,
-                                        now_unix,
-                                    )
-                                })
-                                .collect())
-                        }
-                        EngineBackend::Redis(redis) => redis
-                            .evaluate_many(&checks, now_unix)
-                            .map_err(|e| e.to_string()),
-                    }
-                })
-                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
-
-            Ok(EvalResult::from_dims(&dim_results))
-        })
+        let dim_results = eval_dims_sync(
+            &self.backend,
+            self.config.algorithm,
+            &self.clock,
+            checks,
+            now_unix,
+        )?;
+        Ok(EvalResult::from_dims(&dim_results))
     }
 
     /// Evaluate all active dimensions asynchronously.
@@ -204,37 +197,12 @@ impl RateLimiterEngine {
         checks: Vec<(String, u64, u64)>,
         now_unix: i64,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let backend = match &self.backend {
-            EngineBackend::Memory(store) => AsyncBackend::Memory(Arc::clone(store)),
-            EngineBackend::Redis(redis) => AsyncBackend::Redis(Arc::clone(redis)),
-        };
+        let backend = self.backend.clone();
         let algorithm = self.config.algorithm;
         let clock = Arc::clone(&self.clock);
 
         future_into_py(py, async move {
-            let dim_results: Vec<DimResult> = match backend {
-                AsyncBackend::Memory(store) => {
-                    let now_mono = clock.now_monotonic();
-                    checks
-                        .into_iter()
-                        .map(|(key, limit_count, window_nanos)| {
-                            store.check_and_increment(
-                                &key,
-                                limit_count,
-                                window_nanos,
-                                algorithm,
-                                now_mono,
-                                now_unix,
-                            )
-                        })
-                        .collect()
-                }
-                AsyncBackend::Redis(redis) => redis
-                    .evaluate_many_async(&checks, now_unix)
-                    .await
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
-            };
-
+            let dim_results = eval_dims_async(backend, algorithm, clock, checks, now_unix).await?;
             Python::attach(|py| Py::new(py, EvalResult::from_dims(&dim_results)))
         })
     }
@@ -264,31 +232,13 @@ impl RateLimiterEngine {
             return Ok((true, headers, meta));
         }
 
-        let dim_results: Vec<DimResult> = py
-            .detach(|| -> Result<Vec<DimResult>, String> {
-                match &self.backend {
-                    EngineBackend::Memory(store) => {
-                        let now_mono = self.clock.now_monotonic();
-                        Ok(checks
-                            .into_iter()
-                            .map(|(key, limit_count, window_nanos)| {
-                                store.check_and_increment(
-                                    &key,
-                                    limit_count,
-                                    window_nanos,
-                                    self.config.algorithm,
-                                    now_mono,
-                                    now_unix,
-                                )
-                            })
-                            .collect())
-                    }
-                    EngineBackend::Redis(redis) => redis
-                        .evaluate_many(&checks, now_unix)
-                        .map_err(|e| e.to_string()),
-                }
-            })
-            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+        let dim_results = eval_dims_sync(
+            &self.backend,
+            self.config.algorithm,
+            &self.clock,
+            checks,
+            now_unix,
+        )?;
 
         let eval = EvalResult::from_dims(&dim_results);
         let headers = build_headers_dict(py, &eval, include_retry_after)?;
@@ -328,36 +278,12 @@ impl RateLimiterEngine {
             });
         }
 
-        let backend = match &self.backend {
-            EngineBackend::Memory(store) => AsyncBackend::Memory(Arc::clone(store)),
-            EngineBackend::Redis(redis) => AsyncBackend::Redis(Arc::clone(redis)),
-        };
+        let backend = self.backend.clone();
         let algorithm = self.config.algorithm;
         let clock = Arc::clone(&self.clock);
 
         future_into_py(py, async move {
-            let dim_results: Vec<DimResult> = match backend {
-                AsyncBackend::Memory(store) => {
-                    let now_mono = clock.now_monotonic();
-                    checks
-                        .into_iter()
-                        .map(|(key, limit_count, window_nanos)| {
-                            store.check_and_increment(
-                                &key,
-                                limit_count,
-                                window_nanos,
-                                algorithm,
-                                now_mono,
-                                now_unix,
-                            )
-                        })
-                        .collect()
-                }
-                AsyncBackend::Redis(redis) => redis
-                    .evaluate_many_async(&checks, now_unix)
-                    .await
-                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?,
-            };
+            let dim_results = eval_dims_async(backend, algorithm, clock, checks, now_unix).await?;
 
             let eval = EvalResult::from_dims(&dim_results);
             Python::attach(|py| -> PyResult<Py<PyAny>> {
@@ -375,6 +301,92 @@ impl RateLimiterEngine {
             })
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shared dimension evaluation — used by evaluate_many, check (sync + async)
+// ---------------------------------------------------------------------------
+
+/// Evaluate dimension checks synchronously (memory: GIL-released, Redis: block_on).
+fn eval_dims_sync(
+    backend: &EngineBackend,
+    algorithm: crate::config::Algorithm,
+    clock: &Arc<dyn Clock>,
+    checks: Vec<(String, u64, u64)>,
+    now_unix: i64,
+) -> PyResult<Vec<DimResult>> {
+    Python::attach(|py| {
+        py.detach(|| -> Result<Vec<DimResult>, String> {
+            eval_dims_inner(backend, algorithm, clock, checks, now_unix)
+        })
+        .map_err(pyo3::exceptions::PyRuntimeError::new_err)
+    })
+}
+
+/// Evaluate dimension checks asynchronously (memory: direct, Redis: async).
+async fn eval_dims_async(
+    backend: EngineBackend,
+    algorithm: crate::config::Algorithm,
+    clock: Arc<dyn Clock>,
+    checks: Vec<(String, u64, u64)>,
+    now_unix: i64,
+) -> PyResult<Vec<DimResult>> {
+    match backend {
+        EngineBackend::Memory(store) => {
+            let now_mono = clock.now_monotonic();
+            Ok(eval_dims_memory(
+                &store, algorithm, checks, now_mono, now_unix,
+            ))
+        }
+        EngineBackend::Redis(redis) => redis
+            .evaluate_many_async(&checks, now_unix)
+            .await
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string())),
+    }
+}
+
+/// Backend dispatch for synchronous evaluation (called inside `py.detach`).
+fn eval_dims_inner(
+    backend: &EngineBackend,
+    algorithm: crate::config::Algorithm,
+    clock: &Arc<dyn Clock>,
+    checks: Vec<(String, u64, u64)>,
+    now_unix: i64,
+) -> Result<Vec<DimResult>, String> {
+    match backend {
+        EngineBackend::Memory(store) => {
+            let now_mono = clock.now_monotonic();
+            Ok(eval_dims_memory(
+                store, algorithm, checks, now_mono, now_unix,
+            ))
+        }
+        EngineBackend::Redis(redis) => redis
+            .evaluate_many(&checks, now_unix)
+            .map_err(|e| e.to_string()),
+    }
+}
+
+/// Evaluate checks against the in-memory store.
+fn eval_dims_memory(
+    store: &MemoryStore,
+    algorithm: crate::config::Algorithm,
+    checks: Vec<(String, u64, u64)>,
+    now_mono: crate::clock::Nanos,
+    now_unix: i64,
+) -> Vec<DimResult> {
+    checks
+        .into_iter()
+        .map(|(key, limit_count, window_nanos)| {
+            store.check_and_increment(
+                &key,
+                limit_count,
+                window_nanos,
+                algorithm,
+                now_mono,
+                now_unix,
+            )
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -397,10 +409,11 @@ impl RateLimiterEngine {
         if let (Some(t), Some(rl)) = (tenant, &self.config.by_tenant) {
             checks.push((format!("tenant:{}", t), rl.count, rl.window_nanos));
         }
-        // Tool names are already normalised (lowercase) in EngineConfig at init time.
-        // The caller passes the already-lowercased tool name from Python.
-        if let Some(rl) = self.config.by_tool.get(tool) {
-            checks.push((format!("tool:{}", tool), rl.count, rl.window_nanos));
+        // Tool names are normalised (lowercase) in EngineConfig at init time.
+        // Defensive lowercase here to avoid silent mismatches if caller forgets.
+        let tool_lower = tool.to_ascii_lowercase();
+        if let Some(rl) = self.config.by_tool.get(&tool_lower) {
+            checks.push((format!("tool:{}", tool_lower), rl.count, rl.window_nanos));
         }
         checks
     }
@@ -419,8 +432,7 @@ fn build_headers_dict<'py>(
     headers.set_item("X-RateLimit-Limit", eval.limit.to_string())?;
     headers.set_item("X-RateLimit-Remaining", eval.remaining.to_string())?;
     headers.set_item("X-RateLimit-Reset", eval.reset_timestamp.to_string())?;
-    if include_retry_after {
-        let retry = eval.retry_after.unwrap_or(0);
+    if include_retry_after && let Some(retry) = eval.retry_after {
         headers.set_item("Retry-After", retry.to_string())?;
     }
     Ok(headers)
@@ -436,6 +448,7 @@ fn build_meta_dict<'py>(
     let reset_in = eval
         .retry_after
         .unwrap_or_else(|| (eval.reset_timestamp - now_unix).max(0));
+    // "limited" means rate limits are configured, not that the request was blocked.
     meta.set_item("limited", true)?;
     meta.set_item("remaining", eval.remaining)?;
     meta.set_item("reset_in", reset_in)?;

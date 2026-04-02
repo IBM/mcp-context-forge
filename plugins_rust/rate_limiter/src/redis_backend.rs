@@ -19,13 +19,37 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use redis::aio::MultiplexedConnection;
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 
 use crate::config::Algorithm;
 use crate::types::DimResult;
 
 // ---------------------------------------------------------------------------
 // Batch Lua scripts — identical to Python RedisBackend._LUA_BATCH_* constants
+//
+// INVARIANT (rolling-upgrade compatibility):
+//   These scripts and the key format ({prefix}:{dimension_key}:{window_seconds})
+//   MUST stay in sync with the Python RedisBackend in
+//   plugins/rate_limiter/rate_limiter.py.  Both implementations share the same
+//   Redis counters so that mixed Rust/Python deployments enforce a single set
+//   of limits during a rolling upgrade.
+//
+//   If you change a script or the key format here, update the Python copy and
+//   validate with the test_redis_key_format_parity_* tests.
+//
+//   LIMITATION: The Rust path derives `now_float` from `now_unix as f64`
+//   (whole-second precision) while the Python path passes raw `time.time()`
+//   (sub-second precision).  During a mixed rolling upgrade, sorted-set
+//   members will have different precision levels for the same logical
+//   timestamp.  The functional impact is at most 1 second on response
+//   headers — rate enforcement correctness is unaffected.
+// ---------------------------------------------------------------------------
+//
+// LIMITATION: Batch scripts pass multiple KEYS (one per dimension) in a
+// single EVAL/EVALSHA call.  In Redis Cluster, all keys must hash to the
+// same slot.  The key format `{prefix}:{dim}:{window}` does NOT use hash
+// tags, so these scripts will fail on Redis Cluster.  Use standalone Redis
+// or Sentinel for multi-dimension batch evaluation.
 // ---------------------------------------------------------------------------
 
 const LUA_BATCH_FIXED: &str = r#"
@@ -70,6 +94,10 @@ end
 return results
 "#;
 
+// NOTE: Lua uses floating-point arithmetic for token refill (tokens + elapsed * rate),
+// while the in-memory Rust backend uses integer milli-token math (u128).  Under sustained
+// high-frequency traffic the two may diverge by ±1 token due to float precision loss.
+// This is acceptable for rate limiting — the behavioral contract is identical.
 const LUA_BATCH_TOKEN_BUCKET: &str = r#"
 local now = tonumber(ARGV[1])
 local results = {}
@@ -113,18 +141,45 @@ return results
 
 static MEMBER_CTR: AtomicU64 = AtomicU64::new(0);
 
-/// Process-unique PID, cached once.  Combined with the per-process atomic
-/// counter this guarantees unique sorted-set members across gateway replicas,
-/// preventing ZADD overwrites that would cause undercounting.
+/// Process-unique PID, cached once.
 fn process_id() -> u32 {
-    use std::sync::OnceLock;
     static PID: OnceLock<u32> = OnceLock::new();
     *PID.get_or_init(std::process::id)
 }
 
+/// Random nonce generated once at process start.  Combined with PID and atomic
+/// counter this guarantees unique sorted-set members across gateway replicas
+/// even in containerized environments where PID 1 is common, preventing ZADD
+/// overwrites that would cause undercounting.
+fn instance_nonce() -> u64 {
+    static NONCE: OnceLock<u64> = OnceLock::new();
+    *NONCE.get_or_init(|| {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .hash(&mut h);
+        std::process::id().hash(&mut h);
+        h.finish()
+    })
+}
+
 fn unique_member(now: f64) -> String {
+    use std::fmt::Write;
     let n = MEMBER_CTR.fetch_add(1, Ordering::Relaxed);
-    format!("{:.6}:{}:{}", now, process_id(), n)
+    let mut buf = String::with_capacity(60);
+    let _ = write!(
+        buf,
+        "{:.6}:{}:{}:{}",
+        now,
+        process_id(),
+        instance_nonce(),
+        n
+    );
+    buf
 }
 
 // ---------------------------------------------------------------------------
@@ -137,8 +192,17 @@ fn val_i64(v: &redis::Value) -> i64 {
         redis::Value::BulkString(b) => std::str::from_utf8(b)
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(0),
-        _ => 0,
+            .unwrap_or_else(|| {
+                log::error!("Redis returned unparseable i64 BulkString; defaulting to 0");
+                0
+            }),
+        other => {
+            log::error!(
+                "Redis returned unexpected value type for i64: {:?}; defaulting to 0",
+                other
+            );
+            0
+        }
     }
 }
 
@@ -148,8 +212,17 @@ fn val_f64(v: &redis::Value) -> f64 {
         redis::Value::BulkString(b) => std::str::from_utf8(b)
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0),
-        _ => 0.0,
+            .unwrap_or_else(|| {
+                log::error!("Redis returned unparseable f64 BulkString; defaulting to 0.0");
+                0.0
+            }),
+        other => {
+            log::error!(
+                "Redis returned unexpected value type for f64: {:?}; defaulting to 0.0",
+                other
+            );
+            0.0
+        }
     }
 }
 
@@ -220,7 +293,20 @@ impl RedisRateLimiter {
             }
         }
 
-        let conn = self.client.get_multiplexed_tokio_connection().await?;
+        // Timeout prevents blocking the gateway thread indefinitely when
+        // Redis is unreachable (network partition, DNS failure, etc.).
+        let conn = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.client.get_multiplexed_tokio_connection(),
+        )
+        .await
+        .map_err(|_| {
+            redis::RedisError::from((
+                redis::ErrorKind::IoError,
+                "Redis connection timed out after 5 s",
+            ))
+        })??;
+
         let mut conn_guard = self.conn.lock();
         if let Some(existing) = conn_guard.as_ref() {
             return Ok(existing.clone());
@@ -230,6 +316,7 @@ impl RedisRateLimiter {
     }
 
     fn reset_connection(&self) {
+        log::warn!("Redis connection reset after error; will reconnect on next request");
         *self.conn.lock() = None;
         *self.script_sha.lock() = None;
     }
@@ -319,6 +406,14 @@ impl RedisRateLimiter {
         checks: &[(String, u64, u64)],
         now_unix: i64,
     ) -> Result<Vec<DimResult>, redis::RedisError> {
+        // Guard: block_on from within an existing Tokio runtime panics.
+        // Return a clear error instead of crashing the Python process.
+        if Handle::try_current().is_ok() {
+            return Err(redis::RedisError::from((
+                redis::ErrorKind::IoError,
+                "evaluate_many (sync) called from within a Tokio runtime; use evaluate_many_async instead",
+            )));
+        }
         shared_runtime()?.block_on(self.evaluate_many_async(checks, now_unix))
     }
 
@@ -347,14 +442,23 @@ impl RedisRateLimiter {
                     .await
             }
         };
-        if result.is_err() {
-            self.reset_connection();
+        if let Err(ref e) = result {
+            // Only reset the multiplexed connection on transport-level errors.
+            // Script/type errors are recoverable without dropping in-flight requests.
+            if matches!(
+                e.kind(),
+                redis::ErrorKind::IoError
+                    | redis::ErrorKind::BusyLoadingError
+                    | redis::ErrorKind::TryAgain
+            ) {
+                self.reset_connection();
+            }
         }
         result
     }
 
     fn redis_key(&self, dim_key: &str, window_nanos: u64) -> String {
-        let window_secs = window_nanos / 1_000_000_000;
+        let window_secs = (window_nanos / 1_000_000_000).max(1);
         format!("{}:{}:{}", self.prefix, dim_key, window_secs)
     }
 
@@ -382,7 +486,7 @@ impl RedisRateLimiter {
             .collect();
         let args: Vec<Vec<u8>> = checks
             .iter()
-            .map(|(_, _, w)| format!("{}", w / 1_000_000_000).into_bytes())
+            .map(|(_, _, w)| format!("{}", (w / 1_000_000_000).max(1)).into_bytes())
             .collect();
 
         let raw = self.evalsha_or_eval(conn, keys.len(), &keys, &args).await?;
@@ -433,7 +537,7 @@ impl RedisRateLimiter {
 
         let mut args: Vec<Vec<u8>> = vec![format!("{}", now_float).into_bytes()];
         for (_, limit, window_nanos) in checks {
-            let window_secs = window_nanos / 1_000_000_000;
+            let window_secs = (window_nanos / 1_000_000_000).max(1);
             args.push(format!("{}", window_secs).into_bytes());
             args.push(format!("{}", limit).into_bytes());
             args.push(unique_member(now_float).into_bytes());

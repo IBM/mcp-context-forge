@@ -269,7 +269,7 @@ fn fixed_window(
     now_unix: UnixSecs,
 ) -> DimResult {
     // Reset if window has elapsed (amortized cleanup, MEM-05).
-    if now_mono >= *window_start + window_nanos {
+    if now_mono.saturating_sub(*window_start) >= window_nanos {
         *count = 0;
         *window_start = now_mono;
         *window_start_unix = now_unix;
@@ -293,7 +293,7 @@ fn fixed_window(
             retry_after: None,
         }
     } else {
-        let elapsed_nanos = now_mono - *window_start;
+        let elapsed_nanos = now_mono.saturating_sub(*window_start);
         let remaining_nanos = window_nanos.saturating_sub(elapsed_nanos);
         let retry_after = (remaining_nanos / 1_000_000_000) as i64;
         DimResult {
@@ -322,9 +322,12 @@ fn sliding_window(
     let count = timestamps.len() as u64;
 
     // Reset timestamp: when the oldest timestamp in the window expires.
+    // .max(1) on the division result ensures reset_timestamp is always
+    // strictly in the future, even when the oldest entry expires in < 1 s
+    // (integer division would otherwise truncate to 0).
     let reset_timestamp = if let Some(&oldest) = timestamps.front() {
         let nanos_until_oldest_expires = (oldest + window_nanos).saturating_sub(now_mono);
-        now_unix + (nanos_until_oldest_expires / 1_000_000_000) as i64
+        now_unix + (nanos_until_oldest_expires / 1_000_000_000).max(1) as i64
     } else {
         // No requests in window — reset is now + window.
         now_unix + (window_nanos / 1_000_000_000) as i64
@@ -603,8 +606,9 @@ mod tests {
         check(&store, "sweep:fw", 3, Algorithm::FixedWindow, T0);
         assert_eq!(store.inner.read().len(), 1);
 
-        // Advance past the 1-hour staleness threshold and trigger sweep.
-        let stale_time = T0 + super::TOKEN_BUCKET_STALE_NANOS + 1;
+        // Advance just past window_nanos (WINDOW = 1 s) — fixed-window eviction
+        // uses the per-key window duration, not TOKEN_BUCKET_STALE_NANOS.
+        let stale_time = T0 + WINDOW + 1;
         store.sweep(stale_time);
         assert_eq!(
             store.inner.read().len(),

@@ -59,7 +59,6 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
@@ -281,7 +280,9 @@ def _scan_redis_pattern(pattern: str, timeout: int = 20) -> int:
     try:
         r = subprocess.run(
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "--scan", "--pattern", pattern],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
         if r.returncode != 0:
             return 0
@@ -301,7 +302,9 @@ def _poll_redis_once() -> dict[str, Any] | None:
         # DBSIZE — total key count (for reference / sanity check)
         r_dbsize = subprocess.run(
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "DBSIZE"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         total_keys = int(r_dbsize.stdout.strip()) if r_dbsize.returncode == 0 else 0
 
@@ -311,7 +314,9 @@ def _poll_redis_once() -> dict[str, Any] | None:
         # INFO memory — used_memory in bytes
         r_mem = subprocess.run(
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "INFO", "memory"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         mem_bytes = 0
         for line in r_mem.stdout.splitlines():
@@ -344,7 +349,9 @@ def _detect_algorithm_from_redis() -> str:
     try:
         r_scan = subprocess.run(
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "--scan", "--pattern", "rl:user:*"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         sample_keys = [l.strip() for l in r_scan.stdout.splitlines() if l.strip()]
         if not sample_keys:
@@ -352,7 +359,9 @@ def _detect_algorithm_from_redis() -> str:
 
         r_type = subprocess.run(
             ["docker", "exec", DOCKER_REDIS_CONTAINER, "redis-cli", "TYPE", sample_keys[0]],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         key_type = r_type.stdout.strip().lower()
 
@@ -397,6 +406,7 @@ def _stop_redis_monitor() -> None:
 
 def _admin_jwt() -> str:
     """Create a short-lived JWT for the platform admin (setup/teardown only)."""
+    # First-Party
     from mcpgateway.utils.create_jwt_token import _create_jwt_token  # pylint: disable=import-outside-toplevel
 
     admin_email = _cfg("PLATFORM_ADMIN_EMAIL", "admin@example.com")
@@ -409,14 +419,17 @@ def _admin_jwt() -> str:
 
 
 def _admin_session(host: str) -> Any:
+    # Third-Party
     import requests  # pylint: disable=import-outside-toplevel
 
     s = requests.Session()
-    s.headers.update({
-        "Authorization": f"Bearer {_admin_jwt()}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    })
+    s.headers.update(
+        {
+            "Authorization": f"Bearer {_admin_jwt()}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+    )
     s.base_url = host  # type: ignore[attr-defined]
     return s
 
@@ -440,8 +453,11 @@ def _bootstrap_users(host: str) -> None:
     """
     global _user_tokens, _registered_state, _server_id, _tool_names  # pylint: disable=global-statement
 
-    from mcpgateway.utils.create_jwt_token import _create_jwt_token  # pylint: disable=import-outside-toplevel
+    # Third-Party
     import requests  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.utils.create_jwt_token import _create_jwt_token  # pylint: disable=import-outside-toplevel
 
     admin = _admin_session(host)
 
@@ -482,14 +498,18 @@ def _bootstrap_users(host: str) -> None:
     for i in range(RL_USERS):
         email = f"{_USER_PREFIX}-{run_id}-{i:04d}@loadtest.internal"
         try:
-            r = admin.post(f"{host}/auth/email/admin/users", json={
-                "email": email,
-                "password": _TEST_PASSWORD,
-                "full_name": f"Scale Test User {i:04d}",
-                "is_admin": True,
-                "is_active": True,
-                "password_change_required": False,
-            }, timeout=10)
+            r = admin.post(
+                f"{host}/auth/email/admin/users",
+                json={
+                    "email": email,
+                    "password": _TEST_PASSWORD,
+                    "full_name": f"Scale Test User {i:04d}",
+                    "is_admin": True,
+                    "is_active": True,
+                    "password_change_required": False,
+                },
+                timeout=10,
+            )
             if r.status_code not in (200, 201):
                 logger.warning("User registration failed for %s: %s %s", email, r.status_code, r.text[:200])
                 tokens.append("")
@@ -683,7 +703,7 @@ def on_test_stop(environment, **kwargs):
             print(f"  {'All gateways combined':<38} {total_mem_avg:>7.1f}M {total_mem_peak:>7.1f}M")
 
     # Redis memory timeline — the key comparison metric
-    all_timeline = (([_redis_baseline] if _redis_baseline else []) + _redis_timeline)
+    all_timeline = ([_redis_baseline] if _redis_baseline else []) + _redis_timeline
     if all_timeline:
         print(f"\n  {'REDIS MEMORY TIMELINE  (polled every 5s)':^86}")
         print("  " + "-" * 86)
@@ -717,7 +737,7 @@ def on_test_stop(environment, **kwargs):
             spawn_end = RL_USERS / RL_SPAWN_RATE
             steady = [e for e in _redis_timeline if e["elapsed"] > spawn_end + 10]
             if not steady:
-                steady = _redis_timeline[-min(3, len(_redis_timeline)):]
+                steady = _redis_timeline[-min(3, len(_redis_timeline)) :]
 
             if steady:
                 # Pick the steady-state sample with the most RL keys (most representative)

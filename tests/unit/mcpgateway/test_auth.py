@@ -1282,11 +1282,9 @@ class TestUpdateApiTokenLastUsed:
         import sys
 
         # First-Party
+        from mcpgateway import auth
         from mcpgateway.auth import _update_api_token_last_used_sync
         from mcpgateway.db import EmailApiToken
-
-        # First-Party
-        from mcpgateway import auth
 
         # Clear the module-level in-memory cache
         auth._LAST_USED_CACHE.clear()
@@ -1332,11 +1330,9 @@ class TestUpdateApiTokenLastUsed:
     def test_update_api_token_last_used_sync_redis_exception_falls_back_to_memory(self):
         """Test that _update_api_token_last_used_sync falls back to memory cache when Redis operations fail."""
         # First-Party
+        from mcpgateway import auth
         from mcpgateway.auth import _update_api_token_last_used_sync
         from mcpgateway.db import EmailApiToken
-
-        # First-Party
-        from mcpgateway import auth
 
         # Clear the module-level in-memory cache
         auth._LAST_USED_CACHE.clear()
@@ -3805,9 +3801,9 @@ class TestTenantIdPropagation:
     into GlobalContext.tenant_id so that the rate limiter plugin can enforce
     per-tenant limits correctly.
 
-    All tests here reflect DESIRED behavior after the fix.  They fail against
-    the current implementation where _inject_userinfo_instate never reads
-    request.state.team_id.
+    These tests verify that _propagate_tenant_id() correctly propagates
+    team_id into GlobalContext.tenant_id at every return path in
+    get_current_user().
     """
 
     def _make_request(self, team_id=None, existing_global_context=None):
@@ -3819,8 +3815,11 @@ class TestTenantIdPropagation:
         return SimpleNamespace(state=state, client=None, headers={})
 
     def _make_user(self, email="alice@example.com"):
-        from mcpgateway.db import EmailUser  # noqa: PLC0415
+        # Standard
         from datetime import datetime, timezone  # noqa: PLC0415
+
+        # First-Party
+        from mcpgateway.db import EmailUser  # noqa: PLC0415
 
         return EmailUser(
             email=email,
@@ -3834,12 +3833,12 @@ class TestTenantIdPropagation:
         )
 
     def test_single_team_propagates_tenant_id(self):
-        """P0: _inject_userinfo_instate must copy request.state.team_id into global_context.tenant_id.
+        """P0: the get_current_user() calling sequence must propagate team_id → tenant_id.
 
-        When the JWT contains exactly one team (the common single-tenant API token case),
-        the resolved team_id is already on request.state.  The function must write it
-        into GlobalContext.tenant_id so the rate limiter can enforce per-tenant limits.
+        In production, _inject_userinfo_instate() runs first (may create
+        GlobalContext), then _propagate_tenant_id() fills in tenant_id.
         """
+        # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
         from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
 
@@ -3847,12 +3846,11 @@ class TestTenantIdPropagation:
         request = self._make_request(team_id="team-acme", existing_global_context=global_context)
         user = self._make_user()
 
+        # Mirror the actual calling sequence in get_current_user():
         auth_module._inject_userinfo_instate(request=request, user=user)
+        auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id == "team-acme", (
-            "_inject_userinfo_instate must propagate request.state.team_id into "
-            "global_context.tenant_id for single-team tokens"
-        )
+        assert request.state.plugin_global_context.tenant_id == "team-acme", "_propagate_tenant_id must propagate request.state.team_id into " "global_context.tenant_id for single-team tokens"
 
     def test_no_team_id_leaves_tenant_id_none(self):
         """P1: when request.state.team_id is None (multi-team or no team), tenant_id stays None.
@@ -3860,6 +3858,7 @@ class TestTenantIdPropagation:
         Multi-team tokens have team_id=None because there is no single authoritative tenant.
         The plugin must receive tenant_id=None and skip by_tenant — not invent a 'default'.
         """
+        # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
         from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
 
@@ -3868,19 +3867,16 @@ class TestTenantIdPropagation:
         user = self._make_user()
 
         auth_module._inject_userinfo_instate(request=request, user=user)
+        auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id is None, (
-            "When team_id is None (multi-team or no-team token), "
-            "tenant_id must remain None — no fake 'default' tenant should be invented"
-        )
+        assert request.state.plugin_global_context.tenant_id is None, "When team_id is None (multi-team or no-team token), " "tenant_id must remain None — no fake 'default' tenant should be invented"
 
     def test_existing_tenant_id_is_not_overwritten(self):
         """P1: if global_context.tenant_id is already set (e.g. by an auth plugin), do not overwrite it.
 
-        A custom auth plugin may have already populated tenant_id via the
-        http_auth_resolve_user hook.  The _inject_userinfo_instate function must
-        not clobber an explicit tenant identity with a team_id resolution.
+        _propagate_tenant_id() must not clobber an explicit tenant identity.
         """
+        # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
         from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
 
@@ -3889,10 +3885,9 @@ class TestTenantIdPropagation:
         user = self._make_user()
 
         auth_module._inject_userinfo_instate(request=request, user=user)
+        auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id == "existing-tenant", (
-            "An already-set tenant_id must not be overwritten by team_id resolution"
-        )
+        assert request.state.plugin_global_context.tenant_id == "existing-tenant", "An already-set tenant_id must not be overwritten by team_id resolution"
 
     @pytest.mark.asyncio
     async def test_get_current_user_fallback_propagates_team_id_to_tenant_id(self):
@@ -3903,6 +3898,7 @@ class TestTenantIdPropagation:
         tenant_id set from request.state.team_id so the rate limiter can enforce
         per-tenant limits on this request path.
         """
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult  # noqa: PLC0415
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
@@ -3930,10 +3926,7 @@ class TestTenantIdPropagation:
         call_kwargs = mock_pm.invoke_hook.call_args
         global_context = call_kwargs.kwargs.get("global_context")
         assert global_context is not None
-        assert global_context.tenant_id == "team-acme", (
-            "get_current_user() fallback must propagate request.state.team_id "
-            "into GlobalContext.tenant_id for by_tenant rate limiting"
-        )
+        assert global_context.tenant_id == "team-acme", "get_current_user() fallback must propagate request.state.team_id " "into GlobalContext.tenant_id for by_tenant rate limiting"
 
     @pytest.mark.asyncio
     async def test_get_current_user_fallback_tenant_id_none_when_no_team(self):
@@ -3943,6 +3936,7 @@ class TestTenantIdPropagation:
         constructed GlobalContext must have tenant_id=None so the rate limiter
         skips by_tenant enforcement rather than inventing a phantom tenant.
         """
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult  # noqa: PLC0415
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
@@ -3970,10 +3964,7 @@ class TestTenantIdPropagation:
         call_kwargs = mock_pm.invoke_hook.call_args
         global_context = call_kwargs.kwargs.get("global_context")
         assert global_context is not None
-        assert global_context.tenant_id is None, (
-            "When team_id is None, GlobalContext.tenant_id must be None — "
-            "no phantom tenant should be invented"
-        )
+        assert global_context.tenant_id is None, "When team_id is None, GlobalContext.tenant_id must be None — " "no phantom tenant should be invented"
 
     def test_propagate_tenant_id_on_middleware_seeded_context(self):
         """_propagate_tenant_id must work when middleware has already created GlobalContext.
@@ -3983,6 +3974,7 @@ class TestTenantIdPropagation:
         in the get_current_user fallback (skipped when plugin_global_context exists).
         On the normal middleware path, tenant_id stayed None.
         """
+        # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
         from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
 
@@ -3993,12 +3985,12 @@ class TestTenantIdPropagation:
         auth_module._propagate_tenant_id(request)
 
         assert request.state.plugin_global_context.tenant_id == "team-acme", (
-            "_propagate_tenant_id must fill tenant_id even when middleware "
-            "has already created plugin_global_context with tenant_id=None"
+            "_propagate_tenant_id must fill tenant_id even when middleware " "has already created plugin_global_context with tenant_id=None"
         )
 
     def test_propagate_tenant_id_no_overwrite(self):
         """_propagate_tenant_id must not overwrite an already-set tenant_id."""
+        # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
         from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
 
@@ -4007,13 +3999,110 @@ class TestTenantIdPropagation:
 
         auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id == "plugin-set-tenant", (
-            "_propagate_tenant_id must not overwrite an already-set tenant_id"
-        )
+        assert request.state.plugin_global_context.tenant_id == "plugin-set-tenant", "_propagate_tenant_id must not overwrite an already-set tenant_id"
 
     def test_propagate_tenant_id_none_request_is_noop(self):
         """_propagate_tenant_id with None request must not raise."""
+        # First-Party
         import mcpgateway.auth as auth_module  # noqa: PLC0415
 
         # Should not raise
         auth_module._propagate_tenant_id(None)
+
+    def test_propagate_tenant_id_missing_team_id_attribute(self):
+        """_propagate_tenant_id must handle request.state without team_id attribute.
+
+        Deny-path: request.state may not have team_id (e.g. unauthenticated
+        requests or middleware that doesn't set it).  The function uses getattr
+        fallback — verify it leaves tenant_id as None rather than raising.
+        """
+        # First-Party
+        import mcpgateway.auth as auth_module  # noqa: PLC0415
+        from mcpgateway.plugins.framework import GlobalContext  # noqa: PLC0415
+
+        global_context = GlobalContext(request_id="r1", tenant_id=None)
+        # State has plugin_global_context but NO team_id attribute
+        state = SimpleNamespace(plugin_global_context=global_context)
+        request = SimpleNamespace(state=state, client=None, headers={})
+
+        auth_module._propagate_tenant_id(request)
+
+        assert global_context.tenant_id is None, "When request.state has no team_id attribute, tenant_id must remain None"
+
+    @pytest.mark.asyncio
+    async def test_propagate_tenant_id_on_cache_hit_path(self):
+        """_propagate_tenant_id must be called on the auth cache hit return path.
+
+        Regression: if _propagate_tenant_id(request) is accidentally removed
+        from the cache-hit branch of get_current_user(), by_tenant rate limiting
+        would silently stop working for cached auth requests.
+        """
+        with patch("mcpgateway.auth._propagate_tenant_id") as mock_prop:
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+            payload = {
+                "sub": "test@example.com",
+                "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+                "jti": "jti-prop-cache",
+                "teams": ["team-acme"],
+                "user": {"email": "test@example.com", "full_name": "T", "is_admin": False, "auth_provider": "local"},
+            }
+            cached_ctx = SimpleNamespace(
+                is_token_revoked=False,
+                user={"email": "test@example.com", "full_name": "T", "is_admin": False, "is_active": True},
+                personal_team_id="team_123",
+            )
+            request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+            with (
+                patch("mcpgateway.auth.settings") as mock_settings,
+                patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+                patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+                patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            ):
+                mock_settings.auth_cache_enabled = True
+                mock_settings.auth_required = True
+                mock_settings.jwt_secret = "secret"
+                mock_settings.admin_api_enabled = True
+                mock_settings.require_user_in_db = False
+                await get_current_user(credentials=credentials, request=request)
+
+            assert mock_prop.called, "_propagate_tenant_id must be called on the cache-hit return path"
+
+    @pytest.mark.asyncio
+    async def test_propagate_tenant_id_on_batched_query_path(self):
+        """_propagate_tenant_id must be called on the batched DB query return path.
+
+        Regression: if _propagate_tenant_id(request) is accidentally removed
+        from the batched-query branch of get_current_user(), by_tenant rate
+        limiting would silently stop working for batched-auth requests.
+        """
+        with patch("mcpgateway.auth._propagate_tenant_id") as mock_prop:
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
+            payload = {
+                "sub": "test@example.com",
+                "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+                "jti": "jti-prop-batch",
+                "teams": ["team-acme"],
+                "user": {"email": "test@example.com", "full_name": "T", "is_admin": False, "auth_provider": "local"},
+            }
+            auth_ctx = {
+                "user": {"email": "test@example.com", "full_name": "T", "is_admin": False, "is_active": True},
+                "personal_team_id": "team_123",
+                "is_token_revoked": False,
+            }
+            request = SimpleNamespace(state=SimpleNamespace(), client=None, headers={})
+
+            with (
+                patch("mcpgateway.auth.settings") as mock_settings,
+                patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+                patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+                patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            ):
+                mock_settings.auth_cache_enabled = False
+                mock_settings.auth_cache_batch_queries = True
+                mock_settings.auth_required = True
+                mock_settings.jwt_secret = "secret"
+                mock_settings.admin_api_enabled = True
+                await get_current_user(credentials=credentials, request=request)
+
+            assert mock_prop.called, "_propagate_tenant_id must be called on the batched-query return path"

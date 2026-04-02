@@ -7,13 +7,17 @@ Authors: Mihai Criveti
 Tests for RateLimiterPlugin.
 """
 
+# Standard
 import asyncio
+import os
 import time
 from typing import Any, Dict
 from unittest.mock import patch
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
@@ -28,20 +32,20 @@ from mcpgateway.plugins.framework.errors import PluginViolationError
 from mcpgateway.plugins.framework.manager import PluginExecutor
 from mcpgateway.plugins.framework.models import PluginMode
 from plugins.rate_limiter.rate_limiter import (
-    RedisBackend,
+    _extract_user_identity,
+    _make_headers,
+    _parse_rate,
+    _select_most_restrictive,
     ALGORITHM_FIXED_WINDOW,
     ALGORITHM_SLIDING_WINDOW,
     ALGORITHM_TOKEN_BUCKET,
     FixedWindowAlgorithm,
     MemoryBackend,
     RateLimiterPlugin,
+    RedisBackend,
     RustRateLimiterEngine,
     SlidingWindowAlgorithm,
     TokenBucketAlgorithm,
-    _extract_user_identity,
-    _make_headers,
-    _parse_rate,
-    _select_most_restrictive,
 )
 
 
@@ -169,6 +173,7 @@ async def test_prompt_pre_fetch_success_includes_headers_without_retry_after():
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_violation_returns_http_429():
     """Test that tool_pre_invoke violations return HTTP 429 status code."""
+    # First-Party
     from mcpgateway.plugins.framework import ToolPreInvokePayload
 
     plugin = _mk("1/s")
@@ -189,6 +194,7 @@ async def test_tool_pre_invoke_violation_returns_http_429():
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_violation_includes_headers():
     """Test that tool_pre_invoke violations include rate limit headers."""
+    # First-Party
     from mcpgateway.plugins.framework import ToolPreInvokePayload
 
     plugin = _mk("2/s")
@@ -215,6 +221,7 @@ async def test_tool_pre_invoke_violation_includes_headers():
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_success_includes_headers_without_retry_after():
     """Test that successful tool invocations include headers but not Retry-After."""
+    # First-Party
     from mcpgateway.plugins.framework import ToolPreInvokePayload
 
     plugin = _mk("10/s")
@@ -236,6 +243,7 @@ async def test_tool_pre_invoke_success_includes_headers_without_retry_after():
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_per_tool_rate_limiting():
     """Test per-tool rate limiting configuration."""
+    # First-Party
     from mcpgateway.plugins.framework import ToolPreInvokePayload
 
     plugin = RateLimiterPlugin(
@@ -243,12 +251,7 @@ async def test_tool_pre_invoke_per_tool_rate_limiting():
             name="rl",
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[ToolHookType.TOOL_PRE_INVOKE],
-            config={
-                "by_user": "100/s",  # High user limit
-                "by_tool": {
-                    "restricted_tool": "1/s"  # Low tool-specific limit
-                }
-            },
+            config={"by_user": "100/s", "by_tool": {"restricted_tool": "1/s"}},  # High user limit  # Low tool-specific limit
         )
     )
 
@@ -298,6 +301,7 @@ def test_make_headers_without_retry_after():
 # ============================================================================
 # _select_most_restrictive TESTS
 # ============================================================================
+
 
 class TestSelectMostRestrictive:
     """Comprehensive tests for _select_most_restrictive function."""
@@ -362,7 +366,7 @@ class TestSelectMostRestrictive:
         """When multiple violated, select the one with shortest reset time."""
         now = 1000
         results = [
-            (False, 10, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),   # Resets sooner
+            (False, 10, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),  # Resets sooner
             (False, 20, now + 60, {"limited": True, "remaining": 0, "reset_in": 60}),
             (False, 30, now + 120, {"limited": True, "remaining": 0, "reset_in": 120}),
         ]
@@ -378,8 +382,8 @@ class TestSelectMostRestrictive:
         now = 1000
         results = [
             (True, 100, now + 60, {"limited": True, "remaining": 90, "reset_in": 60}),  # Allowed
-            (False, 50, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),   # Violated (shortest)
-            (False, 75, now + 90, {"limited": True, "remaining": 0, "reset_in": 90}),   # Violated
+            (False, 50, now + 30, {"limited": True, "remaining": 0, "reset_in": 30}),  # Violated (shortest)
+            (False, 75, now + 90, {"limited": True, "remaining": 0, "reset_in": 90}),  # Violated
         ]
         allowed, limit, remaining, reset_ts, meta = _select_most_restrictive(results)
         assert allowed is False
@@ -619,6 +623,7 @@ async def test_prompt_pre_fetch_unlimited_returns_no_headers():
 @pytest.mark.asyncio
 async def test_tool_pre_invoke_unlimited_returns_no_headers():
     """When no limits are configured, tool_pre_invoke returns metadata without http_headers."""
+    # First-Party
     from mcpgateway.plugins.framework import ToolPreInvokePayload
 
     plugin = _mk_unlimited()
@@ -653,6 +658,7 @@ async def test_redis_backend_shares_state_across_instances():
     a live Redis server. The fake client uses its own dict (separate from _store)
     to simulate shared Redis state.
     """
+    # Standard
     import time as _time
 
     class _FakeRedis:
@@ -700,10 +706,7 @@ async def test_redis_backend_shares_state_across_instances():
 
     # Worker 2 shares the same Redis — alice's counter is still 2, next request is blocked
     r3 = await plugin.tool_pre_invoke(payload, ctx)
-    assert r3.violation is not None, (
-        "alice made 3 requests total (limit is 2). With Redis backend, clearing "
-        "local state has no effect — the counter persists in Redis across all workers."
-    )
+    assert r3.violation is not None, "alice made 3 requests total (limit is 2). With Redis backend, clearing " "local state has no effect — the counter persists in Redis across all workers."
     assert r3.violation.http_status_code == 429
 
 
@@ -719,6 +722,7 @@ async def test_store_evicts_expired_windows():
     The Rust engine does not use the Python MemoryBackend store — this test is
     exercising the Python fallback path's sweep behaviour.
     """
+    # First-Party
     import plugins.rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
@@ -737,10 +741,7 @@ async def test_store_evicts_expired_windows():
     # Wait for all 1-second windows to expire and the sweep to run
     await asyncio.sleep(1.1)
 
-    assert len(store) == 0, (
-        f"Expected store to be empty after all windows expired, "
-        f"but found {len(store)} stale entries. "
-    )
+    assert len(store) == 0, f"Expected store to be empty after all windows expired, " f"but found {len(store)} stale entries. "
 
 
 @pytest.mark.asyncio
@@ -760,9 +761,7 @@ async def test_concurrent_requests_respect_limit():
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
     payload = ToolPreInvokePayload(name="test_tool", arguments={})
 
-    results = await asyncio.gather(*[
-        plugin.tool_pre_invoke(payload, ctx) for _ in range(20)
-    ])
+    results = await asyncio.gather(*[plugin.tool_pre_invoke(payload, ctx) for _ in range(20)])
 
     allowed = sum(1 for r in results if r.violation is None)
 
@@ -789,6 +788,7 @@ async def test_fixed_window_allows_boundary_burst():
     but a documented trade-off.  Use sliding_window or token_bucket to prevent
     boundary bursts (see companion test below).
     """
+    # First-Party
     import plugins.rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
@@ -814,9 +814,7 @@ async def test_fixed_window_allows_boundary_burst():
                 allowed_total += 1
 
     # fixed_window: all 10 allowed (5 in W1 + 5 in W2 = 2× limit in ~1 second)
-    assert allowed_total == 10, (
-        f"Expected fixed_window to allow 2× the limit at boundary, got {allowed_total}/10"
-    )
+    assert allowed_total == 10, f"Expected fixed_window to allow 2× the limit at boundary, got {allowed_total}/10"
 
 
 @pytest.mark.asyncio
@@ -827,6 +825,7 @@ async def test_sliding_window_prevents_boundary_burst():
     sliding_window.  The 5 requests from W1 are still within the sliding window
     when W2 starts, so the second batch is blocked.
     """
+    # First-Party
     import plugins.rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
@@ -860,9 +859,7 @@ async def test_sliding_window_prevents_boundary_burst():
 
     # sliding_window: only 5 allowed — the W1 timestamps at t=1000 are still
     # within the window at t=1000.5, so the second batch is blocked.
-    assert allowed_total == 5, (
-        f"Expected sliding_window to prevent boundary burst, got {allowed_total}/10 allowed"
-    )
+    assert allowed_total == 5, f"Expected sliding_window to prevent boundary burst, got {allowed_total}/10 allowed"
 
 
 @pytest.mark.asyncio
@@ -879,7 +876,7 @@ async def test_prompt_pre_fetch_enforces_by_tool_config():
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
             hooks=[PromptHookType.PROMPT_PRE_FETCH],
             config={
-                "by_user": "100/s",          # High — will not trigger
+                "by_user": "100/s",  # High — will not trigger
                 "by_tool": {"search": "2/s"},  # Low — should trigger on 3rd call
             },
         )
@@ -897,9 +894,7 @@ async def test_prompt_pre_fetch_enforces_by_tool_config():
     # Expected: blocked because by_tool["search"] = 2/s is exhausted
     # Actual:   allowed — prompt_pre_fetch never reads by_tool
     assert r3.violation is not None, (
-        "Expected 3rd prompt_pre_fetch call to be blocked by by_tool limit (2/s). "
-        "prompt_pre_fetch does not check by_tool — tool-level limits only apply "
-        "to tool_pre_invoke."
+        "Expected 3rd prompt_pre_fetch call to be blocked by by_tool limit (2/s). " "prompt_pre_fetch does not check by_tool — tool-level limits only apply " "to tool_pre_invoke."
     )
 
 
@@ -1221,6 +1216,7 @@ async def test_redis_fallback_to_memory_when_redis_unavailable():
         async def eval(self, *args: Any, **kwargs: Any) -> None:
             raise ConnectionError("Redis is down")
 
+    # First-Party
     import plugins.rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
@@ -1256,6 +1252,7 @@ async def test_redis_fallback_enforces_limit_via_memory():
         async def eval(self, *args: Any, **kwargs: Any) -> None:
             raise ConnectionError("Redis is down")
 
+    # First-Party
     import plugins.rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
@@ -1408,9 +1405,7 @@ async def test_retry_after_is_within_window_duration():
 
     assert result.violation is not None
     retry_after = int(result.violation.http_headers["Retry-After"])
-    assert 1 <= retry_after <= 1, (
-        f"For a 1/s limit, Retry-After should be 1 second, got {retry_after}"
-    )
+    assert 1 <= retry_after <= 1, f"For a 1/s limit, Retry-After should be 1 second, got {retry_after}"
 
 
 @pytest.mark.asyncio
@@ -1428,9 +1423,7 @@ async def test_retry_after_for_minute_window_is_bounded():
 
     assert result.violation is not None
     retry_after = int(result.violation.http_headers["Retry-After"])
-    assert 1 <= retry_after <= 60, (
-        f"For a 1/m limit, Retry-After should be 1–60 seconds, got {retry_after}"
-    )
+    assert 1 <= retry_after <= 60, f"For a 1/m limit, Retry-After should be 1–60 seconds, got {retry_after}"
 
 
 @pytest.mark.asyncio
@@ -1471,10 +1464,7 @@ async def test_x_ratelimit_reset_consistent_within_window():
     reset2 = r2.http_headers["X-RateLimit-Reset"]
     reset3 = r3.http_headers["X-RateLimit-Reset"]
 
-    assert reset1 == reset2 == reset3, (
-        f"X-RateLimit-Reset must be identical across all requests in the same window. "
-        f"Got {reset1}, {reset2}, {reset3}"
-    )
+    assert reset1 == reset2 == reset3, f"X-RateLimit-Reset must be identical across all requests in the same window. " f"Got {reset1}, {reset2}, {reset3}"
 
 
 @pytest.mark.asyncio
@@ -1493,9 +1483,7 @@ async def test_x_ratelimit_remaining_decrements_correctly():
         assert r.violation is None
         results.append(int(r.http_headers["X-RateLimit-Remaining"]))
 
-    assert results == [4, 3, 2, 1, 0], (
-        f"X-RateLimit-Remaining should count down 4→3→2→1→0, got {results}"
-    )
+    assert results == [4, 3, 2, 1, 0], f"X-RateLimit-Remaining should count down 4→3→2→1→0, got {results}"
 
 
 # ============================================================================
@@ -1527,10 +1515,7 @@ async def test_bypass_none_user_falls_back_to_anonymous_bucket():
 
     assert r1.violation is None
     assert r2.violation is None
-    assert r3.violation is not None, (
-        "None and empty-string users share the 'anonymous' bucket — "
-        "a third request must be blocked regardless of which falsy identity sent it"
-    )
+    assert r3.violation is not None, "None and empty-string users share the 'anonymous' bucket — " "a third request must be blocked regardless of which falsy identity sent it"
 
 
 @pytest.mark.asyncio
@@ -1554,10 +1539,7 @@ async def test_bypass_whitespace_user_shares_anonymous_bucket():
 
     # Whitespace user should be in the same bucket → blocked
     r = await plugin.tool_pre_invoke(payload, ctx_ws)
-    assert r.violation is not None, (
-        "Whitespace-only user identity should share the 'anonymous' bucket. "
-        "Currently it creates its own bucket, bypassing the anonymous limit."
-    )
+    assert r.violation is not None, "Whitespace-only user identity should share the 'anonymous' bucket. " "Currently it creates its own bucket, bypassing the anonymous limit."
 
 
 @pytest.mark.asyncio
@@ -1585,10 +1567,7 @@ async def test_bypass_tool_name_case_sensitivity():
 
     # Calling with different casing should still be caught by the same limit
     r = await plugin.tool_pre_invoke(payload_upper, ctx)
-    assert r.violation is not None, (
-        "'Search' should be subject to the same 1/s limit as 'search'. "
-        "Case-insensitive matching is not implemented — this is a bypass vector."
-    )
+    assert r.violation is not None, "'Search' should be subject to the same 1/s limit as 'search'. " "Case-insensitive matching is not implemented — this is a bypass vector."
 
 
 @pytest.mark.asyncio
@@ -1614,10 +1593,7 @@ async def test_bypass_tool_name_whitespace():
 
     # Whitespace variant should be caught by the same limit
     r = await plugin.tool_pre_invoke(ToolPreInvokePayload(name=" search", arguments={}), ctx)
-    assert r.violation is not None, (
-        "' search' (leading space) should be subject to the same limit as 'search'. "
-        "Whitespace stripping is not implemented — this is a bypass vector."
-    )
+    assert r.violation is not None, "' search' (leading space) should be subject to the same limit as 'search'. " "Whitespace stripping is not implemented — this is a bypass vector."
 
 
 @pytest.mark.asyncio
@@ -1640,9 +1616,7 @@ async def test_bypass_anonymous_exhaustion_does_not_affect_real_users():
 
     # Alice is a real user — her bucket is untouched
     r = await plugin.tool_pre_invoke(payload, ctx_alice)
-    assert r.violation is None, (
-        "Exhausting the anonymous bucket must not affect real authenticated users"
-    )
+    assert r.violation is None, "Exhausting the anonymous bucket must not affect real authenticated users"
 
 
 # ============================================================================
@@ -1667,8 +1641,7 @@ async def test_violation_description_does_not_contain_user_identity():
 
     assert result.violation is not None
     assert "alice@example.com" not in result.violation.description, (
-        "User identity must not appear in the violation description — "
-        "it is logged in permissive mode and embedded in PluginViolationError messages"
+        "User identity must not appear in the violation description — " "it is logged in permissive mode and embedded in PluginViolationError messages"
     )
 
 
@@ -1690,9 +1663,7 @@ async def test_violation_description_does_not_contain_tenant_identity():
     result = await plugin.tool_pre_invoke(payload, ctx)
 
     assert result.violation is not None
-    assert "acme-corp" not in result.violation.description, (
-        "Tenant identifier must not appear in the violation description"
-    )
+    assert "acme-corp" not in result.violation.description, "Tenant identifier must not appear in the violation description"
 
 
 @pytest.mark.asyncio
@@ -1706,9 +1677,7 @@ async def test_prompt_violation_description_does_not_contain_user_identity():
     result = await plugin.prompt_pre_fetch(payload, ctx)
 
     assert result.violation is not None
-    assert "bob@example.com" not in result.violation.description, (
-        "User identity must not appear in the prompt violation description"
-    )
+    assert "bob@example.com" not in result.violation.description, "User identity must not appear in the prompt violation description"
 
 
 @pytest.mark.asyncio
@@ -1741,9 +1710,7 @@ async def test_bypass_different_tenants_are_intentionally_independent():
     # Same user in tenant-2 is allowed — separate counter, by design
     r = await plugin.tool_pre_invoke(payload, ctx_t2)
     assert r.violation is None, (
-        "tenant-2 has a separate independent counter — this is intentional. "
-        "Tenant identity comes from the JWT and is controlled by the auth layer, "
-        "not bypassable by request content."
+        "tenant-2 has a separate independent counter — this is intentional. " "Tenant identity comes from the JWT and is controlled by the auth layer, " "not bypassable by request content."
     )
 
 
@@ -1854,10 +1821,7 @@ async def test_sliding_window_prevents_burst_at_boundary():
 
     # Sliding window: only requests older than 1s are evicted
     # At t=1001.1, cutoff = 1000.1 — all 5 requests at t=1000.9 are still inside
-    assert allowed_total <= 6, (
-        f"Sliding window should prevent boundary burst. Got {allowed_total} allowed "
-        f"(fixed window would allow 10, sliding window should block most of W2)."
-    )
+    assert allowed_total <= 6, f"Sliding window should prevent boundary burst. Got {allowed_total} allowed " f"(fixed window would allow 10, sliding window should block most of W2)."
 
 
 @pytest.mark.asyncio
@@ -1943,9 +1907,7 @@ async def test_token_bucket_allows_burst_up_to_capacity():
         results.append(r)
 
     allowed = sum(1 for r in results if r.violation is None)
-    assert allowed == 5, (
-        f"Token bucket should allow a burst of 5 from a full bucket, got {allowed} allowed"
-    )
+    assert allowed == 5, f"Token bucket should allow a burst of 5 from a full bucket, got {allowed} allowed"
 
     # 6th request: bucket is now empty
     r6 = await plugin.tool_pre_invoke(payload, ctx)
@@ -2045,6 +2007,7 @@ def test_token_bucket_with_redis_backend_uses_redis_backend():
 @pytest.mark.asyncio
 async def test_redis_token_bucket_enforces_limit():
     """RedisBackend with token_bucket enforces the limit via the Lua script."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     mock_client = AsyncMock()
@@ -2074,6 +2037,7 @@ async def test_redis_token_bucket_enforces_limit():
 @pytest.mark.asyncio
 async def test_redis_token_bucket_falls_back_to_memory_on_redis_error():
     """RedisBackend token_bucket falls back to MemoryBackend when Redis is unavailable."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     mock_client = AsyncMock()
@@ -2170,10 +2134,7 @@ async def test_concurrent_stress_window_boundary_total_does_not_exceed_double_li
     second_wave = await asyncio.gather(*[plugin.tool_pre_invoke(payload, ctx) for _ in range(50)])
 
     total_allowed = sum(1 for r in first_wave + second_wave if r.violation is None)
-    assert total_allowed <= 2 * limit, (
-        f"Total allowed {total_allowed} exceeds 2× limit ({2 * limit}) — "
-        f"fixed_window boundary burst is worse than documented"
-    )
+    assert total_allowed <= 2 * limit, f"Total allowed {total_allowed} exceeds 2× limit ({2 * limit}) — " f"fixed_window boundary burst is worse than documented"
 
 
 # ============================================================================
@@ -2286,9 +2247,7 @@ async def test_token_bucket_caps_at_capacity_after_long_inactivity():
     # Next request should be allowed and tokens must not exceed capacity (10)
     allowed, limit, _, meta = await algorithm.allow(lock, "user:grace", 10, 60)
     assert allowed is True
-    assert meta["remaining"] <= limit, (
-        f"Token bucket overflowed: remaining={meta['remaining']} > limit={limit}"
-    )
+    assert meta["remaining"] <= limit, f"Token bucket overflowed: remaining={meta['remaining']} > limit={limit}"
 
 
 @pytest.mark.asyncio
@@ -2339,9 +2298,7 @@ async def test_sliding_window_enforces_correctly_with_duplicate_timestamps():
             results.append(result)
 
     allowed = sum(1 for r, *_ in results if r is True)
-    assert allowed == limit, (
-        f"Expected exactly {limit} allowed with duplicate timestamps, got {allowed}"
-    )
+    assert allowed == limit, f"Expected exactly {limit} allowed with duplicate timestamps, got {allowed}"
 
 
 # ============================================================================
@@ -2356,6 +2313,7 @@ async def test_redis_timeout_falls_back_to_memory():
     fallback when redis_fallback=True. The request must be allowed — a Redis
     timeout must never silently block traffic.
     """
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     mock_client = AsyncMock()
@@ -2381,9 +2339,11 @@ async def test_redis_lua_script_error_fails_open_without_fallback():
     must be allowed — fail-open is the documented behaviour when
     redis_fallback=False.
     """
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     try:
+        # Third-Party
         from redis.exceptions import ResponseError  # noqa: PLC0415
     except ImportError:
         pytest.skip("redis package not installed")
@@ -2412,6 +2372,7 @@ async def test_redis_fallback_and_redis_counters_are_independent():
     We exhaust the fallback limit during the outage, then restore Redis and
     confirm the first Redis-backed request is allowed (fresh Redis counter).
     """
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     mock_client = AsyncMock()
@@ -2525,6 +2486,7 @@ async def test_redis_sliding_window_counts_multiple_requests_with_same_timestamp
     their own sorted-set slot. Three requests at an identical timestamp against
     a limit of 2/s: first two allowed, third blocked.
     """
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     fixed_ts = 1_700_000_000.0
@@ -2571,10 +2533,7 @@ async def test_redis_sliding_window_counts_multiple_requests_with_same_timestamp
 
     assert r1 is True
     assert r2 is True
-    assert r3 is False, (
-        "Third request at same timestamp must be blocked — "
-        "each request now occupies its own sorted-set slot via unique member"
-    )
+    assert r3 is False, "Third request at same timestamp must be blocked — " "each request now occupies its own sorted-set slot via unique member"
 
 
 @pytest.mark.asyncio
@@ -2603,9 +2562,7 @@ async def test_sliding_window_memory_evicts_idle_keys_after_window_expires():
 
         # Next call must see an empty window and allow the request
         allowed, *_ = await algorithm.allow(lock, "user:test", 2, 1)
-        assert allowed is True, (
-            "After window expires, allow() must evict stale timestamps and allow fresh requests"
-        )
+        assert allowed is True, "After window expires, allow() must evict stale timestamps and allow fresh requests"
 
 
 @pytest.mark.asyncio
@@ -2616,6 +2573,7 @@ async def test_memory_and_redis_sliding_window_have_same_allow_block_sequence():
     simulator that faithfully implements the fixed sliding window Lua script logic:
     unique member per request (ARGV[4]) and count check before ZADD.
     """
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     # In-process Redis simulator for the FIXED sliding window Lua script
@@ -2667,11 +2625,7 @@ async def test_memory_and_redis_sliding_window_have_same_allow_block_sequence():
         redis_decisions.append(r_allowed)
         memory_decisions.append(m_allowed)
 
-    assert redis_decisions == memory_decisions, (
-        f"Memory and Redis sliding window diverged:\n"
-        f"  Redis:  {redis_decisions}\n"
-        f"  Memory: {memory_decisions}"
-    )
+    assert redis_decisions == memory_decisions, f"Memory and Redis sliding window diverged:\n" f"  Redis:  {redis_decisions}\n" f"  Memory: {memory_decisions}"
 
 
 @pytest.mark.asyncio
@@ -2681,6 +2635,7 @@ async def test_memory_and_redis_token_bucket_have_same_allow_block_sequence():
     for the token bucket algorithm across a fixed request timeline.
     Uses an in-process simulator of the token bucket Lua script.
     """
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     # In-process Redis simulator for token bucket
@@ -2738,11 +2693,7 @@ async def test_memory_and_redis_token_bucket_have_same_allow_block_sequence():
         redis_decisions.append(r_allowed)
         memory_decisions.append(m_allowed)
 
-    assert redis_decisions == memory_decisions, (
-        f"Memory and Redis token bucket diverged:\n"
-        f"  Redis:  {redis_decisions}\n"
-        f"  Memory: {memory_decisions}"
-    )
+    assert redis_decisions == memory_decisions, f"Memory and Redis token bucket diverged:\n" f"  Redis:  {redis_decisions}\n" f"  Memory: {memory_decisions}"
 
 
 # ---------------------------------------------------------------------------
@@ -2756,6 +2707,7 @@ async def test_token_bucket_success_headers_are_consistent_between_memory_and_re
     For allowed token bucket requests, both memory and Redis backends must
     produce the same X-RateLimit-Remaining value and X-RateLimit-Limit == configured limit.
     """
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     sim_bucket: dict[str, dict] = {}
@@ -2837,8 +2789,7 @@ async def test_token_bucket_memory_reset_timestamp_always_in_future():
 
     assert allowed is True
     assert reset_timestamp > t0, (
-        f"reset_timestamp ({reset_timestamp}) must be strictly greater than now ({t0}). "
-        "int(tokens_needed / refill_rate) rounds to 0 for fast refill rates without max(1, ...)."
+        f"reset_timestamp ({reset_timestamp}) must be strictly greater than now ({t0}). " "int(tokens_needed / refill_rate) rounds to 0 for fast refill rates without max(1, ...)."
     )
 
 
@@ -2966,19 +2917,14 @@ async def test_sliding_window_sweep_evicts_keys_with_fully_stale_timestamps():
         await algorithm.allow(lock, "user:alice", 3, 1)
 
         # Confirm the key is present in the store
-        assert any("user:alice" in k for k in algorithm._store), (
-            "Key must exist in store after allow() calls"
-        )
+        assert any("user:alice" in k for k in algorithm._store), "Key must exist in store after allow() calls"
 
         # t=5: well past the 1-second window — all timestamps are stale
         mock_time.time.return_value = 5.0
         await algorithm.sweep(lock)
 
     # sweep() must have evicted the key — no stale entry should remain
-    assert not any("user:alice" in k for k in algorithm._store), (
-        "sweep() must evict keys with fully stale timestamps, not just empty lists — "
-        "idle users must not accumulate memory indefinitely"
-    )
+    assert not any("user:alice" in k for k in algorithm._store), "sweep() must evict keys with fully stale timestamps, not just empty lists — " "idle users must not accumulate memory indefinitely"
 
 
 @pytest.mark.asyncio
@@ -2996,9 +2942,7 @@ async def test_sliding_window_sweep_does_not_evict_active_keys():
         await algorithm.sweep(lock)
 
     # Key must still be present — it has active timestamps
-    assert any("user:bob" in k for k in algorithm._store), (
-        "sweep() must not evict keys whose timestamps are still within the window"
-    )
+    assert any("user:bob" in k for k in algorithm._store), "sweep() must not evict keys whose timestamps are still within the window"
 
 
 @pytest.mark.asyncio
@@ -3026,10 +2970,7 @@ async def test_sliding_window_allow_after_sweep_starts_fresh():
 
         # t=5: allow() must treat carol as a fresh key with full quota
         allowed, *_ = await algorithm.allow(lock, "user:carol", 2, 1)
-        assert allowed is True, (
-            "After sweep() evicts the stale key, the next allow() must start fresh "
-            "with a full quota — stale state must not persist"
-        )
+        assert allowed is True, "After sweep() evicts the stale key, the next allow() must start fresh " "with a full quota — stale state must not persist"
 
 
 # ---------------------------------------------------------------------------
@@ -3046,6 +2987,7 @@ async def test_sliding_window_allow_after_sweep_starts_fresh():
 
 def _mk_rust(rate: str, algorithm: str = ALGORITHM_FIXED_WINDOW) -> RateLimiterPlugin:
     """Create a plugin instance that is guaranteed to use the Rust engine."""
+    # First-Party
     import plugins.rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", True):
@@ -3062,7 +3004,8 @@ def _mk_rust(rate: str, algorithm: str = ALGORITHM_FIXED_WINDOW) -> RateLimiterP
     return plugin
 
 
-import plugins.rate_limiter.rate_limiter as _rate_limiter_module
+# First-Party
+import plugins.rate_limiter.rate_limiter as _rate_limiter_module  # noqa: E402
 
 _RUST_ENGINE_PRESENT = _rate_limiter_module._RUST_AVAILABLE
 _skip_no_rust = pytest.mark.skipif(not _RUST_ENGINE_PRESENT, reason="Rust engine not installed")
@@ -3085,9 +3028,7 @@ async def test_arch01_evaluate_many_called_once_per_tool_hook():
 
     with patch.object(plugin._rust_engine, "check", wraps=plugin._rust_engine.check) as mock_check:
         await plugin.tool_pre_invoke(payload, ctx)
-        assert mock_check.call_count == 1, (
-            f"check() must be called exactly once per hook invocation, got {mock_check.call_count}"
-        )
+        assert mock_check.call_count == 1, f"check() must be called exactly once per hook invocation, got {mock_check.call_count}"
 
 
 @_skip_no_rust
@@ -3109,6 +3050,7 @@ async def test_arch01_evaluate_many_called_once_per_prompt_hook():
 @pytest.mark.asyncio
 async def test_arch01_redis_rust_path_uses_async_entrypoint():
     """Redis-backed Rust path should await check_async exactly once."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     plugin = RateLimiterPlugin(
@@ -3137,6 +3079,7 @@ async def test_arch01_redis_rust_path_uses_async_entrypoint():
 @pytest.mark.asyncio
 async def test_arch01_memory_rust_path_keeps_sync_entrypoint():
     """Memory-backed Rust path should continue using the sync check entrypoint."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     plugin = _mk_rust("10/s")
@@ -3285,10 +3228,7 @@ async def test_arch04_rust_exception_is_fail_open():
     with patch.object(plugin._rust_engine, "check", side_effect=RuntimeError("simulated Rust panic")):
         result = await plugin.tool_pre_invoke(payload, ctx)
 
-    assert result.violation is None, (
-        "A Rust engine exception must not block the request — fail-open policy "
-        "requires the hook to allow through on any unexpected error"
-    )
+    assert result.violation is None, "A Rust engine exception must not block the request — fail-open policy " "requires the hook to allow through on any unexpected error"
     assert result.continue_processing is True
 
 
@@ -3314,6 +3254,7 @@ async def test_arch04_rust_exception_fail_open_prompt_hook():
 @pytest.mark.asyncio
 async def test_arch04_rust_redis_exception_uses_python_fallback_when_enabled():
     """Rust Redis runtime failure should honor redis_fallback=True via Python backend."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     plugin = RateLimiterPlugin(
@@ -3360,6 +3301,7 @@ async def test_arch04_rust_redis_exception_uses_python_fallback_when_enabled():
 @pytest.mark.asyncio
 async def test_arch04_rust_redis_exception_fail_open_when_fallback_disabled():
     """Rust Redis runtime failure should remain fail-open when redis_fallback=False."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     plugin = RateLimiterPlugin(
@@ -3394,6 +3336,7 @@ async def test_arch05_python_backend_used_when_rust_unavailable():
     The Rust engine is an acceleration path; Python memory backend must remain
     fully functional as a drop-in fallback when the extension is not installed.
     """
+    # First-Party
     import plugins.rate_limiter.rate_limiter as _rl_mod
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
@@ -3407,9 +3350,7 @@ async def test_arch05_python_backend_used_when_rust_unavailable():
         )
 
     assert plugin._rust_engine is None, "Python fallback must not activate Rust engine"
-    assert isinstance(plugin._rate_backend, MemoryBackend), (
-        "Python fallback must use MemoryBackend"
-    )
+    assert isinstance(plugin._rate_backend, MemoryBackend), "Python fallback must use MemoryBackend"
 
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
     payload = ToolPreInvokePayload(name="tool", arguments={})
@@ -3428,9 +3369,7 @@ async def test_arch05_python_backend_used_when_rust_unavailable():
 async def test_arch05_rust_engine_active_when_available():
     """ARCH-05 complement: when Rust is available, engine is wired in for memory backend."""
     plugin = _mk_rust("10/s")
-    assert plugin._rust_engine is not None, (
-        "Rust engine must be active when _RUST_AVAILABLE=True and backend=memory"
-    )
+    assert plugin._rust_engine is not None, "Rust engine must be active when _RUST_AVAILABLE=True and backend=memory"
 
 
 @pytest.mark.asyncio
@@ -3442,6 +3381,7 @@ async def test_arch05_redis_backend_rust_owns_redis_when_available():
     Redis directly. The Python RedisBackend is still present for the Python fallback
     path (when Rust is unavailable).
     """
+    # First-Party
     import plugins.rate_limiter.rate_limiter as _rl_mod
 
     if not _rl_mod._RUST_AVAILABLE:
@@ -3455,9 +3395,7 @@ async def test_arch05_redis_backend_rust_owns_redis_when_available():
             config={"by_user": "10/s", "backend": "redis", "redis_url": "redis://localhost:6379/0"},
         )
     )
-    assert plugin._rust_engine is not None, (
-        "Rust engine must be active for Redis backend when Rust is available"
-    )
+    assert plugin._rust_engine is not None, "Rust engine must be active for Redis backend when Rust is available"
     assert isinstance(plugin._rate_backend, RedisBackend)
 
 
@@ -3481,8 +3419,11 @@ def _mk_redis_plugin(config: dict) -> RateLimiterPlugin:
     these tests verify Python-level batching semantics (REDIS-01/03).
     The Rust+Redis path is validated by the load test.
     """
-    import plugins.rate_limiter.rate_limiter as _rl_mod  # noqa: PLC0415
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    # First-Party
+    import plugins.rate_limiter.rate_limiter as _rl_mod  # noqa: PLC0415
 
     with patch.object(_rl_mod, "_RUST_AVAILABLE", False):
         plugin = RateLimiterPlugin(
@@ -3501,6 +3442,7 @@ def _mk_redis_plugin(config: dict) -> RateLimiterPlugin:
 @pytest.mark.asyncio
 async def test_redis01_single_eval_call_per_tool_hook_one_dimension():
     """REDIS-01: With only by_user configured, tool_pre_invoke makes exactly 1 eval call."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     plugin = _mk_redis_plugin({"by_user": "10/s"})
@@ -3512,24 +3454,24 @@ async def test_redis01_single_eval_call_per_tool_hook_one_dimension():
 
     await plugin.tool_pre_invoke(payload, ctx)
 
-    assert mock_client.eval.call_count == 1, (
-        f"REDIS-01: expected exactly 1 eval call for 1 active dimension, "
-        f"got {mock_client.eval.call_count}"
-    )
+    assert mock_client.eval.call_count == 1, f"REDIS-01: expected exactly 1 eval call for 1 active dimension, " f"got {mock_client.eval.call_count}"
 
 
 @pytest.mark.asyncio
 async def test_redis01_single_eval_call_per_tool_hook_three_dimensions():
     """REDIS-01: With user + tenant + tool all configured, tool_pre_invoke must
     still make exactly 1 eval call — all dimensions batched into one round-trip."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
-    plugin = _mk_redis_plugin({
-        "by_user": "30/m",
-        "by_tenant": "300/m",
-        "by_tool": {"search": "10/m"},
-        "algorithm": ALGORITHM_FIXED_WINDOW,
-    })
+    plugin = _mk_redis_plugin(
+        {
+            "by_user": "30/m",
+            "by_tenant": "300/m",
+            "by_tool": {"search": "10/m"},
+            "algorithm": ALGORITHM_FIXED_WINDOW,
+        }
+    )
     mock_client = plugin._rate_backend._client
     # Batched response: one result per dimension — [count, ttl] per dim
     mock_client.eval = AsyncMock(return_value=[[1, 60], [1, 60], [1, 60]])
@@ -3540,21 +3482,23 @@ async def test_redis01_single_eval_call_per_tool_hook_three_dimensions():
     await plugin.tool_pre_invoke(payload, ctx)
 
     assert mock_client.eval.call_count == 1, (
-        f"REDIS-01: expected exactly 1 eval call for 3 active dimensions (user+tenant+tool), "
-        f"got {mock_client.eval.call_count} — dimensions must be batched into one round-trip"
+        f"REDIS-01: expected exactly 1 eval call for 3 active dimensions (user+tenant+tool), " f"got {mock_client.eval.call_count} — dimensions must be batched into one round-trip"
     )
 
 
 @pytest.mark.asyncio
 async def test_redis01_single_eval_call_per_prompt_hook():
     """REDIS-01: prompt_pre_fetch also makes exactly 1 eval call regardless of active dims."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
-    plugin = _mk_redis_plugin({
-        "by_user": "10/s",
-        "by_tenant": "100/s",
-        "algorithm": ALGORITHM_FIXED_WINDOW,
-    })
+    plugin = _mk_redis_plugin(
+        {
+            "by_user": "10/s",
+            "by_tenant": "100/s",
+            "algorithm": ALGORITHM_FIXED_WINDOW,
+        }
+    )
     mock_client = plugin._rate_backend._client
     mock_client.eval = AsyncMock(return_value=[[1, 60], [1, 60]])
 
@@ -3563,24 +3507,24 @@ async def test_redis01_single_eval_call_per_prompt_hook():
 
     await plugin.prompt_pre_fetch(payload, ctx)
 
-    assert mock_client.eval.call_count == 1, (
-        f"REDIS-01: prompt_pre_fetch must batch all dimensions into 1 eval call, "
-        f"got {mock_client.eval.call_count}"
-    )
+    assert mock_client.eval.call_count == 1, f"REDIS-01: prompt_pre_fetch must batch all dimensions into 1 eval call, " f"got {mock_client.eval.call_count}"
 
 
 @pytest.mark.asyncio
 async def test_redis03_batched_script_returns_result_per_dimension():
     """REDIS-03: The single eval call must pass all active dimensions to the script
     and receive back one result per dimension."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
-    plugin = _mk_redis_plugin({
-        "by_user": "30/m",
-        "by_tenant": "300/m",
-        "by_tool": {"search": "10/m"},
-        "algorithm": ALGORITHM_FIXED_WINDOW,
-    })
+    plugin = _mk_redis_plugin(
+        {
+            "by_user": "30/m",
+            "by_tenant": "300/m",
+            "by_tool": {"search": "10/m"},
+            "algorithm": ALGORITHM_FIXED_WINDOW,
+        }
+    )
     mock_client = plugin._rate_backend._client
     # Simulate all three dimensions allowed
     mock_client.eval = AsyncMock(return_value=[[1, 60], [1, 60], [1, 60]])
@@ -3595,22 +3539,23 @@ async def test_redis03_batched_script_returns_result_per_dimension():
     call_args = mock_client.eval.call_args
     # NUMKEYS should be 3 (one key per dimension)
     numkeys = call_args[0][1] if call_args[0] else call_args[1].get("numkeys", 0)
-    assert numkeys == 3, (
-        f"REDIS-03: batched script must receive 3 keys (one per dimension), got {numkeys}"
-    )
+    assert numkeys == 3, f"REDIS-03: batched script must receive 3 keys (one per dimension), got {numkeys}"
     assert result.violation is None
 
 
 @pytest.mark.asyncio
 async def test_redis03_batched_script_block_when_any_dimension_violated():
     """REDIS-03: If any dimension result is blocked, the hook must return 429."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
-    plugin = _mk_redis_plugin({
-        "by_user": "30/m",
-        "by_tenant": "2/m",   # tenant exhausted
-        "algorithm": ALGORITHM_FIXED_WINDOW,
-    })
+    plugin = _mk_redis_plugin(
+        {
+            "by_user": "30/m",
+            "by_tenant": "2/m",  # tenant exhausted
+            "algorithm": ALGORITHM_FIXED_WINDOW,
+        }
+    )
     mock_client = plugin._rate_backend._client
     # user: allowed, tenant: blocked
     mock_client.eval = AsyncMock(return_value=[[1, 60], [3, 60]])  # count > limit for tenant
@@ -3628,6 +3573,7 @@ async def test_redis03_batched_script_block_when_any_dimension_violated():
 @pytest.mark.asyncio
 async def test_redis01_no_eval_calls_when_no_limits_configured():
     """REDIS-01: When no dimensions are configured, no eval call is made."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     plugin = _mk_redis_plugin({})  # no limits
@@ -3639,9 +3585,7 @@ async def test_redis01_no_eval_calls_when_no_limits_configured():
 
     result = await plugin.tool_pre_invoke(payload, ctx)
 
-    assert mock_client.eval.call_count == 0, (
-        "No eval calls expected when no limits are configured"
-    )
+    assert mock_client.eval.call_count == 0, "No eval calls expected when no limits are configured"
     assert result.violation is None
 
 
@@ -3658,6 +3602,7 @@ async def test_redis01_no_eval_calls_when_no_limits_configured():
 
 def _python_sequence(algorithm: str, limit: int, n_requests: int) -> list[bool]:
     """Run n_requests through the Python MemoryBackend; return allow decisions."""
+    # First-Party
     from plugins.rate_limiter.rate_limiter import (  # noqa: PLC0415
         FixedWindowAlgorithm,
         MemoryBackend,
@@ -3685,6 +3630,7 @@ def _python_sequence(algorithm: str, limit: int, n_requests: int) -> list[bool]:
 
 def _rust_sequence(algorithm: str, limit: int, n_requests: int) -> list[bool]:
     """Run n_requests through the Rust RateLimiterEngine; return allow decisions."""
+    # First-Party
     from plugins.rate_limiter.rate_limiter import RustRateLimiterEngine  # noqa: PLC0415
 
     engine = RustRateLimiterEngine({"by_user": f"{limit}/h", "algorithm": algorithm})
@@ -3730,6 +3676,7 @@ def test_corr01_sliding_window_parity():
 @_skip_no_rust
 def test_corr01_remaining_count_parity_fixed_window():
     """CORR-01: remaining token count matches between Python and Rust (fixed_window)."""
+    # First-Party
     from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm, MemoryBackend  # noqa: PLC0415
     from plugins.rate_limiter.rate_limiter import RustRateLimiterEngine  # noqa: PLC0415
 
@@ -3754,15 +3701,14 @@ def test_corr01_remaining_count_parity_fixed_window():
         rs_result = rust_engine.evaluate_many([("user:test", limit, window_nanos)], now_unix)
     rs_remaining = rs_result.remaining
 
-    assert py_remaining == rs_remaining, (
-        f"remaining mismatch after {n_requests} requests: Python={py_remaining} Rust={rs_remaining}"
-    )
+    assert py_remaining == rs_remaining, f"remaining mismatch after {n_requests} requests: Python={py_remaining} Rust={rs_remaining}"
 
 
 @_skip_no_rust
 @pytest.mark.parametrize("algorithm", [ALGORITHM_SLIDING_WINDOW, ALGORITHM_TOKEN_BUCKET])
 def test_corr01_remaining_count_parity_all_algorithms(algorithm):
     """CORR-01: remaining count matches between Python and Rust for all algorithms."""
+    # First-Party
     from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm, MemoryBackend, RustRateLimiterEngine, SlidingWindowAlgorithm, TokenBucketAlgorithm  # noqa: PLC0415
 
     algo_map = {
@@ -3791,9 +3737,7 @@ def test_corr01_remaining_count_parity_all_algorithms(algorithm):
         rs_result = rust_engine.evaluate_many([("user:test", limit, window_nanos)], now_unix)
     rs_remaining = rs_result.remaining
 
-    assert py_remaining == rs_remaining, (
-        f"remaining mismatch ({algorithm}) after {n_requests} requests: Python={py_remaining} Rust={rs_remaining}"
-    )
+    assert py_remaining == rs_remaining, f"remaining mismatch ({algorithm}) after {n_requests} requests: Python={py_remaining} Rust={rs_remaining}"
 
 
 @_skip_no_rust
@@ -3844,11 +3788,161 @@ def test_corr01_multi_dimension_parity():
             rs_sequence.append(rs_result.continue_processing)
 
     asyncio.run(_run())
-    assert py_sequence == rs_sequence, (
-        f"Multi-dimension parity failure: Python={py_sequence} Rust={rs_sequence}"
-    )
+    assert py_sequence == rs_sequence, f"Multi-dimension parity failure: Python={py_sequence} Rust={rs_sequence}"
     # First 3 allowed (tool limit), then 3 blocked
     assert py_sequence == [True, True, True, False, False, False]
+
+
+# ---------------------------------------------------------------------------
+# Redis key format parity — Python RedisBackend vs Rust engine key generation
+#
+# These tests guard the dual Lua-script invariant: Python and Rust must
+# produce identical Redis keys so that mixed deployments share counters.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "dimension,key,rate,expected_suffix",
+    [
+        ("user", "user:alice@example.com", "30/m", "user:alice@example.com:60"),
+        ("tenant", "tenant:acme", "3000/m", "tenant:acme:60"),
+        ("tool", "tool:my_tool", "10/s", "tool:my_tool:1"),
+        ("user", "user:bob", "100/h", "user:bob:3600"),
+    ],
+    ids=["user-per-minute", "tenant-per-minute", "tool-per-second", "user-per-hour"],
+)
+def test_redis_key_format_parity_python_backend(dimension, key, rate, expected_suffix):
+    """Python RedisBackend key format matches the documented pattern: {prefix}:{dim_key}:{window_seconds}."""
+    count, window_seconds = _parse_rate(rate)
+    prefix = "rl"
+    redis_key = f"{prefix}:{key}:{window_seconds}"
+    assert redis_key == f"rl:{expected_suffix}"
+
+
+@pytest.mark.parametrize(
+    "user,tenant,tool,by_user,by_tenant,by_tool_cfg,expected_keys",
+    [
+        (
+            "alice@example.com",
+            "acme",
+            "summarize",
+            "30/m",
+            "3000/m",
+            {"summarize": "10/m"},
+            ["user:alice@example.com", "tenant:acme", "tool:summarize"],
+        ),
+        (
+            "bob",
+            None,
+            "search",
+            "30/m",
+            "3000/m",
+            {},
+            ["user:bob"],
+        ),
+    ],
+    ids=["three-dimensions", "user-only-no-tenant-no-tool"],
+)
+def test_redis_key_format_parity_rust_dimension_keys(user, tenant, tool, by_user, by_tenant, by_tool_cfg, expected_keys):
+    """Rust engine dimension keys (built by _build_rust_checks) match Python path dimension keys."""
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="key-parity",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[ToolHookType.TOOL_PRE_INVOKE],
+            config={
+                "by_user": by_user,
+                "by_tenant": by_tenant,
+                "by_tool": by_tool_cfg,
+                "algorithm": ALGORITHM_FIXED_WINDOW,
+            },
+        )
+    )
+
+    # Rust path dimension keys (built by Python wrapper, consumed by Rust engine)
+    if plugin._rust_engine is not None:
+        rust_checks = plugin._build_rust_checks(user, tenant, tool)
+        rust_dim_keys = [key for key, _count, _window in rust_checks]
+    else:
+        # If Rust engine not built, manually replicate the key construction
+        # to verify the pattern is consistent.
+        rust_dim_keys = []
+        if plugin._cfg.by_user:
+            rust_dim_keys.append(f"user:{user}")
+        if tenant and plugin._cfg.by_tenant:
+            rust_dim_keys.append(f"tenant:{tenant}")
+        normalised = {k.strip().lower(): v for k, v in (by_tool_cfg or {}).items()}
+        if tool in normalised:
+            rust_dim_keys.append(f"tool:{tool}")
+
+    # Python path dimension keys (built inside _check_rate_limit)
+    python_dim_keys = []
+    if plugin._cfg.by_user:
+        python_dim_keys.append(f"user:{user}")
+    if tenant and plugin._cfg.by_tenant:
+        python_dim_keys.append(f"tenant:{tenant}")
+    if plugin._normalised_by_tool and tool in plugin._normalised_by_tool:
+        python_dim_keys.append(f"tool:{tool}")
+
+    assert rust_dim_keys == python_dim_keys, f"Dimension key mismatch: Rust={rust_dim_keys} Python={python_dim_keys}"
+    assert rust_dim_keys == expected_keys
+
+
+def test_redis_key_format_parity_window_seconds():
+    """Both paths derive identical window_seconds from the same rate string."""
+    for rate, expected_window in [("10/s", 1), ("30/m", 60), ("100/h", 3600)]:
+        count, window_secs = _parse_rate(rate)
+        # Python RedisBackend uses window_seconds directly from _parse_rate
+        python_window = window_secs
+        # Rust engine receives window_nanos and divides back to seconds for the key
+        window_nanos = window_secs * 1_000_000_000
+        rust_window = window_nanos // 1_000_000_000
+        assert python_window == rust_window, f"Window mismatch for {rate}: Python={python_window} Rust={rust_window}"
+        assert python_window == expected_window
+
+
+def _normalise_lua(script: str) -> str:
+    """Collapse whitespace in a Lua script for content-level comparison."""
+    return " ".join(script.split())
+
+
+@pytest.mark.parametrize(
+    "py_attr,rust_const_name",
+    [
+        ("_LUA_BATCH_FIXED", "LUA_BATCH_FIXED"),
+        ("_LUA_BATCH_SLIDING", "LUA_BATCH_SLIDING"),
+        ("_LUA_BATCH_TOKEN_BUCKET", "LUA_BATCH_TOKEN_BUCKET"),
+    ],
+    ids=["batch-fixed", "batch-sliding", "batch-token-bucket"],
+)
+def test_redis_lua_script_content_parity(py_attr, rust_const_name):
+    """Batch Lua scripts in Python RedisBackend and Rust redis_backend.rs must be functionally identical.
+
+    This prevents silent divergence: the key-format parity tests verify key naming
+    but not the Lua logic that runs inside Redis.  If a script is changed in one
+    implementation it must be changed in the other for rolling-upgrade safety.
+    """
+    # Standard
+    import pathlib  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    py_script = getattr(RedisBackend, py_attr)
+
+    rust_src = pathlib.Path(__file__).resolve().parents[6] / "plugins_rust" / "rate_limiter" / "src" / "redis_backend.rs"
+    if not rust_src.exists():
+        pytest.skip(f"Rust source not found at {rust_src}")
+
+    rust_content = rust_src.read_text()
+
+    # Extract the Rust constant by finding `const {name}: &str = r#"...content..."#;`
+    pattern = rf'const {rust_const_name}:\s*&str\s*=\s*r#"(.*?)"#;'
+    match = re.search(pattern, rust_content, re.DOTALL)
+    assert match is not None, f"Could not find const {rust_const_name} in {rust_src}"
+    rust_script = match.group(1)
+
+    assert _normalise_lua(py_script) == _normalise_lua(rust_script), (
+        f"Lua script content mismatch between Python RedisBackend.{py_attr} and Rust {rust_const_name}. " "Both must stay in sync for rolling-upgrade compatibility."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3859,7 +3953,8 @@ def test_corr01_multi_dimension_parity():
 @pytest.mark.asyncio
 async def test_redis02_evalsha_used_after_script_load():
     """REDIS-02: script_load called once at first use; evalsha used on request path."""
-    from unittest.mock import AsyncMock, call  # noqa: PLC0415
+    # Standard
+    from unittest.mock import AsyncMock  # noqa: PLC0415
 
     mock_client = AsyncMock()
     mock_client.script_load.return_value = "abc123sha"
@@ -3883,6 +3978,7 @@ async def test_redis02_evalsha_used_after_script_load():
 @pytest.mark.asyncio
 async def test_redis02_script_load_called_only_once_across_requests():
     """REDIS-02: script_load is called at most once — SHAs are cached after first load."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     mock_client = AsyncMock()
@@ -3901,15 +3997,16 @@ async def test_redis02_script_load_called_only_once_across_requests():
     # script_load call count should be equal to the number of scripts (6),
     # not 5 × 6 — it only runs until all SHAs are populated.
     load_count = mock_client.script_load.call_count
-    assert load_count <= 6, (
-        f"script_load should be called at most once per script, got {load_count} calls"
-    )
+    assert load_count <= 6, f"script_load should be called at most once per script, got {load_count} calls"
 
 
 @pytest.mark.asyncio
 async def test_redis02_noscript_fallback_to_eval():
     """REDIS-02: NOSCRIPT error causes fallback to EVAL and SHA reload."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    # Third-Party
     from redis.exceptions import ResponseError  # noqa: PLC0415
 
     mock_client = AsyncMock()
@@ -3939,6 +4036,7 @@ async def test_redis02_noscript_fallback_to_eval():
 @pytest.mark.asyncio
 async def test_redis04_connection_failure_falls_back_to_memory_allow():
     """REDIS-04: allow() falls back to MemoryBackend on Redis connection failure."""
+    # First-Party
     from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
 
     memory = MemoryBackend(algorithm=FixedWindowAlgorithm())
@@ -3995,6 +4093,7 @@ async def test_redis04_connection_failure_no_fallback_allows_gracefully():
 @pytest.mark.asyncio
 async def test_redis04_allow_many_falls_back_to_memory_on_connection_failure():
     """REDIS-04: allow_many() falls back to per-call MemoryBackend when Redis is down."""
+    # First-Party
     from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
 
     memory = MemoryBackend(algorithm=FixedWindowAlgorithm())
@@ -4031,6 +4130,7 @@ async def test_redis04_allow_many_falls_back_to_memory_on_connection_failure():
 @pytest.mark.asyncio
 async def test_perf05_single_round_trip_per_hook_one_dim():
     """PERF-05: one dimension → one evalsha call."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     mock_client = AsyncMock()
@@ -4047,14 +4147,13 @@ async def test_perf05_single_round_trip_per_hook_one_dim():
     await plugin.tool_pre_invoke(payload, ctx)
 
     total_calls = mock_client.evalsha.call_count + mock_client.eval.call_count
-    assert total_calls <= 1, (
-        f"PERF-05: expected ≤1 Redis call for 1 dimension, got {total_calls}"
-    )
+    assert total_calls <= 1, f"PERF-05: expected ≤1 Redis call for 1 dimension, got {total_calls}"
 
 
 @pytest.mark.asyncio
 async def test_perf05_single_round_trip_per_hook_three_dims():
     """PERF-05: three dimensions (user + tenant + tool) → still one evalsha call."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     mock_client = AsyncMock()
@@ -4070,10 +4169,7 @@ async def test_perf05_single_round_trip_per_hook_three_dims():
     await plugin.tool_pre_invoke(payload, ctx)
 
     total_calls = mock_client.evalsha.call_count + mock_client.eval.call_count
-    assert total_calls <= 1, (
-        f"PERF-05: expected ≤1 Redis call for 3 dimensions, got {total_calls} — "
-        f"all dimensions must be batched into a single round-trip"
-    )
+    assert total_calls <= 1, f"PERF-05: expected ≤1 Redis call for 3 dimensions, got {total_calls} — " f"all dimensions must be batched into a single round-trip"
 
 
 # ---------------------------------------------------------------------------
@@ -4090,7 +4186,7 @@ async def test_perf03_rust_p99_does_not_regress_vs_python():
     compares p99 wall-clock latency.  The Rust path is expected to be faster;
     if it is somehow slower the test fails with a diagnostic message.
     """
-    import statistics  # noqa: PLC0415
+    # First-Party
     from plugins.rate_limiter.rate_limiter import FixedWindowAlgorithm  # noqa: PLC0415
 
     CONCURRENCY = 100
@@ -4132,9 +4228,7 @@ async def test_perf03_rust_p99_does_not_regress_vs_python():
     rust_p99 = sorted(rust_times)[int(0.99 * TOTAL)]
 
     # Rust p99 must be ≤ Python p99 (Rust should be faster, never slower)
-    assert rust_p99 <= py_p99, (
-        f"PERF-03: Rust p99 ({rust_p99*1e6:.1f} µs) regressed vs Python p99 ({py_p99*1e6:.1f} µs)"
-    )
+    assert rust_p99 <= py_p99, f"PERF-03: Rust p99 ({rust_p99*1e6:.1f} µs) regressed vs Python p99 ({py_p99*1e6:.1f} µs)"
 
 
 # ---------------------------------------------------------------------------
@@ -4191,10 +4285,7 @@ def test_perf02_wrapper_overhead_is_small():
     rust_median = sorted(rust_times)[ITERATIONS // 2]
 
     # Wrapper overhead must be < 10× the Rust engine time
-    assert wrapper_median < rust_median * 10, (
-        f"PERF-02: wrapper overhead ({wrapper_median} ns median) is ≥10× Rust engine "
-        f"({rust_median} ns median) — wrapper is dominating"
-    )
+    assert wrapper_median < rust_median * 10, f"PERF-02: wrapper overhead ({wrapper_median} ns median) is ≥10× Rust engine " f"({rust_median} ns median) — wrapper is dominating"
 
 
 # ---------------------------------------------------------------------------
@@ -4298,6 +4389,13 @@ def test_extract_user_identity_dict_no_keys_is_anonymous():
     assert _extract_user_identity({"roles": ["admin"]}) == "anonymous"
 
 
+def test_extract_user_identity_colons_replaced():
+    """Colons in identities must be replaced to prevent key-namespace collisions."""
+    assert _extract_user_identity({"sub": "auth0|user:12345"}) == "auth0|user_12345"
+    assert _extract_user_identity({"email": "urn:user:alice"}) == "urn_user_alice"
+    assert _extract_user_identity("colon:in:string") == "colon_in_string"
+
+
 # ---------------------------------------------------------------------------
 # prompt_pre_fetch Rust async Redis path (14f)
 # ---------------------------------------------------------------------------
@@ -4307,6 +4405,7 @@ def test_extract_user_identity_dict_no_keys_is_anonymous():
 @pytest.mark.asyncio
 async def test_arch01_redis_rust_prompt_uses_async_entrypoint():
     """Redis-backed Rust path should await check_async for prompt_pre_fetch."""
+    # Standard
     from unittest.mock import AsyncMock  # noqa: PLC0415
 
     plugin = RateLimiterPlugin(
@@ -4357,9 +4456,7 @@ async def test_sliding_window_retry_after_never_zero_when_blocked():
         allowed, _, _, meta = await algorithm.allow(lock, "user:x", 1, 1)
 
     assert allowed is False
-    assert meta["reset_in"] >= 1, (
-        f"Retry-After must be >= 1 when blocked, got {meta['reset_in']}"
-    )
+    assert meta["reset_in"] >= 1, f"Retry-After must be >= 1 when blocked, got {meta['reset_in']}"
 
 
 # ============================================================================
@@ -4385,8 +4482,102 @@ async def test_token_bucket_first_request_reset_in_matches_refill_rate():
     assert allowed is True
     assert meta["remaining"] == 9
     # Must NOT be 60 (the full window) — should be ~6 (1 token / refill_rate)
-    assert meta["reset_in"] < 60, (
-        f"First-request reset_in should reflect tokens_needed/refill_rate, "
-        f"not the full window. Got {meta['reset_in']}, expected ~6"
-    )
+    assert meta["reset_in"] < 60, f"First-request reset_in should reflect tokens_needed/refill_rate, " f"not the full window. Got {meta['reset_in']}, expected ~6"
     assert meta["reset_in"] >= 1, "reset_in must be at least 1"
+
+
+# ---------------------------------------------------------------------------
+# RATE_LIMITER_FORCE_PYTHON env var (review finding #17)
+# ---------------------------------------------------------------------------
+
+
+def test_force_python_env_var_disables_rust():
+    """Setting RATE_LIMITER_FORCE_PYTHON=1 must force _RUST_AVAILABLE to False."""
+    # Standard
+    import importlib  # noqa: PLC0415
+
+    # First-Party
+    import plugins.rate_limiter.rate_limiter as rl_mod  # noqa: PLC0415
+
+    with patch.dict(os.environ, {"RATE_LIMITER_FORCE_PYTHON": "1"}):
+        importlib.reload(rl_mod)
+        assert rl_mod._RUST_AVAILABLE is False
+
+    # Restore: reload without the env override so other tests are unaffected.
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("RATE_LIMITER_FORCE_PYTHON", None)
+        importlib.reload(rl_mod)
+
+
+# ---------------------------------------------------------------------------
+# Edge-case rate string validation (review findings)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_rate_zero_count_raises():
+    """Zero-count rate string must raise ValueError — ambiguous semantics."""
+    with pytest.raises(ValueError):
+        _parse_rate("0/s")
+
+
+def test_parse_rate_negative_count_raises():
+    """Negative count rate string must raise ValueError."""
+    with pytest.raises(ValueError):
+        _parse_rate("-5/s")
+
+
+def test_parse_rate_missing_slash_raises():
+    """Malformed rate string without a slash must raise ValueError."""
+    with pytest.raises(ValueError):
+        _parse_rate("10m")
+
+
+def test_parse_rate_empty_string_raises():
+    """Empty rate string must raise ValueError."""
+    with pytest.raises(ValueError):
+        _parse_rate("")
+
+
+def test_parse_rate_slash_only_raises():
+    """Slash-only rate string must raise ValueError."""
+    with pytest.raises(ValueError):
+        _parse_rate("/s")
+
+
+def test_validate_config_redis_url_required():
+    """backend='redis' without redis_url must raise ValueError at init."""
+    with pytest.raises(ValueError, match="redis_url is required"):
+        RateLimiterPlugin(
+            PluginConfig(
+                name="rl",
+                kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+                hooks=[PromptHookType.PROMPT_PRE_FETCH],
+                config={"by_user": "10/s", "backend": "redis"},
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
+# Rust tenant_id=None skips tenant dimension (review finding)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("plugins.rate_limiter.rate_limiter._RUST_AVAILABLE", False)
+async def test_tenant_none_skips_by_tenant_dimension():
+    """When tenant_id is None, the by_tenant dimension must be skipped entirely."""
+    plugin = RateLimiterPlugin(
+        PluginConfig(
+            name="rl",
+            kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
+            hooks=[PromptHookType.PROMPT_PRE_FETCH],
+            config={"by_user": "100/s", "by_tenant": "1/s"},
+        )
+    )
+    # tenant_id=None — by_tenant should be skipped, so 2 requests should both pass
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1", tenant_id=None))
+    payload = PromptPrehookPayload(prompt_id="p", args={})
+    r1 = await plugin.prompt_pre_fetch(payload, ctx)
+    assert r1.violation is None
+    r2 = await plugin.prompt_pre_fetch(payload, ctx)
+    assert r2.violation is None

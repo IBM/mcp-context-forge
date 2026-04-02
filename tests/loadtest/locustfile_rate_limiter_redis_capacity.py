@@ -158,6 +158,7 @@ def _default_prompt_argument_value(prompt_name: str, argument_name: str) -> str:
 
 def _make_token(email: str) -> str:
     """Generate a rich admin token with explicit teams=null for admin bypass."""
+    # First-Party
     from mcpgateway.utils.create_jwt_token import _create_jwt_token  # pylint: disable=import-outside-toplevel
 
     return _create_jwt_token(
@@ -183,14 +184,17 @@ def _admin_jwt() -> str:
 
 def _admin_session(host: str):
     """Build a requests session pinned to the admin token."""
+    # Third-Party
     import requests  # pylint: disable=import-outside-toplevel
 
     session = requests.Session()
-    session.headers.update({
-        "Authorization": f"Bearer {_admin_jwt()}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    })
+    session.headers.update(
+        {
+            "Authorization": f"Bearer {_admin_jwt()}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+    )
     session.base_url = host  # type: ignore[attr-defined]
     return session
 
@@ -555,10 +559,7 @@ def on_test_stop(environment, **kwargs):
             total_mem_peak = 0.0
             for name, data in gateways + redis_rows:
                 short = name.replace("mcp-context-forge-", "")
-                print(
-                    f"  {short:<36} {data['mem_avg']:>7.1f}M {data['mem_peak']:>7.1f}M "
-                    f"{data['cpu_avg']:>7.1f}% {data['cpu_peak']:>8.1f}% {int(data['samples']):>7}"
-                )
+                print(f"  {short:<36} {data['mem_avg']:>7.1f}M {data['mem_peak']:>7.1f}M " f"{data['cpu_avg']:>7.1f}% {data['cpu_peak']:>8.1f}% {int(data['samples']):>7}")
                 if DOCKER_GATEWAY_PATTERN in name:
                     total_mem_avg += data["mem_avg"]
                     total_mem_peak += data["mem_peak"]

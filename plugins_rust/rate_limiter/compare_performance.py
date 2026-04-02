@@ -25,6 +25,7 @@ Options:
 - --concurrency N: thread count for throughput mode
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
@@ -50,6 +51,7 @@ from mcpgateway.plugins.framework import GlobalContext, PluginConfig, PluginCont
 from plugins.rate_limiter.rate_limiter import RateLimiterPlugin
 
 try:
+    # Third-Party
     import redis.asyncio as aioredis
 except ImportError:  # pragma: no cover - dependency exists in repo venv
     aioredis = None
@@ -144,9 +146,7 @@ def _build_plugin(
     workload: str = "allow",
 ) -> RateLimiterPlugin:
     """Instantiate a plugin and force the requested implementation path."""
-    plugin = RateLimiterPlugin(
-        _make_plugin_config(algorithm, backend, redis_url, redis_key_prefix, dimensions, workload)
-    )
+    plugin = RateLimiterPlugin(_make_plugin_config(algorithm, backend, redis_url, redis_key_prefix, dimensions, workload))
     if not use_rust:
         plugin._rust_engine = None
     elif plugin._rust_engine is None:
@@ -157,27 +157,15 @@ def _build_plugin(
 def _build_prompt_contexts(count: int, dimensions: int = 1) -> list[PluginContext]:
     """Build prompt benchmark contexts with fresh user identities."""
     if dimensions >= 3:
-        return [
-            PluginContext(global_context=GlobalContext(request_id=f"prompt-{i}", user=f"prompt-user-{i}@example.com", tenant_id="bench-tenant"))
-            for i in range(count)
-        ]
-    return [
-        PluginContext(global_context=GlobalContext(request_id=f"prompt-{i}", user=f"prompt-user-{i}@example.com"))
-        for i in range(count)
-    ]
+        return [PluginContext(global_context=GlobalContext(request_id=f"prompt-{i}", user=f"prompt-user-{i}@example.com", tenant_id="bench-tenant")) for i in range(count)]
+    return [PluginContext(global_context=GlobalContext(request_id=f"prompt-{i}", user=f"prompt-user-{i}@example.com")) for i in range(count)]
 
 
 def _build_tool_contexts(count: int, dimensions: int = 1) -> list[PluginContext]:
     """Build tool benchmark contexts with fresh user identities."""
     if dimensions >= 3:
-        return [
-            PluginContext(global_context=GlobalContext(request_id=f"tool-{i}", user=f"tool-user-{i}@example.com", tenant_id="bench-tenant"))
-            for i in range(count)
-        ]
-    return [
-        PluginContext(global_context=GlobalContext(request_id=f"tool-{i}", user=f"tool-user-{i}@example.com"))
-        for i in range(count)
-    ]
+        return [PluginContext(global_context=GlobalContext(request_id=f"tool-{i}", user=f"tool-user-{i}@example.com", tenant_id="bench-tenant")) for i in range(count)]
+    return [PluginContext(global_context=GlobalContext(request_id=f"tool-{i}", user=f"tool-user-{i}@example.com")) for i in range(count)]
 
 
 async def _invoke_hook(plugin: RateLimiterPlugin, hook: str, payload: Any, context: PluginContext) -> Any:
@@ -260,7 +248,7 @@ async def _parity_smoke_test(algorithm: str, backend: str, redis_url: str) -> No
                 "backend": backend,
                 "by_user": "3/m",
                 "redis_url": redis_url,
-                "redis_key_prefix": f"{redis_key_prefix}-rust",
+                "redis_key_prefix": redis_key_prefix,
                 "redis_fallback": False,
             },
         )

@@ -1248,9 +1248,9 @@ async def get_current_user(
                 if request and global_context:
                     request.state.plugin_global_context = global_context
 
-                _propagate_tenant_id(request)
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, user)
+                _propagate_tenant_id(request)
 
                 _set_trace_for_user(user)
                 return user
@@ -1378,9 +1378,9 @@ async def get_current_user(
                                     headers={"WWW-Authenticate": "Bearer"},
                                 )
 
-                        _propagate_tenant_id(request)
                         if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                             _inject_userinfo_instate(request, _user_from_cached_dict(cached_ctx.user))
+                        _propagate_tenant_id(request)
 
                         cached_user = _user_from_cached_dict(cached_ctx.user)
                         _set_trace_for_user(
@@ -1517,9 +1517,9 @@ async def get_current_user(
                             headers={"WWW-Authenticate": "Bearer"},
                         )
 
-                _propagate_tenant_id(request)
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, _batched_user)
+                _propagate_tenant_id(request)
 
                 _set_trace_for_user(
                     _batched_user,
@@ -1699,9 +1699,9 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    _propagate_tenant_id(request)
     if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
         _inject_userinfo_instate(request, user)
+    _propagate_tenant_id(request)
 
     trace_teams = getattr(request.state, "token_teams", _UNSET) if request else _UNSET
     _set_trace_for_user(user, teams=trace_teams, team_name=getattr(request.state, "trace_team_name", None) if request else None)
@@ -1717,6 +1717,9 @@ def _propagate_tenant_id(request: Optional[object] = None) -> None:
     (the default) and the middleware has already created plugin_global_context.
 
     Only writes when tenant_id is still None (no overwrite of plugin-set values).
+
+    Args:
+        request: The incoming request object, or ``None`` if unavailable.
     """
     if not request:
         return
@@ -1763,12 +1766,6 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         global_context.user["email"] = user.email
         global_context.user["is_admin"] = user.is_admin
         global_context.user["full_name"] = user.full_name
-
-    # Propagate team_id → tenant_id for by_tenant rate limiting (only when not already set)
-    if request and global_context.tenant_id is None:
-        team_id = getattr(getattr(request, "state", None), "team_id", None)
-        if team_id:
-            global_context.tenant_id = team_id
 
     if request and global_context:
         request.state.plugin_global_context = global_context

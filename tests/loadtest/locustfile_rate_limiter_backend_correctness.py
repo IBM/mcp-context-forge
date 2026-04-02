@@ -134,6 +134,7 @@ _detect_done = False
 
 def _make_token() -> str:
     """Generate a JWT for the admin user (guaranteed to exist in the DB)."""
+    # Third-Party
     import jwt  # pylint: disable=import-outside-toplevel
 
     payload = {
@@ -175,6 +176,7 @@ def _auto_detect(host: str) -> None:
         return
     _detect_done = True
 
+    # Third-Party
     import requests  # pylint: disable=import-outside-toplevel
 
     headers = {"Authorization": f"Bearer {_get_token()}", "Accept": "application/json"}
@@ -280,7 +282,7 @@ def on_test_stop(environment, **kwargs):
     print(f"  Test pace:          {reqs_per_min} req/min  (~{reqs_per_min // 3} req/min per gateway instance)")
     print()
 
-    if rl_pct >= expected_pct * 0.5:
+    if rl_pct >= expected_pct * 0.8:
         verdict = f"✅  REDIS BACKEND — limit correctly enforced ({rl_pct:.0f}% blocked, expected ~{expected_pct:.0f}%)"
     elif rl_pct < 2 and total > 50:
         verdict = f"❌  MEMORY BACKEND — limit NOT enforced across instances ({rl_pct:.0f}% blocked, expected ~{expected_pct:.0f}%)"

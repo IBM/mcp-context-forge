@@ -33,6 +33,13 @@ class EvalDimension:
 
 @typing.final
 class EvalResult:
+    r"""
+    The aggregated result returned to Python via `evaluate_many()`.
+    
+    Contains the most restrictive outcome across all active dimensions
+    (min remaining, earliest unblock among blocked dimensions — matching
+    Python `_select_most_restrictive`).
+    """
     @property
     def allowed(self) -> builtins.bool:
         r"""
@@ -74,10 +81,10 @@ class EvalResult:
 class RateLimiterEngine:
     r"""
     High-performance rate limiter engine.
-
+    
     Construct once per plugin instance (`__init__`), then call
-    `evaluate_many()` on every hook invocation.
-
+    `check()` / `check_async()` on every hook invocation.
+    
     Backend is selected at init time from the config dict:
     - `backend: "memory"` (default) — in-process counting via `MemoryStore`
     - `backend: "redis"` — Rust owns the Redis connection; same batch Lua
@@ -86,10 +93,10 @@ class RateLimiterEngine:
     def __new__(cls, config: dict) -> RateLimiterEngine:
         r"""
         Construct from the Python config dict.
-
+        
         Parses all rate strings and normalises `by_tool` keys at init time —
         never on the request path (IFACE-01, IFACE-05).
-
+        
         Extra keys consumed here (not part of `EngineConfig`):
         - `backend`: `"memory"` (default) or `"redis"`
         - `redis_url`: required when `backend = "redis"`
@@ -98,32 +105,37 @@ class RateLimiterEngine:
     def evaluate_many(self, checks: typing.Sequence[tuple[builtins.str, builtins.int, builtins.int]], now_unix: builtins.int) -> EvalResult:
         r"""
         Evaluate all active dimensions in a single call (ARCH-01, IFACE-02).
-
+        
         `checks` is a list of `(key, limit_count, window_nanos)` tuples built
         by the Python wrapper from the request context.
-
+        
         `now_unix` is `int(time.time())` from Python — passing it here means
         Python test mocks of `time.time()` propagate to header timestamps (CORR-02).
-
+        
         Returns the most restrictive `EvalResult` across all dimensions (ARCH-02).
         """
     def evaluate_many_async(self, checks: typing.Sequence[tuple[builtins.str, builtins.int, builtins.int]], now_unix: builtins.int) -> typing.Any:
         r"""
         Evaluate all active dimensions asynchronously.
-
+        
         Intended for Redis-backed deployments so Python async hooks can await
         the Rust Redis path without blocking the event loop.
         """
-    def check(self, user: builtins.str, tenant: typing.Optional[builtins.str], tool: builtins.str, now_unix: builtins.int, include_retry_after: builtins.bool) -> tuple[builtins.bool, builtins.dict[builtins.str, builtins.str], builtins.dict[builtins.str, typing.Any]]:
+    def check(self, user: builtins.str, tenant: typing.Optional[builtins.str], tool: builtins.str, now_unix: builtins.int, include_retry_after: builtins.bool) -> tuple[builtins.bool, dict, dict]:
         r"""
         High-level check: builds dimension keys internally, evaluates, and
         returns pre-built Python dicts for headers and metadata.
-
-        Returns ``(allowed, headers_dict, meta_dict)``.
+        
+        This eliminates all per-attribute PyO3 accesses on the Python side.
+        The Python wrapper calls this once per hook invocation instead of
+        `evaluate_many()` + `_rust_to_plugin_meta()` + `_rust_to_plugin_headers()`.
+        
+        Returns `(allowed, headers_dict, meta_dict)`.
         """
     def check_async(self, user: builtins.str, tenant: typing.Optional[builtins.str], tool: builtins.str, now_unix: builtins.int, include_retry_after: builtins.bool) -> typing.Any:
         r"""
-        Async variant of ``check()`` for Redis-backed deployments.
-
-        Returns an awaitable that resolves to ``(allowed, headers_dict, meta_dict)``.
+        Async variant of `check()` for Redis-backed deployments.
+        
+        Returns an awaitable that resolves to `(allowed, headers_dict, meta_dict)`.
         """
+

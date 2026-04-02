@@ -17,13 +17,6 @@ pub struct RateLimit {
     pub window_nanos: u64,
 }
 
-impl RateLimit {
-    /// Window duration in whole seconds (used for header computation).
-    pub fn window_secs(&self) -> u64 {
-        self.window_nanos / 1_000_000_000
-    }
-}
-
 /// Errors that can occur while parsing config.
 #[derive(Debug, Error)]
 pub enum ConfigError {
