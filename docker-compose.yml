@@ -361,6 +361,9 @@ services:
       # CSV list (or JSON array) of UI sections/header items to hide for embedded contexts
       - MCPGATEWAY_UI_HIDE_SECTIONS=
       - MCPGATEWAY_UI_HIDE_HEADER_ITEMS=
+      # Admin-specific UI hide lists (empty = admins see all; embedded defaults skip admins)
+      - MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN=
+      - MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN=
       # Security configuration (using defaults)
       - ENVIRONMENT=development
       - SECURITY_HEADERS_ENABLED=true

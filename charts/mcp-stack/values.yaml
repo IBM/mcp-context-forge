@@ -342,6 +342,8 @@ mcpContextForge:
     MCPGATEWAY_UI_EMBEDDED: "false"          # embedded UI mode (hides logout + team selector by default)
     MCPGATEWAY_UI_HIDE_SECTIONS: '["roots"]'  # hide roots section (feature disabled by default)
     MCPGATEWAY_UI_HIDE_HEADER_ITEMS: ""      # CSV/JSON list of header items to hide (e.g. logout,team_selector)
+    MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN: ""    # CSV/JSON list of UI sections to hide for admin users (empty = admins see all)
+    MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN: "" # CSV/JSON list of header items to hide for admin users
 
     # ─ Feature Flags (disabled by default for production) ─
     TOOLOPS_ENABLED: "false"            # enable ToolOps feature

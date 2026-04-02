@@ -50,6 +50,9 @@ services:
       # ── Embedded UI ──
       - MCPGATEWAY_UI_EMBEDDED=true
       - MCPGATEWAY_UI_HIDE_SECTIONS=overview,logs,maintenance,mcp-registry,plugins,roots,llm-settings,teams,tokens,users
+      # Admin users see all sections by default in embedded mode
+      - MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN=
+      - MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN=
 
       # ── CORS & iframe embedding ──
       - CORS_ENABLED=true

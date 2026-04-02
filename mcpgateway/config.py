@@ -673,6 +673,14 @@ class Settings(BaseSettings):
         default_factory=list,
         description="CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
     )
+    mcpgateway_ui_hide_sections_admin: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=("CSV/JSON list of UI sections to hide for admin users. " "Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. " "When unset, admins see all sections."),
+    )
+    mcpgateway_ui_hide_header_items_admin: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description="CSV/JSON list of header items to hide for admin users. Same valid values as MCPGATEWAY_UI_HIDE_HEADER_ITEMS.",
+    )
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
@@ -1977,6 +1985,8 @@ Disallow: /
         "insecure_queryparam_auth_allowed_hosts",
         "mcpgateway_ui_hide_sections",
         "mcpgateway_ui_hide_header_items",
+        "mcpgateway_ui_hide_sections_admin",
+        "mcpgateway_ui_hide_header_items_admin",
         "tool_description_forbidden_patterns",
         mode="before",
     )
@@ -2027,7 +2037,7 @@ Disallow: /
         """
         return [p for p in value if p and p.strip()]
 
-    @field_validator("mcpgateway_ui_hide_sections", mode="after")
+    @field_validator("mcpgateway_ui_hide_sections", "mcpgateway_ui_hide_sections_admin", mode="after")
     @classmethod
     def _validate_ui_hide_sections(cls, value: list[str]) -> list[str]:
         """Normalize and filter hidable UI sections.
@@ -2055,7 +2065,7 @@ Disallow: /
 
         return normalized
 
-    @field_validator("mcpgateway_ui_hide_header_items", mode="after")
+    @field_validator("mcpgateway_ui_hide_header_items", "mcpgateway_ui_hide_header_items_admin", mode="after")
     @classmethod
     def _validate_ui_hide_header_items(cls, value: list[str]) -> list[str]:
         """Normalize and filter hidable header items.
