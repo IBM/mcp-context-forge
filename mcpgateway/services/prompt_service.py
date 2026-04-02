@@ -743,6 +743,7 @@ class PromptService(BaseService):
                 original_name=prompt.name,
                 custom_name=custom_name,
                 display_name=display_name,
+                title=prompt.title,
                 description=prompt.description,
                 template=prompt.template,
                 argument_schema=argument_schema,
@@ -2192,6 +2193,8 @@ class PromptService(BaseService):
                 prompt.display_name = prompt_update.display_name
             if prompt_update.description is not None:
                 prompt.description = prompt_update.description
+            if prompt_update.title is not None:
+                prompt.title = prompt_update.title
             if prompt_update.template is not None:
                 # Validate template size before updating
                 content_security = get_content_security_service()

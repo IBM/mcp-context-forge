@@ -2,7 +2,7 @@
 """Add title column to tools, resources, and prompts
 
 Revision ID: a7f3c9e1b2d4
-Revises: 9f5d93ced2b3
+Revises: 225bde88217e
 Create Date: 2026-02-23 11:20:00.000000
 """
 

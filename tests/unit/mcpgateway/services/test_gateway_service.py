@@ -7580,25 +7580,32 @@ def test_resolve_tool_title():
 
     _BASE = {"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}}
 
-    # Case 1: dict annotations title takes precedence over BaseMetadata title
-    tool_dict_ann = MCPTool.model_validate(_BASE)
-    tool_dict_ann.annotations = {"title": "Annotation Title"}
-    tool_dict_ann.title = "Base Title"
-    assert _resolve_tool_title(tool_dict_ann) == "Annotation Title"
+    # MCP spec: "Display name precedence order is: title, annotations.title, then name."
 
-    # Case 2: ToolAnnotations model title takes precedence over BaseMetadata title
+    # Case 1: BaseMetadata title takes precedence over annotations title
+    tool_both = MCPTool.model_validate(_BASE)
+    tool_both.annotations = {"title": "Annotation Title"}
+    tool_both.title = "Base Title"
+    assert _resolve_tool_title(tool_both) == "Base Title"
+
+    # Case 2: BaseMetadata title takes precedence over ToolAnnotations model title
     tool_model_ann = MCPTool.model_validate({**_BASE, "title": "Base Title", "annotations": {"title": "Model Ann Title", "readOnlyHint": True}})
-    assert _resolve_tool_title(tool_model_ann) == "Model Ann Title"
+    assert _resolve_tool_title(tool_model_ann) == "Base Title"
 
-    # Case 3: ToolAnnotations model without title falls back to BaseMetadata title
-    tool_ann_no_title = MCPTool.model_validate({**_BASE, "title": "Base Title", "annotations": {"readOnlyHint": True}})
-    assert _resolve_tool_title(tool_ann_no_title) == "Base Title"
+    # Case 3: Falls back to annotations.title when BaseMetadata title is absent
+    tool_ann_only = MCPTool.model_validate({**_BASE, "annotations": {"title": "Ann Title", "readOnlyHint": True}})
+    assert _resolve_tool_title(tool_ann_only) == "Ann Title"
 
-    # Case 4: title attribute fallback (no annotations)
+    # Case 4: Falls back to dict annotations.title when BaseMetadata title is absent
+    tool_dict_ann = MCPTool.model_validate(_BASE)
+    tool_dict_ann.annotations = {"title": "Dict Ann Title"}
+    assert _resolve_tool_title(tool_dict_ann) == "Dict Ann Title"
+
+    # Case 5: title attribute only (no annotations)
     tool_with_title = MCPTool.model_validate(_BASE)
     tool_with_title.title = "A Title"
     assert _resolve_tool_title(tool_with_title) == "A Title"
 
-    # Case 5: No title anywhere
+    # Case 6: No title anywhere
     tool_no_title = MCPTool.model_validate(_BASE)
     assert _resolve_tool_title(tool_no_title) is None

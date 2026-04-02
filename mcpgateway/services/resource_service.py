@@ -506,6 +506,7 @@ class ResourceService(BaseService):
             db_resource = DbResource(
                 uri=resource.uri,
                 name=resource.name,
+                title=resource.title,
                 description=resource.description,
                 mime_type=mime_type,
                 uri_template=resource.uri_template,
@@ -2876,6 +2877,8 @@ class ResourceService(BaseService):
                 resource.name = resource_update.name
             if resource_update.description is not None:
                 resource.description = resource_update.description
+            if resource_update.title is not None:
+                resource.title = resource_update.title
             if resource_update.mime_type is not None:
                 resource.mime_type = resource_update.mime_type
             if resource_update.uri_template is not None:

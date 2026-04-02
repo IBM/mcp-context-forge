@@ -121,20 +121,22 @@ from mcpgateway.validation.tags import validate_tags_field
 
 
 def _resolve_tool_title(tool) -> Optional[str]:
-    """Resolve the display title for a tool based on MCP precedence rules.
+    """Resolve the display title for a tool per MCP spec precedence.
 
-    This function determines the appropriate title for a tool by checking
-    multiple possible locations in order of priority, following the MCP spec:
+    MCP 2025-11-25: "Display name precedence order is: title,
+    annotations.title, then name."
 
-    1. ``tool.annotations.title`` — from ``ToolAnnotations`` (Pydantic model
-       or plain dict).
-    2. ``tool.title`` — top-level ``BaseMetadata`` field.
-    3. ``None`` if neither is available.
+    1. ``tool.title`` — top-level ``BaseMetadata`` field (canonical).
+    2. ``tool.annotations.title`` — ``ToolAnnotations`` (legacy fallback).
+    3. ``None`` if neither is available (caller may fall back to ``name``).
+
+    All return paths are guarded with ``isinstance(str)`` so the function
+    never leaks non-string values from mock objects or malformed payloads.
 
     Args:
-        tool: An object representing a tool.  It may define an ``annotations``
-            attribute (``ToolAnnotations`` model or ``dict``) and/or a
-            top-level ``title`` attribute.
+        tool: An object representing a tool.  It may define a top-level
+            ``title`` attribute and/or an ``annotations`` attribute
+            (``ToolAnnotations`` model or ``dict``).
 
     Returns:
         Optional[str]: The resolved title string if found, otherwise None.
@@ -145,15 +147,15 @@ def _resolve_tool_title(tool) -> Optional[str]:
         ...         self.title = title
         ...         self.annotations = annotations
         ...
-        >>> # 1. annotations.title takes precedence
+        >>> # 1. top-level title takes precedence
         >>> tool = Tool(title="Top Level", annotations={"title": "Annotated"})
         >>> _resolve_tool_title(tool)
-        'Annotated'
-
-        >>> # 2. Fallback to top-level title
-        >>> tool = Tool(title="Top Level", annotations={})
-        >>> _resolve_tool_title(tool)
         'Top Level'
+
+        >>> # 2. Fallback to annotations.title
+        >>> tool = Tool(annotations={"title": "Annotated"})
+        >>> _resolve_tool_title(tool)
+        'Annotated'
 
         >>> # 3. No title available
         >>> tool = Tool()
@@ -165,17 +167,19 @@ def _resolve_tool_title(tool) -> Optional[str]:
         >>> _resolve_tool_title(tool)
         'Top Level'
     """
-    annotations_title = None
+    # MCP spec: "Display name precedence order is: title, annotations.title, then name."
+    title = getattr(tool, "title", None)
+    if isinstance(title, str):
+        return title
     annotations = getattr(tool, "annotations", None)
     if annotations is not None:
         if isinstance(annotations, dict):
-            annotations_title = annotations.get("title")
+            ann_title = annotations.get("title")
         else:
-            annotations_title = getattr(annotations, "title", None)
-    if isinstance(annotations_title, str):
-        return annotations_title
-    title = getattr(tool, "title", None)
-    return title if isinstance(title, str) else None
+            ann_title = getattr(annotations, "title", None)
+        if isinstance(ann_title, str):
+            return ann_title
+    return None
 
 
 # Cache import (lazy to avoid circular dependencies)
