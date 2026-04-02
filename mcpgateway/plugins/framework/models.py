@@ -1382,6 +1382,7 @@ class GlobalContext(BaseModel):
             user (str): user ID associated with the request.
             tenant_id (str): tenant ID.
             server_id (str): server ID.
+            content_type (Optional[str]): Content-Type header from the request.
             metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective).
             state (Optional[dict[str,Any]]): a global shared state across plugins.
 
@@ -1401,12 +1402,19 @@ class GlobalContext(BaseModel):
         '123'
         >>> c.server_id
         'srv1'
+        >>> ctx3 = GlobalContext(request_id="req-789", content_type="application/json")
+        >>> ctx3.content_type
+        'application/json'
+        >>> ctx4 = GlobalContext(request_id="req-999", content_type="application/json; charset=utf-8")
+        >>> ctx4.content_type
+        'application/json; charset=utf-8'
     """
 
     request_id: str
     user: Optional[Union[str, dict[str, Any]]] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
+    content_type: Optional[str] = None
     state: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

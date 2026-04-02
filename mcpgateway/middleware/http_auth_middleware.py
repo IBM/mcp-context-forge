@@ -57,7 +57,8 @@ async def run_pre_request_hooks(
 
     if global_context is None:
         request_id = get_correlation_id() or generate_correlation_id()
-        global_context = GlobalContext(request_id=request_id, server_id=None, tenant_id=None)
+        content_type = headers.get("content-type") if headers else None
+        global_context = GlobalContext(request_id=request_id, server_id=None, tenant_id=None, content_type=content_type)
 
     try:
         pre_result, context_table = await plugin_manager.invoke_hook(

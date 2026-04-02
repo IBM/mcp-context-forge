@@ -184,6 +184,28 @@ def parse_class_name(name: str) -> tuple[str, str]:
     return ("", name)
 
 
+def normalize_content_type(content_type: str) -> str:
+    """Extract base content type without parameters.
+
+    Args:
+        content_type: Raw content type string (e.g., 'application/json; charset=utf-8')
+
+    Returns:
+        Normalized content type (e.g., 'application/json')
+
+    Examples:
+        >>> normalize_content_type('application/json; charset=utf-8')
+        'application/json'
+        >>> normalize_content_type('text/html')
+        'text/html'
+        >>> normalize_content_type('TEXT/PLAIN')
+        'text/plain'
+        >>> normalize_content_type('application/json;charset=utf-8')
+        'application/json'
+    """
+    return content_type.split(";")[0].strip().lower()
+
+
 def matches(condition: PluginCondition, context: GlobalContext) -> bool:
     """Check if conditions match the current context.
 
@@ -207,6 +229,16 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
         >>> ctx3 = GlobalContext(request_id="req3", user="admin_user")
         >>> matches(cond2, ctx3)
         True
+        >>> cond3 = PluginCondition(content_types=["application/json"])
+        >>> ctx4 = GlobalContext(request_id="req4", content_type="application/json")
+        >>> matches(cond3, ctx4)
+        True
+        >>> ctx5 = GlobalContext(request_id="req5", content_type="application/json; charset=utf-8")
+        >>> matches(cond3, ctx5)
+        True
+        >>> ctx6 = GlobalContext(request_id="req6", content_type="text/plain")
+        >>> matches(cond3, ctx6)
+        False
     """
     # Check server ID
     if condition.server_ids and context.server_id not in condition.server_ids:
@@ -220,6 +252,14 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
     if condition.user_patterns and context.user:
         if not any(pattern in context.user for pattern in condition.user_patterns):
             return False
+
+    # Check content types
+    if condition.content_types and context.content_type:
+        normalized_request = normalize_content_type(context.content_type)
+        normalized_conditions = [normalize_content_type(ct) for ct in condition.content_types]
+        if normalized_request not in normalized_conditions:
+            return False
+
     return True
 
 
