@@ -10,7 +10,7 @@
 // Transport: Streamable HTTP (no auth)
 // Default: http://127.0.0.1:9080/mcp
 
-use std::env;
+use std::{env, net};
 use std::sync::Arc;
 
 use axum::Router;
@@ -30,6 +30,7 @@ use rmcp::{
 use rand::Rng;
 use rand_distr::Normal;
 use serde_json::json;
+use socket2;
 use tokio::sync::Mutex;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -336,7 +337,11 @@ async fn main() -> anyhow::Result<()> {
         .nest_service("/mcp", service);
 
     // Bind and serve
-    let tcp_listener = tokio::net::TcpListener::bind(&bind_address).await?;
+    let listener = net::TcpListener::bind(&bind_address)?;
+    listener.set_nonblocking(true)?;
+    let socket = socket2::Socket::from(listener);
+    socket.set_tcp_nodelay(true)?;
+    let tcp_listener = tokio::net::TcpListener::from_std(socket.into())?;
 
     info!("MCP endpoint:   http://{}/mcp", bind_address);
     info!("REST API:       http://{}/api/echo (POST), /api/time (GET)", bind_address);
