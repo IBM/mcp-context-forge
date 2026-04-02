@@ -608,18 +608,24 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
 
                     # One query: fetch all names already taken in the admin team that match any
                     # original value exactly or as a suffixed variant (value-N)
+                    def _like_safe(v: str) -> str:
+                        return v.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
                     existing_taken: set[str] = (
                         {
                             row[0]
                             for row in db.query(field_col).filter(
                                 resource_model.team_id == personal_team.id,
                                 resource_model.owner_email == admin_user.email,
-                                or_(*[cond for v in original_values for cond in (field_col == v, field_col.like(f"{v}-%"))]),
+                                or_(*[cond for v in original_values for cond in (field_col == v, field_col.like(f"{_like_safe(v)}-%", escape="\\"))]),
                             )
                         }
                         if original_values
                         else set()
                     )
+
+                    # Pre-compile suffix regexes keyed by original value
+                    suffix_res = {v: re.compile(rf"^{re.escape(v)}-(\d+)$") for v in original_values}
 
                     # Track names claimed within this batch to catch intra-batch duplicates
                     batch_assigned: set[str] = set()
@@ -631,7 +637,7 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                             taken = existing_taken | batch_assigned
                             if original_value in taken:
                                 # Parse numeric suffixes from taken values to find next free one
-                                suffix_re = re.compile(rf"^{re.escape(original_value)}-(\d+)$")
+                                suffix_re = suffix_res[original_value]
                                 used = {int(m.group(1)) for v in taken if (m := suffix_re.match(v))}
                                 new_value = f"{original_value}-{(max(used) if used else 1) + 1}"
                                 logger.warning(f"Name conflict for {resource_name} '{original_value}' — renaming to '{new_value}'")

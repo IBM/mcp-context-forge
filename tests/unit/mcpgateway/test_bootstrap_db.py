@@ -1120,11 +1120,13 @@ class TestBootstrapResourceAssignments:
         mock_server.owner_email = None
         mock_server.visibility = None
         mock_server.federation_source = None
+        mock_server.name = "test-server"
 
         mock_tool = Mock()
         mock_tool.team_id = None
         mock_tool.owner_email = None
         mock_tool.visibility = None
+        mock_tool.name = "test-tool"
 
         def mock_query_handler(model):
             query = MagicMock()
