@@ -17,10 +17,12 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const adminJsPath = path.resolve(
-    __dirname,
-    "../../../mcpgateway/static/admin.js",
+const staticDir = path.resolve(__dirname, "../../../mcpgateway/static");
+const manifest = JSON.parse(
+  fs.readFileSync(path.join(staticDir, ".vite/manifest.json"), "utf8")
 );
+const bundleFile = manifest["mcpgateway/admin_ui/index.js"].file;
+const adminJsPath = path.join(staticDir, bundleFile);
 
 let dom = null;
 let instrumentedCode = null;
@@ -63,23 +65,30 @@ export function loadAdminJs(options = {}) {
         url: "http://localhost",
         runScripts: "outside-only",
     });
+    instrumentedCode = instrumenter.instrumentSync(adminJsContent, adminJsPath);
+  }
 
-    // Suppress console noise from admin.js initialization
-    dom.window.console = {
-        ...dom.window.console,
-        log: () => {},
-        warn: () => {},
-        error: () => {},
-    };
+  dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
+    url: "http://localhost",
+    runScripts: "outside-only",
+  });
 
-    if (typeof options.beforeEval === "function") {
-        options.beforeEval(dom.window);
-    }
+  // Suppress console noise from admin.js initialization
+  dom.window.console = {
+    ...dom.window.console,
+    log: () => {},
+    warn: () => {},
+    error: () => {},
+  };
 
-    // Execute the instrumented script in JSDOM's sandbox — safe eval of our
-    // own source file, required because admin.js is not an ES module.
-    dom.window.eval(instrumentedCode); // eslint-disable-line no-eval
-    return dom.window;
+  if (typeof options.beforeEval === "function") {
+    options.beforeEval(dom.window);
+  }
+
+  // Execute the instrumented script in JSDOM's sandbox — safe eval of our
+  // own source file, required because admin.js is not an ES module.
+  dom.window.eval(instrumentedCode);
+  return dom.window;
 }
 
 /**
@@ -88,21 +97,20 @@ export function loadAdminJs(options = {}) {
  * accumulates rather than the last file overwriting all prior data.
  */
 function mergeCounters(existing, incoming) {
-    for (const key of Object.keys(incoming)) {
-        if (typeof incoming[key] === "number") {
-            existing[key] = (existing[key] || 0) + incoming[key];
-        } else if (Array.isArray(incoming[key])) {
-            // Branch counters are arrays of hit counts
-            if (!existing[key]) {
-                existing[key] = incoming[key].slice();
-            } else {
-                for (let i = 0; i < incoming[key].length; i++) {
-                    existing[key][i] =
-                        (existing[key][i] || 0) + (incoming[key][i] || 0);
-                }
-            }
+  for (const key of Object.keys(incoming)) {
+    if (typeof incoming[key] === "number") {
+      existing[key] = (existing[key] || 0) + incoming[key];
+    } else if (Array.isArray(incoming[key])) {
+      // Branch counters are arrays of hit counts
+      if (!existing[key]) {
+        existing[key] = incoming[key].slice();
+      } else {
+        for (let i = 0; i < incoming[key].length; i++) {
+          existing[key][i] = (existing[key][i] || 0) + (incoming[key][i] || 0);
         }
+      }
     }
+  }
 }
 
 /**
@@ -111,27 +119,27 @@ function mergeCounters(existing, incoming) {
  * Then close the JSDOM window.
  */
 export function cleanupAdminJs() {
-    if (!dom) return;
+  if (!dom) return;
 
-    const jsCoverage = dom.window.__coverage__;
-    if (jsCoverage && typeof jsCoverage === "object") {
-        const target = "__VITEST_COVERAGE__";
-        if (!globalThis[target]) {
-            globalThis[target] = {};
-        }
-        for (const [filePath, fileCov] of Object.entries(jsCoverage)) {
-            if (!globalThis[target][filePath]) {
-                globalThis[target][filePath] = fileCov;
-            } else {
-                // Merge statement, function, and branch counters
-                const existing = globalThis[target][filePath];
-                mergeCounters(existing.s, fileCov.s);
-                mergeCounters(existing.f, fileCov.f);
-                mergeCounters(existing.b, fileCov.b);
-            }
-        }
+  const jsCoverage = dom.window.__coverage__;
+  if (jsCoverage && typeof jsCoverage === "object") {
+    const target = "__VITEST_COVERAGE__";
+    if (!globalThis[target]) {
+      globalThis[target] = {};
     }
+    for (const [filePath, fileCov] of Object.entries(jsCoverage)) {
+      if (!globalThis[target][filePath]) {
+        globalThis[target][filePath] = fileCov;
+      } else {
+        // Merge statement, function, and branch counters
+        const existing = globalThis[target][filePath];
+        mergeCounters(existing.s, fileCov.s);
+        mergeCounters(existing.f, fileCov.f);
+        mergeCounters(existing.b, fileCov.b);
+      }
+    }
+  }
 
-    dom.window.close();
-    dom = null;
+  dom.window.close();
+  dom = null;
 }

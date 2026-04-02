@@ -281,10 +281,22 @@ class MCPRegistryPage(BasePage):
         expect(self.search_input).to_have_value(query, timeout=10000)
 
     def clear_filters(self) -> None:
-        """Clear all filters and search."""
-        self.select_category("")
-        self.select_auth_type("")
-        self.search_servers("")
+        """Clear all filters and search.
+
+        Note: Due to HTMX hx-include behavior, clearing filters sequentially can cause
+        race conditions where one filter's HTMX request includes stale values from other filters.
+        We clear all inputs first, then trigger a single HTMX request.
+        """
+        # Clear all inputs without triggering HTMX
+        self.page.evaluate("""
+            document.getElementById('category-filter').value = '';
+            document.getElementById('auth-filter').value = '';
+            document.getElementById('search-input').value = '';
+        """)
+
+        # Trigger a single HTMX request and wait for the response to land.
+        with self.page.expect_response("**/admin/mcp-registry/partial**", timeout=5000):
+            self.category_filter.select_option("")
 
     def click_category_badge(self, category: str) -> None:
         """Click on a category badge to filter by that category.
@@ -314,6 +326,9 @@ class MCPRegistryPage(BasePage):
         Returns:
             Number of visible server cards
         """
+        # Wait for grid to be stable before counting
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=10000)
+        self.page.wait_for_timeout(300)  # Brief wait for any in-flight HTMX swaps
         return self.server_cards.count()
 
     def get_total_servers_count(self) -> int:

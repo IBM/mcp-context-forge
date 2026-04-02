@@ -1,5 +1,5 @@
 <!-- htmlhint doctype-first:false, tag-pair:false -->
-<script>
+<script defer>
 window.createToolsController = function() {
   return {
     timeRange: 24,
@@ -20,7 +20,7 @@ window.createToolsController = function() {
      */
     destroyAllCharts() {
       // Use global registry for centralized cleanup
-      window.chartRegistry.destroyByPrefix('tools-');
+      Admin.chartRegistry.destroyByPrefix('tools-');
       this.charts = {};
     },
 
@@ -171,7 +171,7 @@ window.createToolsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('tools-usage');
+      Admin.chartRegistry.destroy('tools-usage');
 
       // Handle empty data
       if (!data.tools || data.tools.length === 0) {
@@ -226,7 +226,8 @@ window.createToolsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const tool = data.tools[context.dataIndex];
+                  const tool = data.tools?.[context?.dataIndex];
+                  if (!tool) return 'No data';
                   return [
                     `Invocations: ${tool.count}`,
                     `Percentage: ${tool.percentage}%`
@@ -262,7 +263,7 @@ window.createToolsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('tools-usage', chart);
+          Admin.chartRegistry.register('tools-usage', chart);
           this.charts.toolUsage = chart;
         } catch (e) {
           console.error('Failed to create tool usage chart:', e);
@@ -337,7 +338,7 @@ window.createToolsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('tools-slowness');
+      Admin.chartRegistry.destroy('tools-slowness');
 
       // Handle empty data
       if (!data.tools || data.tools.length === 0) {
@@ -408,7 +409,8 @@ window.createToolsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const tool = sortedTools[context.dataIndex];
+                  const tool = sortedTools?.[context?.dataIndex];
+                  if (!tool) return 'No data';
                   return [
                     `${context.dataset.label}: ${context.parsed.x} ms`,
                     `Avg: ${tool.avg_duration_ms} ms`,
@@ -446,7 +448,7 @@ window.createToolsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('tools-slowness', chart);
+          Admin.chartRegistry.register('tools-slowness', chart);
           this.charts.toolSlowness = chart;
         } catch (e) {
           console.error('Failed to create tool slowness chart:', e);
@@ -464,7 +466,7 @@ window.createToolsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('tools-errorprone');
+      Admin.chartRegistry.destroy('tools-errorprone');
 
       // Handle empty data
       if (!data.tools || data.tools.length === 0) {
@@ -540,7 +542,8 @@ window.createToolsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const tool = sortedTools[context.dataIndex];
+                  const tool = sortedTools?.[context?.dataIndex];
+                  if (!tool) return 'No data';
                   return [
                     `Error Rate: ${tool.error_rate}%`,
                     `Errors: ${tool.error_count}`,
@@ -579,7 +582,7 @@ window.createToolsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('tools-errorprone', chart);
+          Admin.chartRegistry.register('tools-errorprone', chart);
           this.charts.toolErrorProne = chart;
         } catch (e) {
           console.error('Failed to create tool error-prone chart:', e);
