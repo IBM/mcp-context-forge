@@ -23,6 +23,17 @@ struct PushConfig {
     enabled: bool,
 }
 
+/// Check if a push config should fire for the given state change.
+fn should_dispatch(config: &PushConfig, new_state: &str) -> bool {
+    if !config.enabled {
+        return false;
+    }
+    match &config.events {
+        Some(events) => events.iter().any(|e| e.eq_ignore_ascii_case(new_state)),
+        None => true,
+    }
+}
+
 /// Fetch all push configs for a task/agent pair and dispatch matching webhooks.
 ///
 /// Calls `POST {backend_base_url}/_internal/a2a/push/list` with trust headers
@@ -96,15 +107,8 @@ pub async fn dispatch_webhooks(
     };
 
     for config in configs {
-        if !config.enabled {
+        if !should_dispatch(&config, new_state) {
             continue;
-        }
-
-        // If the config has an events filter, the current state must be listed.
-        if let Some(ref events) = config.events {
-            if !events.iter().any(|e| e == new_state) {
-                continue;
-            }
         }
 
         let webhook_url = config.webhook_url.clone();
@@ -188,5 +192,81 @@ pub async fn dispatch_webhooks(
                 "webhook dispatch exhausted all retries"
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_config_deserializes_from_json() {
+        let json = r#"{
+            "webhook_url": "https://example.com/hook",
+            "auth_token": "secret-token",
+            "events": ["completed", "failed"],
+            "enabled": true
+        }"#;
+        let config: PushConfig = serde_json::from_str(json).expect("deserialization failed");
+        assert_eq!(config.webhook_url, "https://example.com/hook");
+        assert_eq!(config.auth_token.as_deref(), Some("secret-token"));
+        assert_eq!(
+            config.events.as_deref(),
+            Some(vec!["completed".to_string(), "failed".to_string()].as_slice())
+        );
+        assert!(config.enabled);
+    }
+
+    #[test]
+    fn push_config_deserializes_with_null_fields() {
+        let json = r#"{
+            "webhook_url": "https://example.com/hook",
+            "auth_token": null,
+            "events": null,
+            "enabled": true
+        }"#;
+        let config: PushConfig = serde_json::from_str(json).expect("deserialization failed");
+        assert!(config.auth_token.is_none());
+        assert!(config.events.is_none());
+    }
+
+    #[test]
+    fn push_config_events_filter_matches() {
+        let config = PushConfig {
+            webhook_url: "https://example.com/hook".to_string(),
+            auth_token: None,
+            events: Some(vec!["completed".to_string(), "failed".to_string()]),
+            enabled: true,
+        };
+        assert!(should_dispatch(&config, "completed"));
+        assert!(should_dispatch(&config, "COMPLETED")); // case-insensitive
+        assert!(should_dispatch(&config, "failed"));
+        assert!(!should_dispatch(&config, "working"));
+    }
+
+    #[test]
+    fn push_config_disabled_is_skipped() {
+        let config = PushConfig {
+            webhook_url: "https://example.com/hook".to_string(),
+            auth_token: None,
+            events: None,
+            enabled: false,
+        };
+        assert!(!should_dispatch(&config, "completed"));
+        assert!(!should_dispatch(&config, "working"));
+    }
+
+    #[test]
+    fn push_config_no_events_filter_matches_all() {
+        let config = PushConfig {
+            webhook_url: "https://example.com/hook".to_string(),
+            auth_token: None,
+            events: None,
+            enabled: true,
+        };
+        assert!(should_dispatch(&config, "completed"));
+        assert!(should_dispatch(&config, "working"));
+        assert!(should_dispatch(&config, "failed"));
+        assert!(should_dispatch(&config, "any-arbitrary-state"));
     }
 }

@@ -2143,6 +2143,479 @@ async fn test_send_message_still_works_after_streaming_changes() {
     mock_server.verify().await;
 }
 
+// ---------------------------------------------------------------------------
+// Trust chain edge cases
+// ---------------------------------------------------------------------------
+
+/// Authentication failure: authenticate endpoint returns 401.
+///
+/// The Rust handler maps any non-200 from authenticate to 403 (Forbidden).
+/// The resolve endpoint must NOT be called.
+#[tokio::test]
+async fn test_a2a_invoke_authentication_failure() {
+    let mock_server = MockServer::start().await;
+
+    // authenticate → 401 (unauthenticated / bad token)
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve must NOT be called
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "SendMessage",
+            "id": 1,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::FORBIDDEN, "expected 403, body: {body}");
+    assert!(
+        body["error"].as_str().is_some(),
+        "response should contain an error field"
+    );
+
+    mock_server.verify().await;
+}
+
+/// Empty method field: JSON-RPC body with no `method` key falls through to the
+/// agent invoke path (the `_ => {}` branch).  Authenticate and authz are still
+/// called; resolve IS called; the agent IS invoked.
+#[tokio::test]
+async fn test_a2a_invoke_with_empty_method() {
+    ensure_queue_initialized();
+    let mock_server = MockServer::start().await;
+
+    // authenticate → 200
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {
+                "email": "user@example.com",
+                "is_admin": false,
+                "teams": ["team1"]
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // invoke/authz → 204
+    Mock::given(method("POST"))
+        .and(path_regex(".*invoke/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve → 200 (must be called — no method means fall-through to invoke)
+    let agent_path = "/empty-method-agent";
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json(&format!(
+                "{}{}",
+                mock_server.uri(),
+                agent_path
+            ))),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Mock agent endpoint → 200
+    Mock::given(method("POST"))
+        .and(path(agent_path))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"status": "ok"}
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    // Send a body with no `method` field
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "params": {"message": "hello"}
+        }),
+    )
+    .await;
+
+    // Handler must not crash; it falls through to agent invoke
+    assert_eq!(status, StatusCode::OK, "expected 200, body: {body}");
+    assert!(
+        body["success"].as_bool().unwrap_or(false),
+        "invoke should succeed without method field"
+    );
+
+    mock_server.verify().await;
+}
+
+// ---------------------------------------------------------------------------
+// Streaming edge cases
+// ---------------------------------------------------------------------------
+
+/// `SendStreamingMessage` where the mock agent returns HTTP 500 with a JSON
+/// error body.  The handler falls into the non-streaming (JSON) branch and
+/// returns HTTP 200 with `success: false` and `status_code: 500`.
+#[tokio::test]
+async fn test_streaming_method_handles_agent_error() {
+    let mock_server = MockServer::start().await;
+
+    // authenticate → 200
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {
+                "email": "user@example.com",
+                "is_admin": false,
+                "teams": ["team1"]
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // invoke/authz → 204
+    Mock::given(method("POST"))
+        .and(path_regex(".*invoke/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve → 200
+    let agent_path = "/streaming-error-agent";
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json(&format!(
+                "{}{}",
+                mock_server.uri(),
+                agent_path
+            ))),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Mock agent returns 500 with a JSON error body (not text/event-stream)
+    Mock::given(method("POST"))
+        .and(path(agent_path))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .insert_header("content-type", "application/json")
+                .set_body_json(json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": {"code": -32000, "message": "internal agent error"}
+                })),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "SendStreamingMessage",
+            "id": 1,
+            "params": {"message": {"role": "ROLE_USER", "parts": [{"text": "hello"}]}}
+        }),
+    )
+    .await;
+
+    // The handler detects the non-streaming JSON body and wraps it in an
+    // InvokeResultDto.  The outer HTTP status is 200 (the DTO carries the
+    // downstream 500 in status_code).
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "expected 200 with error DTO, body: {body}"
+    );
+    assert_eq!(
+        body["status_code"], 500,
+        "DTO status_code should reflect agent 500"
+    );
+    assert!(
+        !body["success"].as_bool().unwrap_or(true),
+        "success should be false for agent 500"
+    );
+
+    mock_server.verify().await;
+}
+
+/// `SendStreamingMessage` where the mock agent delays 10 s and the runtime
+/// timeout is 500 ms.  The handler must return a 502 Bad Gateway (not hang).
+#[tokio::test]
+async fn test_streaming_method_handles_agent_timeout() {
+    let mock_server = MockServer::start().await;
+
+    // authenticate → 200
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {
+                "email": "user@example.com",
+                "is_admin": false,
+                "teams": ["team1"]
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // invoke/authz → 204
+    Mock::given(method("POST"))
+        .and(path_regex(".*invoke/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve → 200
+    let agent_path = "/streaming-timeout-agent";
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json(&format!(
+                "{}{}",
+                mock_server.uri(),
+                agent_path
+            ))),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Mock agent delays 10 s — well past the 500 ms runtime timeout
+    Mock::given(method("POST"))
+        .and(path(agent_path))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(std::time::Duration::from_secs(10)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    config.request_timeout_ms = 500;
+    config.max_retries = 0;
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "SendStreamingMessage",
+            "id": 1,
+            "params": {"message": {"role": "ROLE_USER", "parts": [{"text": "hello"}]}}
+        }),
+    )
+    .await;
+
+    // Timeout on the agent request → BAD_GATEWAY (502)
+    assert!(
+        status == StatusCode::BAD_GATEWAY || status == StatusCode::GATEWAY_TIMEOUT,
+        "expected 502 or 504 on agent timeout, got {status}: {body}"
+    );
+    assert!(
+        body["error"].as_str().is_some(),
+        "response should contain an error field"
+    );
+
+    mock_server.verify().await;
+}
+
+// ---------------------------------------------------------------------------
+// Malformed request handling
+// ---------------------------------------------------------------------------
+
+/// POST to `/a2a/test-agent/invoke` with `Content-Type: application/json`
+/// but a body that is not valid JSON.  Axum's `Json` extractor rejects the
+/// body before authentication is attempted, returning 422.
+#[tokio::test]
+async fn test_a2a_invoke_with_invalid_json_body() {
+    let app = test_app(default_test_config());
+
+    // Build the request manually to send a non-JSON body.
+    let request = Request::builder()
+        .method("POST")
+        .uri("/a2a/test-agent/invoke")
+        .header("content-type", "application/json")
+        .body(Body::from(b"not json".as_ref()))
+        .unwrap();
+
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+
+    // Axum rejects the malformed body at the extractor level — 4xx expected.
+    assert!(
+        status.is_client_error(),
+        "expected 4xx for invalid JSON body, got {status}"
+    );
+}
+
+/// POST to `/invoke` (Python-initiated path) with `endpoint_url: ""`.
+/// URL validation should reject an empty URL before any network call is made.
+#[tokio::test]
+async fn test_invoke_with_empty_endpoint_url() {
+    let app = test_app(default_test_config());
+
+    let (status, body) = post_json(
+        app,
+        "/invoke",
+        json!({
+            "endpoint_url": "",
+            "headers": {},
+            "json_body": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "expected 400 for empty endpoint_url, body: {body}"
+    );
+    assert!(
+        body["error"].as_str().is_some(),
+        "response should contain an error field"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Method routing completeness
+// ---------------------------------------------------------------------------
+
+/// An unknown JSON-RPC method falls through the `_ => {}` branch and reaches
+/// the full resolve → invoke path.  Authenticate, authz, resolve, and the
+/// agent endpoint must all be called exactly once.
+#[tokio::test]
+async fn test_a2a_invoke_unknown_method_goes_to_agent() {
+    ensure_queue_initialized();
+    let mock_server = MockServer::start().await;
+
+    // authenticate → 200
+    Mock::given(method("POST"))
+        .and(path("/_internal/a2a/authenticate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "authContext": {
+                "email": "user@example.com",
+                "is_admin": false,
+                "teams": ["team1"]
+            }
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // invoke/authz → 204
+    Mock::given(method("POST"))
+        .and(path_regex(".*invoke/authz$"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // resolve → 200 (must be called — unknown method falls through to invoke)
+    let agent_path = "/unknown-method-agent";
+    Mock::given(method("POST"))
+        .and(path_regex(".*/agents/test-agent/resolve$"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(resolved_agent_json(&format!(
+                "{}{}",
+                mock_server.uri(),
+                agent_path
+            ))),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Mock agent endpoint → 200
+    Mock::given(method("POST"))
+        .and(path(agent_path))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"status": "handled", "method": "CustomUnknownMethod"}
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = default_test_config();
+    config.backend_base_url = mock_server.uri();
+    config.auth_secret = Some("test-secret".to_string());
+    let app = test_app(config);
+
+    let (status, body) = post_json(
+        app,
+        "/a2a/test-agent/invoke",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "CustomUnknownMethod",
+            "id": 1,
+            "params": {}
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "expected 200, body: {body}");
+    assert!(
+        body["success"].as_bool().unwrap_or(false),
+        "unknown method should fall through to agent successfully"
+    );
+    assert_eq!(
+        body["json"]["result"]["method"], "CustomUnknownMethod",
+        "agent response should be forwarded"
+    );
+
+    // Verify all mocks were called — especially resolve (expect(1)).
+    mock_server.verify().await;
+}
+
 /// When a `Last-Event-ID` header is present but the event store is `None`
 /// (no Redis configured), the handler should fall through to a regular agent
 /// call rather than crashing or returning an error.

@@ -435,9 +435,6 @@ class A2AAgentService(BaseService):
                     # Standard
                     from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
-                    # First-Party
-                    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                     # Service-layer enforcement: Check feature flag
                     if not settings.insecure_allow_queryparam_auth:
                         raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
@@ -1145,9 +1142,6 @@ class A2AAgentService(BaseService):
                 # existing encrypted value so an unchanged edit does not
                 # overwrite real credentials with the mask string.
                 if field == "auth_headers" and value and isinstance(value, list):
-                    # First-Party
-                    from mcpgateway.config import settings as _settings  # pylint: disable=import-outside-toplevel
-
                     existing_auth_raw = getattr(agent, "auth_value", None)
                     existing_auth: Dict[str, str] = {}
                     if isinstance(existing_auth_raw, str):
@@ -1164,7 +1158,7 @@ class A2AAgentService(BaseService):
                         if not key:
                             continue
                         hval = header.get("value", "")
-                        if hval == _settings.masked_auth_value and key in existing_auth:
+                        if hval == settings.masked_auth_value and key in existing_auth:
                             header_dict[key] = existing_auth[key]
                         else:
                             header_dict[key] = hval
@@ -1203,9 +1197,6 @@ class A2AAgentService(BaseService):
                 # Standard
                 from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
                     # Grandfather clause: Allow updates to existing query_param agents
@@ -1238,9 +1229,6 @@ class A2AAgentService(BaseService):
                     is_masked_placeholder = False
                     if param_value and hasattr(param_value, "get_secret_value"):
                         raw_value = param_value.get_secret_value()
-                        # First-Party
-                        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                         is_masked_placeholder = raw_value == settings.masked_auth_value
                     elif param_value:
                         raw_value = str(param_value)

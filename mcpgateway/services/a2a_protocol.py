@@ -87,9 +87,16 @@ class PreparedA2AInvocation:
     auth_query_params_encrypted: Optional[Dict[str, str]] = None
 
 
+def _strip_version_prefix(version: str) -> str:
+    """Strip a leading ``v`` or ``V`` prefix from a version string."""
+    if version and version[0] in ("v", "V"):
+        return version[1:]
+    return version
+
+
 def is_v1_a2a_protocol(protocol_version: Optional[str]) -> bool:
     """Return whether the configured protocol version should use A2A v1 semantics."""
-    normalized = str(protocol_version or "").strip()
+    normalized = _strip_version_prefix(str(protocol_version or "").strip())
     if not normalized:
         return True
     parts = [part for part in normalized.split(".") if part != ""]
@@ -103,7 +110,7 @@ def is_v1_a2a_protocol(protocol_version: Optional[str]) -> bool:
 
 def normalize_a2a_version_header(protocol_version: Optional[str]) -> str:
     """Return the canonical A2A-Version header value for the target protocol."""
-    normalized = str(protocol_version or "").strip()
+    normalized = _strip_version_prefix(str(protocol_version or "").strip())
     if not normalized:
         return _V1_DEFAULT_VERSION
 

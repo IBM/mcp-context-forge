@@ -203,3 +203,91 @@ impl RuntimeConfig {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Returns a RuntimeConfig with sensible defaults for unit testing.
+    fn test_config() -> RuntimeConfig {
+        RuntimeConfig {
+            listen_http: "127.0.0.1:8788".to_string(),
+            listen_uds: None,
+            request_timeout_ms: 30_000,
+            client_connect_timeout_ms: 5_000,
+            client_pool_idle_timeout_seconds: 90,
+            client_pool_max_idle_per_host: 256,
+            client_tcp_keepalive_seconds: 30,
+            max_response_body_bytes: 10_485_760,
+            max_retries: 3,
+            retry_backoff_ms: 1_000,
+            auth_secret: None,
+            backend_base_url: "http://127.0.0.1:4444".to_string(),
+            max_concurrent: 64,
+            max_queued: None,
+            circuit_failure_threshold: 5,
+            circuit_cooldown_secs: 30,
+            circuit_max_entries: 10_000,
+            metrics_max_entries: 10_000,
+            agent_cache_ttl_secs: 60,
+            agent_cache_max_entries: 1_000,
+            redis_url: None,
+            l2_cache_ttl_secs: 300,
+            cache_invalidation_channel: "mcpgw:a2a:invalidate".to_string(),
+            session_enabled: true,
+            session_ttl_secs: 300,
+            session_fingerprint_headers: "authorization,cookie,x-forwarded-for".to_string(),
+            event_store_max_events: 1000,
+            event_store_ttl_secs: 3600,
+            event_flush_interval_ms: 1000,
+            event_flush_batch_size: 100,
+            log_filter: "info".to_string(),
+            exit_after_startup_ms: None,
+        }
+    }
+
+    #[test]
+    fn listen_target_parses_valid_http_address() {
+        let config = test_config();
+        let target = config.listen_target().expect("should parse valid address");
+        match target {
+            ListenTarget::Http(addr) => {
+                assert_eq!(addr, "127.0.0.1:8788".parse::<SocketAddr>().unwrap());
+            }
+            ListenTarget::Uds(_) => panic!("expected Http, got Uds"),
+        }
+    }
+
+    #[test]
+    fn listen_target_prefers_uds_over_http() {
+        let mut config = test_config();
+        config.listen_uds = Some(PathBuf::from("/tmp/test.sock"));
+        let target = config.listen_target().expect("should return Uds");
+        match target {
+            ListenTarget::Uds(path) => {
+                assert_eq!(path, PathBuf::from("/tmp/test.sock"));
+            }
+            ListenTarget::Http(_) => panic!("expected Uds, got Http"),
+        }
+    }
+
+    #[test]
+    fn listen_target_rejects_invalid_address() {
+        let mut config = test_config();
+        config.listen_http = "not-an-address".to_string();
+        let result = config.listen_target();
+        assert!(result.is_err(), "expected Err for invalid address, got Ok");
+    }
+
+    #[test]
+    fn default_config_values_are_sensible() {
+        let config = RuntimeConfig::parse_from(["test"]);
+        assert_eq!(config.listen_http, "127.0.0.1:8788");
+        assert_eq!(config.request_timeout_ms, 30_000);
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.circuit_failure_threshold, 5);
+        assert!(config.session_enabled);
+        assert_eq!(config.event_store_max_events, 1000);
+    }
+}
