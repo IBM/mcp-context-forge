@@ -4566,6 +4566,32 @@ class TestUpdateOrCreateResources:
         assert existing.name == "new-name"
         assert existing.mime_type == "text/html"
 
+    def test_existing_resource_title_updated(self, gateway_service, mock_gateway):
+        """Title change on an existing resource triggers an update."""
+        existing = SimpleNamespace(
+            uri="file:///res",
+            name="res",
+            description="desc",
+            mime_type="text/plain",
+            uri_template=None,
+            visibility="public",
+            title="old title",
+        )
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        resource = SimpleNamespace(
+            uri="file:///res",
+            name="res",
+            description="desc",
+            mime_type="text/plain",
+            uri_template=None,
+            title="new title",
+        )
+        mock_gateway.visibility = "public"
+        result = gateway_service._update_or_create_resources(db, [resource], mock_gateway, "update")
+        assert result == []
+        assert existing.title == "new title"
+
     def test_none_resource_skipped(self, gateway_service, mock_gateway):
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
@@ -4617,6 +4643,24 @@ class TestUpdateOrCreatePrompts:
         assert result == []
         assert existing.description == "new desc"
         assert existing.template == "new template"
+
+    def test_existing_prompt_title_updated(self, gateway_service, mock_gateway):
+        """Title change on an existing prompt triggers an update."""
+        existing = SimpleNamespace(
+            original_name="my-prompt",
+            description="desc",
+            template="Hello",
+            visibility="public",
+            title="old title",
+            argument_schema={"type": "object", "properties": {}, "required": []},
+        )
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        prompt = SimpleNamespace(name="my-prompt", description="desc", template="Hello", title="new title")
+        mock_gateway.visibility = "public"
+        result = gateway_service._update_or_create_prompts(db, [prompt], mock_gateway, "update")
+        assert result == []
+        assert existing.title == "new title"
 
     def test_none_prompt_skipped(self, gateway_service):
         db = MagicMock()

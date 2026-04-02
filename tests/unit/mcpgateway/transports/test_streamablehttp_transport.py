@@ -353,6 +353,24 @@ async def test_get_rust_event_store_client_reuses_uds_client(monkeypatch):
     assert constructed["kwargs"]["follow_redirects"] is False
 
 
+def test_safe_str_attr_returns_str():
+    """_safe_str_attr returns the attribute when it is a string."""
+    obj = SimpleNamespace(title="hello")
+    assert tr._safe_str_attr(obj, "title") == "hello"
+
+
+def test_safe_str_attr_returns_none_for_missing():
+    """_safe_str_attr returns None when the attribute is absent."""
+    obj = SimpleNamespace()
+    assert tr._safe_str_attr(obj, "title") is None
+
+
+def test_safe_str_attr_returns_none_for_non_str():
+    """_safe_str_attr returns None when the attribute is not a string (e.g. MagicMock)."""
+    obj = MagicMock()
+    assert tr._safe_str_attr(obj, "title") is None
+
+
 def test_get_streamable_http_auth_context_returns_empty_for_non_dict_context():
     """Non-dict auth contexts should not be forwarded to trusted internal hops."""
     token = tr.user_context_var.set("not-a-dict")
