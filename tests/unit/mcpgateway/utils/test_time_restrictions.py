@@ -221,17 +221,25 @@ class TestValidateTimeRestrictions:
         assert exc_info.value.status_code == 403
         assert "invalid timezone" in exc_info.value.detail.lower()
 
-    def test_only_start_time_no_restriction(self):
-        """Test that only start_time without end_time results in no restriction."""
+    def test_only_start_time_denies(self):
+        """Test that only start_time without end_time is rejected (fail-closed)."""
         payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "09:00", "end_time": None, "timezone": "UTC", "days": []}}}
-        # Should not raise (no restriction applied when end_time is missing)
-        validate_time_restrictions(payload)
 
-    def test_only_end_time_no_restriction(self):
-        """Test that only end_time without start_time results in no restriction."""
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "incomplete time restriction" in exc_info.value.detail.lower()
+
+    def test_only_end_time_denies(self):
+        """Test that only end_time without start_time is rejected (fail-closed)."""
         payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": None, "end_time": "17:00", "timezone": "UTC", "days": []}}}
-        # Should not raise (no restriction applied when start_time is missing)
-        validate_time_restrictions(payload)
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "incomplete time restriction" in exc_info.value.detail.lower()
 
     @patch("mcpgateway.utils.time_restrictions.datetime")
     def test_only_days_restriction(self, mock_datetime):
@@ -319,3 +327,95 @@ class TestValidateTimeRestrictions:
         assert "Friday" in VALID_DAYS
         assert "Saturday" in VALID_DAYS
         assert "Sunday" in VALID_DAYS
+
+    # --- Type guard tests (fail-closed on wrong inner types) ---
+
+    def test_non_string_start_time_denies(self):
+        """Test that non-string start_time is rejected."""
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": 123, "end_time": "17:00", "timezone": "UTC", "days": []}}}
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "start_time and end_time must be strings" in exc_info.value.detail
+
+    def test_non_string_end_time_denies(self):
+        """Test that non-string end_time is rejected."""
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "09:00", "end_time": 1700, "timezone": "UTC", "days": []}}}
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "start_time and end_time must be strings" in exc_info.value.detail
+
+    def test_non_string_timezone_denies(self):
+        """Test that non-string timezone is rejected."""
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "09:00", "end_time": "17:00", "timezone": 123, "days": []}}}
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "timezone must be a string" in exc_info.value.detail
+
+    def test_non_list_days_denies(self):
+        """Test that non-list days is rejected (e.g. string iterates chars)."""
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "09:00", "end_time": "17:00", "timezone": "UTC", "days": "Monday"}}}
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "days must be a list" in exc_info.value.detail
+
+    def test_int_days_denies(self):
+        """Test that integer days is rejected."""
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "09:00", "end_time": "17:00", "timezone": "UTC", "days": 1}}}
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "days must be a list" in exc_info.value.detail
+
+    # --- Overnight window + days semantics ---
+
+    @patch("mcpgateway.utils.time_restrictions.datetime")
+    def test_overnight_window_with_days_allows_same_calendar_day(self, mock_datetime):
+        """Test that overnight window allows access on the starting calendar day.
+
+        With days=["Monday"] and window 22:00-06:00, Monday 23:00 is allowed
+        because the day check applies to the current calendar day.
+        """
+        # Monday 23:00 UTC
+        mock_now = datetime(2026, 3, 23, 23, 0, 0, tzinfo=timezone.utc)
+        mock_datetime.now.return_value = mock_now
+        mock_datetime.strptime = datetime.strptime
+
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "22:00", "end_time": "06:00", "timezone": "UTC", "days": ["Monday"]}}}
+        # Should not raise (Monday is allowed, 23:00 is in 22:00-06:00 range)
+        validate_time_restrictions(payload)
+
+    @patch("mcpgateway.utils.time_restrictions.datetime")
+    def test_overnight_window_with_days_denies_next_calendar_day(self, mock_datetime):
+        """Test that overnight window denies access on the next calendar day.
+
+        With days=["Monday"] and window 22:00-06:00, Tuesday 02:00 is denied
+        because the day check applies to the current calendar day (Tuesday),
+        which is not in the allowed list. To allow overnight continuation,
+        include both Monday and Tuesday in the days list.
+        """
+        # Tuesday 02:00 UTC
+        mock_now = datetime(2026, 3, 24, 2, 0, 0, tzinfo=timezone.utc)
+        mock_datetime.now.return_value = mock_now
+        mock_datetime.strptime = datetime.strptime
+
+        payload = {"sub": "user@example.com", "scopes": {"time_restrictions": {"start_time": "22:00", "end_time": "06:00", "timezone": "UTC", "days": ["Monday"]}}}
+
+        with pytest.raises(HTTPException) as exc_info:
+            validate_time_restrictions(payload)
+
+        assert exc_info.value.status_code == 403
+        assert "Tuesday" in exc_info.value.detail

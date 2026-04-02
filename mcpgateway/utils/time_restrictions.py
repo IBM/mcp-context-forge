@@ -84,6 +84,69 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
     if not (start_time_str or end_time_str or allowed_days):
         return
 
+    # SECURITY: Type-validate all fields before processing.
+    # Malformed types (e.g. start_time=123, days="Monday") would cause
+    # TypeError in strptime/set operations; fail closed to prevent bypass.
+    if (start_time_str is not None and not isinstance(start_time_str, str)) or (end_time_str is not None and not isinstance(end_time_str, str)):
+        logger.warning(
+            "Invalid type for start_time or end_time in time_restrictions",
+            extra={
+                "security_event": "time_restriction_validation_error",
+                "error_type": "invalid_field_type",
+                "user": payload.get("sub"),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token has invalid time restriction format: start_time and end_time must be strings",
+        )
+
+    if not isinstance(timezone_str, str):
+        logger.warning(
+            "Invalid type for timezone in time_restrictions",
+            extra={
+                "security_event": "time_restriction_validation_error",
+                "error_type": "invalid_field_type",
+                "user": payload.get("sub"),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token has invalid time restriction format: timezone must be a string",
+        )
+
+    if not isinstance(allowed_days, list):
+        logger.warning(
+            "Invalid type for days in time_restrictions",
+            extra={
+                "security_event": "time_restriction_validation_error",
+                "error_type": "invalid_field_type",
+                "user": payload.get("sub"),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token has invalid time restriction format: days must be a list",
+        )
+
+    # SECURITY: Fail closed on half-configured time windows.
+    # Only start_time or only end_time is malformed — deny to prevent bypass.
+    if bool(start_time_str) != bool(end_time_str):
+        logger.warning(
+            f"Incomplete time window in time_restrictions: start_time={start_time_str!r}, end_time={end_time_str!r}",
+            extra={
+                "security_event": "time_restriction_validation_error",
+                "error_type": "incomplete_time_window",
+                "start_time": start_time_str,
+                "end_time": end_time_str,
+                "user": payload.get("sub"),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token has incomplete time restriction: both start_time and end_time are required",
+        )
+
     # Validate day names if day restrictions are present
     if allowed_days:
         invalid_days = set(allowed_days) - VALID_DAYS
@@ -105,7 +168,7 @@ def validate_time_restrictions(payload: Dict[str, Any]) -> None:
     # Get current time in the specified timezone
     try:
         tz = ZoneInfo(timezone_str)
-    except (ZoneInfoNotFoundError, KeyError) as e:
+    except (ZoneInfoNotFoundError, KeyError):
         logger.warning(
             f"Invalid timezone in time_restrictions: {timezone_str}",
             extra={
