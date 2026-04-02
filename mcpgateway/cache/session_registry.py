@@ -2121,49 +2121,59 @@ class SessionRegistry(SessionBackend):
             ...     e.status_code
             400
         """
+        # First-Party
+        from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
+
         protocol_version = body.get("protocol_version") or body.get("protocolVersion")
         client_capabilities = body.get("capabilities", {})
-        # body.get("client_info") or body.get("clientInfo", {})
+        span_attributes: Dict[str, Any] = {
+            "mcp.protocol_version": protocol_version,
+            "mcp.session_id": session_id,
+            "server.id": server_id,
+        }
 
-        if not protocol_version:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing protocol version",
-                headers={"MCP-Error-Code": "-32002"},
+        with create_span("mcp.initialize", span_attributes):
+            # body.get("client_info") or body.get("clientInfo", {})
+
+            if not protocol_version:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Missing protocol version",
+                    headers={"MCP-Error-Code": "-32002"},
+                )
+
+            if protocol_version != settings.protocol_version:
+                logger.warning(f"Using non default protocol version: {protocol_version}")
+
+            # Store client capabilities if session_id provided
+            if session_id and client_capabilities:
+                await self.store_client_capabilities(session_id, client_capabilities)
+                logger.debug(f"Stored capabilities for session {session_id}: {client_capabilities}")
+
+            # Build experimental capabilities (including OAuth if configured)
+            experimental: Optional[Dict[str, Dict[str, Any]]] = None
+
+            # Query OAuth configuration if server_id is provided
+            if server_id:
+                try:
+                    # Run synchronous DB query in threadpool to avoid blocking the event loop
+                    experimental = await asyncio.to_thread(self._get_oauth_experimental_config, server_id)
+                except Exception as e:
+                    logger.warning(f"Failed to query OAuth config for server {server_id}: {e}")
+
+            return InitializeResult(
+                protocolVersion=protocol_version,
+                capabilities=ServerCapabilities(
+                    prompts={"listChanged": True},
+                    resources={"subscribe": True, "listChanged": True},
+                    tools={"listChanged": True},
+                    logging={},
+                    completions={},  # Advertise completions capability per MCP spec
+                    experimental=experimental,  # OAuth capability when configured
+                ),
+                serverInfo=Implementation(name=settings.app_name, version=__version__),
+                instructions=("ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."),
             )
-
-        if protocol_version != settings.protocol_version:
-            logger.warning(f"Using non default protocol version: {protocol_version}")
-
-        # Store client capabilities if session_id provided
-        if session_id and client_capabilities:
-            await self.store_client_capabilities(session_id, client_capabilities)
-            logger.debug(f"Stored capabilities for session {session_id}: {client_capabilities}")
-
-        # Build experimental capabilities (including OAuth if configured)
-        experimental: Optional[Dict[str, Dict[str, Any]]] = None
-
-        # Query OAuth configuration if server_id is provided
-        if server_id:
-            try:
-                # Run synchronous DB query in threadpool to avoid blocking the event loop
-                experimental = await asyncio.to_thread(self._get_oauth_experimental_config, server_id)
-            except Exception as e:
-                logger.warning(f"Failed to query OAuth config for server {server_id}: {e}")
-
-        return InitializeResult(
-            protocolVersion=protocol_version,
-            capabilities=ServerCapabilities(
-                prompts={"listChanged": True},
-                resources={"subscribe": True, "listChanged": True},
-                tools={"listChanged": True},
-                logging={},
-                completions={},  # Advertise completions capability per MCP spec
-                experimental=experimental,  # OAuth capability when configured
-            ),
-            serverInfo=Implementation(name=settings.app_name, version=__version__),
-            instructions=("ContextForge providing federated tools, resources and prompts. Use /admin interface for configuration."),
-        )
 
     async def store_client_capabilities(self, session_id: str, capabilities: Dict[str, Any]) -> None:
         """Store client capabilities for a session.

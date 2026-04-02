@@ -1105,6 +1105,7 @@ class TestGatewayServiceExtended:
         existing_prompt.description = "Greet a user"
         existing_prompt.template = "Hello {name}!"
         existing_prompt.visibility = "public"
+        existing_prompt.title = None
         existing_prompt.argument_schema = existing_schema
 
         mock_result = MagicMock()

@@ -342,6 +342,8 @@ mcpContextForge:
     MCPGATEWAY_UI_EMBEDDED: "false"          # embedded UI mode (hides logout + team selector by default)
     MCPGATEWAY_UI_HIDE_SECTIONS: '["roots"]'  # hide roots section (feature disabled by default)
     MCPGATEWAY_UI_HIDE_HEADER_ITEMS: ""      # CSV/JSON list of header items to hide (e.g. logout,team_selector)
+    MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN: ""    # CSV/JSON list of UI sections to hide for admin users (empty = admins see all)
+    MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN: "" # CSV/JSON list of header items to hide for admin users
 
     # ─ Feature Flags (disabled by default for production) ─
     TOOLOPS_ENABLED: "false"            # enable ToolOps feature
@@ -598,6 +600,13 @@ mcpContextForge:
     # Uncomment when enabling OTEL:
     # OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
     # OTEL_EXPORTER_OTLP_INSECURE: "false"
+    # OTEL_EMIT_LANGFUSE_ATTRIBUTES: ""     # empty = auto-enable only for Langfuse OTLP endpoints
+    # OTEL_CAPTURE_IDENTITY_ATTRIBUTES: ""  # empty = follow Langfuse attribute policy
+    # OTEL_COPY_RESOURCE_ATTRS_TO_SPANS: "false"
+    # OTEL_REDACT_FIELDS: "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key"
+    # OTEL_MAX_TRACE_PAYLOAD_SIZE: "32768"
+    # OTEL_CAPTURE_INPUT_SPANS: ""          # comma-separated allowlist, e.g. tool.invoke,prompt.render
+    # OTEL_CAPTURE_OUTPUT_SPANS: ""         # comma-separated allowlist, leave empty to disable output capture
     # OTEL_BSP_MAX_QUEUE_SIZE: "2048"
     # OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512"
     # OTEL_BSP_SCHEDULE_DELAY: "5000"
@@ -899,6 +908,7 @@ mcpContextForge:
     SSO_KEYCLOAK_ENABLED: "false"
     SSO_ENTRA_ENABLED: "false"
     SSO_GENERIC_ENABLED: "false"
+    SSO_ADFS_ENABLED: "false"
     # See .env.example for full SSO_*_CLIENT_ID, SSO_*_CLIENT_SECRET, etc.
 
     # ─ Default Role Configuration ─
@@ -929,7 +939,13 @@ mcpContextForge:
     # ─ OpenTelemetry Endpoints (configure when OTEL_ENABLE_OBSERVABILITY=true) ─
     # OTEL_EXPORTER_OTLP_ENDPOINT: ""       # e.g., http://otel-collector:4317
     # OTEL_EXPORTER_OTLP_HEADERS: ""        # comma-separated key=value
+    # LANGFUSE_OTEL_ENDPOINT: ""            # e.g., https://cloud.langfuse.com/api/public/otel/v1/traces
+    # LANGFUSE_PUBLIC_KEY: ""               # Langfuse project public key for derived OTLP auth
+    # LANGFUSE_SECRET_KEY: ""               # Langfuse project secret key for derived OTLP auth
+    # LANGFUSE_OTEL_AUTH: ""                # optional base64(pk:sk) override; not needed when keys are set
     # OTEL_EXPORTER_JAEGER_ENDPOINT: ""
+    # OTEL_EXPORTER_JAEGER_USER: ""
+    # OTEL_EXPORTER_JAEGER_PASSWORD: ""
     # OTEL_EXPORTER_ZIPKIN_ENDPOINT: ""
     # OTEL_RESOURCE_ATTRIBUTES: ""
 

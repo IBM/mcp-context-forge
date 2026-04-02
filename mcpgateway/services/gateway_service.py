@@ -92,7 +92,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
@@ -118,6 +118,69 @@ from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
+
+
+def _resolve_tool_title(tool) -> Optional[str]:
+    """Resolve the display title for a tool per MCP spec precedence.
+
+    MCP 2025-11-25: "Display name precedence order is: title,
+    annotations.title, then name."
+
+    1. ``tool.title`` — top-level ``BaseMetadata`` field (canonical).
+    2. ``tool.annotations.title`` — ``ToolAnnotations`` (legacy fallback).
+    3. ``None`` if neither is available (caller may fall back to ``name``).
+
+    All return paths are guarded with ``isinstance(str)`` so the function
+    never leaks non-string values from mock objects or malformed payloads.
+
+    Args:
+        tool: An object representing a tool.  It may define a top-level
+            ``title`` attribute and/or an ``annotations`` attribute
+            (``ToolAnnotations`` model or ``dict``).
+
+    Returns:
+        Optional[str]: The resolved title string if found, otherwise None.
+
+    Examples:
+        >>> class Tool:
+        ...     def __init__(self, title=None, annotations=None):
+        ...         self.title = title
+        ...         self.annotations = annotations
+        ...
+        >>> # 1. top-level title takes precedence
+        >>> tool = Tool(title="Top Level", annotations={"title": "Annotated"})
+        >>> _resolve_tool_title(tool)
+        'Top Level'
+
+        >>> # 2. Fallback to annotations.title
+        >>> tool = Tool(annotations={"title": "Annotated"})
+        >>> _resolve_tool_title(tool)
+        'Annotated'
+
+        >>> # 3. No title available
+        >>> tool = Tool()
+        >>> _resolve_tool_title(tool) is None
+        True
+
+        >>> # 4. annotations is not a dict
+        >>> tool = Tool(title="Top Level", annotations="invalid")
+        >>> _resolve_tool_title(tool)
+        'Top Level'
+    """
+    # MCP spec: "Display name precedence order is: title, annotations.title, then name."
+    title = getattr(tool, "title", None)
+    if isinstance(title, str):
+        return title
+    annotations = getattr(tool, "annotations", None)
+    if annotations is not None:
+        if isinstance(annotations, dict):
+            ann_title = annotations.get("title")
+        else:
+            ann_title = getattr(annotations, "title", None)
+        if isinstance(ann_title, str):
+            return ann_title
+    return None
+
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -476,6 +539,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             self._leader_ttl = settings.redis_leader_ttl
             self._leader_heartbeat_interval = settings.redis_leader_heartbeat_interval
             self._leader_heartbeat_task: Optional[asyncio.Task] = None
+            self._follower_election_task: Optional[asyncio.Task] = None
+
+            # Log instance mapping for debugging
+            logger.info(f"Instance started: instance_id={self._instance_id}, port={settings.port}, pid={os.getpid()}")
 
         # Always initialize file lock as fallback (used if Redis connection fails at runtime)
         if settings.cache_type != "none":
@@ -588,8 +655,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.info("Acquired Redis leadership. Starting health check and heartbeat tasks.")
                 self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
                 self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
+            else:
+                # Did not acquire leadership - start follower election loop
+                logger.info("Did not acquire leadership. Starting follower election loop.")
+                self._follower_election_task = asyncio.create_task(self._run_follower_election(user_email))
         else:
-            # Always create the health check task in filelock mode; leader check is handled inside.
+            # No Redis available - always create the health check task in filelock mode
             self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
 
     async def shutdown(self) -> None:
@@ -608,6 +679,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             >>> len(service._active_gateways)
             0
         """
+        # Cancel follower election FIRST to prevent it from spawning new
+        # health-check / heartbeat tasks while we are tearing down.
+        if getattr(self, "_follower_election_task", None):
+            self._follower_election_task.cancel()
+            try:
+                await self._follower_election_task
+            except asyncio.CancelledError:
+                pass
+
+        # Now safe to cancel health-check and heartbeat (handles may have been
+        # overwritten by follower election just before cancellation — that is fine,
+        # we always cancel whichever task the attribute currently points to).
         if self._health_check_task:
             self._health_check_task.cancel()
             try:
@@ -615,7 +698,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except asyncio.CancelledError:
                 pass
 
-        # Cancel leader heartbeat task if running
         if getattr(self, "_leader_heartbeat_task", None):
             self._leader_heartbeat_task.cancel()
             try:
@@ -952,6 +1034,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     custom_name=tool.name,
                     custom_name_slug=slugify(tool.name),
                     display_name=generate_display_name(tool.name),
+                    title=_resolve_tool_title(tool),
                     url=normalized_url,
                     original_description=tool.description,
                     description=tool.description,
@@ -1030,6 +1113,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
                     )
                     existing.size = len(r.content) if r.content else 0
+                    existing.title = getattr(r, "title", None)
                     existing.tags = getattr(r, "tags", []) or []
                     existing.federation_source = gateway.name
                     existing.modified_by = created_by
@@ -1046,6 +1130,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         DbResource(
                             uri=r.uri,
                             name=r.name,
+                            title=getattr(r, "title", None),
                             description=r.description,
                             mime_type=mime_type,
                             uri_template=r.uri_template or None,
@@ -1109,6 +1194,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     existing.original_name = prompt.name
                     existing.custom_name = prompt.name
                     existing.display_name = prompt.name
+                    existing.title = getattr(prompt, "title", None)
                     existing.description = prompt.description
                     existing.template = prompt.template if hasattr(prompt, "template") else ""
                     existing.argument_schema = self._build_prompt_argument_schema(prompt)
@@ -1129,6 +1215,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             original_name=prompt.name,
                             custom_name=prompt.name,
                             display_name=prompt.name,
+                            title=getattr(prompt, "title", None),
                             description=prompt.description,
                             template=prompt.template if hasattr(prompt, "template") else "",
                             argument_schema=self._build_prompt_argument_schema(prompt),
@@ -3296,8 +3383,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             elapsed = time.monotonic() - start_time
 
             if batch_span:
-                batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
-                batch_span.set_attribute("check.completed", True)
+                set_span_attribute(batch_span, "check.duration_ms", int(elapsed * 1000))
+                set_span_attribute(batch_span, "check.completed", True)
 
             logger.debug(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
 
@@ -3437,8 +3524,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     # Get user-specific OAuth token
                                     if not user_email:
                                         if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", "User email required for OAuth token")
+                                            set_span_attribute(span, "health.status", "unhealthy")
+                                            set_span_error(span, "User email required for OAuth token")
                                         await self._handle_gateway_failure(gateway)
                                         return
 
@@ -3448,15 +3535,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 else:
                                     if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", "No valid OAuth token for user")
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "No valid OAuth token for user")
                                     await self._handle_gateway_failure(gateway)
                                     return
                             except Exception as e:
                                 logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                 if span:
-                                    span.set_attribute("health.status", "unhealthy")
-                                    span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                    set_span_attribute(span, "health.status", "unhealthy")
+                                    set_span_error(span, "Failed to obtain stored OAuth token")
                                 await self._handle_gateway_failure(gateway)
                                 return
                         else:
@@ -3466,8 +3553,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 headers["Authorization"] = f"Bearer {access_token}"
                             except Exception as e:
                                 if span:
-                                    span.set_attribute("health.status", "unhealthy")
-                                    span.set_attribute("error.message", str(e))
+                                    set_span_attribute(span, "health.status", "unhealthy")
+                                    set_span_error(span, e)
                                 await self._handle_gateway_failure(gateway)
                                 return
                     else:
@@ -3487,7 +3574,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # This will raise immediately if status is 4xx/5xx
                             response.raise_for_status()
                             if span:
-                                span.set_attribute("http.status_code", response.status_code)
+                                set_span_attribute(span, "http.status_code", response.status_code)
                     elif (gateway_transport).lower() == "streamablehttp":
                         # Use session pool if enabled for faster health checks
                         use_pool = False
@@ -3584,13 +3671,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             logger.warning(f"Failed to refresh tools for gateway {gateway_name}: {refresh_error}")
 
                     if span:
-                        span.set_attribute("health.status", "healthy")
-                        span.set_attribute("success", True)
+                        set_span_attribute(span, "health.status", "healthy")
+                        set_span_attribute(span, "success", True)
 
                 except Exception as e:
                     if span:
-                        span.set_attribute("health.status", "unhealthy")
-                        span.set_attribute("error.message", str(e))
+                        set_span_attribute(span, "health.status", "unhealthy")
+                        set_span_error(span, e)
 
                     # Set the logger as debug as this check happens for each interval
                     logger.debug(f"Health check failed for gateway {gateway_name}: {e}")
@@ -3915,34 +4002,87 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return self.convert_gateway_to_read(result)
 
     async def _run_leader_heartbeat(self) -> None:
-        """Run leader heartbeat loop to keep leader key alive.
+        """Run leader heartbeat loop with Redis reconnection support.
 
-        This runs independently from health checks to ensure the leader key
-        is refreshed frequently enough (every redis_leader_heartbeat_interval seconds)
-        to prevent expiration during long-running health check operations.
-
-        The loop exits if this instance loses leadership.
+        Refreshes the leader key TTL every heartbeat interval. Exits and starts
+        follower election if leadership is lost or after consecutive failures.
         """
+        consecutive_failures = 0
+        max_failures = 3
+
         while True:
             try:
                 await asyncio.sleep(self._leader_heartbeat_interval)
 
                 if not self._redis_client:
-                    return
+                    logger.warning("Redis client unavailable in heartbeat")
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_failures:
+                        logger.error("Lost Redis connection, stopping heartbeat")
+                        return
+                    continue
 
                 # Check if we're still the leader
                 current_leader = await self._redis_client.get(self._leader_key)
                 if current_leader != self._instance_id:
                     logger.info("Lost Redis leadership, stopping heartbeat")
+                    self._start_follower_election()
                     return
 
                 # Refresh the leader key TTL
                 await self._redis_client.expire(self._leader_key, self._leader_ttl)
                 logger.debug(f"Leader heartbeat: refreshed TTL to {self._leader_ttl}s")
+                consecutive_failures = 0
 
             except Exception as e:
-                logger.warning(f"Leader heartbeat error: {e}")
-                # Continue trying - the main health check loop will handle leadership loss
+                consecutive_failures += 1
+                logger.warning(f"Leader heartbeat error (failure {consecutive_failures}/{max_failures}): {e}")
+                if consecutive_failures >= max_failures:
+                    logger.error("Too many consecutive heartbeat failures, starting follower election")
+                    self._start_follower_election()
+                    return
+
+    def _start_follower_election(self) -> None:
+        """Start a follower election task if one is not already running."""
+        if self._follower_election_task is None or self._follower_election_task.done():
+            self._follower_election_task = asyncio.create_task(self._run_follower_election(settings.platform_admin_email))
+
+    async def _run_follower_election(self, user_email: str) -> None:
+        """Continuously attempt to acquire leadership when not the leader.
+
+        This runs on follower instances and polls Redis to claim leadership
+        when the current leader key expires or becomes available.
+
+        Args:
+            user_email: Email of the user for OAuth token lookup
+        """
+        retry_interval = max(1, self._leader_ttl // 3)  # Poll at 1/3 of TTL
+
+        while True:
+            try:
+                await asyncio.sleep(retry_interval)
+
+                if not self._redis_client:
+                    logger.warning("Redis client unavailable, cannot attempt election.")
+                    continue
+
+                # Attempt to acquire leadership
+                is_leader = await self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
+
+                if is_leader:
+                    logger.info("Acquired Redis leadership via follower election. Starting health check and heartbeat.")
+                    # Cancel stale tasks from a previous leadership period to prevent
+                    # orphaned loops running alongside the new ones.
+                    if self._health_check_task and not self._health_check_task.done():
+                        self._health_check_task.cancel()
+                    if getattr(self, "_leader_heartbeat_task", None) and not self._leader_heartbeat_task.done():
+                        self._leader_heartbeat_task.cancel()
+                    self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
+                    self._leader_heartbeat_task = asyncio.create_task(self._run_leader_heartbeat())
+                    return  # Exit follower loop, now running as leader
+
+            except Exception as e:
+                logger.warning(f"Follower election error: {e}", exc_info=True)
 
     async def _run_health_checks(self, user_email: str) -> None:
         """Run health checks periodically,
@@ -4190,6 +4330,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
+        # Populate tool count from the eagerly-loaded tools relationship when available
+        tools_rel = gateway.__dict__.get("tools")
+        gateway_dict["tool_count"] = len(tools_rel) if tools_rel is not None else 0
+
         return GatewayRead.model_validate(gateway_dict).masked()
 
     def _create_db_tool(
@@ -4219,6 +4363,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             custom_name=tool.name,
             custom_name_slug=slugify(tool.name),
             display_name=generate_display_name(tool.name),
+            title=_resolve_tool_title(tool),
             url=gateway.url,
             original_description=tool.description,
             description=tool.description,
@@ -4321,7 +4466,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or (update_visibility and upstream_tool_visibility is not None and existing_tool.visibility != upstream_tool_visibility)
                     )
 
-                    if basic_fields_changed or schema_fields_changed or auth_fields_changed:
+                    title_changed = existing_tool.title != _resolve_tool_title(tool)
+
+                    if basic_fields_changed or schema_fields_changed or auth_fields_changed or title_changed:
                         fields_to_update = True
                     if fields_to_update:
                         existing_tool.url = gateway.url
@@ -4336,6 +4483,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_tool.input_schema = tool.input_schema
                         existing_tool.output_schema = tool.output_schema
                         existing_tool.jsonpath_filter = tool.jsonpath_filter
+                        existing_tool.title = _resolve_tool_title(tool)
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value
                         if update_visibility and upstream_tool_visibility is not None:
@@ -4406,6 +4554,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
                         or (update_visibility and upstream_visibility is not None and existing_resource.visibility != upstream_visibility)
+                        or existing_resource.title != getattr(resource, "title", None)
                     ):
                         fields_to_update = True
 
@@ -4414,6 +4563,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
+                        existing_resource.title = getattr(resource, "title", None)
                         if update_visibility and upstream_visibility is not None:
                             existing_resource.visibility = upstream_visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
@@ -4422,6 +4572,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     db_resource = DbResource(
                         uri=resource.uri,
                         name=resource.name,
+                        title=getattr(resource, "title", None),
                         description=resource.description,
                         mime_type=resource.mime_type,
                         uri_template=resource.uri_template,
@@ -4512,6 +4663,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
                         or (update_visibility and upstream_prompt_visibility is not None and existing_prompt.visibility != upstream_prompt_visibility)
                         or (existing_prompt.argument_schema or {}) != new_argument_schema
+                        or existing_prompt.title != getattr(prompt, "title", None)
                     ):
                         fields_to_update = True
 
@@ -4519,6 +4671,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
                         existing_prompt.argument_schema = new_argument_schema
+                        existing_prompt.title = getattr(prompt, "title", None)
                         if update_visibility and upstream_prompt_visibility is not None:
                             existing_prompt.visibility = upstream_prompt_visibility
                         logger.debug(f"Updated existing prompt: {prompt.name}")
@@ -4529,6 +4682,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         original_name=prompt.name,
                         custom_name=prompt.name,
                         display_name=prompt.name,
+                        title=getattr(prompt, "title", None),
                         description=prompt.description,
                         template=prompt.template if hasattr(prompt, "template") else "",
                         argument_schema=self._build_prompt_argument_schema(prompt),

@@ -31,6 +31,8 @@ PLUGIN_PARITY_PREFIX = "mcp-plugin-parity"
 RESOURCE_LICENSE_PREFIX = "# SPDX-License-Identifier: Apache-2.0"
 TOOL_OUTPUT_SENTINEL = "[TOOL-POST-INVOKE-SENTINEL]"
 PROMPT_OUTPUT_SENTINEL = "[PROMPT-POST-FETCH-SENTINEL]"
+DB_DIRECT_RESOURCE_URI = "parity://db-direct-formats"
+DB_DIRECT_PROMPT_NAME = "mcp-plugin-parity-db-direct"
 EXPECTED_RUNTIME = os.getenv("MCP_PLUGIN_PARITY_EXPECTED_RUNTIME")
 pytestmark = [
     pytest.mark.e2e,
@@ -259,6 +261,47 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
     formats_resource = next(resource for resource in resources if resource["uri"] == "time://formats")
     detailed_prompt = next(prompt for prompt in prompts if prompt["name"] == "fast-time-convert-time-detailed")
 
+    for resource in resources:
+        if resource["uri"] == DB_DIRECT_RESOURCE_URI:
+            with suppress(Exception):
+                admin_client.delete(f"/resources/{resource['id']}")
+    for prompt in prompts:
+        if prompt["name"] == DB_DIRECT_PROMPT_NAME or prompt.get("originalName") == DB_DIRECT_PROMPT_NAME:
+            with suppress(Exception):
+                admin_client.delete(f"/prompts/{prompt['id']}")
+
+    db_direct_resource = _request_json(
+        admin_client,
+        "POST",
+        "/resources",
+        json={
+            "resource": {
+                "uri": DB_DIRECT_RESOURCE_URI,
+                "name": "db_direct_formats",
+                "description": "DB-backed MCP parity resource",
+                "mimeType": "application/json",
+                "content": '{"output_formats":["iso8601","rfc3339"]}',
+            },
+            "team_id": team_id,
+            "visibility": "team",
+        },
+    )
+    db_direct_prompt = _request_json(
+        admin_client,
+        "POST",
+        "/prompts",
+        json={
+            "prompt": {
+                "name": DB_DIRECT_PROMPT_NAME,
+                "description": "DB-backed MCP parity prompt",
+                "template": "DB direct prompt body",
+                "arguments": [],
+            },
+            "team_id": team_id,
+            "visibility": "team",
+        },
+    )
+
     server = _request_json(
         admin_client,
         "POST",
@@ -268,8 +311,8 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
                 "name": f"{PLUGIN_PARITY_PREFIX}-server-{uuid.uuid4().hex[:8]}",
                 "description": "Plugin parity virtual server",
                 "associated_tools": [time_tool["id"]],
-                "associated_resources": [formats_resource["id"]],
-                "associated_prompts": [detailed_prompt["id"]],
+                "associated_resources": [formats_resource["id"], db_direct_resource["id"]],
+                "associated_prompts": [detailed_prompt["id"], db_direct_prompt["id"]],
             },
             "team_id": team_id,
             "visibility": "team",
@@ -277,10 +320,19 @@ def plugin_parity_server(admin_client: httpx.Client) -> Generator[dict[str, str]
     )
     server_id = server["id"]
 
-    yield {"server_id": server_id, "token": _make_admin_jwt()}
+    yield {
+        "server_id": server_id,
+        "token": _make_admin_jwt(),
+        "db_direct_resource_uri": DB_DIRECT_RESOURCE_URI,
+        "db_direct_prompt_name": DB_DIRECT_PROMPT_NAME,
+    }
 
     with suppress(Exception):
         admin_client.delete(f"/servers/{server_id}")
+    with suppress(Exception):
+        admin_client.delete(f"/resources/{db_direct_resource['id']}")
+    with suppress(Exception):
+        admin_client.delete(f"/prompts/{db_direct_prompt['id']}")
     with suppress(Exception):
         admin_client.delete(f"/teams/{team_id}")
 
@@ -383,3 +435,60 @@ class TestMcpPluginParity:
         assert lines[-1] == PROMPT_OUTPUT_SENTINEL, text
         assert "America/New_York" in text, text
         assert "Europe/Dublin" in text, text
+
+    def test_db_direct_resources_read_applies_license_header(self, plugin_parity_server: dict[str, str]) -> None:
+        """DB-backed `resources/read` should not bypass `resource_post_fetch` hooks.
+
+        Args:
+            plugin_parity_server: Provisioned server fixture.
+        """
+        with httpx.Client(base_url=BASE_URL, timeout=20.0, verify=False) as client:
+            session_id = _initialize_session(client, server_id=plugin_parity_server["server_id"], token=plugin_parity_server["token"])
+            result = _extract_result(
+                _mcp_post(
+                    client,
+                    server_id=plugin_parity_server["server_id"],
+                    token=plugin_parity_server["token"],
+                    session_id=session_id,
+                    method="resources/read",
+                    params={"uri": plugin_parity_server["db_direct_resource_uri"]},
+                    request_id=5,
+                )
+            )
+
+        contents = result.get("contents", [])
+        assert len(contents) == 1, contents
+        content = contents[0]
+        assert content["uri"] == plugin_parity_server["db_direct_resource_uri"]
+        assert isinstance(content.get("text"), str), content
+        assert content["text"].startswith(RESOURCE_LICENSE_PREFIX), content["text"]
+        assert '"output_formats"' in content["text"], content["text"]
+
+    def test_db_direct_prompts_get_appends_sentinel(self, plugin_parity_server: dict[str, str]) -> None:
+        """DB-backed `prompts/get` should not bypass `prompt_post_fetch` hooks.
+
+        Args:
+            plugin_parity_server: Provisioned server fixture.
+        """
+        with httpx.Client(base_url=BASE_URL, timeout=20.0, verify=False) as client:
+            session_id = _initialize_session(client, server_id=plugin_parity_server["server_id"], token=plugin_parity_server["token"])
+            result = _extract_result(
+                _mcp_post(
+                    client,
+                    server_id=plugin_parity_server["server_id"],
+                    token=plugin_parity_server["token"],
+                    session_id=session_id,
+                    method="prompts/get",
+                    params={"name": plugin_parity_server["db_direct_prompt_name"]},
+                    request_id=6,
+                )
+            )
+
+        assert result["description"] == "DB-backed MCP parity prompt"
+        messages = result.get("messages", [])
+        assert len(messages) == 1, messages
+        text = messages[0]["content"]["text"]
+        assert isinstance(text, str) and text, result
+        lines = text.splitlines()
+        assert lines[0] == "DB direct prompt body", text
+        assert lines[-1] == PROMPT_OUTPUT_SENTINEL, text

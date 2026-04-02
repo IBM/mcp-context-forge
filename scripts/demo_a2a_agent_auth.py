@@ -334,19 +334,19 @@ class SimpleAgent:
 class Parameters(BaseModel):
     """Parameters object containing the actual query."""
 
-    query: str = ""
-    message: str = ""
+    query: Optional[str] = None
+    message: Optional[str] = None
 
 
 class A2ARequest(BaseModel):
     """Request model for A2A protocol format (ContextForge custom agent format)."""
 
-    interaction_type: str = ""
+    interaction_type: Optional[str] = None
     parameters: Optional[Parameters] = None
-    protocol_version: str = ""
+    protocol_version: Optional[str] = None
     # Also support direct query/message for simple testing
-    query: str = ""
-    message: str = ""
+    query: Optional[str] = None
+    message: Optional[str] = None
 
 
 class MessagePart(BaseModel):

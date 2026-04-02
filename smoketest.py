@@ -51,6 +51,10 @@ from mcpgateway.config import settings
 PORT_GATEWAY = 4444  # HTTPS container
 PORT_TIME_SERVER = 8002  # mcpgateway.translate
 DOCKER_CONTAINER = "mcpgateway"
+PROJECT_NAME = "mcpgateway"
+VENVS_DIR = os.getenv("VENVS_DIR", os.path.join(os.path.expanduser("~"), ".venv"))
+PROJECT_VENV_DIR = os.getenv("VENV_DIR", os.path.join(VENVS_DIR, PROJECT_NAME))
+PROJECT_VENV_PYTHON = os.path.join(PROJECT_VENV_DIR, "bin", "python")
 
 MAKE_VENV_CMD = ["make", "venv", "install", "install-dev"]
 MAKE_DOCKER_BUILD = ["make", "docker"]
@@ -364,11 +368,20 @@ def sh(cmd, desc):  # shorthand
 
 
 def step_1_setup_venv():
+    current_venv = os.path.realpath(os.environ.get("VIRTUAL_ENV", sys.prefix))
+    expected_venv = os.path.realpath(PROJECT_VENV_DIR)
+    if current_venv == expected_venv and os.path.exists(PROJECT_VENV_PYTHON):
+        logging.info("ℹ️  Reusing active project venv at %s", PROJECT_VENV_DIR)
+        return
+
     sh(MAKE_VENV_CMD, "1️⃣  Create venv + install deps")
 
 
 def step_2_pip_install():
-    sh(["pip", "install", "."], "2️⃣  pip install .")
+    if not os.path.exists(PROJECT_VENV_PYTHON):
+        raise RuntimeError(f"Project venv Python not found at {PROJECT_VENV_PYTHON}")
+
+    sh([PROJECT_VENV_PYTHON, "-m", "pip", "install", "."], "2️⃣  pip install .")
 
 
 def step_3_docker_build():
@@ -941,13 +954,16 @@ def step_16_test_summary():
     logging.info(summary)
 
     # Show failed tests
+    if not test_ctx.test_results:
+        logging.info("\nℹ️  No additional tests were executed.")
+    # Show failed tests
     failed_tests = [name for name, passed in test_ctx.test_results.items() if not passed]
     if failed_tests:
         logging.warning("\n❌ Failed tests:")
         for test_name in failed_tests:
             error = test_ctx.error_messages.get(test_name, "No error message")
             logging.warning("  - %s: %s", test_name, error)
-    else:
+    elif test_ctx.test_results:
         logging.info("\n✅ All additional tests passed!")
 
     # Show entity counts
@@ -983,7 +999,7 @@ STEPS: List[Tuple[str, StepFunc]] = [
 
 
 # ──────────────────────────────── Main ───────────────────────────────────
-def main():
+def main() -> int:
     ap = argparse.ArgumentParser(description="ContextForge smoke-test")
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument("--tail", type=int, default=10, help="Tail window (default 10)")
@@ -1005,7 +1021,7 @@ def main():
 
     if args.cleanup_only:
         cleanup()
-        return
+        return 0
 
     # Select steps
     sel: List[Tuple[str, StepFunc]]
@@ -1056,7 +1072,10 @@ def main():
         # Still show test summary even on failure
         if any(name == "test_summary" for name, _ in sel):
             step_16_test_summary()
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

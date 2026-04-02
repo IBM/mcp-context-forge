@@ -915,6 +915,56 @@ def test_ui_embedded_default_false():
     assert s.mcpgateway_ui_embedded is False
 
 
+def test_ui_hide_sections_admin_csv():
+    """Admin section hide list should normalize aliases and ignore invalid values."""
+    s = Settings(
+        mcpgateway_ui_hide_sections_admin="prompts,CATALOG,a2a,invalid,prompts",
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_sections_admin == ["prompts", "servers", "agents"]
+
+
+def test_ui_hide_sections_admin_json_array():
+    """Admin section hide list should accept JSON array input."""
+    s = Settings(
+        mcpgateway_ui_hide_sections_admin='["tools", "resources"]',
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_sections_admin == ["tools", "resources"]
+
+
+def test_ui_hide_sections_admin_empty_default(monkeypatch):
+    """Admin section hide list should default to empty list."""
+    monkeypatch.delenv("MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN", raising=False)
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_ui_hide_sections_admin == []
+
+
+def test_ui_hide_header_items_admin_csv():
+    """Admin header hide list should accept CSV input and normalize."""
+    s = Settings(
+        mcpgateway_ui_hide_header_items_admin="logout,THEME_TOGGLE,invalid",
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_header_items_admin == ["logout", "theme_toggle"]
+
+
+def test_ui_hide_header_items_admin_json_array():
+    """Admin header hide list should accept JSON array input."""
+    s = Settings(
+        mcpgateway_ui_hide_header_items_admin='["logout", "theme_toggle"]',
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_header_items_admin == ["logout", "theme_toggle"]
+
+
+def test_ui_hide_header_items_admin_empty_default(monkeypatch):
+    """Admin header hide list should default to empty list."""
+    monkeypatch.delenv("MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN", raising=False)
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_ui_hide_header_items_admin == []
+
+
 # --------------------------------------------------------------------------- #
 #                    validate_database (non-sqlite)                            #
 # --------------------------------------------------------------------------- #

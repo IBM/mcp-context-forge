@@ -148,6 +148,7 @@ prune .pytest_cache
 prune .ruff_cache
 prune .mypy_cache
 prune htmlcov
+global-exclude **/.mypy_cache/*
 
 # Virtual environments (including nested in plugins)
 prune venv

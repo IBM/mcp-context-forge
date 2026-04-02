@@ -77,6 +77,10 @@ pip-delete-this-directory.txt
 # ========================================
 # Testing & Coverage
 # ========================================
+.playwright-mcp/
+.playwright-mcp
+output
+output/
 htmlcov
 htmlcov/
 .tox/
@@ -131,6 +135,7 @@ docs/docs/security/report.md
 # ========================================
 # IDE & Editor
 # ========================================
+.codex
 .vscode
 .vscode/
 .idea/
@@ -365,3 +370,4 @@ tools_rust/mcp_runtime/perf.data*
 tests/jmeter/results/*.jtl
 tests/jmeter/results/*/
 .jmeter/
+.bob
