@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 import sys
 import tempfile
 from unittest.mock import AsyncMock, Mock, patch
@@ -187,7 +188,8 @@ sys.stdout.flush()
         """Test starting StdIOEndpoint without environment variables."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub)
+        cmd = f"{shlex.quote(sys.executable)} {shlex.quote(echo_script)}"
+        endpoint = StdIOEndpoint(cmd, pubsub)
         await endpoint.start()
 
         try:
@@ -209,7 +211,8 @@ sys.stdout.flush()
         """Test that starting an already started endpoint is handled gracefully."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub)
+        cmd = f"{shlex.quote(sys.executable)} {shlex.quote(echo_script)}"
+        endpoint = StdIOEndpoint(cmd, pubsub)
         await endpoint.start()
 
         try:
@@ -246,7 +249,8 @@ sys.stdout.flush()
         """Test stopping after starting."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub)
+        cmd = f"{shlex.quote(sys.executable)} {shlex.quote(echo_script)}"
+        endpoint = StdIOEndpoint(cmd, pubsub)
         await endpoint.start()
 
         assert endpoint._proc is not None
@@ -307,7 +311,8 @@ sys.stdout.flush()
         pubsub = _PubSub()
         env_vars: dict[str, str] = {}
 
-        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub, env_vars)
+        cmd = f"{shlex.quote(sys.executable)} {shlex.quote(echo_script)}"
+        endpoint = StdIOEndpoint(cmd, pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -328,7 +333,8 @@ sys.stdout.flush()
         """Test with None environment variables."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub, None)
+        cmd = f"{shlex.quote(sys.executable)} {shlex.quote(echo_script)}"
+        endpoint = StdIOEndpoint(cmd, pubsub, None)
         await endpoint.start()
 
         try:
@@ -526,7 +532,8 @@ sys.stdout.flush()
         """Test that old start method still works."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub)
+        cmd = f"{shlex.quote(sys.executable)} {shlex.quote(echo_script)}"
+        endpoint = StdIOEndpoint(cmd, pubsub)
         await endpoint.start()  # No additional_env_vars parameter
 
         try:

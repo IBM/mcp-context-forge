@@ -8055,13 +8055,6 @@ async def admin_update_user(
         if user_obj and current_user_email.lower() == decoded_email.lower():
             is_admin = user_obj.is_admin
 
-        if user_obj and user_obj.is_admin and not is_admin:
-            # This user is currently an admin and we're trying to remove admin privileges
-            if await auth_service.is_last_active_admin(decoded_email):
-                return HTMLResponse(
-                    content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"}
-                )
-
         # Update user
         fn_val = form.get("full_name")
         pw_val = form.get("password")

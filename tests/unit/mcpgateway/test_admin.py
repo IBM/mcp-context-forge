@@ -9245,12 +9245,12 @@ async def test_admin_update_user_last_admin_block(monkeypatch, mock_db, allow_pe
 
     auth_service = MagicMock()
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", is_admin=True))
-    auth_service.is_last_active_admin = AsyncMock(return_value=True)
+    auth_service.update_user = AsyncMock(side_effect=ValueError("Cannot demote or deactivate the last remaining active admin user"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 400
-    assert "last remaining admin" in response.body.decode()
+    assert "last remaining" in response.body.decode().lower()
 
 
 @pytest.mark.asyncio
@@ -13570,12 +13570,12 @@ async def test_admin_update_user_errors_include_retarget_header(monkeypatch, moc
     request2.form = AsyncMock(return_value=FakeForm({"full_name": "A"}))
     auth_service2 = MagicMock()
     auth_service2.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", is_admin=True))
-    auth_service2.is_last_active_admin = AsyncMock(return_value=True)
+    auth_service2.update_user = AsyncMock(side_effect=ValueError("Cannot demote or deactivate the last remaining active admin user"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service2)
 
     response2 = await admin_update_user("a%40example.com", request=request2, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
     assert response2.status_code == 400
-    assert "last remaining admin" in response2.body.decode()
+    assert "last remaining" in response2.body.decode().lower()
     assert response2.headers.get("HX-Retarget") == "#edit-user-error", "Admin protection error should include HX-Retarget header"
 
 

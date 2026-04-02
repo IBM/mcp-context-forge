@@ -1686,7 +1686,7 @@ class EmailAuthService:
                         raise ValueError("requesting_user_email is required for update_user to enforce admin protection")
 
                     # Check if this is self-demotion
-                    is_self_demotion = requesting_user_email.lower().strip() == email.lower().strip()
+                    is_self_demotion = requesting_user_email.lower().strip() == email
 
                     # Block self-demotion
                     if is_self_demotion:

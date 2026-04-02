@@ -2340,13 +2340,8 @@ class TestEmailAuthServiceUserUpdates:
         # Ensure no ValueError is raised related to requesting_user_email being None
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_self_demotion(self, service, mock_db, monkeypatch):
+    async def test_update_user_protect_self_demotion(self, service, mock_db):
         """Test that blocks admin from self demoting."""
-        # First-Party
-        from mcpgateway.config import settings
-
-        monkeypatch.setattr(settings, "protect_all_admins", True)
-
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
         admin_user.is_admin = True
@@ -2360,13 +2355,8 @@ class TestEmailAuthServiceUserUpdates:
             await service.update_user(email="admin@example.com", is_admin=False, requesting_user_email="admin@example.com")
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_self_deactivation(self, service, mock_db, monkeypatch):
-        """Test that protect_all_admins blocks deactivating any admin."""
-        # First-Party
-        from mcpgateway.config import settings
-
-        monkeypatch.setattr(settings, "protect_all_admins", True)
-
+    async def test_update_user_protect_self_deactivation(self, service, mock_db):
+        """Test that self-deactivation is blocked for admin users."""
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
         admin_user.is_admin = True
@@ -2380,13 +2370,8 @@ class TestEmailAuthServiceUserUpdates:
             await service.update_user(email="admin@example.com", is_active=False, requesting_user_email="admin@example.com")
 
     @pytest.mark.asyncio
-    async def test_update_user_protect_all_admins_allows_other_updates(self, service, mock_db, monkeypatch):
-        """Test that protect_all_admins still allows non-admin-related updates."""
-        # First-Party
-        from mcpgateway.config import settings
-
-        monkeypatch.setattr(settings, "protect_all_admins", True)
-
+    async def test_update_user_protect_all_admins_allows_other_updates(self, service, mock_db):
+        """Test that non-admin-related updates are allowed (e.g., full_name changes)."""
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
         admin_user.is_admin = True
@@ -2417,13 +2402,8 @@ class TestEmailAuthServiceUserUpdates:
             await service.update_user(email="admin@example.com", is_admin=False)
 
     @pytest.mark.asyncio
-    async def test_update_user_blocks_demote_last_active_admin(self, service, mock_db, monkeypatch):
-        """Test update_user blocks demoting/deactivating the last active admin when protection is off."""
-        # First-Party
-        from mcpgateway.config import settings
-
-        monkeypatch.setattr(settings, "protect_all_admins", False)
-
+    async def test_update_user_blocks_demote_last_active_admin(self, service, mock_db):
+        """Test update_user blocks demoting/deactivating the last active admin."""
         admin_user = MagicMock(spec=EmailUser)
         admin_user.email = "admin@example.com"
         admin_user.is_admin = True
@@ -2452,7 +2432,6 @@ class TestEmailAuthServiceUserUpdates:
         # First-Party
         from mcpgateway.config import settings
 
-        monkeypatch.setattr(settings, "protect_all_admins", False)
         monkeypatch.setattr(settings, "default_admin_role", "platform_admin")
         monkeypatch.setattr(settings, "default_user_role", "user")
 

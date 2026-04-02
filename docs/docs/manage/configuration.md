@@ -21,7 +21,7 @@ These variables have insecure defaults and **must be changed** before production
 Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and update these values.
 
 !!! warning "Startup Validation"
-If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
+    If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
 
 ### 🔒 Security Defaults (Secure by Default)
 
@@ -61,27 +61,27 @@ ContextForge supports multiple database backends with full feature parity across
 ### PostgreSQL System Dependencies
 
 !!! warning "Required: libpq Development Headers"
-The PostgreSQL adapter (`psycopg[c]`) requires the `libpq` development headers to compile. Install them before running `pip install .[postgres]`:
+    The PostgreSQL adapter (`psycopg[c]`) requires the `libpq` development headers to compile. Install them before running `pip install .[postgres]`:
 
-    === "Debian/Ubuntu"
+        === "Debian/Ubuntu"
+            ```bash
+            sudo apt-get install libpq-dev
+            ```
+
+        === "RHEL/CentOS/Fedora"
+            ```bash
+            sudo dnf install postgresql-devel
+            ```
+
+        === "macOS (Homebrew)"
+            ```bash
+            brew install libpq
+            ```
+
+        After installing the system dependencies, install the Python package:
         ```bash
-        sudo apt-get install libpq-dev
+        pip install .[postgres]
         ```
-
-    === "RHEL/CentOS/Fedora"
-        ```bash
-        sudo dnf install postgresql-devel
-        ```
-
-    === "macOS (Homebrew)"
-        ```bash
-        brew install libpq
-        ```
-
-    After installing the system dependencies, install the Python package:
-    ```bash
-    pip install .[postgres]
-    ```
 
 ---
 
@@ -103,7 +103,7 @@ The PostgreSQL adapter (`psycopg[c]`) requires the `libpq` development headers t
 | `FORGE_CONTENT_TYPE` | Content-Type for outgoing requests to Forge | `application/json`     | `application/json`, `application/x-www-form-urlencoded` |
 
 !!! tip "Subpath Deployment"
-Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
+    Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
 
 ### Authentication
 
@@ -137,22 +137,23 @@ Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.
 | `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` | JSON array of hosts allowed to use query param auth                          | `[]`                                       | JSON array  |
 
 !!! warning "Query Parameter Authentication (INSECURE)"
-The `INSECURE_ALLOW_QUERYPARAM_AUTH` setting enables API key authentication via URL query parameters. This is inherently insecure (CWE-598) as API keys may appear in proxy logs, browser history, and server access logs. Only enable this when the upstream MCP server (e.g., Tavily) requires this authentication method. Always configure `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` to restrict which hosts can use this feature.
+    The `INSECURE_ALLOW_QUERYPARAM_AUTH` setting enables API key authentication via URL query parameters. This is inherently insecure (CWE-598) as API keys may appear in proxy logs, browser history, and server access logs. Only enable this when the upstream MCP server (e.g., Tavily) requires this authentication method. Always configure `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` to restrict which hosts can use this feature.
 
 !!! info "Basic Authentication"
-**Basic Authentication is DISABLED by default** for security. `BASIC_AUTH_USER`/`PASSWORD` are only used when Basic auth is explicitly enabled:
+    **Basic Authentication is DISABLED by default** for security. `BASIC_AUTH_USER`/`PASSWORD` are only used when Basic auth is explicitly enabled:
 
-    - `API_ALLOW_BASIC_AUTH=true` - Enable for API endpoints (e.g., `/api/metrics/*`)
-    - `DOCS_ALLOW_BASIC_AUTH=true` - Enable for docs endpoints (`/docs`, `/redoc`)
+        - `API_ALLOW_BASIC_AUTH=true` - Enable for API endpoints (e.g., `/api/metrics/*`)
+        - `DOCS_ALLOW_BASIC_AUTH=true` - Enable for docs endpoints (`/docs`, `/redoc`)
 
-    **Recommended:** Use JWT tokens instead of Basic auth:
-    ```bash
-    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token ...)
+        **Recommended:** Use JWT tokens instead of Basic auth:
+        ```bash
+        export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token ...)
     curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/api/...
     ```
 
 !!! tip "JWT Token Generation"
     `JWT_SECRET_KEY` is used to sign JSON Web Tokens. Generate tokens via:
+
     ```bash
     export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
     ```
@@ -175,20 +176,20 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT`   | Tool test timeout in milliseconds for the admin UI                                                                                                                                                                           | `60000` | int           |
 
 !!! note "Per-Request UI Hiding"
-For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.
+    For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.
 
-    Example:
-    ```text
-    /admin/?ui_hide=prompts,resources,teams
-    ```
+        Example:
+        ```text
+        /admin/?ui_hide=prompts,resources,teams
+        ```
 
-    The query value is stored in an HttpOnly cookie with a 30-day lifetime. Clear it by visiting:
-    ```text
-    /admin/?ui_hide=
-    ```
+        The query value is stored in an HttpOnly cookie with a 30-day lifetime. Clear it by visiting:
+        ```text
+        /admin/?ui_hide=
+        ```
 
 !!! tip "Production Settings"
-Set both UI and Admin API to `false` to disable management UI and APIs in production.
+    Set both UI and Admin API to `false` to disable management UI and APIs in production.
 
 ### A2A (Agent-to-Agent) Features
 
@@ -401,7 +402,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `PROXY_USER_HEADER`       | Header containing authenticated username from proxy                                                                                                                                        | `X-Authenticated-User` | string  |
 
 !!! warning "MCP Access Control Dependencies"
-Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
+    Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
 
 ### SSO (Single Sign-On) Configuration
 
@@ -582,15 +583,15 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `REQUIRE_STRONG_SECRETS`         | Enforce strong secrets (fail startup on weak secrets) | `false`                        | bool                            |
 
 !!! info "CORS Configuration"
-When `ENVIRONMENT=development`, CORS origins are automatically configured for common development ports (3000, 8080, gateway port). In production, origins are constructed from `APP_DOMAIN`. Override with `ALLOWED_ORIGINS`.
+    When `ENVIRONMENT=development`, CORS origins are automatically configured for common development ports (3000, 8080, gateway port). In production, origins are constructed from `APP_DOMAIN`. Override with `ALLOWED_ORIGINS`.
 
 !!! info "iframe Embedding"
-The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive:
+    The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive:
 
-    - `X_FRAME_OPTIONS=DENY` (default): Blocks all iframe embedding
-    - `X_FRAME_OPTIONS=SAMEORIGIN`: Allows embedding from same domain only
-    - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
-    - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
+        - `X_FRAME_OPTIONS=DENY` (default): Blocks all iframe embedding
+        - `X_FRAME_OPTIONS=SAMEORIGIN`: Allows embedding from same domain only
+        - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
+        - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
 
 ### SSRF Protection
 
@@ -625,24 +626,26 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 ```
 
 !!! warning "Cloud Metadata Protection"
-Cloud metadata endpoints (169.254.169.254) are **always blocked by default** to prevent credential exposure in cloud environments (AWS, GCP, Azure). This protects against SSRF attacks that attempt to steal instance credentials.
+    Cloud metadata endpoints (169.254.169.254) are **always blocked by default** to prevent credential exposure in cloud environments (AWS, GCP, Azure). This protects against SSRF attacks that attempt to steal instance credentials.
 
 !!! note "DNS Resolution Behavior"
-The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA records) and validates each one. If ANY resolved IP is blocked, the request is rejected.
+    The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA records) and validates each one. If ANY resolved IP is blocked, the request is rejected.
 
-    - **DNS fail-closed** (default): Unresolvable hostnames are rejected
-    - **DNS fail-open** (`SSRF_DNS_FAIL_CLOSED=false`): Unresolvable hostnames are allowed (hostname blocklist still applies)
+        - **DNS fail-closed** (default): Unresolvable hostnames are rejected
+        - **DNS fail-open** (`SSRF_DNS_FAIL_CLOSED=false`): Unresolvable hostnames are allowed (hostname blocklist still applies)
 
 !!! tip "Configuration Modes"
-**Strict Mode (default)**: External endpoints only.
-`bash
+    **Strict Mode (default)**: External endpoints only.
+
+    ```bash
     SSRF_PROTECTION_ENABLED=true
     SSRF_ALLOW_LOCALHOST=false
     SSRF_ALLOW_PRIVATE_NETWORKS=false
     SSRF_DNS_FAIL_CLOSED=true
-    `
+    ```
 
     **Controlled Internal Access** (explicit CIDR exceptions):
+
     ```bash
     SSRF_PROTECTION_ENABLED=true
     SSRF_ALLOW_LOCALHOST=false
@@ -651,6 +654,7 @@ The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA re
     ```
 
     **Custom Blocked Networks** (add additional ranges):
+
     ```bash
     SSRF_BLOCKED_NETWORKS='["169.254.169.254/32","169.254.0.0/16","100.64.0.0/10"]'
     ```
@@ -689,9 +693,9 @@ mcpContextForge:
 ```
 
 !!! note "Local Development Defaults"
-The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
-(`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
-Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
+    The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
+    (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
+    Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
 
 ### Content Security - Size Limits
 
@@ -703,11 +707,12 @@ Content size limits prevent DoS attacks and resource exhaustion from oversized c
 | `CONTENT_MAX_PROMPT_SIZE`   | Maximum prompt template size (bytes)  | `10240` (10KB)   | 512B – 1MB |
 
 !!! note "Scope"
-Size limits apply only to new create and update operations. Existing content is not retroactively validated.
+    Size limits apply only to new create and update operations. Existing content is not retroactively validated.
 
 !!! example "Error Response"
-Oversized content returns a structured 413 response:
-`json
+    Oversized content returns a structured 413 response:
+
+    ```json
     {
       "detail": {
         "error": "Resource content size limit exceeded",
@@ -986,7 +991,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)           | `5`                      | int > 0                               |
 
 !!! tip "Cache Backend Selection"
-Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
+    Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
 
 ### Tool Lookup Cache
 
@@ -1022,7 +1027,7 @@ Use `memory` for dev, `database` for local persistence, or `redis` for distribut
 | `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC`       | Force explicit RPC on health checks                 | `false` | bool        |
 
 !!! tip "Session Pool Performance"
-Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant via identity hashing.
+    Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant via identity hashing.
 
 ### Development
 
@@ -1053,7 +1058,7 @@ Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improv
 | `GLOBAL_CONFIG_CACHE_TTL`       | In-memory cache TTL for GlobalConfig (seconds) | `60`                            | int        |
 
 !!! warning "Security Warning"
-Header passthrough is disabled by default for security. Only enable if you understand the implications.
+    Header passthrough is disabled by default for security. Only enable if you understand the implications.
 
 ### Plugins Configuration
 
@@ -1078,10 +1083,10 @@ plugins are fully trusted.
 | `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS` | Allow pre-request plugin hooks to override auth-sensitive headers (`Authorization`, `Cookie`, `X-Api-Key`, `Proxy-Authorization`) that the client already sent. Required for plugin-driven token exchange workflows (e.g. WXO auth). | `false` | bool    |
 
 !!! danger "Security Impact"
-Enabling `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS` allows a plugin to rewrite the
-`Authorization` header, effectively impersonating any user. Only enable when
-all loaded plugins are fully trusted and the deployment specifically requires
-plugin-driven token exchange.
+    Enabling `PLUGINS_CAN_OVERRIDE_AUTH_HEADERS` allows a plugin to rewrite the
+    `Authorization` header, effectively impersonating any user. Only enable when
+    all loaded plugins are fully trusted and the deployment specifically requires
+    plugin-driven token exchange.
 
 #### Plugin Framework (Standalone) Settings
 
@@ -1107,11 +1112,11 @@ The plugin framework has its own configuration via `pydantic-settings` with the 
 | `PLUGINS_CLI_MARKUP_MODE`                 | CLI markup mode (shared with gateway)             | (none)                | `rich`, `markdown`, `disabled` |
 
 !!! note "Gateway ↔ Plugin Framework Shared Settings"
-`PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are read by both the gateway
-and the plugin framework from the same env var. The gateway also reads `PLUGIN_CONFIG_FILE` for backwards
-compatibility, while the plugin framework reads `PLUGINS_CONFIG_FILE`. The gateway's `HTTPX_CONNECT_TIMEOUT` /
-`HTTPX_READ_TIMEOUT` / `SKIP_SSL_VERIFY` are independent of the plugin framework's `PLUGINS_HTTPX_CONNECT_TIMEOUT` /
-`PLUGINS_HTTPX_READ_TIMEOUT` / `PLUGINS_SKIP_SSL_VERIFY`.
+    `PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are read by both the gateway
+    and the plugin framework from the same env var. The gateway also reads `PLUGIN_CONFIG_FILE` for backwards
+    compatibility, while the plugin framework reads `PLUGINS_CONFIG_FILE`. The gateway's `HTTPX_CONNECT_TIMEOUT` /
+    `HTTPX_READ_TIMEOUT` / `SKIP_SSL_VERIFY` are independent of the plugin framework's `PLUGINS_HTTPX_CONNECT_TIMEOUT` /
+    `PLUGINS_HTTPX_READ_TIMEOUT` / `PLUGINS_SKIP_SSL_VERIFY`.
 
 ### HTTP Retry Configuration
 
