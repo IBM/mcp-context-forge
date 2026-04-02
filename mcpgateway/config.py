@@ -1664,7 +1664,7 @@ class Settings(BaseSettings):
     # JWT identity extraction - decode JWT to extract stable user ID instead of hashing full token
     # Prevents bucket explosion from rotating JWTs (different jti/exp/iat per request)
     # When enabled, extracts 'sub', 'email', or 'user_id' claim from JWT for identity hash
-    mcp_session_pool_jwt_identity_extraction: bool = False
+    mcp_session_pool_jwt_identity_extraction: bool = True
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
     # memory streams) don't respond to cancellation. Does NOT affect tool execution

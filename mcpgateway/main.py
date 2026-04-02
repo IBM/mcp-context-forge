@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -1516,7 +1516,7 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
-def _create_jwt_identity_extractor() -> callable:
+def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
     """Create JWT identity extractor function for session pool.
 
     Extracts stable user ID from JWT token to prevent bucket explosion

@@ -586,7 +586,7 @@ services:
       - MCP_SESSION_POOL_MAX_TOTAL_KEYS=0         # Max total pool keys across all buckets (0 = unlimited, SET MANUALLY)
       - MCP_SESSION_POOL_MAX_TOTAL_SESSIONS=0     # Max total active sessions across all buckets (0 = unlimited, SET MANUALLY)
       # JWT identity extraction - prevents bucket explosion from rotating tokens
-      - MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION=false  # Extract stable user ID from JWT (sub/email/user_id)
+      - MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION=true   # Extract stable user ID from JWT (sub/email/user_id)
       # ═══════════════════════════════════════════════════════════════════════════
       # CPU Spin Loop Mitigation (Issue #2360, anyio#695)
       # ═══════════════════════════════════════════════════════════════════════════
