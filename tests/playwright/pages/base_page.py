@@ -68,6 +68,19 @@ class BasePage:
         """Click a locator."""
         locator.click()
 
+    def _open_action_dropdown(self, row: Locator) -> None:
+        """Open the three-dot actions dropdown for a table row.
+
+        All entity tables use an Alpine.js dropdown (menuOpen: false by default).
+        This helper clicks the ⋮ trigger and waits for the menu to appear.
+
+        Args:
+            row: Playwright Locator for the table row element
+        """
+        row.scroll_into_view_if_needed()
+        row.locator("button[aria-expanded]").click()
+        row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
+
     def fill_input(self, selector: str, value: str) -> None:
         """Fill input field (legacy method for backward compatibility)."""
         self.page.fill(selector, value)

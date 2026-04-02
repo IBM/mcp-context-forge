@@ -21,11 +21,27 @@
       {% set can_modify = is_admin or gateway.ownerEmail == current_user_email or (gateway.visibility == 'team' and gateway.teamId and user_team_roles.get(gateway.teamId|string) == 'owner') %}
       <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}" data-owner-email="{{ gateway.ownerEmail }}" data-team-id="{{ gateway.teamId or '' }}" data-visibility="{{ gateway.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-          <div class="relative" x-data="{ menuOpen: false }" @click.away="menuOpen = false">
+          <div class="relative" 
+               x-data="{ 
+                 menuOpen: false, 
+                 menuTop: 0, 
+                 menuLeft: 0,
+                 updatePosition() {
+                   if (this.$refs.trigger) {
+                     const rect = this.$refs.trigger.getBoundingClientRect();
+                     this.menuTop = rect.bottom + 4;
+                     this.menuLeft = rect.left;
+                   }
+                 }
+               }" 
+               @click.away="menuOpen = false"
+               @keydown.escape.window="menuOpen = false"
+               x-effect="if (menuOpen) { const interval = setInterval(() => updatePosition(), 16); return () => clearInterval(interval); }">
             <!-- Three-dot trigger -->
             <button
               type="button"
-              @click="menuOpen = !menuOpen"
+              x-ref="trigger"
+              @click="updatePosition(); menuOpen = !menuOpen"
               class="p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
               :aria-expanded="menuOpen"
               x-tooltip="'Actions'"
@@ -44,7 +60,8 @@
               x-transition:leave="transition ease-in duration-75"
               x-transition:leave-start="opacity-100 scale-100"
               x-transition:leave-end="opacity-0 scale-95"
-              class="absolute left-0 mt-1 w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
+              :style="`position:fixed;top:${menuTop}px;left:${menuLeft}px`"
+              class="w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] py-1"
               style="display:none"
               role="menu"
             >

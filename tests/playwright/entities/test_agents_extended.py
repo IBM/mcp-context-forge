@@ -36,7 +36,10 @@ def _open_view_modal(agents_page: AgentsPage, index: int = 0) -> None:
     so we intercept the response to detect API errors early.
     """
     row = agents_page.get_agent_row(index)
-    view_btn = row.locator('button:has-text("View")')
+    row.scroll_into_view_if_needed()
+    row.locator("button[aria-expanded]").click()
+    row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
+    view_btn = row.locator('button[role="menuitem"]:has-text("View")')
     with agents_page.page.expect_response(
         lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
         timeout=30000,
@@ -61,7 +64,10 @@ def _open_edit_modal(agents_page: AgentsPage, index: int = 0) -> None:
     The JS handler fetches GET /admin/a2a/{id} before showing the modal.
     """
     row = agents_page.get_agent_row(index)
-    edit_btn = row.locator('button:has-text("Edit")')
+    row.scroll_into_view_if_needed()
+    row.locator("button[aria-expanded]").click()
+    row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
+    edit_btn = row.locator('button[role="menuitem"]:has-text("Edit")')
     with agents_page.page.expect_response(
         lambda resp: (re.search(r"/admin/a2a/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and resp.request.method == "GET"),
         timeout=30000,

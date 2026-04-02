@@ -5029,7 +5029,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
-          <div class="overflow-visible">
+          <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
                  x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
