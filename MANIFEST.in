@@ -41,6 +41,7 @@ include .env.make
 include .env.example
 include .interrogaterc
 include .jshintrc
+include .npmrc
 include whitesource.config
 include .darglint
 include .dockerignore

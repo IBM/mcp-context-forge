@@ -245,7 +245,7 @@ class TestGatewayService:
             ]
         )
         test_db.add = Mock()
-        test_db.flush = Mock()  # Implementation uses flush() not commit()
+        test_db.commit = Mock()
         test_db.refresh = Mock()
         # Mock query for _check_gateway_uniqueness
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
@@ -286,7 +286,7 @@ class TestGatewayService:
         result = await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
-        test_db.flush.assert_called_once()  # Implementation uses flush() not commit()
+        test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
         gateway_service._initialize_gateway.assert_called_once()
         gateway_service._notify_gateway_added.assert_called_once()
@@ -351,7 +351,7 @@ class TestGatewayService:
             ]
         )
         test_db.add = Mock()
-        test_db.flush = Mock()  # Implementation uses flush() not commit()
+        test_db.commit = Mock()
         test_db.refresh = Mock()
         # Mock query for _check_gateway_uniqueness
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
@@ -387,7 +387,7 @@ class TestGatewayService:
         await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
-        test_db.flush.assert_called_once()  # Implementation uses flush() not commit()
+        test_db.commit.assert_called_once()
         gateway_service._initialize_gateway.assert_called_once()
 
     @pytest.mark.asyncio
@@ -474,7 +474,7 @@ class TestGatewayService:
         """Test database error during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
-        test_db.flush = Mock(side_effect=Exception("Database error"))  # Implementation uses flush() not commit()
+        test_db.commit = Mock(side_effect=Exception("Database error"))
         test_db.rollback = Mock()
         # Mock query for _check_gateway_uniqueness
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
@@ -541,7 +541,7 @@ class TestGatewayService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
         test_db.rollback = Mock()
-        test_db.flush = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))  # Implementation uses flush()
+        test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))
         # Mock query for _check_gateway_uniqueness
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
 
@@ -568,7 +568,7 @@ class TestGatewayService:
             ]
         )
         test_db.add = Mock()
-        test_db.flush = Mock()  # Implementation uses flush() not commit()
+        test_db.commit = Mock()
         test_db.refresh = Mock()
         # Mock query for _check_gateway_uniqueness
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
@@ -598,7 +598,7 @@ class TestGatewayService:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         test_db.add.assert_called_once()
-        test_db.flush.assert_called_once()  # Implementation uses flush() not commit()
+        test_db.commit.assert_called_once()
         gateway_service._initialize_gateway.assert_called_once()
 
     @pytest.mark.asyncio
@@ -780,7 +780,7 @@ class TestGatewayService:
         """Test rollback on exception during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
-        test_db.flush = Mock(side_effect=Exception("Flush failed"))  # Implementation uses flush() not commit()
+        test_db.commit = Mock(side_effect=Exception("Commit failed"))
         test_db.rollback = Mock()
         # Mock query for _check_gateway_uniqueness
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
@@ -796,7 +796,7 @@ class TestGatewayService:
         with pytest.raises(Exception) as exc_info:
             await gateway_service.register_gateway(test_db, gateway_create)
 
-        assert "Flush failed" in str(exc_info.value)  # Error message matches the mocked exception
+        assert "Commit failed" in str(exc_info.value)  # Error message matches the mocked exception
         test_db.rollback.assert_called_once()  # Exception handlers now rollback to prevent orphaned records
 
     @pytest.mark.asyncio
@@ -3159,6 +3159,88 @@ class TestGatewayHealth:
                     gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_health_skips_refresh_classification_says_no(self, gateway_service, mock_gateway_health, mock_db_session):
+        """Test that health check skips refresh when classification service says not to poll."""
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        gateway_service.set_gateway_state = AsyncMock()
+        gateway_service._get_refresh_lock = MagicMock()
+
+        # Mock classification service that says NOT to poll
+        mock_classification = AsyncMock()
+        mock_classification.should_poll_server = AsyncMock(return_value=False)
+        gateway_service._classification_service = mock_classification
+
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        gateway_service._get_refresh_lock.return_value = lock
+
+        # Mock http client
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = 300
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    session = mock_db_session.__enter__()
+                    session.execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    await gateway_service._check_single_gateway_health(mock_gateway_health)
+
+                    # Should NOT call refresh because classification service said no
+                    gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
+                    # Should have checked with classification service
+                    mock_classification.should_poll_server.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_health_proceeds_refresh_classification_fails(self, gateway_service, mock_gateway_health, mock_db_session):
+        """Test that health check proceeds with refresh when classification check fails (fail-open)."""
+        gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock()
+        gateway_service.set_gateway_state = AsyncMock()
+        gateway_service._get_refresh_lock = MagicMock()
+
+        # Mock classification service that raises an exception
+        mock_classification = AsyncMock()
+        mock_classification.should_poll_server = AsyncMock(side_effect=Exception("Classification error"))
+        gateway_service._classification_service = mock_classification
+
+        lock = MagicMock()
+        lock.locked.return_value = False
+        lock.__aenter__ = AsyncMock(return_value=None)
+        lock.__aexit__ = AsyncMock(return_value=None)
+        gateway_service._get_refresh_lock.return_value = lock
+
+        # Mock http client
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.__aexit__.return_value = None
+        mock_client.get.return_value = MagicMock(status_code=200)
+
+        with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+            mock_settings.auto_refresh_servers = True
+            mock_settings.gateway_auto_refresh_interval = 300
+            mock_settings.enable_ed25519_signing = False
+            mock_settings.httpx_admin_read_timeout = 5.0
+
+            with patch("mcpgateway.services.http_client_service.get_isolated_http_client", return_value=mock_client):
+                with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
+                    session = mock_db_session.__enter__()
+                    session.execute.return_value = _make_execute_result(scalar=mock_gateway_health)
+
+                    await gateway_service._check_single_gateway_health(mock_gateway_health)
+
+                    # Should call refresh despite classification error (fail-open)
+                    gateway_service._refresh_gateway_tools_resources_prompts.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_initialize_redis_ping_failure(self, monkeypatch):
         # First-Party
         import mcpgateway.services.gateway_service as gs
@@ -3910,6 +3992,49 @@ async def test_shutdown_releases_redis_leader_success():
     await service.shutdown()
 
     service._redis_client.eval.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_classification_service():
+    """Test that shutdown stops classification service if present."""
+    service = GatewayService()
+    service._redis_client = None
+    service._http_client = SimpleNamespace(aclose=AsyncMock())
+    service._event_service = SimpleNamespace(shutdown=AsyncMock())
+
+    # Create mock classification service
+    mock_classification = AsyncMock()
+    mock_classification.stop = AsyncMock()
+    service._classification_service = mock_classification
+
+    await service.shutdown()
+
+    # Verify classification service stop was called
+    mock_classification.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_leader_heartbeat_task():
+    """Test that shutdown cancels leader heartbeat task if present."""
+    service = GatewayService()
+    service._redis_client = None
+    service._http_client = SimpleNamespace(aclose=AsyncMock())
+    service._event_service = SimpleNamespace(shutdown=AsyncMock())
+    service._classification_service = None
+
+    # Create a real asyncio task that can be cancelled and awaited
+    async def dummy_heartbeat():
+        try:
+            await asyncio.sleep(1000)  # Long sleep to ensure it gets cancelled
+        except asyncio.CancelledError:
+            pass
+
+    service._leader_heartbeat_task = asyncio.create_task(dummy_heartbeat())
+
+    await service.shutdown()
+
+    # Verify task was cancelled
+    assert service._leader_heartbeat_task.cancelled()
 
 
 @pytest.mark.asyncio
