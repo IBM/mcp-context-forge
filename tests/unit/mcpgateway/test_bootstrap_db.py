@@ -1291,6 +1291,47 @@ class TestBootstrapResourceAssignments:
                     mock_logger.warning.assert_any_call("Name conflict for servers 'Web Search' — renaming to 'Web Search-3'")
 
     @pytest.mark.asyncio
+    async def test_null_field_value_skips_conflict_detection(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Orphan with None unique-field value is assigned without conflict detection."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server = Mock()
+        mock_server.team_id = None
+        mock_server.owner_email = None
+        mock_server.visibility = None
+        mock_server.federation_source = None
+        mock_server.name = None
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                query.__iter__ = Mock(return_value=iter([]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    # Resource should be assigned even with None name
+                    assert mock_server.name is None
+                    assert mock_server.team_id == mock_personal_team.id
+                    assert mock_server.owner_email == mock_admin_user.email
+                    assert mock_server.visibility == "public"
+                    # No warning about renaming should appear
+                    for call in mock_logger.warning.call_args_list:
+                        assert "Name conflict" not in str(call)
+
+    @pytest.mark.asyncio
     async def test_resource_assignments_per_resource_error_continues(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
         """Errors for a single resource type should be logged and processing should continue."""
         mock_admin_user.get_personal_team.return_value = mock_personal_team

@@ -640,7 +640,9 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
                                 suffix_re = suffix_res[original_value]
                                 used = {int(m.group(1)) for v in taken if (m := suffix_re.match(v))}
                                 new_value = f"{original_value}-{(max(used) if used else 1) + 1}"
-                                logger.warning(f"Name conflict for {resource_name} '{original_value}' — renaming to '{new_value}'")
+                                logger.warning(
+                                    f"Name conflict for {SecurityValidator.sanitize_log_message(resource_name)} '{SecurityValidator.sanitize_log_message(original_value)}' — renaming to '{SecurityValidator.sanitize_log_message(new_value)}'"
+                                )
                                 setattr(resource, field, new_value)
                                 batch_assigned.add(new_value)
                             else:
