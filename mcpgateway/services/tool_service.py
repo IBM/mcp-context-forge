@@ -2203,7 +2203,7 @@ class ToolService(BaseService):
                             requesting_user_is_admin=requesting_user_is_admin,
                             requesting_user_team_roles=requesting_user_team_roles,
                             server_id=server_id,
-                    )
+                        )
                     )
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                     logger.exception(f"Failed to convert tool {getattr(tool, 'id', 'unknown')} ({getattr(tool, 'name', 'unknown')}): {e}")
@@ -4168,6 +4168,7 @@ class ToolService(BaseService):
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+
                         response.raise_for_status()
 
                         # Handle 204 No Content responses that have no body
