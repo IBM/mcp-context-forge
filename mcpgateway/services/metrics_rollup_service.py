@@ -865,6 +865,12 @@ class MetricsRollupService:
             # Normalizing
             hour_start = agg.hour_start.replace(minute=0, second=0, microsecond=0)
 
+            # IMPORTANT: Use empty string as sentinel for NULL server_id
+            # SQLite's ON CONFLICT doesn't match NULL values (NULL != NULL),
+            # causing duplicate inserts. Empty string provides a concrete value
+            # that can match in the unique constraint.
+            rollup_server_id = agg.server_id if agg.server_id else ""
+
             values = {
                 entity_id_col: agg.entity_id,
                 name_col: agg.entity_name,
@@ -878,8 +884,12 @@ class MetricsRollupService:
                 "p50_response_time": agg.p50_response_time,
                 "p95_response_time": agg.p95_response_time,
                 "p99_response_time": agg.p99_response_time,
-                "server_id": agg.server_id,
             }
+
+            # Only add server_id if it's not already the entity column
+            # (for server_metrics_hourly, entity_id_col IS "server_id")
+            if entity_id_col != "server_id":
+                values["server_id"] = rollup_server_id
 
             if is_a2a:
                 values["interaction_type"] = agg.interaction_type
@@ -887,9 +897,13 @@ class MetricsRollupService:
             dialect = db.bind.dialect.name if db.bind else "unknown"
             conflict_cols = [
                 getattr(hourly_model, entity_id_col),
-                hourly_model.server_id,
                 hourly_model.hour_start,
             ]
+
+            # Only add server_id if it's not already the entity column
+            # (for server_metrics_hourly, entity_id_col IS "server_id")
+            if entity_id_col != "server_id":
+                conflict_cols.insert(1, hourly_model.server_id)
 
             if is_a2a:
                 conflict_cols.append(hourly_model.interaction_type)

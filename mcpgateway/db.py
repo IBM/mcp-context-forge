@@ -931,9 +931,15 @@ def _compute_metrics_summary(
         # ============================================================
 
         # Filter by server_id if provided
+        # Note: Hourly rollups use empty string "" as sentinel for NULL server_id
+        # to work around SQLite's NULL != NULL behavior in UNIQUE constraints
         if server_id is not None:
-            raw_metrics = [m for m in raw_metrics if m.server_id == server_id]
-            hourly_metrics = [m for m in hourly_metrics if m.server_id == server_id]
+            # Normalize: treat NULL and empty string as equivalent
+            def normalize_server_id(sid):
+                return sid if sid else None
+
+            raw_metrics = [m for m in raw_metrics if normalize_server_id(m.server_id) == normalize_server_id(server_id)]
+            hourly_metrics = [m for m in hourly_metrics if normalize_server_id(m.server_id) == normalize_server_id(server_id)]
 
         # Build set of hours already covered by hourly aggregates
         covered_hours: set[datetime] = set()
@@ -1026,8 +1032,15 @@ def _compute_metrics_summary(
     ).filter(fk_column_hourly == entity_id)
 
     # Add server_id filter if provided
+    # Note: Hourly rollups use empty string "" as sentinel for NULL server_id (to fix SQLite UNIQUE constraint issue)
+    # However, old data may still have NULL, so we need to handle both during transition
     if server_id is not None:
-        hourly_query = hourly_query.filter(hourly_metric_class.server_id == server_id)
+        if server_id:
+            # Filtering by specific server UUID
+            hourly_query = hourly_query.filter(hourly_metric_class.server_id == server_id)
+        else:
+            # Filtering by NULL server_id (admin UI executions) - check both NULL and empty string
+            hourly_query = hourly_query.filter((hourly_metric_class.server_id == "") | (hourly_metric_class.server_id.is_(None)))
 
     hourly_result = hourly_query.one()
 
