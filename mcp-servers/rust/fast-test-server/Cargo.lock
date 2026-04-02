@@ -230,6 +230,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "socket2",
  "tokio",
  "tokio-util",
  "tracing",
