@@ -1188,11 +1188,12 @@ async def get_current_user(
             # Get plugin contexts from request state if available
             global_context = getattr(request.state, "plugin_global_context", None) if request else None
             if not global_context:
-                # Create global context
+                # Propagate team_id → tenant_id for by_tenant rate limiting
+                team_id = getattr(getattr(request, "state", None), "team_id", None) if request else None
                 global_context = GlobalContext(
                     request_id=request_id,
                     server_id=None,
-                    tenant_id=None,
+                    tenant_id=team_id,
                 )
 
             context_table = getattr(request.state, "plugin_context_table", None) if request else None
@@ -1249,6 +1250,7 @@ async def get_current_user(
 
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, user)
+                _propagate_tenant_id(request)
 
                 _set_trace_for_user(user)
                 return user
@@ -1378,6 +1380,7 @@ async def get_current_user(
 
                         if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                             _inject_userinfo_instate(request, _user_from_cached_dict(cached_ctx.user))
+                        _propagate_tenant_id(request)
 
                         cached_user = _user_from_cached_dict(cached_ctx.user)
                         _set_trace_for_user(
@@ -1516,6 +1519,7 @@ async def get_current_user(
 
                 if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, _batched_user)
+                _propagate_tenant_id(request)
 
                 _set_trace_for_user(
                     _batched_user,
@@ -1697,10 +1701,33 @@ async def get_current_user(
 
     if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
         _inject_userinfo_instate(request, user)
+    _propagate_tenant_id(request)
 
     trace_teams = getattr(request.state, "token_teams", _UNSET) if request else _UNSET
     _set_trace_for_user(user, teams=trace_teams, team_name=getattr(request.state, "trace_team_name", None) if request else None)
     return user
+
+
+def _propagate_tenant_id(request: Optional[object] = None) -> None:
+    """Propagate request.state.team_id into GlobalContext.tenant_id for rate limiting.
+
+    Called unconditionally at every return path in get_current_user() — unlike
+    _inject_userinfo_instate() which is gated by include_user_info.  This
+    ensures by_tenant rate limiting works even when include_user_info is False
+    (the default) and the middleware has already created plugin_global_context.
+
+    Only writes when tenant_id is still None (no overwrite of plugin-set values).
+
+    Args:
+        request: The incoming request object, or ``None`` if unavailable.
+    """
+    if not request:
+        return
+    global_context = getattr(getattr(request, "state", None), "plugin_global_context", None)
+    if global_context and global_context.tenant_id is None:
+        team_id = getattr(getattr(request, "state", None), "team_id", None)
+        if team_id:
+            global_context.tenant_id = team_id
 
 
 def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[EmailUser] = None) -> None:
