@@ -1,0 +1,155 @@
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Authentication & Authorization
+  # ---------------------------------------------------------------------------
+
+  - id: mcp-hardcoded-secret-key
+    languages: [python]
+    severity: ERROR
+    message: >
+      Hardcoded SECRET_KEY detected. Secrets must be read from environment
+      variables or a secrets manager, never embedded in source.
+    patterns:
+      - pattern: SECRET_KEY = "..."
+      - pattern-not: SECRET_KEY = os.environ[...]
+      - pattern-not: SECRET_KEY = os.getenv(...)
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      owasp: "A07:2021 – Identification and Authentication Failures"
+
+  - id: mcp-jwt-none-algorithm
+    languages: [python]
+    severity: ERROR
+    message: >
+      JWT decode called with algorithm="none". This allows unsigned tokens
+      and completely bypasses signature verification.
+    patterns:
+      - pattern: jwt.decode(..., algorithm="none", ...)
+      - pattern: jwt.decode(..., algorithms=["none"], ...)
+    metadata:
+      category: security
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+
+  - id: mcp-jwt-verify-disabled
+    languages: [python]
+    severity: ERROR
+    message: >
+      JWT signature verification is disabled. All incoming tokens will be
+      accepted regardless of validity.
+    pattern: jwt.decode(..., options={..., "verify_signature": False, ...}, ...)
+    metadata:
+      category: security
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+
+  - id: mcp-debug-mode-enabled
+    languages: [python]
+    severity: WARNING
+    message: >
+      Application started with debug=True. Never enable in production —
+      exposes stack traces and the interactive debugger to clients.
+    patterns:
+      - pattern: app.run(..., debug=True, ...)
+      - pattern: uvicorn.run(..., reload=True, ...)
+    metadata:
+      category: security
+      cwe: "CWE-94: Improper Control of Generation of Code"
+      owasp: "A05:2021 – Security Misconfiguration"
+
+  # ---------------------------------------------------------------------------
+  # Injection
+  # ---------------------------------------------------------------------------
+
+  - id: mcp-sql-string-format
+    languages: [python]
+    severity: ERROR
+    message: >
+      SQL query built with string formatting. Use parameterised queries or
+      an ORM to prevent SQL injection.
+    patterns:
+      - pattern: |
+          $QUERY = f"... {$VAR} ..."
+          $DB.execute($QUERY)
+      - pattern: |
+          $QUERY = "..." + $VAR
+          $DB.execute($QUERY)
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 – Injection"
+
+  - id: mcp-shell-injection
+    languages: [python]
+    severity: ERROR
+    message: >
+      subprocess called with shell=True. User-controlled data in shell
+      commands enables command injection.
+    patterns:
+      - pattern: subprocess.run($CMD, ..., shell=True, ...)
+      - pattern: subprocess.Popen($CMD, ..., shell=True, ...)
+      - pattern: os.system($CMD)
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+
+  - id: mcp-yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: >
+      yaml.load() without SafeLoader can execute arbitrary Python code
+      embedded in attacker-controlled YAML documents.
+    pattern: yaml.load($DATA)
+    fix: yaml.safe_load($DATA)
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+
+  # ---------------------------------------------------------------------------
+  # Cryptography
+  # ---------------------------------------------------------------------------
+
+  - id: mcp-weak-hash-md5
+    languages: [python]
+    severity: WARNING
+    message: MD5 is cryptographically broken. Use SHA-256 or stronger.
+    patterns:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.new("md5", ...)
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+
+  - id: mcp-insecure-random
+    languages: [python]
+    severity: WARNING
+    message: >
+      random module is not cryptographically secure. Use secrets.token_hex()
+      or secrets.token_bytes() for security tokens and passwords.
+    patterns:
+      - pattern: random.random()
+      - pattern: random.randint(...)
+      - pattern: random.choice(...)
+    metadata:
+      category: security
+      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
+
+  # ---------------------------------------------------------------------------
+  # MCP Gateway — application-specific
+  # ---------------------------------------------------------------------------
+
+  - id: mcp-tls-verify-disabled
+    languages: [python]
+    severity: ERROR
+    message: >
+      TLS certificate verification disabled (verify=False). Makes all
+      outbound HTTPS requests vulnerable to MITM attacks.
+    patterns:
+      - pattern: requests.get(..., verify=False, ...)
+      - pattern: requests.post(..., verify=False, ...)
+      - pattern: httpx.get(..., verify=False, ...)
+      - pattern: httpx.AsyncClient(..., verify=False, ...)
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      owasp: "A02:2021 – Cryptographic Failures"
