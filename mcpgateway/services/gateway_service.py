@@ -126,15 +126,15 @@ def _resolve_tool_title(tool) -> Optional[str]:
     This function determines the appropriate title for a tool by checking
     multiple possible locations in order of priority, following the MCP spec:
 
-    1. tool.annotations["title"] if annotations exists and contains
-       a "title" key.
-    2. tool.title (top-level metadata field).
-    3. None if neither is available.
+    1. ``tool.annotations.title`` — from ``ToolAnnotations`` (Pydantic model
+       or plain dict).
+    2. ``tool.title`` — top-level ``BaseMetadata`` field.
+    3. ``None`` if neither is available.
 
     Args:
-        tool: An object representing a tool. It may define an annotations
-            attribute (expected to be a dict) and/or a top-level title
-            attribute.
+        tool: An object representing a tool.  It may define an ``annotations``
+            attribute (``ToolAnnotations`` model or ``dict``) and/or a
+            top-level ``title`` attribute.
 
     Returns:
         Optional[str]: The resolved title string if found, otherwise None.
@@ -166,9 +166,16 @@ def _resolve_tool_title(tool) -> Optional[str]:
         'Top Level'
     """
     annotations_title = None
-    if hasattr(tool, "annotations") and isinstance(tool.annotations, dict):
-        annotations_title = tool.annotations.get("title")
-    return annotations_title or getattr(tool, "title", None)
+    annotations = getattr(tool, "annotations", None)
+    if annotations is not None:
+        if isinstance(annotations, dict):
+            annotations_title = annotations.get("title")
+        else:
+            annotations_title = getattr(annotations, "title", None)
+    if isinstance(annotations_title, str):
+        return annotations_title
+    title = getattr(tool, "title", None)
+    return title if isinstance(title, str) else None
 
 
 # Cache import (lazy to avoid circular dependencies)

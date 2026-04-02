@@ -7578,17 +7578,27 @@ def test_resolve_tool_title():
     from mcpgateway.services.gateway_service import _resolve_tool_title
     from mcp.types import Tool as MCPTool
 
-    # Case 1: title in annotations takes precedence
-    tool_with_annotations = MCPTool.model_validate({"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}})
-    tool_with_annotations.annotations = {"title": "Annotation Title"}
-    tool_with_annotations.title = "A Title"
-    assert _resolve_tool_title(tool_with_annotations) == "Annotation Title"
+    _BASE = {"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}}
 
-    # Case 2: title attribute fallback
-    tool_with_title = MCPTool.model_validate({"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}})
+    # Case 1: dict annotations title takes precedence over BaseMetadata title
+    tool_dict_ann = MCPTool.model_validate(_BASE)
+    tool_dict_ann.annotations = {"title": "Annotation Title"}
+    tool_dict_ann.title = "Base Title"
+    assert _resolve_tool_title(tool_dict_ann) == "Annotation Title"
+
+    # Case 2: ToolAnnotations model title takes precedence over BaseMetadata title
+    tool_model_ann = MCPTool.model_validate({**_BASE, "title": "Base Title", "annotations": {"title": "Model Ann Title", "readOnlyHint": True}})
+    assert _resolve_tool_title(tool_model_ann) == "Model Ann Title"
+
+    # Case 3: ToolAnnotations model without title falls back to BaseMetadata title
+    tool_ann_no_title = MCPTool.model_validate({**_BASE, "title": "Base Title", "annotations": {"readOnlyHint": True}})
+    assert _resolve_tool_title(tool_ann_no_title) == "Base Title"
+
+    # Case 4: title attribute fallback (no annotations)
+    tool_with_title = MCPTool.model_validate(_BASE)
     tool_with_title.title = "A Title"
     assert _resolve_tool_title(tool_with_title) == "A Title"
 
-    # Case 3: None of those fields exist
-    tool_no_title = MCPTool.model_validate({"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}})
+    # Case 5: No title anywhere
+    tool_no_title = MCPTool.model_validate(_BASE)
     assert _resolve_tool_title(tool_no_title) is None

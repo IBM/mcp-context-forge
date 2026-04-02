@@ -153,7 +153,15 @@ def _normalize_mcp_prompt_arguments(arguments: Any) -> Optional[List[types.Promp
 
 
 def _safe_str_attr(obj: Any, attr: str) -> Optional[str]:
-    """Extract an attribute as ``str | None``, guarding against mock objects."""
+    """Extract an attribute as ``str | None``, guarding against non-string values.
+
+    Args:
+        obj: The object to read the attribute from.
+        attr: The attribute name to extract.
+
+    Returns:
+        The attribute value if it is a ``str``, otherwise ``None``.
+    """
     value = getattr(obj, attr, None)
     return value if isinstance(value, str) else None
 
@@ -1829,7 +1837,12 @@ async def list_tools() -> List[types.Tool]:
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [
                     types.Tool(
-                        name=tool.name, title=_safe_str_attr(tool, "title"), description=tool.description or "", inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations
+                        name=tool.name,
+                        title=_safe_str_attr(tool, "title"),
+                        description=tool.description or "",
+                        inputSchema=tool.input_schema,
+                        outputSchema=tool.output_schema,
+                        annotations=tool.annotations,
                     )
                     for tool in tools
                 ]
@@ -1842,7 +1855,12 @@ async def list_tools() -> List[types.Tool]:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [
                     types.Tool(
-                        name=tool.name, title=_safe_str_attr(tool, "title"), description=tool.description or "", inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations
+                        name=tool.name,
+                        title=_safe_str_attr(tool, "title"),
+                        description=tool.description or "",
+                        inputSchema=tool.input_schema,
+                        outputSchema=tool.output_schema,
+                        annotations=tool.annotations,
                     )
                     for tool in tools
                 ]
@@ -2103,7 +2121,10 @@ async def list_resources() -> List[types.Resource]:
 
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
-                return [types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type) for resource in resources]
+                return [
+                    types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type)
+                    for resource in resources
+                ]
         except Exception as e:
             logger.exception("Error listing Resources:%s", e)
             return []
@@ -2111,7 +2132,10 @@ async def list_resources() -> List[types.Resource]:
         try:
             async with get_db() as db:
                 resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
-                return [types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type) for resource in resources]
+                return [
+                    types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type)
+                    for resource in resources
+                ]
         except Exception as e:
             logger.exception("Error listing resources:%s", e)
             return []
