@@ -10,8 +10,21 @@ description: >-
 
 # PR Review
 
-A review-only skill. **Do not modify any files** — produce a report the author
-uses to make their own changes.
+A review skill that auto-fixes formatting issues on touched files and produces
+a report for everything else.
+
+## Rebase against origin/main
+
+Before reviewing, ensure the branch is up to date:
+
+1. `git fetch origin`
+2. `git rebase origin/main`
+
+If the rebase fails with conflicts, attempt to resolve them. When resolution
+is not obvious — e.g., both sides made substantive changes to the same logic —
+ask the user which side to prioritize before continuing. Note that
+`.secrets.baseline` is a generated file; resolve conflicts there by keeping
+the most recent (incoming) version.
 
 ## Gather context
 
@@ -38,12 +51,35 @@ Review the diff in priority order. Report all findings for human review.
 | 1 | Security | Blocking | Injection, leaked secrets, auth gaps, OWASP top 10 |
 | 2 | Correctness | Blocking | Logic errors, edge cases, mismatch with linked issues |
 | 3 | Test coverage | Blocking | Differential coverage — verify changed code has tests |
-| 4 | Linter compliance | Blocking | Run project linters on touched files; report findings with exact commands |
+| 4 | Linter compliance | Blocking | Run project linters on touched files; **auto-fix** formatting issues (see below) |
 | 5 | Performance | High | N+1 queries, unnecessary allocations, bottlenecks |
 | 6 | Redundancy | High | Duplicated logic, copy-paste patterns, shared-utility opportunities |
 | 7 | Design | High | Structural quality — see guidance below |
 | 8 | Consistency | Medium | Adherence to documented conventions |
 | 9 | Alembic migrations | Conditional | Idempotence, reversibility, cross-DB compat, `batch_alter_table` for SQLite |
+
+## Lint auto-fix (targeted only)
+
+Formatting issues found by `black`, `isort`, or `autoflake` MUST be fixed
+automatically, but only on the specific files touched by the PR. **Never run
+formatters against the entire codebase** — that creates unrelated changes that
+pollute the diff.
+
+Run all three fixers in one shot, scoped to changed Python files:
+
+```bash
+PY_FILES="$(git diff --diff-filter=d --name-only origin/main -- '*.py')"
+if [ -n "$PY_FILES" ]; then
+  make autoflake isort black TARGET="$PY_FILES"
+fi
+```
+
+After fixing, re-run linters to confirm the findings are resolved. Report
+what was fixed in the review output under the Linter compliance category
+(e.g., "Auto-fixed: ran autoflake/isort/black on N files").
+
+Other linter findings (flake8, pylint, bandit, mypy, etc.) that cannot be
+auto-fixed safely should be reported as findings for the author to address.
 
 ## Design review guidance
 
@@ -124,7 +160,9 @@ Attribute findings to their source and resolve contradictions.
 
 ## Rules
 
-- **Do not modify any files.** Report findings for the author to address.
+- **Do not modify files** except for targeted lint auto-fixes (`make autoflake
+  TARGET=...`, `make isort TARGET=...`, `make black TARGET=...`). Report all
+  other findings for the author to address.
 - Never mention Claude, Claude Code, or AI in any output.
 - Include exact linter commands and output so the author can reproduce.
 - Make suggestions concrete — name the method to extract, the class to create,
