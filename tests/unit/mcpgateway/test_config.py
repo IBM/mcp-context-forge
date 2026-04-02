@@ -949,6 +949,15 @@ def test_ui_hide_header_items_admin_csv():
     assert s.mcpgateway_ui_hide_header_items_admin == ["logout", "theme_toggle"]
 
 
+def test_ui_hide_header_items_admin_json_array():
+    """Admin header hide list should accept JSON array input."""
+    s = Settings(
+        mcpgateway_ui_hide_header_items_admin='["logout", "theme_toggle"]',
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_header_items_admin == ["logout", "theme_toggle"]
+
+
 def test_ui_hide_header_items_admin_empty_default(monkeypatch):
     """Admin header hide list should default to empty list."""
     monkeypatch.delenv("MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN", raising=False)

@@ -4265,6 +4265,65 @@ class TestAdminUIRoute:
     @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_admin_user_uses_admin_visibility(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Admin user should use _ADMIN hide lists, not non-admin ones."""
+        mock_request.query_params = {}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+
+        monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+        # Non-admin: hide tools and resources
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools", "resources"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        # Admin: only hide maintenance
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", False, raising=False)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "is_admin": True, "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+
+        context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+        # Admin should see admin hide list, not non-admin
+        assert "maintenance" in context["ui_hidden_sections"]
+        assert "tools" not in context["ui_hidden_sections"]
+        assert "resources" not in context["ui_hidden_sections"]
+        # Embedded-mode header defaults should NOT apply to admin
+        assert "logout" not in context["ui_hidden_header_items"]
+        assert "team_selector" not in context["ui_hidden_header_items"]
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_cookie_delete_on_empty_query(
         self,
         mock_roots,
