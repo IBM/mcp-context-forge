@@ -256,7 +256,7 @@ plugins:
 
   # Rate limiter (sliding_window algorithm, memory backend)
   - name: RateLimiterPlugin_sliding_window
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — sliding window algorithm
     version: 0.1.0
     author: Pratik Gandhi
@@ -274,7 +274,7 @@ plugins:
 
   # Rate limiter (token_bucket algorithm, memory backend)
   - name: RateLimiterPlugin_token_bucket
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — token bucket algorithm
     version: 0.1.0
     author: Pratik Gandhi
@@ -292,7 +292,7 @@ plugins:
 
   # Rate limiter (fixed_window algorithm, Redis backend)
   - name: RateLimiterPlugin_redis_fixed_window
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — fixed window algorithm, Redis backend
     version: 0.1.0
     author: Pratik Gandhi
@@ -313,7 +313,7 @@ plugins:
 
   # Rate limiter (sliding_window algorithm, Redis backend)
   - name: RateLimiterPlugin_redis_sliding_window
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — sliding window algorithm, Redis backend
     version: 0.1.0
     author: Pratik Gandhi
@@ -334,7 +334,7 @@ plugins:
 
   # Rate limiter (token_bucket algorithm, Redis backend)
   - name: RateLimiterPlugin_redis_token_bucket
-    kind: plugins.rate_limiter.rate_limiter.RateLimiterPlugin
+    kind: cpex_rate_limiter.RateLimiterPlugin
     description: Per-user/tenant/tool rate limits — token bucket algorithm, Redis backend
     version: 0.1.0
     author: Pratik Gandhi

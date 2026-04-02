@@ -1192,7 +1192,6 @@ async def get_current_user(
                 team_id = getattr(getattr(request, "state", None), "team_id", None) if request else None
                 # Extract content type from headers
                 content_type = headers.get("content-type") if headers else None
-                # Create global context
                 global_context = GlobalContext(
                     request_id=request_id,
                     server_id=None,
