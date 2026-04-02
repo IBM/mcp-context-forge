@@ -85,7 +85,7 @@ from mcpgateway.services.metrics_query_service import get_top_performers_combine
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
-from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError, get_rust_a2a_runtime_client
+from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.correlation_id import get_correlation_id

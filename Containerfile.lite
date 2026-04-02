@@ -139,7 +139,6 @@ WORKDIR /build/tools_rust/a2a_runtime
 # Build the experimental Rust A2A runtime binary (only if ENABLE_RUST=true)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         cargo build --release && \
-        cp target/release/contextforge_a2a_runtime target/release/contextforge-a2a-runtime && \
         echo "✅ Rust A2A runtime built successfully"; \
     else \
         echo "⏭️  Skipping Rust A2A runtime build"; \

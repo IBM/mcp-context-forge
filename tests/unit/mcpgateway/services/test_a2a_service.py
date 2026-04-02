@@ -2378,6 +2378,47 @@ class TestInvokeAgentEdgeCases:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_query_param_error_redacts_secret_from_message(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Error messages from failed invocations must redact query param auth values."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=500, text="Internal error at https://x.com/api?api_key=secret123")
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/api",
+            auth_type="query_param",
+            auth_value=None,
+            auth_query_params={"api_key": "encrypted_blob"},
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda x: {"api_key": "secret123"})
+        monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=secret123")
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        with pytest.raises(A2AAgentError) as exc_info:
+            await service.invoke_agent(mock_db, "ag", {})
+        assert "secret123" not in str(exc_info.value)
+        assert "REDACTED" in str(exc_info.value) or "api_key" not in str(exc_info.value)
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
     async def test_invoke_query_param_auth_decrypt_error_is_skipped(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
         """Query param decrypt failures are logged and skipped, without applying auth to URL."""
         mock_client = AsyncMock()

@@ -30,6 +30,7 @@ class RustA2ARuntimeError(RuntimeError):
     """Raised when the Rust A2A runtime cannot complete a request."""
 
     def __init__(self, message: str, *, is_timeout: bool = False) -> None:
+        """Initialize with message and optional timeout flag."""
         super().__init__(message)
         self.is_timeout = is_timeout
 
@@ -60,14 +61,22 @@ class RustA2ARuntimeClient:
         request_timeout = timeout_seconds or float(settings.experimental_rust_a2a_runtime_timeout_seconds)
         proxy_timeout = max(float(settings.experimental_rust_a2a_runtime_timeout_seconds), float(request_timeout) + 5.0)
 
+        payload: Dict[str, Any] = {
+            "endpoint_url": prepared.base_endpoint_url or prepared.endpoint_url,
+            "headers": prepared.headers,
+            "json_body": prepared.request_data,
+            "timeout_seconds": request_timeout,
+        }
+        # Pass encrypted auth blobs so the Rust side decrypts them (avoids
+        # plaintext secrets transiting the Python→Rust boundary).
+        if prepared.auth_value_encrypted:
+            payload["auth_headers_encrypted"] = prepared.auth_value_encrypted
+        if prepared.auth_query_params_encrypted:
+            payload["auth_query_params_encrypted"] = prepared.auth_query_params_encrypted
+
         response = await client.post(
             target_url,
-            json={
-                "endpoint_url": prepared.endpoint_url,
-                "headers": prepared.headers,
-                "json_body": prepared.request_data,
-                "timeout_seconds": request_timeout,
-            },
+            json=payload,
             timeout=httpx.Timeout(proxy_timeout),
             follow_redirects=False,
         )

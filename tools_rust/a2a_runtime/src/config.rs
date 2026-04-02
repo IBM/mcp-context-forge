@@ -48,6 +48,131 @@ pub struct RuntimeConfig {
     )]
     pub client_tcp_keepalive_seconds: u64,
 
+    #[arg(
+        long,
+        env = "A2A_RUST_MAX_RESPONSE_BODY_BYTES",
+        default_value_t = 10_485_760
+    )]
+    pub max_response_body_bytes: u64,
+
+    #[arg(long, env = "A2A_RUST_MAX_RETRIES", default_value_t = 3)]
+    pub max_retries: u32,
+
+    #[arg(long, env = "A2A_RUST_RETRY_BACKOFF_MS", default_value_t = 1_000)]
+    pub retry_backoff_ms: u64,
+
+    // --- Auth -----------------------------------------------------------
+    /// Shared secret for AES-GCM decryption of encrypted auth blobs.
+    /// When set, the runtime decrypts `auth_headers_encrypted` and
+    /// `auth_query_params_encrypted` fields in invoke requests.
+    #[arg(long, env = "A2A_RUST_AUTH_SECRET")]
+    pub auth_secret: Option<String>,
+
+    // --- Backend (Python gateway) --------------------------------------
+    /// Base URL of the Python gateway for proxied requests and internal
+    /// authz callouts (e.g. `http://127.0.0.1:4444`).
+    #[arg(
+        long,
+        env = "A2A_RUST_BACKEND_BASE_URL",
+        default_value = "http://127.0.0.1:4444"
+    )]
+    pub backend_base_url: String,
+
+    // --- Concurrency / queue -------------------------------------------
+    /// Maximum number of concurrent outbound invoke batches.
+    #[arg(long, env = "A2A_RUST_MAX_CONCURRENT", default_value_t = 64)]
+    pub max_concurrent: usize,
+
+    /// Optional bounded queue depth.  When set, new submissions are
+    /// rejected with 503 once the queue reaches this size.
+    #[arg(long, env = "A2A_RUST_MAX_QUEUED")]
+    pub max_queued: Option<usize>,
+
+    // --- Circuit breaker -----------------------------------------------
+    /// Consecutive failures before a circuit opens.
+    #[arg(long, env = "A2A_RUST_CIRCUIT_FAILURE_THRESHOLD", default_value_t = 5)]
+    pub circuit_failure_threshold: u32,
+
+    /// Seconds before an open circuit transitions to half-open.
+    #[arg(long, env = "A2A_RUST_CIRCUIT_COOLDOWN_SECS", default_value_t = 30)]
+    pub circuit_cooldown_secs: u64,
+
+    /// Maximum tracked circuit-breaker endpoints before eviction.
+    #[arg(long, env = "A2A_RUST_CIRCUIT_MAX_ENTRIES", default_value_t = 10_000)]
+    pub circuit_max_entries: usize,
+
+    // --- Metrics -------------------------------------------------------
+    /// Maximum tracked per-agent metrics entries before eviction.
+    #[arg(long, env = "A2A_RUST_METRICS_MAX_ENTRIES", default_value_t = 10_000)]
+    pub metrics_max_entries: usize,
+
+    // --- Agent cache ---------------------------------------------------
+    /// TTL in seconds for cached agent resolve responses.
+    #[arg(long, env = "A2A_RUST_AGENT_CACHE_TTL_SECS", default_value_t = 60)]
+    pub agent_cache_ttl_secs: u64,
+
+    /// Maximum cached agent entries before eviction.
+    #[arg(
+        long,
+        env = "A2A_RUST_AGENT_CACHE_MAX_ENTRIES",
+        default_value_t = 1_000
+    )]
+    pub agent_cache_max_entries: usize,
+
+    // --- Redis (L2 cache) -------------------------------------------------
+    /// Redis connection URL. Defaults to REDIS_URL env var.
+    /// When unset, L2 caching is disabled (L1 → L3 fallback).
+    #[arg(long, env = "A2A_RUST_REDIS_URL")]
+    pub redis_url: Option<String>,
+
+    /// TTL in seconds for L2 (Redis) cache entries.
+    #[arg(long, env = "A2A_RUST_L2_CACHE_TTL_SECS", default_value_t = 300)]
+    pub l2_cache_ttl_secs: u64,
+
+    /// Redis pub/sub channel for cache invalidation.
+    #[arg(
+        long,
+        env = "A2A_RUST_CACHE_INVALIDATION_CHANNEL",
+        default_value = "mcpgw:a2a:invalidate"
+    )]
+    pub cache_invalidation_channel: String,
+
+    // --- Session management -----------------------------------------------
+    /// Enable session-based auth caching. When true and Redis is available,
+    /// the sidecar creates sessions and skips Python authenticate on reuse.
+    #[arg(long, env = "A2A_RUST_SESSION_ENABLED", default_value_t = true)]
+    pub session_enabled: bool,
+
+    /// TTL in seconds for session entries in Redis.
+    #[arg(long, env = "A2A_RUST_SESSION_TTL_SECS", default_value_t = 300)]
+    pub session_ttl_secs: u64,
+
+    /// Comma-separated header names used for auth fingerprinting.
+    #[arg(
+        long,
+        env = "A2A_RUST_SESSION_FINGERPRINT_HEADERS",
+        default_value = "authorization,cookie,x-forwarded-for"
+    )]
+    pub session_fingerprint_headers: String,
+
+    // --- Event store (streaming) ------------------------------------------
+    /// Maximum events per stream in the Redis ring buffer.
+    #[arg(long, env = "A2A_RUST_EVENT_STORE_MAX_EVENTS", default_value_t = 1000)]
+    pub event_store_max_events: usize,
+
+    /// TTL in seconds for event stream keys in Redis.
+    #[arg(long, env = "A2A_RUST_EVENT_STORE_TTL_SECS", default_value_t = 3600)]
+    pub event_store_ttl_secs: u64,
+
+    /// Interval in milliseconds for flushing events to PG via Python RPC.
+    #[arg(long, env = "A2A_RUST_EVENT_FLUSH_INTERVAL_MS", default_value_t = 1000)]
+    pub event_flush_interval_ms: u64,
+
+    /// Maximum events per PG flush batch.
+    #[arg(long, env = "A2A_RUST_EVENT_FLUSH_BATCH_SIZE", default_value_t = 100)]
+    pub event_flush_batch_size: usize,
+
+    // --- Logging / lifecycle -------------------------------------------
     #[arg(long, env = "A2A_RUST_LOG", default_value = "info")]
     pub log_filter: String,
 

@@ -774,3 +774,39 @@ def test_prepare_a2a_invocation_v_prefixed_protocol_uses_v1_format():
     assert prepared.headers["A2A-Version"] == "1.0"
     assert prepared.request_data["method"] == "SendMessage"
     assert prepared.request_data["params"]["message"]["role"] == "ROLE_USER"
+
+
+def test_prepare_a2a_invocation_preserves_encrypted_auth_fields(monkeypatch):
+    """Query-param auth preserves encrypted blobs and sets base_endpoint_url."""
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: {"api_key": "decrypted-key"})
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=decrypted-key")
+
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://example.com/",
+        protocol_version="1.0.0",
+        parameters={"query": "hello"},
+        interaction_type="query",
+        auth_type="query_param",
+        auth_query_params={"api_key": "encrypted_blob"},
+    )
+
+    assert prepared.auth_query_params_encrypted == {"api_key": "encrypted_blob"}
+    assert prepared.base_endpoint_url == "https://example.com/"
+
+
+def test_prepare_a2a_invocation_preserves_encrypted_auth_value(monkeypatch):
+    """Bearer auth preserves the encrypted auth_value blob for Rust-side decryption."""
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: {"Authorization": "Bearer decrypted"})
+
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://example.com/",
+        protocol_version="1.0.0",
+        parameters={"query": "hello"},
+        interaction_type="query",
+        auth_type="bearer",
+        auth_value="encrypted_blob",
+    )
+
+    assert prepared.auth_value_encrypted == "encrypted_blob"

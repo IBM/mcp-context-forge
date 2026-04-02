@@ -11,12 +11,15 @@ from __future__ import annotations
 
 # Standard
 from dataclasses import dataclass
+import logging
 from typing import Any, Dict, Mapping, Optional
 import uuid
 
 # First-Party
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging
+
+logger = logging.getLogger(__name__)
 
 _A2A_VERSION_HEADER = "A2A-Version"
 _V1_DEFAULT_VERSION = "1.0"
@@ -78,6 +81,10 @@ class PreparedA2AInvocation:
     protocol_version_header: str
     uses_jsonrpc: bool
     sensitive_query_param_names: Optional[Dict[str, str]] = None
+    # Raw encrypted auth values for Rust-side decryption (never decrypted in Python when Rust delegates).
+    base_endpoint_url: Optional[str] = None
+    auth_value_encrypted: Optional[str] = None
+    auth_query_params_encrypted: Optional[Dict[str, str]] = None
 
 
 def is_v1_a2a_protocol(protocol_version: Optional[str]) -> bool:
@@ -144,8 +151,8 @@ def _normalize_part(part: Any, protocol_version: Optional[str]) -> Any:
     source = dict(part)
     discriminator = source.pop("kind", None) or source.pop("type", None)
     if is_v1_a2a_protocol(protocol_version):
-        if discriminator in {"text", "TEXT", None} and "text" in source:
-            return source
+        # V1 uses protobuf oneof — field presence is the discriminator.
+        # No explicit "kind" or "type" field in the wire format.
         return source
 
     target = dict(source)
@@ -272,7 +279,7 @@ def _build_default_message(query: str, protocol_version: Optional[str], message_
     }
 
 
-def build_a2a_jsonrpc_request(parameters: Dict[str, Any], protocol_version: Optional[str], *, interaction_type: str = "query") -> Dict[str, Any]:  # pylint: disable=unused-argument
+def build_a2a_jsonrpc_request(parameters: Dict[str, Any], protocol_version: Optional[str]) -> Dict[str, Any]:
     """Build a JSON-RPC A2A request body for the target protocol version."""
     payload = dict(parameters or {})
     request_id = payload.pop("id", 1)
@@ -351,7 +358,8 @@ def prepare_a2a_invocation(
             try:
                 decrypted = decode_auth(encrypted_value)
                 auth_query_params_decrypted[str(param_key)] = str(decrypted.get(param_key, ""))
-            except Exception:
+            except Exception:  # nosec B112
+                logger.debug("Failed to decrypt query param %r for A2A agent invocation", param_key, exc_info=True)
                 continue
         if auth_query_params_decrypted:
             target_endpoint_url = apply_query_param_auth(target_endpoint_url, auth_query_params_decrypted)
@@ -361,7 +369,7 @@ def prepare_a2a_invocation(
     if uses_jsonrpc:
         headers[_A2A_VERSION_HEADER] = protocol_version_header
         headers.setdefault("Accept", "application/json, text/event-stream")
-        request_data = build_a2a_jsonrpc_request(parameters or {}, protocol_version, interaction_type=interaction_type)
+        request_data = build_a2a_jsonrpc_request(parameters or {}, protocol_version)
     else:
         request_data = {
             "interaction_type": interaction_type,
@@ -378,4 +386,7 @@ def prepare_a2a_invocation(
         protocol_version_header=protocol_version_header,
         uses_jsonrpc=uses_jsonrpc,
         sensitive_query_param_names=auth_query_params_decrypted or None,
+        base_endpoint_url=endpoint_url,
+        auth_value_encrypted=auth_value if isinstance(auth_value, str) and auth_type in {"basic", "bearer", "authheaders", "api_key"} else None,
+        auth_query_params_encrypted=dict(auth_query_params) if auth_type == "query_param" and auth_query_params else None,
     )

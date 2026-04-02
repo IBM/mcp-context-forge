@@ -27,18 +27,18 @@ from sqlalchemy.orm import Session
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
+from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate, A2ATaskRead
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
-from mcpgateway.services.rust_a2a_runtime import RustA2ARuntimeError, get_rust_a2a_runtime_client
+from mcpgateway.services.rust_a2a_runtime import get_rust_a2a_runtime_client, RustA2ARuntimeError
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.correlation_id import get_correlation_id
@@ -89,6 +89,24 @@ logger = logging_service.get_logger(__name__)
 
 # Initialize structured logger for A2A lifecycle tracking
 structured_logger = get_structured_logger("a2a_service")
+
+
+async def _publish_a2a_invalidation(message_type: str, **kwargs: Any) -> None:
+    """Publish a cache invalidation message to Redis for Rust L1 eviction."""
+    try:
+        # First-Party
+        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+        redis = await get_redis_client()
+        if redis is None:
+            return
+        # Third-Party
+        import orjson  # pylint: disable=import-outside-toplevel
+
+        payload = orjson.dumps({"type": message_type, **kwargs}).decode()
+        await redis.publish("mcpgw:a2a:invalidate", payload)
+    except Exception as e:
+        logger.debug("Failed to publish A2A cache invalidation: %s", e)
 
 
 class A2AAgentError(Exception):
@@ -501,6 +519,17 @@ class A2AAgentService(BaseService):
                     metrics_cache.invalidate("a2a")
                 except Exception as cache_error:
                     logger.warning(f"Cache invalidation failed after agent commit: {cache_error}")
+
+                try:
+                    # Standard
+                    import asyncio  # pylint: disable=import-outside-toplevel
+
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_publish_a2a_invalidation("agent", name=new_agent.name))
+                except RuntimeError:
+                    pass  # No running event loop (e.g., in tests)
+                except Exception:
+                    pass  # Best-effort invalidation
 
                 # Automatically create a tool for the A2A agent if not already present
                 # Tool creation is wrapped in try/except to ensure agent registration succeeds
@@ -965,6 +994,54 @@ class A2AAgentService(BaseService):
 
         return self.convert_agent_to_read(agent, db=db)
 
+    def get_agent_card(self, db: Session, agent_name: str) -> Optional[Dict[str, Any]]:
+        """Build an A2A v1 AgentCard dict for the named agent.
+
+        Queries the database for an enabled agent with the given name and
+        returns a dict that conforms to the A2A AgentCard schema.  Returns
+        None when no matching enabled agent is found.
+
+        Args:
+            db: Database session.
+            agent_name: Name of the agent to look up.
+
+        Returns:
+            AgentCard dict, or None if the agent is not found / disabled.
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.services.a2a_service import A2AAgentService
+            >>> service = A2AAgentService()
+            >>> db = MagicMock()
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> service.get_agent_card(db, "missing") is None
+            True
+        """
+        query = select(DbA2AAgent).where(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True)  # noqa: E712
+        agent = db.execute(query).scalar_one_or_none()
+        if not agent:
+            return None
+
+        capabilities = agent.capabilities or {}
+
+        card: Dict[str, Any] = {
+            "name": agent.name,
+            "description": agent.description or "",
+            "url": agent.endpoint_url,
+            "version": str(agent.version),
+            "protocolVersion": agent.protocol_version,
+            "defaultInputModes": ["text"],
+            "defaultOutputModes": ["text"],
+            "capabilities": {
+                "streaming": bool(capabilities.get("streaming", False)),
+                "pushNotifications": bool(capabilities.get("pushNotifications", False)),
+                "stateTransitionHistory": bool(capabilities.get("stateTransitionHistory", False)),
+            },
+            "skills": capabilities.get("skills", []),
+            "supportsAuthenticatedExtendedCard": True,
+        }
+        return card
+
     async def update_agent(
         self,
         db: Session,
@@ -1216,6 +1293,17 @@ class A2AAgentService(BaseService):
 
             await admin_stats_cache.invalidate_tags()
 
+            try:
+                # Standard
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                loop = asyncio.get_running_loop()
+                loop.create_task(_publish_a2a_invalidation("agent", name=agent.name))
+            except RuntimeError:
+                pass  # No running event loop (e.g., in tests)
+            except Exception:
+                pass  # Best-effort invalidation
+
             # Update the associated tool if it exists
             # Wrap in try/except to handle tool sync failures gracefully - the agent
             # update is the primary operation and should succeed even if tool sync fails
@@ -1405,6 +1493,17 @@ class A2AAgentService(BaseService):
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
                 await admin_stats_cache.invalidate_tags()
+
+                try:
+                    # Standard
+                    import asyncio  # pylint: disable=import-outside-toplevel
+
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_publish_a2a_invalidation("agent", name=agent_name))
+                except RuntimeError:
+                    pass  # No running event loop (e.g., in tests)
+                except Exception:
+                    pass  # Best-effort invalidation
 
                 logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
 
@@ -1601,6 +1700,55 @@ class A2AAgentService(BaseService):
                         duration_ms=call_duration_ms,
                         metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": status_code, "success": True},
                     )
+
+                    # ═══════════════════════════════════════════════════════════════════════════
+                    # SHADOW MODE: dual-dispatch to Rust sidecar and compare responses.
+                    # Runs only when runtime_enabled=true and delegate_enabled=false (shadow mode).
+                    # Failures here are silently swallowed — the Python response is always returned.
+                    # ═══════════════════════════════════════════════════════════════════════════
+                    if settings.experimental_rust_a2a_runtime_enabled and not settings.experimental_rust_a2a_runtime_delegate_enabled:
+                        try:
+                            rust_response = await get_rust_a2a_runtime_client().invoke(
+                                prepared,
+                                timeout_seconds=int(settings.mcpgateway_a2a_default_timeout),
+                            )
+                            rust_status = int(rust_response.get("status_code", 200))
+                            rust_json = rust_response.get("json")
+
+                            shadow_match = rust_status == status_code and rust_json == response_json
+                            if rust_status != status_code:
+                                logger.warning(
+                                    "A2A shadow mode mismatch for '%s': Python status=%d, Rust status=%d",
+                                    agent_name,
+                                    status_code,
+                                    rust_status,
+                                )
+                            elif rust_json != response_json:
+                                logger.info(
+                                    "A2A shadow mode response difference for '%s' (both status=%d, payloads differ)",
+                                    agent_name,
+                                    status_code,
+                                )
+                            else:
+                                logger.debug("A2A shadow mode: responses match for '%s'", agent_name)
+
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"A2A shadow mode comparison: {agent_name}",
+                                component="a2a_service",
+                                user_id=user_id,
+                                user_email=user_email,
+                                correlation_id=correlation_id,
+                                metadata={
+                                    "event": "a2a_shadow_comparison",
+                                    "agent_name": agent_name,
+                                    "python_status": status_code,
+                                    "rust_status": rust_status,
+                                    "match": shadow_match,
+                                },
+                            )
+                        except Exception as shadow_err:
+                            logger.warning("A2A shadow mode Rust invoke failed for '%s': %s", agent_name, shadow_err)
                 else:
                     # Sanitize error message to prevent URL secrets from leaking in logs
                     raw_error = f"HTTP {status_code}: {response_text}"
@@ -1847,3 +1995,213 @@ class A2AAgentService(BaseService):
 
         # Return masked version (like GatewayRead)
         return validated_agent.masked()
+
+    def get_task(self, db: Session, task_id: str, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Retrieve an A2A task by its task_id.
+
+        Args:
+            db: Database session.
+            task_id: The agent-side task ID.
+            agent_id: Optional agent ID filter.
+
+        Returns:
+            Task data as a dict, or None if not found.
+        """
+        query = db.query(A2ATask).filter(A2ATask.task_id == task_id)
+        if agent_id is not None:
+            query = query.filter(A2ATask.a2a_agent_id == agent_id)
+        task = query.first()
+        if task is None:
+            return None
+        return A2ATaskRead.model_validate(task).model_dump(mode="json")
+
+    def cancel_task(self, db: Session, task_id: str, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Cancel an A2A task by setting its state to 'canceled'.
+
+        Args:
+            db: Database session.
+            task_id: The agent-side task ID.
+            agent_id: Optional agent ID filter.
+
+        Returns:
+            Task data as a dict after cancellation, or None if not found.
+            If the task is already in a terminal state (completed/failed/canceled),
+            returns it as-is without modification.
+        """
+        query = db.query(A2ATask).filter(A2ATask.task_id == task_id)
+        if agent_id is not None:
+            query = query.filter(A2ATask.a2a_agent_id == agent_id)
+        task = query.first()
+        if task is None:
+            return None
+        if task.state in ("completed", "failed", "canceled"):
+            return A2ATaskRead.model_validate(task).model_dump(mode="json")
+        task.state = "canceled"
+        task.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(task)
+        return A2ATaskRead.model_validate(task).model_dump(mode="json")
+
+    def list_tasks(self, db: Session, agent_id: Optional[str] = None, state: Optional[str] = None, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+        """List A2A tasks with optional filtering.
+
+        Args:
+            db: Database session.
+            agent_id: Optional agent ID filter.
+            state: Optional task state filter.
+            limit: Maximum number of results.
+            offset: Pagination offset.
+
+        Returns:
+            List of task data dicts.
+        """
+        query = db.query(A2ATask)
+        if agent_id is not None:
+            query = query.filter(A2ATask.a2a_agent_id == agent_id)
+        if state is not None:
+            query = query.filter(A2ATask.state == state)
+        query = query.order_by(desc(A2ATask.updated_at))
+        query = query.limit(limit).offset(offset)
+        return [A2ATaskRead.model_validate(t).model_dump(mode="json") for t in query.all()]
+
+    # ---------------------------------------------------------------------------
+    # Push notification config CRUD
+    # ---------------------------------------------------------------------------
+
+    def create_push_config(self, db: Session, config_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a push notification configuration.
+
+        Args:
+            db: Database session.
+            config_data: Dict with fields for A2APushNotificationConfig.
+
+        Returns:
+            Created config as a dict.
+        """
+        # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import A2APushNotificationConfigRead  # pylint: disable=import-outside-toplevel
+
+        cfg = A2APushNotificationConfig(
+            a2a_agent_id=config_data["a2a_agent_id"],
+            task_id=config_data["task_id"],
+            webhook_url=config_data["webhook_url"],
+            auth_token=config_data.get("auth_token"),
+            events=config_data.get("events"),
+            enabled=config_data.get("enabled", True),
+        )
+        db.add(cfg)
+        db.commit()
+        db.refresh(cfg)
+        return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
+
+    def get_push_config(self, db: Session, task_id: str, agent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Retrieve a push notification config by task_id.
+
+        Args:
+            db: Database session.
+            task_id: The task ID to look up.
+            agent_id: Optional agent ID filter.
+
+        Returns:
+            Config data as a dict, or None if not found.
+        """
+        # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import A2APushNotificationConfigRead  # pylint: disable=import-outside-toplevel
+
+        query = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.task_id == task_id)
+        if agent_id is not None:
+            query = query.filter(A2APushNotificationConfig.a2a_agent_id == agent_id)
+        cfg = query.first()
+        if cfg is None:
+            return None
+        return A2APushNotificationConfigRead.model_validate(cfg).model_dump(mode="json")
+
+    def list_push_configs(self, db: Session, agent_id: Optional[str] = None, task_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List push notification configs with optional filtering.
+
+        Args:
+            db: Database session.
+            agent_id: Optional agent ID filter.
+            task_id: Optional task ID filter.
+
+        Returns:
+            List of config data dicts.
+        """
+        # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import A2APushNotificationConfigRead  # pylint: disable=import-outside-toplevel
+
+        query = db.query(A2APushNotificationConfig)
+        if agent_id is not None:
+            query = query.filter(A2APushNotificationConfig.a2a_agent_id == agent_id)
+        if task_id is not None:
+            query = query.filter(A2APushNotificationConfig.task_id == task_id)
+        return [A2APushNotificationConfigRead.model_validate(c).model_dump(mode="json") for c in query.all()]
+
+    def delete_push_config(self, db: Session, config_id: str) -> bool:
+        """Delete a push notification config by ID.
+
+        Args:
+            db: Database session.
+            config_id: The config record ID to delete.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        # First-Party
+        from mcpgateway.db import A2APushNotificationConfig  # pylint: disable=import-outside-toplevel
+
+        cfg = db.query(A2APushNotificationConfig).filter(A2APushNotificationConfig.id == config_id).first()
+        if cfg is None:
+            return False
+        db.delete(cfg)
+        db.commit()
+        return True
+
+    def flush_events(self, db: Session, events: List[Dict[str, Any]]) -> int:
+        """Batch-insert task events to PG.
+
+        Args:
+            db: Database session.
+            events: List of event dicts with task_id, event_id, sequence, event_type, and optional payload.
+
+        Returns:
+            Number of events inserted.
+        """
+        # First-Party
+        from mcpgateway.db import A2ATaskEvent  # pylint: disable=import-outside-toplevel
+
+        count = 0
+        for event_data in events:
+            event = A2ATaskEvent(
+                task_id=event_data["task_id"],
+                event_id=event_data["event_id"],
+                sequence=event_data["sequence"],
+                event_type=event_data["event_type"],
+                payload=event_data.get("payload"),
+            )
+            db.add(event)
+            count += 1
+        db.commit()
+        return count
+
+    def replay_events(self, db: Session, task_id: str, after_sequence: int, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Return events for task_id with sequence > after_sequence.
+
+        Args:
+            db: Database session.
+            task_id: The task whose events to replay.
+            after_sequence: Return only events with sequence greater than this value.
+            limit: Maximum number of events to return (default 1000).
+
+        Returns:
+            List of serialized event dicts ordered by sequence.
+        """
+        # First-Party
+        from mcpgateway.db import A2ATaskEvent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import A2ATaskEventRead  # pylint: disable=import-outside-toplevel
+
+        events = db.query(A2ATaskEvent).filter(A2ATaskEvent.task_id == task_id, A2ATaskEvent.sequence > after_sequence).order_by(A2ATaskEvent.sequence).limit(limit).all()
+        return [A2ATaskEventRead.model_validate(e).model_dump(mode="json") for e in events]

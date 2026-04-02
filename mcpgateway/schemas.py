@@ -5482,6 +5482,141 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
 
 
 # ---------------------------------------------------------------------------
+# A2A Task Schemas
+# ---------------------------------------------------------------------------
+
+
+class A2ATaskCreate(BaseModel):
+    """Schema for recording a new A2A task state."""
+
+    a2a_agent_id: str
+    task_id: str
+    context_id: Optional[str] = None
+    state: str = "submitted"
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+
+
+class A2ATaskRead(BaseModel):
+    """Schema for reading A2A task state."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    a2a_agent_id: str
+    task_id: str
+    context_id: Optional[str] = None
+    state: str
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: Optional[datetime] = None
+
+
+class A2ATaskUpdate(BaseModel):
+    """Schema for updating A2A task state."""
+
+    state: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
+    latest_message: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+    completed_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------------
+# Server Interface Schemas
+# ---------------------------------------------------------------------------
+
+
+class ServerInterfaceCreate(BaseModel):
+    """Schema for creating a server interface."""
+
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool = True
+    config: Optional[Dict[str, Any]] = None
+
+
+class ServerInterfaceRead(BaseModel):
+    """Schema for reading a server interface."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    server_id: str
+    protocol: str
+    binding: str
+    version: Optional[str] = None
+    tenant: Optional[str] = None
+    enabled: bool
+    config: Optional[Dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# A2A Push Notification Config Schemas
+# ---------------------------------------------------------------------------
+
+
+class A2APushNotificationConfigCreate(BaseModel):
+    """Schema for creating a push notification webhook configuration."""
+
+    a2a_agent_id: str
+    task_id: str
+    webhook_url: str
+    auth_token: Optional[str] = None
+    events: Optional[List[str]] = None
+    enabled: bool = True
+
+
+class A2APushNotificationConfigRead(BaseModel):
+    """Schema for reading a push notification webhook configuration."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    a2a_agent_id: str
+    task_id: str
+    webhook_url: str
+    auth_token: Optional[str] = None
+    events: Optional[List[str]] = None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class A2ATaskEventCreate(BaseModel):
+    """Schema for creating a task event log entry."""
+
+    task_id: str
+    event_id: str
+    sequence: int
+    event_type: str
+    payload: Optional[Dict[str, Any]] = None
+
+
+class A2ATaskEventRead(BaseModel):
+    """Schema for reading a task event log entry."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    task_id: str
+    event_id: str
+    sequence: int
+    event_type: str
+    payload: Optional[Dict[str, Any]] = None
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
 # Email-Based Authentication Schemas
 # ---------------------------------------------------------------------------
 

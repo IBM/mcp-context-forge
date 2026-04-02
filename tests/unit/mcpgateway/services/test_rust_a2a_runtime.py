@@ -217,6 +217,85 @@ class TestRustA2ARuntimeClient:
         await uds_client.aclose()
 
     @pytest.mark.asyncio
+    async def test_invoke_sends_encrypted_auth_fields(self):
+        """Encrypted auth blobs are forwarded in the JSON payload to the Rust sidecar."""
+        prepared = PreparedA2AInvocation(
+            endpoint_url="https://agent.test/?api_key=decrypted",
+            sanitized_endpoint_url="https://agent.test/?api_key=REDACTED",
+            headers={"Content-Type": "application/json"},
+            request_data={"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1},
+            protocol_version_header="1.0",
+            uses_jsonrpc=True,
+            base_endpoint_url="https://agent.test/",
+            auth_value_encrypted="enc-bearer-blob",
+            auth_query_params_encrypted={"api_key": "enc-qp-blob"},
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            await client.invoke(prepared, timeout_seconds=5.0)
+
+        call_kwargs = mock_client.post.call_args
+        payload = call_kwargs.kwargs["json"]
+        assert payload["auth_headers_encrypted"] == "enc-bearer-blob"
+        assert payload["auth_query_params_encrypted"] == {"api_key": "enc-qp-blob"}
+
+    @pytest.mark.asyncio
+    async def test_invoke_uses_base_endpoint_url_when_available(self):
+        """When base_endpoint_url is set, it is used as the endpoint_url in the payload."""
+        prepared = PreparedA2AInvocation(
+            endpoint_url="https://agent.test/?api_key=decrypted",
+            sanitized_endpoint_url="https://agent.test/?api_key=REDACTED",
+            headers={"Content-Type": "application/json"},
+            request_data={"jsonrpc": "2.0", "method": "SendMessage", "params": {}, "id": 1},
+            protocol_version_header="1.0",
+            uses_jsonrpc=True,
+            base_endpoint_url="https://agent.test/",
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            await client.invoke(prepared, timeout_seconds=5.0)
+
+        call_kwargs = mock_client.post.call_args
+        payload = call_kwargs.kwargs["json"]
+        # base_endpoint_url should be used instead of the query-param-enriched endpoint_url
+        assert payload["endpoint_url"] == "https://agent.test/"
+
+    @pytest.mark.asyncio
+    async def test_invoke_omits_encrypted_fields_when_not_set(self, sample_prepared):
+        """When encrypted auth fields are None, they are absent from the payload."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"ok": True}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        client = RustA2ARuntimeClient()
+        with patch.object(client, "_get_runtime_client", return_value=mock_client):
+            await client.invoke(sample_prepared, timeout_seconds=5.0)
+
+        call_kwargs = mock_client.post.call_args
+        payload = call_kwargs.kwargs["json"]
+        assert "auth_headers_encrypted" not in payload
+        assert "auth_query_params_encrypted" not in payload
+
+    @pytest.mark.asyncio
     async def test_proxy_timeout_is_at_least_request_timeout_plus_five(self, sample_prepared):
         """The proxy timeout should be max(settings, request_timeout + 5)."""
         mock_response = MagicMock()

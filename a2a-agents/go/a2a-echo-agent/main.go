@@ -43,7 +43,8 @@ const (
     idleTimeout       = 60 * time.Second
     shutdownTimeout   = 10 * time.Second
 
-    maxBodyBytes = 1 << 20 // 1 MiB
+    maxBodyBytes  = 1 << 20 // 1 MiB
+    maxStoredTasks = 10_000
 )
 
 type server struct {
@@ -309,6 +310,10 @@ func (s *server) handleSendMessage(raw json.RawMessage, useV1 bool) (any, *jsonR
     s.mu.Lock()
     s.tasks[task.ID] = task
     s.taskList = append(s.taskList, task.ID)
+    for len(s.taskList) > maxStoredTasks {
+        delete(s.tasks, s.taskList[0])
+        s.taskList = s.taskList[1:]
+    }
     s.mu.Unlock()
 
     return s.renderTask(task, useV1), nil
@@ -351,9 +356,6 @@ func (s *server) handleListTasks(raw json.RawMessage, useV1 bool) (any, *jsonRPC
     }
     s.mu.RUnlock()
 
-    if useV1 {
-        return map[string]any{"tasks": rendered}, nil
-    }
     return map[string]any{"tasks": rendered}, nil
 }
 

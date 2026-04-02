@@ -7,16 +7,37 @@ license = "Apache-2.0"
 authors = ["Mihai Criveti"]
 description = "Experimental Rust A2A runtime sidecar for ContextForge"
 
+[[bin]]
+name = "contextforge-a2a-runtime"
+path = "src/main.rs"
+
 [dependencies]
+aes-gcm = "0.10"
 axum = "0.8.8"
+base64 = "0.22"
 clap = { version = "4.5.60", features = ["derive", "env"] }
-reqwest = { version = "0.12.23", default-features = false, features = ["json", "http2", "rustls-tls-native-roots"] }
+dashmap = "6"
+futures = "0.3"
+redis = { version = "0.28", features = ["aio", "tokio-comp", "connection-manager"] }
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "http2", "rustls-tls-native-roots", "stream"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+sha2 = "0.10"
 thiserror = "2.0.16"
 tokio = { version = "1.50.0", features = ["full"] }
+tokio-stream = "0.1"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+url = "2.5"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 tokio = { version = "1.50.0", features = ["full"] }
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+wiremock = "0.6"
+
+[[bench]]
+name = "invoke"
+harness = false

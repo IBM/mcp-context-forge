@@ -8870,6 +8870,450 @@ async def handle_internal_mcp_prompts_get_authz(request: Request):
     )
 
 
+# ---------------------------------------------------------------------------
+# Internal A2A authorization endpoints (Rust A2A runtime sidecar)
+# ---------------------------------------------------------------------------
+
+
+@utility_router.post("/_internal/a2a/authenticate/")
+@utility_router.post("/_internal/a2a/authenticate")
+async def handle_internal_a2a_authenticate(request: Request):
+    """Authenticate an inbound A2A request for Rust runtime execution.
+
+    Delegates to the shared MCP authenticate handler — the auth flow is
+    identical (validate credentials, return auth context).
+    """
+    return await handle_internal_mcp_authenticate(request)
+
+
+async def _authorize_internal_a2a_method(
+    request: Request,
+    *,
+    permission: str,
+    method: str,
+) -> Response:
+    """Authorize a trusted internal A2A method for Rust module execution.
+
+    Reuses the core authorization machinery from the MCP runtime path.
+    """
+    db = SessionLocal()
+    try:
+        await _authorize_internal_mcp_request(
+            request,
+            db,
+            permission=permission,
+            method=method,
+        )
+        if db.is_active and db.in_transaction() is not None:
+            db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except JSONRPCError as exc:
+        return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                pass  # nosec B110
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/invoke/authz/")
+@utility_router.post("/_internal/a2a/invoke/authz")
+async def handle_internal_a2a_invoke_authz(request: Request):
+    """Authorize trusted A2A invoke requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.invoke", method="a2a/invoke")
+
+
+@utility_router.post("/_internal/a2a/list/authz/")
+@utility_router.post("/_internal/a2a/list/authz")
+async def handle_internal_a2a_list_authz(request: Request):
+    """Authorize trusted A2A list requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/list")
+
+
+@utility_router.post("/_internal/a2a/get/authz/")
+@utility_router.post("/_internal/a2a/get/authz")
+async def handle_internal_a2a_get_authz(request: Request):
+    """Authorize trusted A2A get requests for Rust module execution."""
+    return await _authorize_internal_a2a_method(request, permission="a2a.read", method="a2a/get")
+
+
+@utility_router.post("/_internal/a2a/agents/{agent_name}/resolve/")
+@utility_router.post("/_internal/a2a/agents/{agent_name}/resolve")
+async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
+    """Resolve an A2A agent record for Rust module execution.
+
+    Returns the agent's endpoint, auth configuration (encrypted), and
+    protocol version so the Rust sidecar can invoke it directly.
+    """
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        # First-Party
+        from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
+
+        agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True).first()  # noqa: E712
+        if not agent:
+            # First-Party
+            from mcpgateway.services.a2a_server_service import A2AServerService  # pylint: disable=import-outside-toplevel
+
+            server_service = A2AServerService()
+            server_agent = server_service.resolve_server_agent(db, agent_name)
+            if server_agent:
+                return ORJSONResponse(status_code=200, content=server_agent)
+            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
+
+        result = {
+            "agent_id": agent.id,
+            "name": agent.name,
+            "endpoint_url": agent.endpoint_url,
+            "agent_type": agent.agent_type,
+            "protocol_version": agent.protocol_version,
+            "auth_type": agent.auth_type,
+        }
+        # Return encrypted auth values — Rust decrypts them with the shared secret.
+        if agent.auth_value:
+            result["auth_value_encrypted"] = agent.auth_value
+        if agent.auth_query_params:
+            result["auth_query_params_encrypted"] = agent.auth_query_params
+
+        return ORJSONResponse(status_code=200, content=result)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/agents/{agent_name}/card/")
+@utility_router.post("/_internal/a2a/agents/{agent_name}/card")
+async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
+    """Return the A2A AgentCard for an agent.
+
+    Called by the Rust sidecar to serve GetExtendedAgentCard /
+    agent/getExtendedCard / agent/getAuthenticatedExtendedCard requests.
+    """
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        card = service.get_agent_card(db, agent_name)
+        if card is None:
+            # First-Party
+            from mcpgateway.services.a2a_server_service import A2AServerService  # pylint: disable=import-outside-toplevel
+
+            server_service = A2AServerService()
+            card = server_service.get_server_agent_card(db, agent_name)
+        if card is None:
+            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
+        return ORJSONResponse(status_code=200, content=card)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/get/")
+@utility_router.post("/_internal/a2a/tasks/get")
+async def handle_internal_a2a_tasks_get(request: Request):
+    """Retrieve an A2A task for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id:
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        task = service.get_task(db, task_id, agent_id=agent_id)
+        if task is None:
+            return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=task)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/list/")
+@utility_router.post("/_internal/a2a/tasks/list")
+async def handle_internal_a2a_tasks_list(request: Request):
+    """List A2A tasks for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        agent_id = body.get("agent_id")
+        state = body.get("state")
+        limit = min(int(body.get("limit", 100)), 1000)
+        offset = max(int(body.get("offset", 0)), 0)
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        tasks = service.list_tasks(db, agent_id=agent_id, state=state, limit=limit, offset=offset)
+        return ORJSONResponse(status_code=200, content={"tasks": tasks})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/tasks/cancel/")
+@utility_router.post("/_internal/a2a/tasks/cancel")
+async def handle_internal_a2a_tasks_cancel(request: Request):
+    """Cancel an A2A task for Rust module execution."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id:
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        task = service.cancel_task(db, task_id, agent_id=agent_id)
+        if task is None:
+            return ORJSONResponse(status_code=404, content={"error": f"task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=task)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/create/")
+@utility_router.post("/_internal/a2a/push/create")
+async def handle_internal_a2a_push_create(request: Request):
+    """Create a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        if not body.get("a2a_agent_id") or not body.get("task_id") or not body.get("webhook_url"):
+            return ORJSONResponse(status_code=400, content={"error": "a2a_agent_id, task_id, and webhook_url are required"})
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        cfg = service.create_push_config(db, body)
+        return ORJSONResponse(status_code=200, content=cfg)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/get/")
+@utility_router.post("/_internal/a2a/push/get")
+async def handle_internal_a2a_push_get(request: Request):
+    """Retrieve a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        agent_id = body.get("agent_id")
+        if not task_id:
+            return ORJSONResponse(status_code=400, content={"error": "task_id is required"})
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        cfg = service.get_push_config(db, task_id, agent_id=agent_id)
+        if cfg is None:
+            return ORJSONResponse(status_code=404, content={"error": f"push config for task '{task_id}' not found"})
+        return ORJSONResponse(status_code=200, content=cfg)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/list/")
+@utility_router.post("/_internal/a2a/push/list")
+async def handle_internal_a2a_push_list(request: Request):
+    """List push notification configs for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        agent_id = body.get("agent_id")
+        task_id = body.get("task_id")
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        configs = service.list_push_configs(db, agent_id=agent_id, task_id=task_id)
+        return ORJSONResponse(status_code=200, content={"configs": configs})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/push/delete/")
+@utility_router.post("/_internal/a2a/push/delete")
+async def handle_internal_a2a_push_delete(request: Request):
+    """Delete a push notification config for Rust A2A runtime."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        config_id = body.get("config_id")
+        if not config_id:
+            return ORJSONResponse(status_code=400, content={"error": "config_id is required"})
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        deleted = service.delete_push_config(db, config_id)
+        if not deleted:
+            return ORJSONResponse(status_code=404, content={"error": f"push config '{config_id}' not found"})
+        return ORJSONResponse(status_code=200, content={"deleted": True})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/events/flush/")
+@utility_router.post("/_internal/a2a/events/flush")
+async def handle_internal_a2a_events_flush(request: Request):
+    """Batch-insert streaming events to PG for durability."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        events = body.get("events", [])
+        if not events:
+            return ORJSONResponse(status_code=200, content={"count": 0})
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        count = service.flush_events(db, events)
+        return ORJSONResponse(status_code=200, content={"count": count})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+@utility_router.post("/_internal/a2a/events/replay/")
+@utility_router.post("/_internal/a2a/events/replay")
+async def handle_internal_a2a_events_replay(request: Request):
+    """Replay events from PG for stream reconnection."""
+    if not _is_trusted_internal_mcp_runtime_request(request):
+        return ORJSONResponse(status_code=403, content={"error": "untrusted request"})
+
+    db = SessionLocal()
+    try:
+        body = await request.json()
+        task_id = body.get("task_id")
+        after_sequence = int(body.get("after_sequence", 0))
+        limit = min(int(body.get("limit", 1000)), 10000)
+        if not task_id:
+            return ORJSONResponse(status_code=400, content={"error": "task_id required"})
+
+        # First-Party
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
+
+        service = A2AAgentService()
+        events = service.replay_events(db, task_id, after_sequence, limit=limit)
+        return ORJSONResponse(status_code=200, content={"events": events})
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
 async def _maybe_forward_affinitized_rpc_request(
     request: Request,
     *,
