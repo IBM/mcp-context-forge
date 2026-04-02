@@ -214,7 +214,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 20
     conditions: []
     config:
@@ -437,13 +437,13 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_post_invoke"]
     tags: ["guard", "length", "outputs", "truncate", "block", "mcp", "structured", "word-boundary", "tokens"]
-    mode: "disabled"  # use "enforce" with strategy: block for strict behavior
+    mode: "enforce"  # use "enforce" with strategy: block for strict behavior
     priority: 160  # run after other transformers
     conditions: []
     config:
       # Output limits
       min_chars: 0  # minimum character limit (0 disables)
-      max_chars: 0  # minimum character limit
+      max_chars: 10  # minimum character limit
       min_tokens: 0     # minimum allowed tokens (0 disables)
       max_tokens: 0  # maximum allowed tokens (null disables)
       chars_per_token: 4  # characters per token ratio for estimation (1-10)

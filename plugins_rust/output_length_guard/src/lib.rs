@@ -27,6 +27,25 @@ fn is_boundary_char(c: char) -> bool {
     BOUNDARY_CHARS.contains(&c)
 }
 
+// ─── Metadata and Content Keys ──────────────────────────────────────────────
+
+/// Metadata keys that should NEVER be processed/truncated
+/// These keys are preserved unchanged to maintain data integrity
+const METADATA_KEYS: &[&str] = &[
+    "type",
+    "mimeType",
+    "id",
+    "url",
+    "uri",
+    "name",
+    "annotations",
+    "role",
+    "model",
+    "title",
+    "description",
+    "metadata",
+];
+
 // ─── Configuration ───────────────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
@@ -56,6 +75,16 @@ enum LimitMode {
 enum Strategy {
     Truncate,
     Block,
+}
+
+/// Context for processing - determines which limits to enforce
+/// This ensures Rust behavior matches Python's token-mode semantics
+#[derive(Clone, Debug, PartialEq, Copy)]
+enum ProcessingContext {
+    /// Plain text/string list - ignore token limits (match Python)
+    PlainText,
+    /// MCP content item - enforce token limits
+    McpContent,
 }
 
 impl Default for GuardConfig {
@@ -486,14 +515,32 @@ enum ProcessResult<'py> {
     Violation(ViolationInfo),
 }
 
+/// Determine the processing context for a container.
+/// This ensures Rust behavior matches Python's token-mode semantics.
+fn determine_context(container: &Bound<'_, PyAny>) -> ProcessingContext {
+    // Check if data is MCP content structure
+    if let Ok(dict) = container.cast::<PyDict>() {
+        // Has 'content' key = MCP structure
+        if dict.contains("content").unwrap_or(false) {
+            return ProcessingContext::McpContent;
+        }
+    }
+    ProcessingContext::PlainText
+}
+
 /// Recursively process a Python container (str, list, dict, nested).
 /// Returns ProcessResult indicating what happened.
+///
+/// The `context` parameter determines whether token limits are enforced:
+/// - PlainText: Ignores token limits (matches Python behavior for plain strings/lists)
+/// - McpContent: Enforces token limits (matches Python behavior for MCP content)
 fn process_container<'py>(
     py: Python<'py>,
     container: &Bound<'py, PyAny>,
     cfg: &GuardConfig,
     path: &str,
     depth: usize,
+    context: ProcessingContext,
 ) -> PyResult<ProcessResult<'py>> {
     // Security: depth limit
     if depth > cfg.max_recursion_depth {
@@ -519,10 +566,16 @@ fn process_container<'py>(
                 above || below
             }
             LimitMode::Token => {
-                let est_tokens = py_len / cfg.chars_per_token.max(1);
-                let above = cfg.max_tokens.is_some_and(|m| est_tokens > m);
-                let below = cfg.min_tokens > 0 && est_tokens < cfg.min_tokens;
-                above || below
+                // Only check token limits for MCP content, not plain text (match Python)
+                match context {
+                    ProcessingContext::PlainText => false,  // Ignore token limits for plain text
+                    ProcessingContext::McpContent => {
+                        let est_tokens = py_len / cfg.chars_per_token.max(1);
+                        let above = cfg.max_tokens.is_some_and(|m| est_tokens > m);
+                        let below = cfg.min_tokens > 0 && est_tokens < cfg.min_tokens;
+                        above || below
+                    }
+                }
             }
         };
 
@@ -558,9 +611,15 @@ fn process_container<'py>(
                 (below, above)
             }
             LimitMode::Token => {
-                let below = cfg.min_tokens > 0 && token_count < cfg.min_tokens;
-                let above = cfg.max_tokens.is_some_and(|m| token_count > m);
-                (below, above)
+                // Only check token limits for MCP content, not plain text (match Python)
+                match context {
+                    ProcessingContext::PlainText => (false, false),  // Ignore token limits
+                    ProcessingContext::McpContent => {
+                        let below = cfg.min_tokens > 0 && token_count < cfg.min_tokens;
+                        let above = cfg.max_tokens.is_some_and(|m| token_count > m);
+                        (below, above)
+                    }
+                }
             }
         };
 
@@ -799,7 +858,7 @@ fn process_container<'py>(
                 format!("{path}[{idx}]")
             };
 
-            match process_container(py, &item, cfg, &item_path, depth + 1)? {
+            match process_container(py, &item, cfg, &item_path, depth + 1, context)? {
                 ProcessResult::Violation(v) => return Ok(ProcessResult::Violation(v)),
                 ProcessResult::Modified(new_val) => {
                     any_modified = true;
@@ -828,13 +887,28 @@ fn process_container<'py>(
 
         for (key, value) in dict.iter() {
             let key_str: String = key.extract::<String>().unwrap_or_else(|_| format!("{key}"));
+            
+            // Check if this is a metadata key - preserve unchanged (match Python)
+            if METADATA_KEYS.contains(&key_str.as_str()) {
+                new_dict.set_item(&key, value)?;
+                continue;
+            }
+            
             let value_path = if path.is_empty() {
                 key_str.clone()
             } else {
                 format!("{path}.{key_str}")
             };
+            
+            // Determine context for nested processing
+            // If key is "content", switch to McpContent context
+            let nested_context = if key_str == "content" {
+                ProcessingContext::McpContent
+            } else {
+                context  // Inherit parent context
+            };
 
-            match process_container(py, &value, cfg, &value_path, depth + 1)? {
+            match process_container(py, &value, cfg, &value_path, depth + 1, nested_context)? {
                 ProcessResult::Violation(v) => return Ok(ProcessResult::Violation(v)),
                 ProcessResult::Modified(new_val) => {
                     any_modified = true;
@@ -889,7 +963,10 @@ impl OutputLengthGuardEngine {
         py: Python<'py>,
         container: &Bound<'py, PyAny>,
     ) -> PyResult<(PyObject, bool, PyObject)> {
-        match process_container(py, container, &self.cfg, "", 0)? {
+        // Determine initial context based on container structure
+        let context = determine_context(container);
+        
+        match process_container(py, container, &self.cfg, "", 0, context)? {
             ProcessResult::Unchanged => Ok((py.None(), false, py.None())),
             ProcessResult::Modified(new_val) => Ok((new_val.unbind(), true, py.None())),
             ProcessResult::Violation(v) => {
