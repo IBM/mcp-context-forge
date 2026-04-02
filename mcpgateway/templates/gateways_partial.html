@@ -22,26 +22,31 @@
       <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}" data-owner-email="{{ gateway.ownerEmail }}" data-team-id="{{ gateway.teamId or '' }}" data-visibility="{{ gateway.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="relative" 
-               x-data="{ 
-                 menuOpen: false, 
-                 menuTop: 0, 
+               x-data="{
+                 menuOpen: false,
+                 menuTop: 0,
                  menuLeft: 0,
-                 updatePosition() {
-                   if (this.$refs.trigger) {
-                     const rect = this.$refs.trigger.getBoundingClientRect();
-                     this.menuTop = rect.bottom + 4;
-                     this.menuLeft = rect.left;
-                   }
+                 openMenu() {
+                   const rect = $refs.trigger.getBoundingClientRect();
+                   this.menuTop = rect.bottom + 4;
+                   this.menuLeft = rect.left;
+                   this.menuOpen = true;
+                   $nextTick(() => $refs.menu.querySelector('[role=menuitem]')?.focus());
+                 },
+                 navigate(dir) {
+                   const items = [...$refs.menu.querySelectorAll('[role=menuitem]')];
+                   const idx = items.indexOf(document.activeElement);
+                   items[(idx + dir + items.length) % items.length]?.focus();
                  }
-               }" 
+               }"
                @click.away="menuOpen = false"
-               @keydown.escape.window="menuOpen = false"
-               x-effect="if (menuOpen) { const interval = setInterval(() => updatePosition(), 16); return () => clearInterval(interval); }">
+               @keydown.escape="menuOpen = false; $refs.trigger.focus()"
+               x-effect="const main = document.querySelector('main[data-scroll-container]'); if (main) main.style.overflow = menuOpen ? 'hidden' : ''; const wrapper = document.getElementById('gateways-table-wrapper'); if (wrapper) wrapper.style.overflow = menuOpen ? 'hidden' : ''">
             <!-- Three-dot trigger -->
             <button
               type="button"
               x-ref="trigger"
-              @click="updatePosition(); menuOpen = !menuOpen"
+              @click="menuOpen ? (menuOpen = false) : openMenu()"
               class="p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
               :aria-expanded="menuOpen"
               x-tooltip="'Actions'"
@@ -51,8 +56,9 @@
               </svg>
             </button>
 
-            <!-- Dropdown menu -->
+            <!-- Dropdown menu (fixed-positioned to escape overflow/scroll containers) -->
             <div
+              x-ref="menu"
               x-show="menuOpen"
               x-transition:enter="transition ease-out duration-100"
               x-transition:enter-start="opacity-0 scale-95"
@@ -60,15 +66,17 @@
               x-transition:leave="transition ease-in duration-75"
               x-transition:leave-start="opacity-100 scale-100"
               x-transition:leave-end="opacity-0 scale-95"
-              :style="`position:fixed;top:${menuTop}px;left:${menuLeft}px`"
-              class="w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] py-1"
+              :class="`fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1 top-[${menuTop}px] left-[${menuLeft}px]`"
               style="display:none"
               role="menu"
+              @keydown.arrow-down.prevent="navigate(1)"
+              @keydown.arrow-up.prevent="navigate(-1)"
             >
               <!-- Test -->
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.testGateway({{ gateway.url|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Test</button>
@@ -79,6 +87,7 @@
                 href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
                 @click="menuOpen = false"
                 role="menuitem"
+                tabindex="0"
                 class="flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >🔐 Authorize</a>
               {% endif %}
@@ -88,6 +97,7 @@
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 id="refresh-tools-{{ gateway.id }}"
                 @click="menuOpen = false; Admin.refreshGatewayTools({{ gateway.id|tojson_attr }}, {{ gateway.name|tojson_attr }}, $event.currentTarget)"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -101,6 +111,7 @@
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.viewGateway({{ gateway.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >View</button>
@@ -110,6 +121,7 @@
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.editGateway({{ gateway.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
@@ -122,6 +134,7 @@
                 <button
                   type="submit"
                   role="menuitem"
+                  tabindex="0"
                   class="w-full flex items-center px-4 py-2 text-sm {% if gateway.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
                 >{% if gateway.enabled %}Deactivate{% else %}Activate{% endif %}</button>
               </form>
@@ -131,6 +144,7 @@
                 <button
                   type="submit"
                   role="menuitem"
+                  tabindex="0"
                   class="w-full flex items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
                 >Delete</button>
               </form>

@@ -22,50 +22,58 @@
       {% set can_modify = is_admin or prompt.owner_email == current_user_email or prompt.ownerEmail == current_user_email or (prompt.visibility == 'team' and prompt.teamId and user_team_roles.get(prompt.teamId|string) == 'owner') or (prompt.visibility == 'team' and prompt.team_id and user_team_roles.get(prompt.team_id|string) == 'owner') %}
       <tr data-enabled="{{ prompt.enabled|lower }}" data-owner-email="{{ prompt.ownerEmail or prompt.owner_email }}" data-team-id="{{ prompt.teamId or prompt.team_id or '' }}" data-visibility="{{ prompt.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-      <div class="relative" 
-           x-data="{ 
-             menuOpen: false, 
-             menuTop: 0, 
-             menuLeft: 0,
-             updatePosition() {
-               if (this.$refs.trigger) {
-                 const rect = this.$refs.trigger.getBoundingClientRect();
-                 this.menuTop = rect.bottom + 4;
-                 this.menuLeft = rect.left;
-               }
-             }
-           }" 
-           @click.away="menuOpen = false"
-           @keydown.escape.window="menuOpen = false"
-           x-effect="if (menuOpen) { const interval = setInterval(() => updatePosition(), 16); return () => clearInterval(interval); }">
-            <button
-              type="button"
-              x-ref="trigger"
-              @click="updatePosition(); menuOpen = !menuOpen"
-              class="p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
-              :aria-expanded="menuOpen"
-              x-tooltip="'Actions'"
-            >
-              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z"/>
-              </svg>
-            </button>
-            <div
-              x-show="menuOpen"
-              x-transition:enter="transition ease-out duration-100"
-              x-transition:enter-start="opacity-0 scale-95"
-              x-transition:enter-end="opacity-100 scale-100"
-              x-transition:leave="transition ease-in duration-75"
-              x-transition:leave-start="opacity-100 scale-100"
-              x-transition:leave-end="opacity-0 scale-95"
-              :style="`position:fixed;top:${menuTop}px;left:${menuLeft}px`"
-              class="w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] py-1"
-              style="display:none"
-              role="menu"
-            >
-              <button
+                <div class="relative" 
+                     x-data="{
+                       menuOpen: false,
+                       menuTop: 0,
+                       menuLeft: 0,
+                       openMenu() {
+                         const rect = $refs.trigger.getBoundingClientRect();
+                         this.menuTop = rect.bottom + 4;
+                         this.menuLeft = rect.left;
+                         this.menuOpen = true;
+                         $nextTick(() => $refs.menu.querySelector('[role=menuitem]')?.focus());
+                       },
+                       navigate(dir) {
+                         const items = [...$refs.menu.querySelectorAll('[role=menuitem]')];
+                         const idx = items.indexOf(document.activeElement);
+                         items[(idx + dir + items.length) % items.length]?.focus();
+                       }
+                     }"
+                     @click.away="menuOpen = false"
+                     @keydown.escape="menuOpen = false; $refs.trigger.focus()"
+                     x-effect="const main = document.querySelector('main[data-scroll-container]'); if (main) main.style.overflow = menuOpen ? 'hidden' : ''; const wrapper = document.getElementById('prompts-table-wrapper'); if (wrapper) wrapper.style.overflow = menuOpen ? 'hidden' : ''">
+                  <button
+                    type="button"
+                    x-ref="trigger"
+                    @click="menuOpen ? (menuOpen = false) : openMenu()"
+                    class="p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
+                    :aria-expanded="menuOpen"
+                    x-tooltip="'Actions'"
+                  >
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z"/>
+                    </svg>
+                  </button>
+                  <!-- Dropdown menu (fixed-positioned to escape overflow/scroll containers) -->
+                  <div
+                    x-ref="menu"
+                    x-show="menuOpen"
+                    x-transition:enter="transition ease-out duration-100"
+                    x-transition:enter-start="opacity-0 scale-95"
+                    x-transition:enter-end="opacity-100 scale-100"
+                    x-transition:leave="transition ease-in duration-75"
+                    x-transition:leave-start="opacity-100 scale-100"
+                    x-transition:leave-end="opacity-0 scale-95"
+                    :class="`fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1 top-[${menuTop}px] left-[${menuLeft}px]`"
+                    style="display:none"
+                    role="menu"
+                    @keydown.arrow-down.prevent="navigate(1)"
+                    @keydown.arrow-up.prevent="navigate(-1)"
+                  >              <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.testPrompt({{ prompt.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
                 x-tooltip="'💡Test this Prompt with sample arguments'"
@@ -73,6 +81,7 @@
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.viewPrompt({{ prompt.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >View</button>
@@ -80,6 +89,7 @@
               <button
                 type="button"
                 role="menuitem"
+                tabindex="0"
                 @click="menuOpen = false; Admin.editPrompt({{ prompt.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
@@ -89,6 +99,7 @@
                 <button
                   type="submit"
                   role="menuitem"
+                  tabindex="0"
                   class="w-full flex items-center px-4 py-2 text-sm {% if prompt.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
                 >{% if prompt.enabled %}Deactivate{% else %}Activate{% endif %}</button>
               </form>
@@ -96,6 +107,7 @@
                 <button
                   type="submit"
                   role="menuitem"
+                  tabindex="0"
                   class="w-full flex items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
                 >Delete</button>
               </form>

@@ -92,6 +92,9 @@ def _open_test_modal(agents_page: AgentsPage, index: int = 0) -> None:
     The test modal does not require an API fetch before opening.
     """
     row = agents_page.get_agent_row(index)
+    row.scroll_into_view_if_needed()
+    row.locator("button[aria-expanded]").click()
+    row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
     test_btn = row.locator('button:has-text("Test")')
     test_btn.click()
     agents_page.page.wait_for_selector("#a2a-test-modal:not(.hidden)", state="visible", timeout=10000)
@@ -961,6 +964,9 @@ class TestA2ARowActions:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
+        first_row.scroll_into_view_if_needed()
+        first_row.locator("button[aria-expanded]").click()
+        first_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         expect(first_row.locator('button:has-text("Test")')).to_be_visible()
 
     def test_row_has_view_button(self, agents_page: AgentsPage):
@@ -970,6 +976,9 @@ class TestA2ARowActions:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
+        first_row.scroll_into_view_if_needed()
+        first_row.locator("button[aria-expanded]").click()
+        first_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         expect(first_row.locator('button:has-text("View")')).to_be_visible()
 
     def test_row_has_edit_button(self, agents_page: AgentsPage):
@@ -979,6 +988,9 @@ class TestA2ARowActions:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
+        first_row.scroll_into_view_if_needed()
+        first_row.locator("button[aria-expanded]").click()
+        first_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         expect(first_row.locator('button:has-text("Edit")')).to_be_visible()
 
     def test_row_has_deactivate_or_activate_button(self, agents_page: AgentsPage):
@@ -988,6 +1000,9 @@ class TestA2ARowActions:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
+        first_row.scroll_into_view_if_needed()
+        first_row.locator("button[aria-expanded]").click()
+        first_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         # One of these should be visible
         deactivate = first_row.locator('button:has-text("Deactivate")')
         activate = first_row.locator('button:has-text("Activate")')
@@ -1000,6 +1015,9 @@ class TestA2ARowActions:
         _skip_if_no_agents(agents_page)
 
         first_row = agents_page.get_agent_row(0)
+        first_row.scroll_into_view_if_needed()
+        first_row.locator("button[aria-expanded]").click()
+        first_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         expect(first_row.locator('button:has-text("Delete")')).to_be_visible()
 
     def test_row_displays_serial_number(self, agents_page: AgentsPage):

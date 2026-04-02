@@ -479,6 +479,9 @@ class TestResourcesTestModal:
         _skip_if_no_resources(resources_page)
 
         resource_row = resources_page.get_resource_row(0)
+        resource_row.scroll_into_view_if_needed()
+        resource_row.locator("button[aria-expanded]").click()
+        resource_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         resource_row.locator('button:has-text("Test")').click()
         resources_page.page.wait_for_selector("#resource-test-modal:not(.hidden)", timeout=10000)
 
@@ -496,6 +499,9 @@ class TestResourcesTestModal:
         _skip_if_no_resources(resources_page)
 
         resource_row = resources_page.get_resource_row(0)
+        resource_row.scroll_into_view_if_needed()
+        resource_row.locator("button[aria-expanded]").click()
+        resource_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         resource_row.locator('button:has-text("Test")').click()
         resources_page.page.wait_for_selector("#resource-test-modal:not(.hidden)", timeout=10000)
 
@@ -517,6 +523,9 @@ class TestResourcesTestModal:
         _skip_if_no_resources(resources_page)
 
         resource_row = resources_page.get_resource_row(0)
+        resource_row.scroll_into_view_if_needed()
+        resource_row.locator("button[aria-expanded]").click()
+        resource_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         resource_row.locator('button:has-text("Test")').click()
         resources_page.page.wait_for_selector("#resource-test-modal:not(.hidden)", timeout=10000)
 
@@ -534,6 +543,9 @@ class TestResourcesTestModal:
         _skip_if_no_resources(resources_page)
 
         resource_row = resources_page.get_resource_row(0)
+        resource_row.scroll_into_view_if_needed()
+        resource_row.locator("button[aria-expanded]").click()
+        resource_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
         resource_row.locator('button:has-text("Test")').click()
         resources_page.page.wait_for_selector("#resource-test-modal:not(.hidden)", timeout=10000)
 
