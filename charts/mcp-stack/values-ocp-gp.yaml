@@ -1,6 +1,6 @@
 ########################################################################
 # OCP Deployment Values — gp-context-forge namespace
-# Cluster: contextforge-p02-rocp01.cp.fyre.ibm.com
+# Cluster: <your-ocp-cluster>
 #
 # Override values for deploying ContextForge on OpenShift (Fyre).
 # Only settings that differ from the chart defaults are listed here.
@@ -93,7 +93,7 @@ mcpContextForge:
           conditions: []
           config:
             backend: "redis"
-            redis_url: "redis://:change-me-redis@gp-context-forge-mcp-stack-redis:6379/0"
+            redis_url: "redis://:changeme@gp-context-forge-mcp-stack-redis:6379/0"  # pragma: allowlist secret
             redis_key_prefix: "rl"
             redis_fallback: true
             by_user: "30/m"
@@ -237,10 +237,10 @@ mcpContextForge:
     GUNICORN_WORKERS: "4"                  # match CPU cores for throughput
 
   secret:
-    JWT_SECRET_KEY: "gp-context-forge-jwt-secret-key-longer-than-32-bytes"
-    AUTH_ENCRYPTION_SECRET: "gp-context-forge-encryption-secret-key-32b"
-    BASIC_AUTH_PASSWORD: "GpAdmin2026Secure!"
-    PLATFORM_ADMIN_PASSWORD: "GpAdmin2026Secure!"
+    JWT_SECRET_KEY: "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
+    AUTH_ENCRYPTION_SECRET: "my-test-salt"  # pragma: allowlist secret
+    BASIC_AUTH_PASSWORD: "changeme"  # pragma: allowlist secret
+    PLATFORM_ADMIN_PASSWORD: "changeme"  # pragma: allowlist secret
     REQUIRE_STRONG_SECRETS: "true"
 
 # --- Postgres ---
@@ -348,7 +348,7 @@ testing:
     jwt:
       username: admin@example.com
       expirationMinutes: 10080
-      secret: "gp-context-forge-jwt-secret-key-longer-than-32-bytes"
+      secret: "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
   fastTime:
     register:
       enabled: true
