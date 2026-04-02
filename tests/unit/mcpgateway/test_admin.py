@@ -3984,6 +3984,53 @@ class TestUIVisibilityConfig:
 
         assert config["hidden_sections"] == ["maintenance", "tools"]
 
+    def test_get_ui_visibility_config_default_is_admin_false(self, monkeypatch):
+        """Calling without is_admin should default to non-admin path (backward compat)."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["tools"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", ["logout"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == ["tools"]
+        assert config["hidden_header_items"] == ["logout"]
+
+    def test_get_ui_visibility_config_admin_cookie_override(self, monkeypatch):
+        """Admin cookie overrides should be additive to admin hide list."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "tools,resources"}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        assert set(config["hidden_sections"]) == {"maintenance", "tools", "resources"}
+
+    def test_get_ui_visibility_config_admin_query_overrides_cookie(self, monkeypatch):
+        """Admin query param should take precedence over cookie."""
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "users"}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources,teams"}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections_admin", ["maintenance"], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items_admin", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request, is_admin=True)
+
+        # Query param is used instead of cookie, additive to admin config
+        assert set(config["hidden_sections"]) == {"maintenance", "users"}
+        assert config["cookie_action"] == "set"
+
 
 class TestAdminUIRoute:
     """Test the main admin UI route with enhanced coverage."""
