@@ -253,17 +253,16 @@ Before running the demo agent, ensure the following configuration:
 make dev
 
 # Terminal 2: Start the demo agent (auto-registers with ContextForge)
-# Option 1: Let the script generate the token internally
-PLATFORM_ADMIN_EMAIL=admin@example.com uv run python scripts/demo_a2a_agent.py
+# Override the token subject if your admin email differs from the default:
+#   export PLATFORM_ADMIN_EMAIL=you@example.com
+uv run python scripts/demo_a2a_agent.py
 
-# Option 2: Generate token manually for testing API calls (script still generates its own token)
+# Optional: Generate a token for the curl test commands below
 export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
   --username "admin@example.com" --exp 60)
-uv run python scripts/demo_a2a_agent.py
-# The $TOKEN variable is now available for the curl test commands below
 ```
 
-Note: The token generation uses your configured `JWT_SECRET_KEY` from `.env` (defaults to `my-test-key` for local development).
+Note: The script reads `JWT_SECRET_KEY` and `PLATFORM_ADMIN_EMAIL` from environment variables (defaults: `my-test-key…` and `admin@example.com`).
 
 The demo agent supports these query formats:
 
@@ -345,7 +344,7 @@ curl -X POST "http://localhost:8000/rpc" \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "a2a-demo-calculator-agent",
+      "name": "a2a_demo-calculator-agent",
       "arguments": {"query": "calc: 99+1"}
     },
     "id": 1

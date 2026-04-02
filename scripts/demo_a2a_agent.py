@@ -23,8 +23,6 @@ import signal
 import socket
 import sys
 from contextlib import closing
-from typing import Optional
-
 import httpx
 import jwt
 import uvicorn
@@ -123,32 +121,6 @@ app = FastAPI(title="Demo A2A Agent", description="Calculator and Weather Agent 
 agent = SimpleAgent("Demo-A2A-Agent")
 
 
-class Parameters(BaseModel):
-    """Parameters object containing the actual query."""
-
-    query: Optional[str] = None
-    message: Optional[str] = None
-
-
-class A2ARequest(BaseModel):
-    """Request model for A2A protocol format.
-
-    ContextForge sends custom agents requests in this format:
-    {
-        "interaction_type": "admin_test",
-        "parameters": {"query": "weather: Dallas", "message": "..."},
-        "protocol_version": "1.0"
-    }
-    """
-
-    interaction_type: Optional[str] = None
-    parameters: Optional[Parameters] = None
-    protocol_version: Optional[str] = None
-    # Also support direct query/message for simple testing
-    query: Optional[str] = None
-    message: Optional[str] = None
-
-
 class Response(BaseModel):
     """Response model for agent results."""
 
@@ -166,7 +138,10 @@ async def run_agent(request: Request) -> Response:
     """
     # Parse request body
     body = await request.body()
-    body_dict = json.loads(body)
+    try:
+        body_dict = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        return Response(response="Error: invalid JSON in request body")
 
     query_text = ""
 
@@ -225,7 +200,7 @@ JWT_SECRET = os.environ.get("JWT_SECRET_KEY", "my-test-key-but-now-longer-than-3
 AGENT_ID = None
 
 
-def create_jwt_token(username: str = "admin@example.com") -> str:
+def create_jwt_token(username: str = os.environ.get("PLATFORM_ADMIN_EMAIL", "admin@example.com")) -> str:
     """Create a JWT token for ContextForge authentication."""
     import datetime
 
