@@ -57,6 +57,9 @@
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
           <div>{{ prompt_label }}</div>
           <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ prompt_tech_name }}</div>
+          {% if prompt.title %}
+          <div class="text-xs text-gray-500 dark:text-gray-400 italic">{{ prompt.title }}</div>
+          {% endif %}
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-48" aria-labelledby="prompt-id-header">
           <div class="font-mono text-xs">{{ prompt.id }}</div>

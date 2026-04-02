@@ -1281,6 +1281,7 @@ class ToolService(BaseService):
                 custom_name=tool.name,
                 custom_name_slug=slugify(tool.name),
                 display_name=tool.displayName or tool.name,
+                title=tool.title,
                 url=str(tool.url),
                 description=tool.description,
                 original_description=tool.description,
@@ -1720,6 +1721,7 @@ class ToolService(BaseService):
                 if conflict_strategy == "update":
                     # Update existing tool
                     existing_tool.display_name = tool.displayName or tool.name
+                    existing_tool.title = tool.title
                     existing_tool.url = str(tool.url)
                     existing_tool.description = tool.description
                     if getattr(existing_tool, "original_description", None) is None:
@@ -1841,6 +1843,7 @@ class ToolService(BaseService):
             custom_name=name,
             custom_name_slug=slugify(name),
             display_name=tool.displayName or name,
+            title=tool.title,
             url=str(tool.url),
             description=tool.description,
             original_description=tool.description,
@@ -5122,6 +5125,8 @@ class ToolService(BaseService):
                 tool.url = str(tool_update.url)
             if tool_update.description is not None:
                 tool.description = tool_update.description
+            if tool_update.title is not None:
+                tool.title = tool_update.title
             if tool_update.integration_type is not None:
                 tool.integration_type = tool_update.integration_type
             if tool_update.request_type is not None:

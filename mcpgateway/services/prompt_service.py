@@ -743,6 +743,7 @@ class PromptService(BaseService):
                 original_name=prompt.name,
                 custom_name=custom_name,
                 display_name=display_name,
+                title=prompt.title,
                 description=prompt.description,
                 template=prompt.template,
                 argument_schema=argument_schema,
@@ -1076,6 +1077,7 @@ class PromptService(BaseService):
                                 continue
                             if conflict_strategy == "update":
                                 # Update existing prompt
+                                existing_prompt.title = getattr(prompt, "title", None)
                                 existing_prompt.description = prompt.description
                                 existing_prompt.template = prompt.template
                                 # Clear template cache to reduce memory growth
@@ -1106,6 +1108,7 @@ class PromptService(BaseService):
                                     original_name=prompt.name,
                                     custom_name=new_custom_name,
                                     display_name=new_display_name,
+                                    title=getattr(prompt, "title", None),
                                     description=prompt.description,
                                     template=prompt.template,
                                     argument_schema=argument_schema,
@@ -1139,6 +1142,7 @@ class PromptService(BaseService):
                                 original_name=prompt.name,
                                 custom_name=custom_name,
                                 display_name=display_name,
+                                title=getattr(prompt, "title", None),
                                 description=prompt.description,
                                 template=prompt.template,
                                 argument_schema=argument_schema,
@@ -2192,6 +2196,8 @@ class PromptService(BaseService):
                 prompt.display_name = prompt_update.display_name
             if prompt_update.description is not None:
                 prompt.description = prompt_update.description
+            if prompt_update.title is not None:
+                prompt.title = prompt_update.title
             if prompt_update.template is not None:
                 # Validate template size before updating
                 content_security = get_content_security_service()

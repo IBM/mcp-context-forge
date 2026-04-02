@@ -3368,10 +3368,11 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
     resource = ResourceCreate(
         uri="https://example.com/resource.txt",
         name="Resource",
+        title="Resource Title",
         description="Test resource",
         content="hello",
     )
-    prompt = PromptCreate(name="Prompt", description="Test prompt", template="Hello")
+    prompt = PromptCreate(name="Prompt", title="Prompt Title", description="Test prompt", template="Hello")
 
     existing = MagicMock()
     existing.gateway_id = None
@@ -3424,7 +3425,9 @@ async def test_register_gateway_reassigns_orphaned_resource(gateway_service, mon
 
     added_gateway = db.add.call_args[0][0]
     assert existing in added_gateway.resources
+    assert existing.title == "Resource Title"
     assert existing_prompt in added_gateway.prompts
+    assert existing_prompt.title == "Prompt Title"
 
 
 def test_validate_tools_mixed_errors(monkeypatch):
@@ -3857,8 +3860,8 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     from mcpgateway.schemas import PromptCreate, ResourceCreate
 
     gateway = _make_gateway(auth_value={"Authorization": "Bearer token"})
-    resource = ResourceCreate(uri="https://example.com/resource.txt", name="Resource", description="Test resource", content="hello")
-    prompt = PromptCreate(name="Prompt", description="Test prompt", template="Hello")
+    resource = ResourceCreate(uri="https://example.com/resource.txt", name="Resource", title="Resource Title", description="Test resource", content="hello")
+    prompt = PromptCreate(name="Prompt", title="Prompt Title", description="Test prompt", template="Hello")
 
     result_ids = MagicMock()
     result_ids.all.return_value = []
@@ -3874,6 +3877,7 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     db.refresh = Mock()
 
     monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda _val: "encoded")
     monkeypatch.setattr(
         "mcpgateway.services.gateway_service.GatewayRead.model_validate",
         lambda x: MagicMock(masked=lambda: x),
@@ -3883,17 +3887,14 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [resource], [prompt]))
     gateway_service._notify_gateway_added = AsyncMock()
 
-    await gateway_service.register_gateway(
-        db,
-        gateway,
-        team_id="team-1",
-        owner_email="owner@example.com",
-        created_by="creator@example.com",
-    )
+    await gateway_service.register_gateway(db, gateway)
 
     added_gateway = db.add.call_args[0][0]
     assert len(added_gateway.resources) == 1
+    assert added_gateway.resources[0].title == "Resource Title"
     assert len(added_gateway.prompts) == 1
+    assert added_gateway.prompts[0].title == "Prompt Title"
+
 
 
 @pytest.mark.asyncio
@@ -4434,6 +4435,7 @@ class TestUpdateOrCreateTools:
         existing.auth_type = None
         existing.auth_value = None
         existing.visibility = "public"
+        existing.title = "old title"
 
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = [existing]
@@ -4447,6 +4449,7 @@ class TestUpdateOrCreateTools:
             headers={},
             annotations=None,
             jsonpath_filter=None,
+            title="new title",
         )
         mock_gateway.url = "http://new-url.com"
         mock_gateway.auth_type = None
@@ -4456,6 +4459,7 @@ class TestUpdateOrCreateTools:
         assert result == []  # updated in-place, no new tools
         assert existing.url == "http://new-url.com"
         assert existing.description == "new desc"
+        assert existing.title == "new title"
 
     def test_none_tool_skipped(self, gateway_service, mock_gateway):
         db = MagicMock()
@@ -4562,6 +4566,32 @@ class TestUpdateOrCreateResources:
         assert existing.name == "new-name"
         assert existing.mime_type == "text/html"
 
+    def test_existing_resource_title_updated(self, gateway_service, mock_gateway):
+        """Title change on an existing resource triggers an update."""
+        existing = SimpleNamespace(
+            uri="file:///res",
+            name="res",
+            description="desc",
+            mime_type="text/plain",
+            uri_template=None,
+            visibility="public",
+            title="old title",
+        )
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        resource = SimpleNamespace(
+            uri="file:///res",
+            name="res",
+            description="desc",
+            mime_type="text/plain",
+            uri_template=None,
+            title="new title",
+        )
+        mock_gateway.visibility = "public"
+        result = gateway_service._update_or_create_resources(db, [resource], mock_gateway, "update")
+        assert result == []
+        assert existing.title == "new title"
+
     def test_none_resource_skipped(self, gateway_service, mock_gateway):
         db = MagicMock()
         db.execute.return_value.scalars.return_value.all.return_value = []
@@ -4613,6 +4643,24 @@ class TestUpdateOrCreatePrompts:
         assert result == []
         assert existing.description == "new desc"
         assert existing.template == "new template"
+
+    def test_existing_prompt_title_updated(self, gateway_service, mock_gateway):
+        """Title change on an existing prompt triggers an update."""
+        existing = SimpleNamespace(
+            original_name="my-prompt",
+            description="desc",
+            template="Hello",
+            visibility="public",
+            title="old title",
+            argument_schema={"type": "object", "properties": {}, "required": []},
+        )
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        prompt = SimpleNamespace(name="my-prompt", description="desc", template="Hello", title="new title")
+        mock_gateway.visibility = "public"
+        result = gateway_service._update_or_create_prompts(db, [prompt], mock_gateway, "update")
+        assert result == []
+        assert existing.title == "new title"
 
     def test_none_prompt_skipped(self, gateway_service):
         db = MagicMock()
@@ -7519,3 +7567,45 @@ class TestMtlsDecryptExceptionBranches:
 
         init_call = gateway_service._initialize_gateway.call_args
         assert init_call[1]["client_key"] == "raw-key"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_tool_title
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tool_title():
+    from mcpgateway.services.gateway_service import _resolve_tool_title
+    from mcp.types import Tool as MCPTool
+
+    _BASE = {"name": "test", "description": "desc", "inputSchema": {"type": "object", "properties": {}}}
+
+    # MCP spec: "Display name precedence order is: title, annotations.title, then name."
+
+    # Case 1: BaseMetadata title takes precedence over annotations title
+    tool_both = MCPTool.model_validate(_BASE)
+    tool_both.annotations = {"title": "Annotation Title"}
+    tool_both.title = "Base Title"
+    assert _resolve_tool_title(tool_both) == "Base Title"
+
+    # Case 2: BaseMetadata title takes precedence over ToolAnnotations model title
+    tool_model_ann = MCPTool.model_validate({**_BASE, "title": "Base Title", "annotations": {"title": "Model Ann Title", "readOnlyHint": True}})
+    assert _resolve_tool_title(tool_model_ann) == "Base Title"
+
+    # Case 3: Falls back to annotations.title when BaseMetadata title is absent
+    tool_ann_only = MCPTool.model_validate({**_BASE, "annotations": {"title": "Ann Title", "readOnlyHint": True}})
+    assert _resolve_tool_title(tool_ann_only) == "Ann Title"
+
+    # Case 4: Falls back to dict annotations.title when BaseMetadata title is absent
+    tool_dict_ann = MCPTool.model_validate(_BASE)
+    tool_dict_ann.annotations = {"title": "Dict Ann Title"}
+    assert _resolve_tool_title(tool_dict_ann) == "Dict Ann Title"
+
+    # Case 5: title attribute only (no annotations)
+    tool_with_title = MCPTool.model_validate(_BASE)
+    tool_with_title.title = "A Title"
+    assert _resolve_tool_title(tool_with_title) == "A Title"
+
+    # Case 6: No title anywhere
+    tool_no_title = MCPTool.model_validate(_BASE)
+    assert _resolve_tool_title(tool_no_title) is None

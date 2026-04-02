@@ -2998,3 +2998,67 @@ def test_email_api_token_is_expired_none():
         expires_at=None,
     )
     assert token.is_expired() is False
+
+
+def test_db_tool_title_property(test_db):
+    import mcpgateway.db as db
+
+    tool = db.Tool(
+        id="tool-1",
+        name="test-tool",
+        original_name="test-tool",
+        custom_name="Test Tool",
+        custom_name_slug="test-tool",
+        title="My Custom Title",
+        gateway_id="gw-1",
+        request_type="GET",
+        integration_type="REST",
+        visibility="public",
+        input_schema={"type": "object", "properties": {}},
+    )
+    test_db.add(tool)
+    test_db.flush()
+
+    assert tool.title == "My Custom Title"
+
+
+def test_db_resource_title_property(test_db):
+    import mcpgateway.db as db
+
+    resource = db.Resource(
+        id="resource-1",
+        uri="https://example.com",
+        name="test-resource",
+        title="Resource Title",
+        team_id="team-1",
+        owner_email="user@test.com",
+        visibility="public",
+        version=1,
+    )
+    test_db.add(resource)
+    test_db.flush()
+
+    assert resource.title == "Resource Title"
+
+
+def test_db_prompt_title_property(test_db):
+    import mcpgateway.db as db
+
+    prompt = db.Prompt(
+        id="prompt-1",
+        name="test-prompt",
+        original_name="test-prompt",
+        custom_name="test-prompt",
+        custom_name_slug="test-prompt",
+        title="Prompt Title",
+        template="Hello {{name}}",
+        team_id="team-1",
+        owner_email="user@test.com",
+        visibility="public",
+        version=1,
+        argument_schema={"type": "object", "properties": {"name": {"type": "string"}}},
+    )
+    test_db.add(prompt)
+    test_db.flush()
+
+    assert prompt.title == "Prompt Title"

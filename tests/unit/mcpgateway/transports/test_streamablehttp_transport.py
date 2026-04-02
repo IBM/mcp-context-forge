@@ -353,6 +353,24 @@ async def test_get_rust_event_store_client_reuses_uds_client(monkeypatch):
     assert constructed["kwargs"]["follow_redirects"] is False
 
 
+def test_safe_str_attr_returns_str():
+    """_safe_str_attr returns the attribute when it is a string."""
+    obj = SimpleNamespace(title="hello")
+    assert tr._safe_str_attr(obj, "title") == "hello"
+
+
+def test_safe_str_attr_returns_none_for_missing():
+    """_safe_str_attr returns None when the attribute is absent."""
+    obj = SimpleNamespace()
+    assert tr._safe_str_attr(obj, "title") is None
+
+
+def test_safe_str_attr_returns_none_for_non_str():
+    """_safe_str_attr returns None when the attribute is not a string (e.g. MagicMock)."""
+    obj = MagicMock()
+    assert tr._safe_str_attr(obj, "title") is None
+
+
 def test_get_streamable_http_auth_context_returns_empty_for_non_dict_context():
     """Non-dict auth contexts should not be forwarded to trusted internal hops."""
     token = tr.user_context_var.set("not-a-dict")
@@ -652,6 +670,7 @@ async def test_list_tools_with_server_id(monkeypatch):
     mock_db = MagicMock()
     mock_tool = MagicMock()
     mock_tool.name = "t"
+    mock_tool.title = "Tool Title"
     mock_tool.description = "desc"
     mock_tool.input_schema = {"type": "object"}
     mock_tool.output_schema = None
@@ -671,6 +690,7 @@ async def test_list_tools_with_server_id(monkeypatch):
 
     assert isinstance(result, list)
     assert result[0].name == "t"
+    assert getattr(result[0], "title", None) == "Tool Title"
     assert result[0].description == "desc"
 
     server_id_var.reset(server_token)
@@ -686,6 +706,7 @@ async def test_list_tools_no_server_id(monkeypatch):
     mock_db = MagicMock()
     mock_tool = MagicMock()
     mock_tool.name = "t"
+    mock_tool.title = "Global Tool Title"
     mock_tool.description = "desc"
     mock_tool.input_schema = {"type": "object"}
     mock_tool.output_schema = None
@@ -704,6 +725,7 @@ async def test_list_tools_no_server_id(monkeypatch):
     server_id_var.reset(token)
     assert isinstance(result, list)
     assert result[0].name == "t"
+    assert getattr(result[0], "title", None) == "Global Tool Title"
     assert result[0].description == "desc"
 
 
@@ -800,6 +822,7 @@ async def test_list_prompts_with_server_id(monkeypatch):
     mock_db = MagicMock()
     mock_prompt = MagicMock()
     mock_prompt.name = "prompt1"
+    mock_prompt.title = "Prompt Title"
     mock_prompt.description = "test prompt"
     mock_prompt.arguments = [SchemaPromptArgument(name="arg1", description="desc1", required=False)]
 
@@ -821,6 +844,7 @@ async def test_list_prompts_with_server_id(monkeypatch):
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0].name == "prompt1"
+    assert getattr(result[0], "title", None) == "Prompt Title"
     assert result[0].description == "test prompt"
     assert len(result[0].arguments) == 1
     assert isinstance(result[0].arguments[0], PromptArgument)
@@ -837,6 +861,7 @@ async def test_list_prompts_no_server_id(monkeypatch):
     mock_db = MagicMock()
     mock_prompt = MagicMock()
     mock_prompt.name = "global_prompt"
+    mock_prompt.title = "Global Prompt Title"
     mock_prompt.description = "global test prompt"
     mock_prompt.arguments = [SchemaPromptArgument(name="global_arg", description="desc", required=True)]
 
@@ -854,6 +879,7 @@ async def test_list_prompts_no_server_id(monkeypatch):
     assert isinstance(result, list)
     assert len(result) == 1
     assert result[0].name == "global_prompt"
+    assert getattr(result[0], "title", None) == "Global Prompt Title"
     assert result[0].description == "global test prompt"
     assert len(result[0].arguments) == 1
     assert isinstance(result[0].arguments[0], PromptArgument)
@@ -1045,6 +1071,7 @@ async def test_list_resources_with_server_id(monkeypatch):
     mock_resource = MagicMock()
     mock_resource.uri = "file:///test.txt"
     mock_resource.name = "test resource"
+    mock_resource.title = "Resource Title"
     mock_resource.description = "test description"
     mock_resource.mime_type = "text/plain"
 
@@ -1068,6 +1095,7 @@ async def test_list_resources_with_server_id(monkeypatch):
     assert len(result) == 1
     assert str(result[0].uri) == "file:///test.txt"
     assert result[0].name == "test resource"
+    assert getattr(result[0], "title", None) == "Resource Title"
     assert result[0].description == "test description"
 
 
@@ -1081,6 +1109,7 @@ async def test_list_resources_no_server_id(monkeypatch):
     mock_resource = MagicMock()
     mock_resource.uri = "http://example.com/resource"
     mock_resource.name = "global resource"
+    mock_resource.title = "Global Resource Title"
     mock_resource.description = "global description"
     mock_resource.mime_type = "application/json"
 
@@ -1098,6 +1127,7 @@ async def test_list_resources_no_server_id(monkeypatch):
     assert isinstance(result, list)
     assert len(result) == 1
     assert str(result[0].uri) == "http://example.com/resource"
+    assert getattr(result[0], "title", None) == "Global Resource Title"
     assert result[0].name == "global resource"
 
 
@@ -3537,6 +3567,7 @@ async def test_list_tools_admin_bypass(monkeypatch):
     mock_db = MagicMock()
     mock_tool = MagicMock()
     mock_tool.name = "admin_tool"
+    mock_tool.title = None
     mock_tool.description = "admin tool desc"
     mock_tool.input_schema = {"type": "object"}
     mock_tool.output_schema = None
@@ -3578,6 +3609,7 @@ async def test_list_tools_non_admin_no_teams(monkeypatch):
     mock_db = MagicMock()
     mock_tool = MagicMock()
     mock_tool.name = "public_tool"
+    mock_tool.title = None
     mock_tool.description = "public tool desc"
     mock_tool.input_schema = {"type": "object"}
     mock_tool.output_schema = None
@@ -3622,6 +3654,7 @@ async def test_list_prompts_admin_bypass(monkeypatch):
     mock_db = MagicMock()
     mock_prompt = MagicMock()
     mock_prompt.name = "admin_prompt"
+    mock_prompt.title = None
     mock_prompt.description = "admin prompt desc"
     mock_prompt.arguments = []
 
@@ -3745,6 +3778,7 @@ async def test_list_resources_admin_bypass(monkeypatch):
     mock_resource = MagicMock()
     mock_resource.uri = "file:///admin.txt"
     mock_resource.name = "admin resource"
+    mock_resource.title = None
     mock_resource.description = "admin desc"
     mock_resource.mime_type = "text/plain"
 
@@ -5115,6 +5149,7 @@ async def test_list_tools_team_scoped_user(monkeypatch):
     mock_db = MagicMock()
     mock_tool = MagicMock()
     mock_tool.name = "team_tool"
+    mock_tool.title = None
     mock_tool.description = "team tool desc"
     mock_tool.input_schema = {"type": "object"}
     mock_tool.output_schema = None
@@ -5158,6 +5193,7 @@ async def test_list_prompts_team_scoped_user(monkeypatch):
     mock_db = MagicMock()
     mock_prompt = MagicMock()
     mock_prompt.name = "team_prompt"
+    mock_prompt.title = None
     mock_prompt.description = "team prompt desc"
     mock_prompt.arguments = []
 
@@ -5200,6 +5236,7 @@ async def test_list_resources_team_scoped_user(monkeypatch):
     mock_resource = MagicMock()
     mock_resource.uri = "file:///team.txt"
     mock_resource.name = "team resource"
+    mock_resource.title = None
     mock_resource.description = "team desc"
     mock_resource.mime_type = "text/plain"
 

@@ -390,6 +390,7 @@ class ToolCreate(BaseModel):
 
     name: str = Field(..., description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
@@ -964,6 +965,7 @@ class ToolUpdate(BaseModelWithConfigDict):
 
     name: Optional[str] = Field(None, description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
@@ -1402,6 +1404,7 @@ class ToolRead(BaseModelWithConfigDict):
     url: Optional[str]
     description: Optional[str]
     original_description: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     request_type: str
     integration_type: str
     headers: Optional[Dict[str, str]]
@@ -1650,6 +1653,7 @@ class ResourceCreate(BaseModel):
     uri: str = Field(..., description="Unique URI for the resource")
     name: str = Field(..., description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
@@ -1796,6 +1800,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     uri: Optional[str] = Field(None, description="Unique URI for the resource")
     name: Optional[str] = Field(None, description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
@@ -1966,7 +1971,7 @@ class ResourceRead(BaseModelWithConfigDict):
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # MCP protocol fields
-    title: Optional[str] = Field(None, description="Human-readable title for the resource")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource")
     annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
@@ -2212,6 +2217,7 @@ class PromptCreate(BaseModelWithConfigDict):
     name: str = Field(..., description="Unique name for the prompt")
     custom_name: Optional[str] = Field(None, description="Custom prompt name used for MCP invocation")
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt (MCP BaseMetadata)")
     description: Optional[str] = Field(None, description="Prompt description")
     template: str = Field(..., description="Prompt template text")
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
@@ -2379,6 +2385,7 @@ class PromptUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the prompt")
     custom_name: Optional[str] = Field(None, description="Custom prompt name used for MCP invocation")
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt (MCP BaseMetadata)")
     description: Optional[str] = Field(None, description="Prompt description")
     template: Optional[str] = Field(None, description="Prompt template text")
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
@@ -2559,7 +2566,7 @@ class PromptRead(BaseModelWithConfigDict):
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # MCP protocol fields
-    title: Optional[str] = Field(None, description="Human-readable title for the prompt")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
