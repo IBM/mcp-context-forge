@@ -155,6 +155,7 @@ class HttpAuthCheckPermissionPayload(PluginPayload):
         resource_type: Type of resource being accessed (e.g., "tool", "server", "prompt")
         team_id: Team context for the permission check (if applicable)
         is_admin: Whether the user has admin privileges
+        roles: List of role names assigned to the user (e.g., ["developer", "viewer"])
         auth_method: Authentication method used (e.g., "simple_token", "jwt", "oauth")
         client_host: Client IP address for IP-based permission checks
         user_agent: User agent string for device-based permission checks
@@ -165,6 +166,7 @@ class HttpAuthCheckPermissionPayload(PluginPayload):
     resource_type: str | None = None
     team_id: str | None = None
     is_admin: bool = False
+    roles: list[str] = []
     auth_method: str | None = None
     client_host: str | None = None
     user_agent: str | None = None

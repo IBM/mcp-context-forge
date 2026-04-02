@@ -592,6 +592,33 @@ class TestAssignRoleToUser:
             with pytest.raises(ValueError, match="scope_id not allowed"):
                 await role_service.assign_role_to_user(user_email="user@example.com", role_id="role-123", scope="personal", scope_id="should-not-have", granted_by="admin@example.com")
 
+    @pytest.mark.asyncio
+    async def test_assign_role_invalidates_roles_list_cache(self, role_service, mock_db, sample_role, sample_user_role):
+        """Successful assignment invalidates the user roles list cache."""
+        mock_cache = AsyncMock()
+
+        with patch.object(role_service, "get_role_by_id", new=AsyncMock(return_value=sample_role)):
+            with patch.object(role_service, "get_user_role_assignment", new=AsyncMock(return_value=None)):
+                with patch("mcpgateway.services.role_service.UserRole", return_value=sample_user_role):
+                    with patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache):
+                        await role_service.assign_role_to_user(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com")
+
+        mock_cache.invalidate_user_roles_list.assert_called_once_with("user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_assign_role_cache_invalidation_failure_is_non_fatal(self, role_service, mock_db, sample_role, sample_user_role):
+        """Cache invalidation failure on assign does not prevent successful assignment."""
+        mock_cache = AsyncMock()
+        mock_cache.invalidate_user_roles_list = AsyncMock(side_effect=Exception("Redis down"))
+
+        with patch.object(role_service, "get_role_by_id", new=AsyncMock(return_value=sample_role)):
+            with patch.object(role_service, "get_user_role_assignment", new=AsyncMock(return_value=None)):
+                with patch("mcpgateway.services.role_service.UserRole", return_value=sample_user_role):
+                    with patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache):
+                        result = await role_service.assign_role_to_user(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789", granted_by="admin@example.com")
+
+        assert result == sample_user_role
+
 
 class TestRevokeRoleFromUser:
     """Test revoke_role_from_user method."""
@@ -625,6 +652,32 @@ class TestRevokeRoleFromUser:
             result = await role_service.revoke_role_from_user(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789")
 
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_revoke_role_invalidates_roles_list_cache(self, role_service, sample_user_role):
+        """Successful revocation invalidates the user roles list cache."""
+        sample_user_role.is_active = True
+        mock_cache = AsyncMock()
+
+        with patch.object(role_service, "get_user_role_assignment", new=AsyncMock(return_value=sample_user_role)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache):
+                result = await role_service.revoke_role_from_user(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789")
+
+        assert result is True
+        mock_cache.invalidate_user_roles_list.assert_called_once_with("user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_revoke_role_cache_invalidation_failure_is_non_fatal(self, role_service, sample_user_role):
+        """Cache invalidation failure on revoke does not prevent successful revocation."""
+        sample_user_role.is_active = True
+        mock_cache = AsyncMock()
+        mock_cache.invalidate_user_roles_list = AsyncMock(side_effect=Exception("Redis down"))
+
+        with patch.object(role_service, "get_user_role_assignment", new=AsyncMock(return_value=sample_user_role)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache):
+                result = await role_service.revoke_role_from_user(user_email="user@example.com", role_id="role-123", scope="team", scope_id="team-789")
+
+        assert result is True
 
 
 class TestGetUserRoleAssignment:

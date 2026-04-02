@@ -2,6 +2,7 @@ description: "A plugin that does policy decision and enforcement using cedar"
 author: "Shriti Priya"
 version: "0.1.0"
 available_hooks:
+  - "http_auth_check_permission"
   - "prompt_pre_hook"
   - "prompt_post_hook"
   - "tool_pre_hook"

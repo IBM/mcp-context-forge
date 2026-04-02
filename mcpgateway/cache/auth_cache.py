@@ -623,6 +623,118 @@ class AuthCache:
                 expiry=time.time() + self._role_ttl,
             )
 
+    async def get_user_roles_list(self, email: str) -> Optional[List[str]]:
+        """Get the cached list of all role names for a user across all teams.
+
+        Returns:
+            - None: Cache miss (caller should query DB)
+            - list[str]: Cached role names (may be empty if user has no roles)
+
+        Args:
+            email: User email
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> result = asyncio.run(cache.get_user_roles_list("test@example.com"))
+            >>> result is None  # Cache miss
+            True
+        """
+        if not self._enabled:
+            return None
+
+        cache_key = f"roles_list:{email}"
+
+        # Check L1 in-memory cache
+        entry = self._role_cache.get(cache_key)
+        if entry and not entry.is_expired():
+            self._hit_count += 1
+            return entry.value if entry.value is not None else []
+
+        # Check L2 Redis cache
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                import json  # pylint: disable=import-outside-toplevel
+
+                redis_key = self._get_redis_key("roles_list", cache_key)
+                data = await redis.get(redis_key)
+                if data is not None:
+                    self._hit_count += 1
+                    self._redis_hit_count += 1
+                    roles = json.loads(data.decode() if isinstance(data, bytes) else data)
+                    with self._lock:
+                        self._role_cache[cache_key] = CacheEntry(value=roles, expiry=time.time() + self._role_ttl)
+                    return roles
+                self._redis_miss_count += 1
+            except Exception as e:
+                logger.warning(f"AuthCache Redis get_user_roles_list failed: {e}")
+
+        self._miss_count += 1
+        return None
+
+    async def set_user_roles_list(self, email: str, roles: List[str]) -> None:
+        """Store the list of all role names for a user.
+
+        Uses a long safety-net TTL; the primary invalidation mechanism is
+        explicit invalidation via invalidate_user_roles_list() on role changes.
+
+        Args:
+            email: User email
+            roles: List of role name strings
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.set_user_roles_list("test@example.com", ["developer"]))
+        """
+        if not self._enabled:
+            return
+
+        import json  # pylint: disable=import-outside-toplevel
+
+        cache_key = f"roles_list:{email}"
+        safety_net_ttl = 3600  # 1 hour fallback; write-invalidation is the primary mechanism
+
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("roles_list", cache_key)
+                await redis.setex(redis_key, safety_net_ttl, json.dumps(roles))
+            except Exception as e:
+                logger.warning(f"AuthCache Redis set_user_roles_list failed: {e}")
+
+        with self._lock:
+            self._role_cache[cache_key] = CacheEntry(value=roles, expiry=time.time() + safety_net_ttl)
+
+    async def invalidate_user_roles_list(self, email: str) -> None:
+        """Invalidate the cached roles list for a user.
+
+        Call this whenever a role is assigned to or revoked from the user.
+
+        Args:
+            email: User email
+
+        Examples:
+            >>> import asyncio
+            >>> cache = AuthCache()
+            >>> asyncio.run(cache.invalidate_user_roles_list("test@example.com"))
+        """
+        cache_key = f"roles_list:{email}"
+        logger.debug(f"AuthCache: Invalidating roles_list cache for {email}")
+
+        with self._lock:
+            self._role_cache.pop(cache_key, None)
+
+        redis = await self._get_redis_client()
+        if redis:
+            try:
+                redis_key = self._get_redis_key("roles_list", cache_key)
+                await redis.delete(redis_key)
+                await redis.publish("mcpgw:auth:invalidate", f"roles_list:{email}")
+            except Exception as e:
+                logger.warning(f"AuthCache Redis invalidate_user_roles_list failed: {e}")
+
     async def invalidate_user_role(self, email: str, team_id: str) -> None:
         """Invalidate cached role for a user in a team.
 
