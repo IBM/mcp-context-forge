@@ -1221,9 +1221,8 @@ class TestRPCToolExecutionRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "RPC RBAC regression test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}},
+                    "tool": {"name": tool_name, "description": "RPC RBAC regression test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
-                    "visibility": "team",
                 }
             ),
             headers={"Content-Type": "application/json"},
@@ -1269,9 +1268,8 @@ class TestRPCToolExecutionRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "RPC RBAC viewer execute test tool", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}},
+                    "tool": {"name": tool_name, "description": "RPC RBAC viewer execute test tool", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
-                    "visibility": "team",
                 }
             ),
             headers={"Content-Type": "application/json"},
@@ -1376,9 +1374,8 @@ class TestSessionTokenCookieRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Cookie RBAC test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}},
+                    "tool": {"name": tool_name, "description": "Cookie RBAC test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
-                    "visibility": "team",
                 }
             ),
             headers={"Content-Type": "application/json"},
@@ -1420,9 +1417,8 @@ class TestSessionTokenCookieRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Cookie viewer execute test", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}},
+                    "tool": {"name": tool_name, "description": "Cookie viewer execute test", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
-                    "visibility": "team",
                 }
             ),
             headers={"Content-Type": "application/json"},
