@@ -1234,3 +1234,12 @@ def test_reverse_proxy_feature_default_false():
     """mcpgateway_reverse_proxy_enabled should default to False."""
     s = Settings(_env_file=None)
     assert s.mcpgateway_reverse_proxy_enabled is False
+
+
+def test_hot_server_check_interval_property():
+    """hot_server_check_interval should be auto-derived from gateway_auto_refresh_interval."""
+    from mcpgateway.config import Settings
+
+    s = Settings(gateway_auto_refresh_interval=60, _env_file=None)
+    # hot_server_check_interval defaults to gateway_auto_refresh_interval
+    assert s.hot_server_check_interval == 60

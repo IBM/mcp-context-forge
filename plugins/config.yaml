@@ -212,7 +212,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 20
     conditions: []
     config:
@@ -220,6 +220,7 @@ plugins:
       redis_url: "redis://redis:6379/0"
       redis_key_prefix: "rl"
       redis_fallback: true
+      algorithm: "fixed_window"
       by_user: "30/m"
       by_tenant: "3000/m"
       by_tool: {}

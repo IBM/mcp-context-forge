@@ -485,6 +485,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         self._active_gateways: Set[str] = set()  # Track active gateway URLs
         self._stream_response = None
         self._pending_responses = {}
+        # Hot/cold server classification service (initialized in initialize())
+        self._classification_service: Optional[Any] = None
         # Prefer using the globally-initialized singletons from the service modules
         # so events propagate via their initialized EventService/Redis clients.
         # Import lazily and fall back to creating local instances when the module-level
@@ -663,6 +665,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # No Redis available - always create the health check task in filelock mode
             self._health_check_task = asyncio.create_task(self._run_health_checks(user_email))
 
+        # Initialize hot/cold classification service (if enabled)
+        if settings.hot_cold_classification_enabled:
+            # First-Party
+            from mcpgateway.services.server_classification_service import ServerClassificationService
+
+            self._classification_service = ServerClassificationService(redis_client=self._redis_client)
+            await self._classification_service.start()
+            logger.info("Hot/cold classification service initialized")
+
     async def shutdown(self) -> None:
         """Shutdown the service.
 
@@ -698,6 +709,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             except asyncio.CancelledError:
                 pass
 
+        # Stop classification service
+        if self._classification_service:
+            await self._classification_service.stop()
+            logger.info("Classification service stopped")
+
+        # Cancel leader heartbeat task if running
         if getattr(self, "_leader_heartbeat_task", None):
             self._leader_heartbeat_task.cancel()
             try:
@@ -1271,9 +1288,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_mode=gateway_mode,
             )
 
-            # Add to DB
+            # Add to DB and commit immediately so tools/resources/prompts are visible
+            # to other workers before the HTTP response reaches the client.
+            # Without this, clients issuing follow-up requests (e.g., manual refresh)
+            # can hit a different worker that hasn't seen the uncommitted data yet.
             db.add(db_gateway)
-            db.flush()  # Flush to get the ID without committing
+            db.commit()
             db.refresh(db_gateway)
 
             # Update tracking
@@ -1281,6 +1301,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
+
+            # Invalidate caches so other workers see the new gateway and its tools/resources/prompts
+            cache = _get_registry_cache()
+            await cache.invalidate_gateways()
+            await cache.invalidate_tools()
+            await cache.invalidate_resources()
+            await cache.invalidate_prompts()
+            tool_lookup_cache = _get_tool_lookup_cache()
+            await tool_lookup_cache.invalidate_gateway(str(db_gateway.id))
+            # First-Party
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
 
             # Invalidate loopback passthrough cache when a new gateway has passthrough headers (#3640)
             if gateway.passthrough_headers:
@@ -2245,6 +2278,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 tools_to_add = []
                 resources_to_add = []
                 prompts_to_add = []
+                reinit_succeeded = False
 
                 try:
                     ca_certificate = getattr(gateway, "ca_certificate", None)
@@ -2384,8 +2418,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # Update tracking with new URL
                     self._active_gateways.discard(gateway.url)
                     self._active_gateways.add(gateway.url)
+                    reinit_succeeded = True
                 except Exception as e:
                     logger.warning(f"Failed to initialize updated gateway: {e}")
+                    reinit_succeeded = False
 
                 # Update tags if provided
                 if gateway_update.tags is not None:
@@ -2425,6 +2461,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
                 await admin_stats_cache.invalidate_tags()
+
+                # Advance hot/cold poll schedule only after successful tool re-init
+                if reinit_succeeded and self._classification_service and gateway.url:
+                    try:
+                        await self._classification_service.mark_poll_completed(gateway.url, "tool_discovery", gateway_id=str(gateway.id))
+                    except Exception as poll_ts_err:
+                        logger.debug(f"Best-effort tool_discovery poll timestamp update failed: {poll_ts_err}")
 
                 # Invalidate loopback passthrough cache when gateway headers change (#3640)
                 if gateway_update.passthrough_headers is not None:
@@ -3405,6 +3448,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Handle query_param auth - decrypt and apply to URL for health check
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        # Preserve the base URL (without auth query params) for classification lookups.
+        # Classification uses Gateway.url from the DB, so poll-state keys must match.
+        gateway_base_url = gateway_url
         if gateway_auth_type == "query_param" and gateway_auth_query_params:
             auth_query_params_decrypted = {}
             for param_key, encrypted_value in gateway_auth_query_params.items():
@@ -3419,6 +3465,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         # Sanitize URL for logging/telemetry (redacts sensitive query params)
         gateway_url_sanitized = sanitize_url_for_logging(gateway_url, auth_query_params_decrypted)
+
+        # NOTE: Health checks always run regardless of hot/cold classification.
+        # Classification only gates auto-refresh (tool discovery), not health monitoring.
+        # Skipping health checks would blind the gateway to outages on cold servers.
 
         # Create span for individual gateway health check
         with create_span(
@@ -3616,7 +3666,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         logger.warning(f"Failed to update last_seen for gateway {gateway_name}: {update_error}")
 
                     # Auto-refresh tools/resources/prompts if enabled
+                    should_auto_refresh = False
                     if settings.auto_refresh_servers:
+                        # Hot/cold classification: Check if this server should have tools refreshed now
+                        if self._classification_service:
+                            try:
+                                should_auto_refresh = await self._classification_service.should_poll_server(gateway_base_url, "tool_discovery", gateway_id=str(gateway_id))
+                                if not should_auto_refresh:
+                                    logger.debug(f"Skipping auto-refresh for {SecurityValidator.sanitize_log_message(gateway_name)}: " f"not yet due based on hot/cold classification")
+                            except Exception as e:
+                                # Fail open: proceed with auto-refresh if classification check fails
+                                logger.warning(f"Classification check failed for {SecurityValidator.sanitize_log_message(gateway_name)}, proceeding with auto-refresh (fail-open): {e}")
+                                should_auto_refresh = True
+                        else:
+                            should_auto_refresh = True
+
+                    if should_auto_refresh:
                         try:
                             # Throttling: Check if refresh is needed based on last_refresh_at
                             refresh_needed = True
@@ -3651,6 +3716,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                             pre_auth_headers=headers if headers else None,
                                             gateway=gateway,
                                         )
+                                        # mark_poll_completed is called inside _refresh_gateway_tools_resources_prompts
                                 else:
                                     logger.debug(f"Skipping auto-refresh for {gateway_name}: lock held (likely manual refresh in progress)")
                         except Exception as refresh_error:
@@ -4833,6 +4899,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 refresh_client_cert = getattr(gateway_obj, "client_cert", None)
                 refresh_client_key = getattr(gateway_obj, "client_key", None)
 
+        # Preserve base URL before auth mutation for classification poll-state keys
+        gateway_base_url = gateway_url
+
         # Handle query_param auth - decrypt and apply to URL for refresh
         auth_query_params_decrypted: Optional[Dict[str, str]] = None
         if gateway_auth_type == "query_param" and gateway_auth_query_params:
@@ -5029,6 +5098,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 db.commit()
                 logger.debug(f"No changes detected during refresh of gateway {gateway_name}")
+
+        # Advance poll schedule so hot/cold classification tracks the actual last refresh
+        # regardless of whether the refresh was triggered by health check, manual API, or registration.
+        # Use gateway_base_url (pre-auth) to match classification keys.
+        if self._classification_service and gateway_base_url:
+            try:
+                await self._classification_service.mark_poll_completed(gateway_base_url, "tool_discovery", gateway_id=str(gateway_id))
+            except Exception as poll_ts_err:
+                logger.debug(f"Best-effort tool_discovery poll timestamp update failed: {poll_ts_err}")
 
         return result
 

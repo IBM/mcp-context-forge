@@ -1700,6 +1700,12 @@ class Settings(BaseSettings):
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
 
+    # Hot/Cold Server Classification
+    # Classify servers by usage (hot = active sessions, cold = inactive) for optimized polling
+    # Poll intervals auto-derived: hot = gateway_auto_refresh_interval (1x), cold = 3x
+    # Classification refresh uses gateway_auto_refresh_interval (no separate config needed)
+    hot_cold_classification_enabled: bool = Field(default=False, description="Enable hot/cold server classification for staggered polling (requires Redis for multi-worker)")
+
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds
     gateway_max_redirects: int = 5
@@ -1932,6 +1938,32 @@ Disallow: /
         except orjson.JSONDecodeError:
             logger.error(f"Invalid JSON in WELL_KNOWN_CUSTOM_FILES: {self.well_known_custom_files}")
             return {}
+
+    @property
+    def hot_server_check_interval(self) -> float:
+        """Hot server polling interval (auto-derived from gateway_auto_refresh_interval).
+
+        Hot servers (top 20% by usage) are polled at the same rate as gateway tool refresh.
+
+        Returns:
+            float: Hot server check interval in seconds (equals gateway_auto_refresh_interval)
+        """
+        return float(self.gateway_auto_refresh_interval)
+
+    @property
+    def cold_server_check_interval(self) -> float:
+        """Cold server polling interval (auto-derived from gateway_auto_refresh_interval).
+
+        Cold servers (remaining 80%) are polled at 3x the gateway refresh rate to save resources.
+
+        Examples:
+            - gateway_auto_refresh_interval=300s → cold=900s (15 minutes)
+            - gateway_auto_refresh_interval=60s → cold=180s (3 minutes)
+
+        Returns:
+            float: Cold server check interval in seconds (3x gateway_auto_refresh_interval)
+        """
+        return float(self.gateway_auto_refresh_interval * 3)
 
     @field_validator("well_known_security_txt_enabled", mode="after")
     @classmethod

@@ -303,6 +303,7 @@ docs/build/
 # PyBuilder
 target/
 **/target/
+**/target/**
 
 # Jupyter Notebook
 .ipynb_checkpoints

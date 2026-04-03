@@ -283,6 +283,16 @@ services:
       - GATEWAY_VALIDATION_TIMEOUT=5
       # Max concurrent health checks per worker (default: 10)
       - MAX_CONCURRENT_HEALTH_CHECKS=10
+      # Auto-refresh tools/resources/prompts from MCP servers during health checks
+      # SSE gateways use polling only; StreamableHTTP gateways with session pooling
+      # also receive push notifications via notifications/tools/list_changed
+      - AUTO_REFRESH_SERVERS=true
+      - GATEWAY_AUTO_REFRESH_INTERVAL=300
+      # Hot/cold server classification - Stagger polling based on upstream MCP session usage
+      # Classifies servers into hot (top 20% by recent usage) and cold (remaining 80%)
+      # Hot servers polled at GATEWAY_AUTO_REFRESH_INTERVAL (1x), cold at 3x (auto-derived)
+      - HOT_COLD_CLASSIFICATION_ENABLED=true
+      # Poll intervals auto-derived: hot = 1x GATEWAY_AUTO_REFRESH_INTERVAL, cold = 3x
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256
