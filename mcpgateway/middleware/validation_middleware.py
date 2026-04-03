@@ -34,6 +34,7 @@ from mcpgateway.config import settings
 logger = logging.getLogger(__name__)
 
 _RUST_VALIDATION_MODULE = None
+_MAX_JSON_VALIDATION_DEPTH = 1024
 
 
 def is_path_traversal(uri: str) -> bool:
@@ -67,6 +68,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         self.strict = settings.validation_strict
         self.sanitize = settings.sanitize_output
         self.allowed_roots = [Path(root).resolve() for root in settings.allowed_roots]
+        self.dangerous_pattern_strings = list(settings.dangerous_patterns)
         self.dangerous_patterns = [re.compile(pattern) for pattern in settings.dangerous_patterns]
 
     async def dispatch(self, request: Request, call_next):
@@ -169,25 +171,16 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             HTTPException: If validation fails in strict mode
         """
         if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
-            result = self._load_rust_validation_module().validate_json_data(data, settings.max_param_length, list(settings.dangerous_patterns))
+            result = self._validate_json_data_with_rust(data)
             if result is not None:
                 key, error_type = result
-                if error_type == "max_length":
-                    raise HTTPException(status_code=422, detail=f"Parameter {key} exceeds maximum length")
-                if error_type == "dangerous_pattern":
-                    raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")
-                raise HTTPException(status_code=422, detail=f"Parameter {key} failed validation")
+                self._raise_validation_failure(key, error_type)
             return
 
-        if isinstance(data, dict):
-            for key, value in data.items():
-                if isinstance(value, str):
-                    self._validate_parameter(key, value)
-                elif isinstance(value, (dict, list)):
-                    self._validate_json_data(value)
-        elif isinstance(data, list):
-            for item in data:
-                self._validate_json_data(item)
+        result = self._validate_json_data_with_python(data)
+        if result is not None:
+            key, error_type = result
+            self._raise_validation_failure(key, error_type)
 
     def _load_rust_validation_module(self):
         """Load the experimental Rust validation sidecar on demand."""
@@ -196,6 +189,66 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         if _RUST_VALIDATION_MODULE is None:
             _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_sidecar")
         return _RUST_VALIDATION_MODULE
+
+    def _validate_json_data_with_rust(self, data: Any) -> tuple[str, str] | None:
+        """Validate JSON data with the Rust sidecar, falling back to Python on sidecar failures."""
+        try:
+            return self._load_rust_validation_module().validate_json_data(data, settings.max_param_length, self.dangerous_pattern_strings)
+        except ValueError as exc:
+            if "maximum supported nesting depth" in str(exc):
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            logger.warning("Rust validation sidecar unavailable or failed; falling back to Python validation: %s", exc)
+            return self._validate_json_data_with_python(data)
+        except Exception as exc:
+            logger.warning("Rust validation sidecar unavailable or failed; falling back to Python validation: %s", exc)
+            return self._validate_json_data_with_python(data)
+
+    def _validate_json_data_with_python(self, data: Any, depth: int = 0) -> tuple[str, str] | None:
+        """Validate JSON data with the Python implementation."""
+        if depth > _MAX_JSON_VALIDATION_DEPTH:
+            raise HTTPException(status_code=422, detail="JSON payload exceeds maximum supported nesting depth")
+
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, str):
+                    if len(value) > settings.max_param_length:
+                        return key, "max_length"
+                    for pattern in self.dangerous_patterns:
+                        if pattern.search(value):
+                            return key, "dangerous_pattern"
+                elif isinstance(value, (dict, list)):
+                    result = self._validate_json_data_with_python(value, depth + 1)
+                    if result is not None:
+                        return result
+        elif isinstance(data, list):
+            for item in data:
+                if isinstance(item, str):
+                    if len(item) > settings.max_param_length:
+                        return "list_item", "max_length"
+                    for pattern in self.dangerous_patterns:
+                        if pattern.search(item):
+                            return "list_item", "dangerous_pattern"
+                else:
+                    result = self._validate_json_data_with_python(item, depth + 1)
+                    if result is not None:
+                        return result
+        return None
+
+    def _raise_validation_failure(self, key: str, error_type: str):
+        """Raise or log validation failures while preserving middleware mode semantics."""
+        if error_type == "max_length":
+            if settings.environment in ("development", "staging"):
+                logger.warning("Parameter %s exceeds maximum length", key)
+                return
+            raise HTTPException(status_code=422, detail=f"Parameter {key} exceeds maximum length")
+
+        if error_type == "dangerous_pattern":
+            if settings.environment in ("development", "staging"):
+                logger.warning("Parameter %s contains dangerous characters", key)
+                return
+            raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")
+
+        raise HTTPException(status_code=422, detail=f"Parameter {key} failed validation")
 
     def validate_resource_path(self, path: str) -> str:
         """Validate and normalize resource paths to prevent traversal attacks.

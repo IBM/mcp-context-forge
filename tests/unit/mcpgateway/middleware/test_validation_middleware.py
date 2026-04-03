@@ -349,6 +349,24 @@ class TestValidationMiddleware:
             # Should not raise for valid data
             middleware._validate_json_data([{"name": "item1"}, {"name": "item2"}])
 
+    def test_validate_json_data_list_rejects_dangerous_string_items(self):
+        """Test JSON data validation rejects dangerous strings nested directly in lists."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
+                middleware._validate_json_data(["<script>"])
+
+            assert exc_info.value.status_code == 422
+
     def test_validate_json_data_uses_rust_sidecar_when_enabled(self):
         """Test JSON validation uses the Rust sidecar when explicitly enabled."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -370,8 +388,8 @@ class TestValidationMiddleware:
 
             rust_module.validate_json_data.assert_called_once_with({"name": "safe"}, 1000, [r"<script"])
 
-    def test_validate_json_data_missing_sidecar_is_hard_failure_when_enabled(self):
-        """Test Rust mode fails hard when the sidecar cannot be loaded."""
+    def test_validate_json_data_rust_sidecar_falls_back_to_python_validation(self):
+        """Test Rust mode falls back to Python validation when the sidecar cannot be loaded."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.experimental_rust_validation_middleware_enabled = True
@@ -385,8 +403,72 @@ class TestValidationMiddleware:
             middleware = ValidationMiddleware(app=None)
 
             with patch.object(middleware, "_load_rust_validation_module", side_effect=ModuleNotFoundError("missing sidecar")):
-                with pytest.raises(ModuleNotFoundError, match="missing sidecar"):
+                with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
                     middleware._validate_json_data({"name": "<script>"})
+            assert exc_info.value.status_code == 422
+
+    def test_validate_json_data_rust_sidecar_respects_warn_only_mode(self):
+        """Test Rust mode preserves warn-only behavior outside production."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = False
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "development"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_module = MagicMock()
+            rust_module.validate_json_data.return_value = ("name", "dangerous_pattern")
+
+            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
+                middleware._validate_json_data({"name": "<script>"})
+
+    def test_validate_json_data_rust_sidecar_maps_max_length_errors(self):
+        """Test Rust mode maps max-length failures to HTTP 422 responses."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 5
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_module = MagicMock()
+            rust_module.validate_json_data.return_value = ("name", "max_length")
+
+            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
+                with pytest.raises(HTTPException, match="exceeds maximum length") as exc_info:
+                    middleware._validate_json_data({"name": "toolong"})
+
+            assert exc_info.value.status_code == 422
+
+    def test_validate_json_data_rust_sidecar_maps_depth_errors(self):
+        """Test Rust mode maps sidecar depth errors to HTTP 422 responses."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_module = MagicMock()
+            rust_module.validate_json_data.side_effect = ValueError("JSON payload exceeds maximum supported nesting depth")
+
+            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
+                with pytest.raises(HTTPException, match="exceeds maximum supported nesting depth") as exc_info:
+                    middleware._validate_json_data({"name": "safe"})
+
+            assert exc_info.value.status_code == 422
 
     def test_validate_resource_path_traversal(self):
         """Test resource path validation for traversal."""

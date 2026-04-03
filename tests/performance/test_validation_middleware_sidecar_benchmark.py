@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Benchmark the validation middleware Rust sidecar against the Python path."""
+"""Benchmark the validation middleware Rust sidecar against the Python path.
+
+This benchmark exercises `ValidationMiddleware._validate_json_data()` for both paths so the
+measurements include the Python wrapper work around the extension call.
+"""
 
 # Standard
 from __future__ import annotations
@@ -43,19 +47,15 @@ def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]
 
 
 def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[Any], None]:
-    sidecar = _ensure_sidecar_installed()
+    _ensure_sidecar_installed()
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
+    settings.experimental_rust_validation_middleware_enabled = True
     settings.environment = "production"
+    middleware = ValidationMiddleware(app=None)
 
     def _run(data: Any) -> None:
-        result = sidecar.validate_json_data(data, max_param_length, dangerous_patterns)
-        if result is None:
-            return
-        key, error_type = result
-        if error_type == "max_length":
-            raise HTTPException(status_code=422, detail=f"Parameter {key} exceeds maximum length")
-        raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")
+        middleware._validate_json_data(data)
 
     return _run
 
@@ -74,6 +74,27 @@ def _measure(label: str, fn: Callable[[Any], None], payload: Any, iterations: in
     p95_ms = statistics.quantiles(samples, n=100)[94] / 1_000_000
     print(f"{label}: median={median_ms:.3f}ms p95={p95_ms:.3f}ms")
     return median_ms, p95_ms
+
+
+def _measure_pair(
+    python_fn: Callable[[Any], None],
+    rust_fn: Callable[[Any], None],
+    payload: Any,
+    iterations: int,
+) -> tuple[float, float]:
+    ordered_runs = []
+    for order in (
+        (("python", python_fn), ("rust", rust_fn)),
+        (("rust", rust_fn), ("python", python_fn)),
+    ):
+        run_result: dict[str, tuple[float, float]] = {}
+        for label, fn in order:
+            run_result[label] = _measure(label, fn, payload, iterations)
+        ordered_runs.append(run_result)
+
+    python_median = statistics.mean(result["python"][0] for result in ordered_runs)
+    rust_median = statistics.mean(result["rust"][0] for result in ordered_runs)
+    return python_median, rust_median
 
 
 def _assert_parity(python_fn: Callable[[Any], None], rust_fn: Callable[[Any], None], payloads: list[Any]) -> None:
@@ -106,6 +127,8 @@ def main() -> None:
         {"name": "safe", "nested": {"description": "still safe"}},
         {"prompt": "<script>alert(1)</script>"},
         {"outer": {"inner": "a" * 2048}},
+        ["<script>alert(1)</script>"],
+        {"emoji": "é" * 1025},
     ]
     _assert_parity(python_fn, rust_fn, parity_payloads)
 
@@ -135,8 +158,8 @@ def main() -> None:
 
     for name, payload, iterations in scenarios:
         print(f"\n{name} ({iterations} iterations)")
-        python_median, _ = _measure("python", python_fn, payload, iterations)
-        rust_median, _ = _measure("rust", rust_fn, payload, iterations)
+        python_median, rust_median = _measure_pair(python_fn, rust_fn, payload, iterations)
+        print(f"python_avg_median={python_median:.3f}ms rust_avg_median={rust_median:.3f}ms")
         print(f"speedup={python_median / rust_median:.2f}x")
 
 

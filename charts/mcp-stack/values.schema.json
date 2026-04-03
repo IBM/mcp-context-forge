@@ -481,6 +481,9 @@
             "EXPERIMENTAL_VALIDATE_IO": {
               "type": "string"
             },
+            "EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED": {
+              "type": "string"
+            },
             "FEDERATION_TIMEOUT": {
               "type": "string",
               "description": "HTTP timeout in seconds for gateway and MCP server requests (health checks, tool invocations)",
