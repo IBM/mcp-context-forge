@@ -2853,6 +2853,38 @@ class TestCallA2AAgentCoverage:
         assert headers["Authorization"] == "Bearer bearer-token"
 
     @pytest.mark.asyncio
+    async def test_bearer_auth_dict_value(self, tool_service):
+        """Should handle dict auth_value directly without decryption."""
+        agent = self._make_agent(auth_type="bearer", auth_value={"Authorization": "Bearer dict-token"})
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            await tool_service._call_a2a_agent(agent, {"query": "test"})
+        headers = mock_client.post.call_args[1]["headers"]
+        assert headers["Authorization"] == "Bearer dict-token"
+
+    @pytest.mark.asyncio
+    async def test_bearer_auth_decrypt_failure(self, tool_service):
+        """Should raise Exception when decode_auth fails."""
+        agent = self._make_agent(auth_type="bearer", auth_value="invalid_encrypted_value")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decryption failed")),
+        ):
+            with pytest.raises(Exception, match="Failed to decrypt authentication"):
+                await tool_service._call_a2a_agent(agent, {"query": "test"})
+
+    @pytest.mark.asyncio
     async def test_query_param_auth(self, tool_service):
         agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})
         mock_resp = MagicMock()
@@ -6715,6 +6747,81 @@ class TestInvokeToolA2A:
         assert result is not None
         assert captured_url["url"] == "http://a2a-agent:9000"
         mock_apply.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a2a_with_dict_auth_value(self, tool_service):
+        """A2A agent with dict auth_value (no decryption needed)."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(auth_type="bearer", auth_value={"Authorization": "Bearer dict-token"})
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        captured_headers = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+        assert captured_headers.get("Authorization") == "Bearer dict-token"
+
+    @pytest.mark.asyncio
+    async def test_a2a_decrypt_failure_raises_exception(self, tool_service):
+        """A2A agent with decrypt failure should raise Exception."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(auth_type="bearer", auth_value="invalid_encrypted")
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decrypt failed")),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+
+            with pytest.raises(Exception, match="Failed to decrypt authentication"):
+                await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
 
     @pytest.mark.asyncio
     async def test_a2a_timeout_triggers_cb_context_and_post_hook(self, tool_service):
