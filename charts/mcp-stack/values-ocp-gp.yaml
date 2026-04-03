@@ -234,7 +234,36 @@ mcpContextForge:
   config:
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"    # needed for in-cluster MCP server registration
     LOG_LEVEL: INFO
-    GUNICORN_WORKERS: "4"                  # match CPU cores for throughput
+    # --- Gunicorn tuning (match VM benchmark) ---
+    GUNICORN_WORKERS: "8"                  # 8 workers per pod × 3 pods = 24 total (matches VM)
+    GUNICORN_MAX_REQUESTS: "1000000"       # recycle after 1M requests (VM: 1M)
+    GUNICORN_MAX_REQUESTS_JITTER: "100000" # prevent thundering herd
+    DISABLE_ACCESS_LOG: "true"             # reduce I/O overhead
+    # --- Feature flags ---
+    LLMCHAT_ENABLED: "true"                # enable LLM endpoints (VM has this enabled)
+    COMPRESSION_ENABLED: "false"           # disable compression to save CPU (VM: false)
+    # --- Cache TTLs (match VM: 300s vs default 20-60s) ---
+    REGISTRY_CACHE_TOOLS_TTL: "300"
+    REGISTRY_CACHE_SERVERS_TTL: "300"
+    REGISTRY_CACHE_PROMPTS_TTL: "300"
+    REGISTRY_CACHE_RESOURCES_TTL: "300"
+    REGISTRY_CACHE_GATEWAYS_TTL: "300"
+    REGISTRY_CACHE_AGENTS_TTL: "300"
+    REGISTRY_CACHE_CATALOG_TTL: "300"
+    AUTH_CACHE_USER_TTL: "300"
+    AUTH_CACHE_TEAM_TTL: "300"
+    AUTH_CACHE_ROLE_TTL: "300"
+    AUTH_CACHE_REVOCATION_TTL: "120"
+    AUTH_CACHE_TEAMS_TTL: "300"
+    # --- Connection pools (match VM) ---
+    REDIS_MAX_CONNECTIONS: "100"
+    HTTPX_MAX_CONNECTIONS: "500"
+    HTTPX_MAX_KEEPALIVE_CONNECTIONS: "300"
+    DB_POOL_SIZE: "20"
+    DB_POOL_CLASS: "queue"
+    DB_POOL_PRE_PING: "true"
+    DB_POOL_RECYCLE: "60"
+    DB_POOL_TIMEOUT: "60"
 
   secret:
     JWT_SECRET_KEY: "gp-context-forge-jwt-secret-key-longer-than-32-bytes"
