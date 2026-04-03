@@ -166,6 +166,42 @@ The `get_system_time` tool supports:
 - IANA timezone names (e.g., `America/New_York`, `Europe/London`, `Asia/Tokyo`)
 - Fixed offsets (e.g., `+05:30`, `-08:00`)
 
+## Latency Testing
+
+### Rust Client (High Performance)
+
+```bash
+# Build and run latency test
+cargo run --bin latency_test -- http://localhost:9080/mcp echo
+
+# Test specific tool multiple times
+cargo run --bin latency_test -- http://localhost:9080/mcp get_system_time 10
+```
+
+### Python Client (MCP SDK Comparison)
+
+```bash
+# Install dependencies
+pip install -r src/bin/requirements.txt
+
+# Run latency test
+python src/bin/latency_test.py http://localhost:9080/mcp echo
+
+# Test with more iterations
+python src/bin/latency_test.py http://localhost:9080/mcp echo 10
+
+# Test time tool
+python src/bin/latency_test.py http://localhost:9080/mcp get_system_time 5
+```
+
+The Python client uses the official [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk) with streamable HTTP transport, providing a direct comparison with the Rust implementation. Both clients:
+- Initialize an MCP session
+- Call the specified tool N times
+- Report per-call latency in milliseconds
+- Track min/max/average statistics (Python only)
+
+**Use this to compare Rust vs Python MCP SDK performance!**
+
 ## Comparison with Go Server
 
 This server is designed to be compared with the Go `fast-time-server` for benchmarking purposes. Both implement similar functionality with the same transport (streamable HTTP).

@@ -1,0 +1,237 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#   FAST-TEST-SERVER - Smoke Test Workflow
+#   Builds the server, starts it, and runs latency client smoke tests
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+name: Fast Test Server Smoke Test
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "mcp-servers/rust/fast-test-server/**"
+      - ".github/workflows/fast-test-server-smoke.yml"
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: [main, develop]
+    paths:
+      - "mcp-servers/rust/fast-test-server/**"
+      - ".github/workflows/fast-test-server-smoke.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  SERVER_PORT: 9080
+  SERVER_URL: http://127.0.0.1:9080
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable
+          rustup component add rustfmt clippy
+          rustup default stable
+
+      - name: Cache Cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            mcp-servers/rust/fast-test-server/target
+          key: ${{ runner.os }}-cargo-fast-test-${{ hashFiles('mcp-servers/rust/fast-test-server/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fast-test-
+
+      # ─────────────────────────────────────────────────────────────────────
+      # LINTING & BUILD
+      # ─────────────────────────────────────────────────────────────────────
+
+      - name: Check formatting
+        working-directory: mcp-servers/rust/fast-test-server
+        run: cargo fmt --check
+
+      - name: Run clippy
+        working-directory: mcp-servers/rust/fast-test-server
+        run: cargo clippy -- -D warnings
+
+      - name: Run tests
+        working-directory: mcp-servers/rust/fast-test-server
+        run: cargo test
+
+      - name: Build release binary
+        working-directory: mcp-servers/rust/fast-test-server
+        run: cargo build --release
+
+      # ─────────────────────────────────────────────────────────────────────
+      # START SERVER
+      # ─────────────────────────────────────────────────────────────────────
+
+      - name: Start fast-test-server
+        working-directory: mcp-servers/rust/fast-test-server
+        run: |
+          ./target/release/fast-test-server &
+          echo "Server PID: $!"
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
+
+      - name: Wait for server to be ready
+        run: |
+          echo "Waiting for server to start on port ${{ env.SERVER_PORT }}..."
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:${{ env.SERVER_PORT }}/health > /dev/null 2>&1; then
+              echo "✅ Server is ready!"
+              exit 0
+            fi
+            echo "  Attempt $i/30 - server not ready yet..."
+            sleep 1
+          done
+          echo "❌ Server failed to start within 30 seconds"
+          exit 1
+
+      # ─────────────────────────────────────────────────────────────────────
+      # SMOKE TESTS - HEALTH & VERSION
+      # ─────────────────────────────────────────────────────────────────────
+
+      - name: Smoke test - Health check
+        run: |
+          echo "Testing /health endpoint..."
+          response=$(curl -sf http://127.0.0.1:${{ env.SERVER_PORT }}/health)
+          echo "Response: $response"
+          echo "$response" | jq -e '.status == "healthy"' > /dev/null
+          echo "✅ Health check passed"
+
+      - name: Smoke test - Version check
+        run: |
+          echo "Testing /version endpoint..."
+          response=$(curl -sf http://127.0.0.1:${{ env.SERVER_PORT }}/version)
+          echo "Response: $response"
+          echo "$response" | jq -e '.name == "fast-test-server"' > /dev/null
+          echo "✅ Version check passed"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # SMOKE TESTS - REST API (for benchmarking)
+      # ─────────────────────────────────────────────────────────────────────
+
+      - name: Smoke test - REST echo endpoint
+        run: |
+          echo "Testing /api/echo endpoint..."
+          response=$(curl -sf -X POST http://127.0.0.1:${{ env.SERVER_PORT }}/api/echo \
+            -H "Content-Type: application/json" \
+            -d '{"message":"smoke test"}')
+          echo "Response: $response"
+          echo "$response" | jq -e '.message == "smoke test"' > /dev/null
+          echo "✅ REST echo endpoint passed"
+
+      - name: Smoke test - REST time endpoint
+        run: |
+          echo "Testing /api/time endpoint..."
+          response=$(curl -sf "http://127.0.0.1:${{ env.SERVER_PORT }}/api/time?tz=America/New_York")
+          echo "Response: $response"
+          echo "$response" | jq -e '.time != null' > /dev/null
+          echo "✅ REST time endpoint passed"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # SMOKE TESTS - MCP PROTOCOL
+      # ─────────────────────────────────────────────────────────────────────
+
+      - name: Smoke test - MCP tools/list
+        run: |
+          echo "Testing MCP tools/list..."
+          response=$(curl -sf -X POST http://127.0.0.1:${{ env.SERVER_PORT }}/mcp \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"tools/list","id":1}')
+          echo "Response: $response"
+          echo "$response" | jq -e '.result.tools | length > 0' > /dev/null
+          echo "✅ MCP tools/list passed"
+
+      - name: Smoke test - MCP echo tool
+        run: |
+          echo "Testing MCP echo tool..."
+          response=$(curl -sf -X POST http://127.0.0.1:${{ env.SERVER_PORT }}/mcp \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"echo","arguments":{"message":"hello mcp"}},"id":1}')
+          echo "Response: $response"
+          echo "$response" | jq -e '.result.content[0].text == "hello mcp"' > /dev/null
+          echo "✅ MCP echo tool passed"
+
+      - name: Smoke test - MCP get_system_time tool
+        run: |
+          echo "Testing MCP get_system_time tool..."
+          response=$(curl -sf -X POST http://127.0.0.1:${{ env.SERVER_PORT }}/mcp \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_system_time","arguments":{"timezone":"UTC"}},"id":1}')
+          echo "Response: $response"
+          echo "$response" | jq -e '.result.isError != true' > /dev/null
+          echo "✅ MCP get_system_time tool passed"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # LATENCY CLIENT SMOKE TEST
+      # ─────────────────────────────────────────────────────────────────────
+
+      - name: Build latency test binary
+        working-directory: mcp-servers/rust/fast-test-server
+        run: cargo build --bin latency_test --release
+
+      - name: Run latency client - echo tool
+        working-directory: mcp-servers/rust/fast-test-server
+        run: |
+          echo "Running latency test for echo tool..."
+          ./target/release/latency_test "http://127.0.0.1:${{ env.SERVER_PORT }}/mcp" "echo"
+
+      - name: Run latency client - get_system_time tool
+        working-directory: mcp-servers/rust/fast-test-server
+        run: |
+          echo "Running latency test for get_system_time tool..."
+          ./target/release/latency_test "http://127.0.0.1:${{ env.SERVER_PORT }}/mcp" "get_system_time"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # QUICK BENCHMARK (optional - validates performance characteristics)
+      # ─────────────────────────────────────────────────────────────────────
+
+      - name: Install hey (HTTP benchmark tool)
+        run: go install github.com/rakyll/hey@latest
+
+      - name: Quick benchmark - echo (10K requests)
+        run: |
+          echo "Running quick benchmark: /api/echo (10K requests, 50 concurrent)..."
+          hey -m POST -T 'application/json' \
+              -d '{"message":"benchmark"}' \
+              -n 10000 -c 50 \
+              "http://127.0.0.1:${{ env.SERVER_PORT }}/api/echo"
+
+      - name: Quick benchmark - time (10K requests)
+        run: |
+          echo "Running quick benchmark: /api/time (10K requests, 50 concurrent)..."
+          hey -n 10000 -c 50 \
+              "http://127.0.0.1:${{ env.SERVER_PORT }}/api/time?tz=UTC"
+
+      # ─────────────────────────────────────────────────────────────────────
+      # CLEANUP
+      # ─────────────────────────────────────────────────────────────────────
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -n "${{ env.SERVER_PID }}" ]; then
+            echo "Stopping server (PID: ${{ env.SERVER_PID }})..."
+            kill ${{ env.SERVER_PID }} 2>/dev/null || true
+            wait ${{ env.SERVER_PID }} 2>/dev/null || true
+            echo "✅ Server stopped"
+          fi
