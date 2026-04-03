@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 """Tests for secrets detection plugin regex patterns."""
 
+# Standard
 import logging
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+# Third-Party
 import pytest
 import yaml
 
+# First-Party
 from mcpgateway.common.models import ResourceContent
 from mcpgateway.plugins.framework import PluginConfig, PluginManager, PluginMode, PromptHookType, PromptPrehookPayload, ResourceHookType, ResourcePostFetchPayload, ToolHookType, ToolPostInvokePayload
 from mcpgateway.plugins.framework.models import GlobalContext
@@ -17,6 +20,7 @@ from plugins.secrets_detection.secrets_detection import SecretsDetectionPlugin
 
 # Try to import Rust implementation
 try:
+    # Third-Party
     import secrets_detection_rust.secrets_detection_rust  # noqa: F401 - imported to check availability
 
     RUST_AVAILABLE = True
@@ -145,6 +149,7 @@ class TestSecretsDetectionHookDispatch:
         return GlobalContext(request_id="req-secrets", server_id="srv-secrets")
 
     async def _manager(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, use_rust: bool, config: dict) -> PluginManager:
+        # First-Party
         from plugins.secrets_detection import secrets_detection as module
 
         if not use_rust:
@@ -302,7 +307,8 @@ class TestAwsSecretPattern:
 
     def test_matches_standard_format(self, use_rust):
         """Pattern should match standard AWS secret key format."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         text = "AWS_SECRET_ACCESS_KEY=FAKESecretAccessKeyForTestingEXAMPLE0000"
@@ -313,7 +319,8 @@ class TestAwsSecretPattern:
 
     def test_matches_with_separators(self, use_rust):
         """Pattern should match with various separators."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
 
@@ -327,7 +334,8 @@ class TestAwsSecretPattern:
 
     def test_case_insensitive(self, use_rust):
         """Pattern should be case-insensitive for the prefix."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
 
@@ -341,7 +349,8 @@ class TestAwsSecretPattern:
 
     def test_no_match_short_secret(self, use_rust):
         """Pattern should not match secrets shorter than 40 chars."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         text = "aws_secret=FAKESecretKeyThatIsTooShortToMatch"  # Too short
@@ -352,7 +361,8 @@ class TestAwsSecretPattern:
 
     def test_no_match_missing_equals(self, use_rust):
         """Pattern should not match without = sign."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         text = "aws_secret FAKESecretAccessKeyForTestingEXAMPLE0000"
@@ -363,7 +373,8 @@ class TestAwsSecretPattern:
 
     def test_no_match_unrelated_text(self, use_rust):
         """Pattern should not match unrelated text."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
 
@@ -376,7 +387,8 @@ class TestAwsSecretPattern:
 
     def test_captures_secret_value(self, use_rust):
         """Pattern should capture the secret value."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         text = "AWS_SECRET_ACCESS_KEY=FAKESecretAccessKeyForTestingEXAMPLE0000"
@@ -406,7 +418,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_detects_aws_access_key(self, use_rust):
         """Should detect AWS access keys."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"message": "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"}
@@ -419,7 +432,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_detects_aws_secret_key(self, use_rust):
         """Should detect AWS secret keys."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"message": "AWS_SECRET_ACCESS_KEY=FAKESecretAccessKeyForTestingEXAMPLE0000"}
@@ -432,7 +446,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_detects_slack_token(self, use_rust):
         """Should detect Slack tokens."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"message": "xoxr-fake-000000000-fake000000000-fakefakefakefake"}
@@ -445,7 +460,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_detects_google_api_key(self, use_rust):
         """Should detect Google API keys."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"message": "AIzaFAKE_KEY_FOR_TESTING_ONLY_fake12345"}
@@ -458,7 +474,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_detects_github_token_without_label(self, use_rust):
         """Should detect provider-specific GitHub tokens without relying on labels."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"message": "Token value ghp_1234567890abcdefghijklmnopqrstuvwxyZ was pasted into the chat"}  # pragma: allowlist secret
@@ -470,7 +487,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_detects_github_fine_grained_pat_without_label(self, use_rust):
         """Should detect GitHub fine-grained PATs from their intrinsic prefix."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         token = "github_pat_abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ12"  # pragma: allowlist secret
@@ -483,7 +501,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_detects_stripe_secret_key_without_label(self, use_rust):
         """Should detect Stripe secret keys from their intrinsic prefix."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         stripe_secret = "_".join(["sk", "live", "1234567890abcdefghijklmnop"])  # pragma: allowlist secret
@@ -496,7 +515,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_does_not_treat_publishable_stripe_key_as_secret(self, use_rust):
         """Should avoid obvious Stripe false positives like publishable keys."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         publishable_key = "_".join(["pk", "live", "1234567890abcdefghijklmnop"])  # pragma: allowlist secret
@@ -508,7 +528,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_redaction_works(self, use_rust):
         """Should redact secrets when enabled."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig(redact=True, redaction_text="[REDACTED]")
         data = "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"
@@ -521,7 +542,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_handles_nested_structures(self, use_rust):
         """Should handle nested dicts and lists."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"users": [{"name": "Alice", "key": "AKIAFAKE12345EXAMPLE"}, {"name": "Bob", "token": "xoxr-fake-000000000-fake000000000-fakefakefakefake"}]}
@@ -533,7 +555,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_no_secrets_returns_zero(self, use_rust):
         """Should return zero findings for clean text."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"message": "This is just normal text without any secrets"}
@@ -546,7 +569,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_empty_string(self, use_rust):
         """Should handle empty strings."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"message": ""}
@@ -559,7 +583,8 @@ class TestSecretsDetectionBothImplementations:
 
     def test_multiple_secrets(self, use_rust):
         """Should detect multiple secrets in one message."""
-        from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+        # First-Party
+        from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
         config = SecretsDetectionConfig()
         data = {"message": "AWS_KEY=AKIAFAKE12345EXAMPLE and Slack token xoxr-fake-000000000-fake000000000-fakefakefakefake"}
@@ -590,6 +615,7 @@ def test_implementation_info():
 
 def test_default_config_disables_broad_generic_api_key_pattern():
     """Broad generic API-key assignment detection should stay opt-in."""
+    # First-Party
     from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig
 
     config = SecretsDetectionConfig()
@@ -599,6 +625,7 @@ def test_default_config_disables_broad_generic_api_key_pattern():
 
 def test_partial_enabled_config_preserves_safe_defaults():
     """Partial enabled maps should not silently enable broad heuristics."""
+    # First-Party
     from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig
 
     config = SecretsDetectionConfig(enabled={"aws_access_key_id": False})
@@ -612,7 +639,8 @@ def test_partial_enabled_config_preserves_safe_defaults():
 @pytest.mark.skipif(not RUST_AVAILABLE, reason="Rust not available")
 def test_rust_scan_emits_python_log_records(caplog):
     """Rust logging should bridge into Python logging via pyo3_log."""
-    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+    # First-Party
+    from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
     caplog.set_level(logging.DEBUG)
     # Fake AWS key for testing - not a real credential
@@ -631,6 +659,7 @@ def test_rust_scan_emits_python_log_records(caplog):
 
 def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):
     """Fallback to Python should keep the Rust exception and traceback in logs."""
+    # First-Party
     from plugins.secrets_detection import secrets_detection as module
 
     secret = "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"
@@ -662,7 +691,8 @@ def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):
 )
 def test_generic_api_key_assignment_detection_is_opt_in(use_rust):
     """Generic assignment-based API key detection should work when explicitly enabled."""
-    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+    # First-Party
+    from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
     config = SecretsDetectionConfig(
         enabled={
@@ -687,7 +717,8 @@ def test_generic_api_key_assignment_detection_is_opt_in(use_rust):
 )
 def test_generic_api_key_assignment_ignores_short_or_prose_values(use_rust):
     """The broad API-key pattern should avoid matching short values or prose."""
-    from plugins.secrets_detection.secrets_detection import SecretsDetectionConfig, _scan_container
+    # First-Party
+    from plugins.secrets_detection.secrets_detection import _scan_container, SecretsDetectionConfig
 
     config = SecretsDetectionConfig(
         enabled={
@@ -709,6 +740,7 @@ def test_generic_api_key_assignment_ignores_short_or_prose_values(use_rust):
 
 def test_plugin_warns_when_broad_patterns_enabled(caplog):
     """Enabling broad heuristic API-key patterns should emit an operator warning."""
+    # First-Party
     from plugins.secrets_detection.secrets_detection import SecretsDetectionPlugin
 
     caplog.set_level(logging.WARNING, logger="plugins.secrets_detection.secrets_detection")
