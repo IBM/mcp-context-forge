@@ -53,7 +53,6 @@ from locust.runners import MasterRunner, WorkerRunner
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-print("test")
 test_password = "Th!s_Is_a-gr34t-P@ssw0rd!OrElsy"
 # =============================================================================
 # Configuration - Load from .env file and environment variables
