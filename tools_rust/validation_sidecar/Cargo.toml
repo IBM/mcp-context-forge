@@ -1,0 +1,22 @@
+[package]
+name = "contextforge_validation_sidecar"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["Mihai Criveti"]
+description = "Experimental Rust UDS validation sidecar for ContextForge"
+
+[dependencies]
+base64 = "0.22.1"
+clap = { version = "4.5.60", features = ["derive", "env"] }
+regex = "1.12.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+simd-json = { version = "0.15.1", features = ["serde_impl"] }
+thiserror = "2.0.16"
+tokio = { version = "1.50.0", features = ["full"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"
+tokio = { version = "1.50.0", features = ["full"] }
