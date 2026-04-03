@@ -4760,7 +4760,7 @@ class ToolService(BaseService):
                             if is_err is None:
                                 is_err = getattr(tool_call_result, "isError", False)
                             tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
-                            success = not is_err../../mcpgateway/services/tool_service.py
+                            success = not is_err
                             logger.debug(f"Final tool_result: {tool_result}")
 
                 elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
