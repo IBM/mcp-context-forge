@@ -53,7 +53,8 @@ from locust.runners import MasterRunner, WorkerRunner
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
+print("test")
+test_password = "Th!s_Is_a-gr34t-P@ssw0rd!OrElsy"
 # =============================================================================
 # Configuration - Load from .env file and environment variables
 # =============================================================================
@@ -1300,11 +1301,7 @@ class MCPJsonRpcUser(BaseUser):
         have no backing MCP server.
         """
         # Filter out tools that require arguments or are virtual (no MCP server)
-        callable_tools = [
-            t for t in TOOL_NAMES
-            if t not in TOOLS_WITH_REQUIRED_ARGS
-            and not any(t.startswith(prefix) for prefix in VIRTUAL_TOOL_PREFIXES)
-        ]
+        callable_tools = [t for t in TOOL_NAMES if t not in TOOLS_WITH_REQUIRED_ARGS and not any(t.startswith(prefix) for prefix in VIRTUAL_TOOL_PREFIXES)]
         if callable_tools:
             tool_name = random.choice(callable_tools)
             payload = _json_rpc_request("tools/call", {"name": tool_name, "arguments": {}})
@@ -8371,7 +8368,13 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     pid = name
                 if pid:
                     time.sleep(0.05)
-                    with self.client.post(f"/admin/prompts/{pid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/prompts/[id]/edit", catch_response=True) as r:
+                    with self.client.post(
+                        f"/admin/prompts/{pid}/edit",
+                        data=f"name={name}&description=Edited",
+                        headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                        name="/admin/prompts/[id]/edit",
+                        catch_response=True,
+                    ) as r:
                         self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/prompts/{pid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/prompts/[id]/delete", catch_response=True) as r:
@@ -8401,7 +8404,13 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     rid = name
                 if rid:
                     time.sleep(0.05)
-                    with self.client.post(f"/admin/resources/{rid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/resources/[id]/edit", catch_response=True) as r:
+                    with self.client.post(
+                        f"/admin/resources/{rid}/edit",
+                        data=f"name={name}&description=Edited",
+                        headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                        name="/admin/resources/[id]/edit",
+                        catch_response=True,
+                    ) as r:
                         self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/resources/{rid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/resources/[id]/delete", catch_response=True) as r:
@@ -8454,7 +8463,13 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     pass
                 if aid:
                     time.sleep(0.05)
-                    with self.client.post(f"/admin/a2a/{aid}/edit", data=f"name={name}&endpoint_url=http://localhost:1&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/a2a/[id]/edit", catch_response=True) as r:
+                    with self.client.post(
+                        f"/admin/a2a/{aid}/edit",
+                        data=f"name={name}&endpoint_url=http://localhost:1&description=Edited",
+                        headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                        name="/admin/a2a/[id]/edit",
+                        catch_response=True,
+                    ) as r:
                         self._validate_status(r, allowed_codes=[200, 302, 303, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/a2a/{aid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/a2a/[id]/delete", catch_response=True) as r:
@@ -8484,7 +8499,13 @@ class AdminHTMXEntityCRUDUser(BaseUser):
                     gid = name
                 if gid:
                     time.sleep(0.05)
-                    with self.client.post(f"/admin/gateways/{gid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/gateways/[id]/edit", catch_response=True) as r:
+                    with self.client.post(
+                        f"/admin/gateways/{gid}/edit",
+                        data=f"name={name}&description=Edited",
+                        headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                        name="/admin/gateways/[id]/edit",
+                        catch_response=True,
+                    ) as r:
                         self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     time.sleep(0.05)
                     with self.client.post(f"/admin/gateways/{gid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/gateways/[id]/delete", catch_response=True) as r:
@@ -8590,11 +8611,19 @@ class AdminUsersOpsUser(BaseUser):
                     self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Force password change
                 time.sleep(0.05)
-                with self.client.post(f"/admin/users/{email}/force-password-change", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/users/[email]/force-password-change", catch_response=True) as r:
+                with self.client.post(
+                    f"/admin/users/{email}/force-password-change", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/users/[email]/force-password-change", catch_response=True
+                ) as r:
                     self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Update
                 time.sleep(0.05)
-                with self.client.post(f"/admin/users/{email}/update", data="full_name=Updated+Load+Test", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/users/[email]/update", catch_response=True) as r:
+                with self.client.post(
+                    f"/admin/users/{email}/update",
+                    data="full_name=Updated+Load+Test",
+                    headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                    name="/admin/users/[email]/update",
+                    catch_response=True,
+                ) as r:
                     self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Delete
                 time.sleep(0.05)
@@ -8649,19 +8678,43 @@ class AdminTeamsHTMXOpsUser(BaseUser):
                     tid = name
                 # Update
                 time.sleep(0.1)
-                with self.client.post(f"/admin/teams/{tid}/update", data=f"name={name}&description=Updated", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/update", catch_response=True) as r:
+                with self.client.post(
+                    f"/admin/teams/{tid}/update",
+                    data=f"name={name}&description=Updated",
+                    headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                    name="/admin/teams/[id]/update",
+                    catch_response=True,
+                ) as r:
                     self._validate_status(r, allowed_codes=[200, 302, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Add member
                 time.sleep(0.1)
-                with self.client.post(f"/admin/teams/{tid}/add-member", data="email=admin@example.com&role=viewer", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/add-member", catch_response=True) as r:
+                with self.client.post(
+                    f"/admin/teams/{tid}/add-member",
+                    data="email=admin@example.com&role=viewer",
+                    headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                    name="/admin/teams/[id]/add-member",
+                    catch_response=True,
+                ) as r:
                     self._validate_status(r, allowed_codes=[200, 302, 400, 404, 409, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Update member role
                 time.sleep(0.1)
-                with self.client.post(f"/admin/teams/{tid}/update-member-role", data="email=admin@example.com&role=admin", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/update-member-role", catch_response=True) as r:
+                with self.client.post(
+                    f"/admin/teams/{tid}/update-member-role",
+                    data="email=admin@example.com&role=admin",
+                    headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                    name="/admin/teams/[id]/update-member-role",
+                    catch_response=True,
+                ) as r:
                     self._validate_status(r, allowed_codes=[200, 302, 400, 404, 422, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Remove member
                 time.sleep(0.1)
-                with self.client.post(f"/admin/teams/{tid}/remove-member", data="email=admin@example.com", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/teams/[id]/remove-member", catch_response=True) as r:
+                with self.client.post(
+                    f"/admin/teams/{tid}/remove-member",
+                    data="email=admin@example.com",
+                    headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                    name="/admin/teams/[id]/remove-member",
+                    catch_response=True,
+                ) as r:
                     self._validate_status(r, allowed_codes=[200, 302, 400, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                 # Join request
                 time.sleep(0.1)
@@ -8696,13 +8749,25 @@ class AdminTeamsHTMXOpsUser(BaseUser):
                             if rid:
                                 action = random.choice(["approve", "reject", "delete"])
                                 if action == "approve":
-                                    with self.client.post(f"/admin/teams/{tid}/join-requests/{rid}/approve", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/join-requests/[id]/approve", catch_response=True) as r:
+                                    with self.client.post(
+                                        f"/admin/teams/{tid}/join-requests/{rid}/approve",
+                                        headers={**self.admin_headers, "HX-Request": "true"},
+                                        name="/admin/teams/[id]/join-requests/[id]/approve",
+                                        catch_response=True,
+                                    ) as r:
                                         self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                                 elif action == "reject":
-                                    with self.client.post(f"/admin/teams/{tid}/join-requests/{rid}/reject", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/teams/[id]/join-requests/[id]/reject", catch_response=True) as r:
+                                    with self.client.post(
+                                        f"/admin/teams/{tid}/join-requests/{rid}/reject",
+                                        headers={**self.admin_headers, "HX-Request": "true"},
+                                        name="/admin/teams/[id]/join-requests/[id]/reject",
+                                        catch_response=True,
+                                    ) as r:
                                         self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                                 else:
-                                    with self.client.delete(f"/admin/teams/{tid}/join-request/{rid}", headers=self.admin_headers, name="/admin/teams/[id]/join-request/[id] [delete]", catch_response=True) as r:
+                                    with self.client.delete(
+                                        f"/admin/teams/{tid}/join-request/{rid}", headers=self.admin_headers, name="/admin/teams/[id]/join-request/[id] [delete]", catch_response=True
+                                    ) as r:
                                         self._validate_status(r, allowed_codes=[200, 302, 404, *SOFT_SERVER_ERROR_CODES, *INFRASTRUCTURE_ERROR_CODES])
                     except Exception:
                         pass
