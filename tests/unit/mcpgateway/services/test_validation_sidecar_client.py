@@ -93,18 +93,6 @@ def test_request_envelope_preserves_raw_body_outside_metadata() -> None:
     assert "request_body_b64" not in metadata
 
 
-def test_request_envelope_rejects_parser_selection() -> None:
-    """Request envelopes should reject parser selection entirely."""
-    with pytest.raises(ValueError, match="unsupported parser selection"):
-        ValidationSidecarRequest.from_body(
-            b"{}",
-            max_param_length=1,
-            dangerous_patterns=[],
-            parser="serde-json",
-            allow_parser_selection=True,
-        )
-
-
 def test_client_builds_binary_request_payload_without_base64(tmp_path: Path) -> None:
     """Client request payloads should encode metadata length plus raw body bytes."""
     client = ValidationSidecarClient(uds_path=str(tmp_path / "sidecar.sock"), timeout_seconds=0.1)

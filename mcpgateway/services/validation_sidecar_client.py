@@ -129,8 +129,6 @@ class ValidationSidecarRequest:
         max_param_length: int,
         dangerous_patterns: Sequence[str],
         request_id: str | None = None,
-        parser: str | None = None,
-        allow_parser_selection: bool = False,
     ) -> "ValidationSidecarRequest":
         """Build a request envelope from raw request-body bytes.
 
@@ -139,19 +137,15 @@ class ValidationSidecarRequest:
             max_param_length: Maximum allowed string length.
             dangerous_patterns: Regex patterns to enforce.
             request_id: Optional request correlation id.
-            parser: Deprecated parser override that is no longer supported.
-            allow_parser_selection: Deprecated benchmark flag retained for call compatibility.
 
         Returns:
             A sidecar request envelope instance.
 
         Raises:
-            ValueError: If the body is too large or parser selection is requested.
+            ValueError: If the body is too large.
         """
         if len(body) > MAX_REQUEST_BODY_SIZE:
             raise ValueError(f"request body exceeds maximum size of {MAX_REQUEST_BODY_SIZE} bytes")
-        if parser is not None:
-            raise ValueError(f"unsupported parser selection: {parser}")
 
         return cls(
             raw_body_len=len(body),

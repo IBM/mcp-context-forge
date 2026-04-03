@@ -34,13 +34,9 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn cli_rejects_parser_flag() {
+    fn cli_requires_uds_path() {
         let result = Cli::try_parse_from([
             "contextforge-validation-sidecar",
-            "--uds-path",
-            "/tmp/validation.sock",
-            "--parser",
-            "serde-json",
         ]);
 
         assert!(result.is_err());

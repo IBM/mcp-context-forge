@@ -42,7 +42,7 @@ impl ValidationRejection {
 pub enum ValidatorError {
     #[error("dangerous pattern regex is not supported by Rust regex: {0}")]
     InvalidRegex(#[from] regex::Error),
-    #[error("invalid JSON for selected parser: {0}")]
+    #[error("invalid JSON payload: {0}")]
     Parse(String),
 }
 
