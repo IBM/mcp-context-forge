@@ -7,6 +7,10 @@ use crate::protocol::ValidationRequest;
 use clap::ValueEnum;
 use regex::Regex;
 use serde_json::Value;
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock, Mutex},
+};
 use thiserror::Error;
 
 pub const MAX_JSON_DEPTH: usize = 1024;
@@ -57,6 +61,17 @@ struct CompiledValidator {
     dangerous_pattern: Option<Regex>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ValidatorCacheKey {
+    max_param_length: usize,
+    dangerous_patterns: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct ValidatorCache {
+    entries: Mutex<HashMap<ValidatorCacheKey, Arc<CompiledValidator>>>,
+}
+
 impl CompiledValidator {
     fn new(max_param_length: usize, dangerous_patterns: &[String]) -> Result<Self, ValidatorError> {
         let dangerous_pattern = if dangerous_patterns.is_empty() {
@@ -77,11 +92,47 @@ impl CompiledValidator {
     }
 }
 
+impl ValidatorCache {
+    fn get_or_compile(
+        &self,
+        max_param_length: usize,
+        dangerous_patterns: &[String],
+    ) -> Result<Arc<CompiledValidator>, ValidatorError> {
+        let key = ValidatorCacheKey {
+            max_param_length,
+            dangerous_patterns: dangerous_patterns.to_vec(),
+        };
+
+        let mut entries = self.entries.lock().expect("validator cache mutex poisoned");
+        if let Some(compiled) = entries.get(&key) {
+            return Ok(Arc::clone(compiled));
+        }
+
+        let compiled = Arc::new(CompiledValidator::new(
+            max_param_length,
+            &key.dangerous_patterns,
+        )?);
+        entries.insert(key, Arc::clone(&compiled));
+        Ok(compiled)
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries
+            .lock()
+            .expect("validator cache mutex poisoned")
+            .len()
+    }
+}
+
+static VALIDATOR_CACHE: LazyLock<ValidatorCache> = LazyLock::new(ValidatorCache::default);
+
 pub fn validate_request(
     request: &ValidationRequest,
     backend: ParserBackend,
 ) -> Result<Option<ValidationRejection>, ValidatorError> {
-    let validator = CompiledValidator::new(request.max_param_length, &request.dangerous_patterns)?;
+    let validator =
+        VALIDATOR_CACHE.get_or_compile(request.max_param_length, &request.dangerous_patterns)?;
     match parse_json(&request.raw_body, backend) {
         Ok(value) => Ok(walk_json(&value, &validator, 0)),
         Err(_) => Ok(Some(ValidationRejection::new(
@@ -281,5 +332,21 @@ mod tests {
         .expect("rejection");
 
         assert_eq!(rejection.error_type, "invalid_json");
+    }
+
+    #[test]
+    fn compiled_validators_are_reused_for_identical_settings() {
+        let cache = ValidatorCache::default();
+        let patterns = default_patterns();
+
+        let first = cache
+            .get_or_compile(64, &patterns)
+            .expect("first validator");
+        let second = cache
+            .get_or_compile(64, &patterns)
+            .expect("second validator");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(cache.len(), 1);
     }
 }

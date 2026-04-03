@@ -218,7 +218,6 @@ where
 {
     let framed = encode_frame(payload)?;
     writer.write_all(&framed).await?;
-    writer.flush().await?;
     Ok(())
 }
 
@@ -238,6 +237,43 @@ pub fn invalid_envelope<M: Display>(message: M) -> ProtocolError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    use tokio::io::AsyncWrite;
+
+    #[derive(Default)]
+    struct RecordingWriter {
+        written: Vec<u8>,
+        flush_calls: usize,
+    }
+
+    impl AsyncWrite for RecordingWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<Result<usize, std::io::Error>> {
+            self.written.extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), std::io::Error>> {
+            self.flush_calls += 1;
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Result<(), std::io::Error>> {
+            Poll::Ready(Ok(()))
+        }
+    }
 
     fn default_patterns() -> Vec<String> {
         vec![
@@ -305,5 +341,20 @@ mod tests {
             response.validate(),
             Err(ProtocolError::InvalidEnvelope(message)) if message.contains("rejected responses")
         ));
+    }
+
+    #[tokio::test]
+    async fn write_frame_does_not_force_flush_per_response() {
+        let mut writer = RecordingWriter::default();
+
+        write_frame(&mut writer, br#"{"ok":true}"#)
+            .await
+            .expect("write frame");
+
+        assert_eq!(
+            writer.written,
+            encode_frame(br#"{"ok":true}"#).expect("encoded frame")
+        );
+        assert_eq!(writer.flush_calls, 0);
     }
 }

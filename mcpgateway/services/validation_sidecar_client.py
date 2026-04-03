@@ -173,7 +173,7 @@ class ValidationSidecarRequest:
         payload: dict[str, Any] = {
             "request_body_b64": self.request_body_b64,
             "max_param_length": self.max_param_length,
-            "dangerous_patterns": list(self.dangerous_patterns),
+            "dangerous_patterns": self.dangerous_patterns,
         }
         if self.request_id is not None:
             payload["request_id"] = self.request_id
@@ -187,7 +187,7 @@ class ValidationSidecarRequest:
         Returns:
             Canonical UTF-8 JSON bytes for the request envelope.
         """
-        return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode("utf-8")
+        return json.dumps(self.to_dict(), separators=(",", ":")).encode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,6 +274,7 @@ class ValidationSidecarClient:
         self._slot_locks = [asyncio.Lock() for _ in range(pool_size)]
         self._pool_lock = asyncio.Lock()
         self._next_index = 0
+        self._request_metadata_cache: dict[tuple[int, tuple[str, ...]], bytes] = {}
 
     async def __aenter__(self) -> "ValidationSidecarClient":
         """Enter an async context manager for the client.
@@ -323,13 +324,13 @@ class ValidationSidecarClient:
             ValidationSidecarTransportError: If the sidecar cannot be reached.
             ValidationSidecarValidationError: If the sidecar rejects the payload.
         """
-        request = ValidationSidecarRequest.from_body(
+        request_payload = self._build_request_json_bytes(
             body,
             max_param_length=max_param_length,
             dangerous_patterns=dangerous_patterns,
             request_id=request_id,
         )
-        request_frame = encode_frame(request.to_json_bytes())
+        request_frame = encode_frame(request_payload)
 
         last_error: Exception | None = None
         for attempt in range(2):
@@ -375,6 +376,54 @@ class ValidationSidecarClient:
         if last_error is not None:
             raise ValidationSidecarTransportError(f"Validation sidecar transport failed after retry: {last_error}") from last_error
         raise ValidationSidecarTransportError("Validation sidecar transport failed")
+
+    def _build_request_json_bytes(
+        self,
+        body: bytes,
+        *,
+        max_param_length: int,
+        dangerous_patterns: Sequence[str],
+        request_id: str | None,
+    ) -> bytes:
+        """Serialize a validation request while caching static metadata for the hot path.
+
+        Args:
+            body: Raw JSON request body bytes.
+            max_param_length: Maximum allowed string length.
+            dangerous_patterns: Regex patterns to enforce.
+            request_id: Optional request correlation id.
+
+        Returns:
+            Canonical UTF-8 JSON request bytes for the sidecar.
+
+        Raises:
+            ValueError: If the request body is too large.
+        """
+        if len(body) > MAX_REQUEST_BODY_SIZE:
+            raise ValueError(f"request body exceeds maximum size of {MAX_REQUEST_BODY_SIZE} bytes")
+
+        encoded_body = base64.b64encode(body)
+        patterns_key = tuple(dangerous_patterns)
+        if request_id is not None:
+            return ValidationSidecarRequest.from_body(
+                body,
+                max_param_length=max_param_length,
+                dangerous_patterns=patterns_key,
+                request_id=request_id,
+            ).to_json_bytes()
+
+        metadata = self._request_metadata_cache.get((max_param_length, patterns_key))
+        if metadata is None:
+            metadata = json.dumps(
+                {
+                    "max_param_length": max_param_length,
+                    "dangerous_patterns": patterns_key,
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            self._request_metadata_cache[(max_param_length, patterns_key)] = metadata
+
+        return b'{"request_body_b64":"' + encoded_body + b'",' + metadata[1:]
 
     async def _reserve_connection_index(self) -> int:
         """Return the next pool slot index using round-robin selection.
