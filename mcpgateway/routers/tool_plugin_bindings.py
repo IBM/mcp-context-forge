@@ -1,0 +1,181 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/routers/tool_plugin_bindings.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Madhumohan Jaishankar
+
+Tool Plugin Bindings Router.
+Provides endpoints for configuring per-tool per-tenant plugin policies.
+
+Endpoints:
+    POST   /v1/tools/plugin_bindings          — Create or update bindings (upsert)
+    GET    /v1/tools/plugin_bindings           — List all bindings
+    GET    /v1/tools/plugin_bindings/{team_id} — List bindings for a specific team
+    DELETE /v1/tools/plugin_bindings/{id}      — Delete a binding by ID
+"""
+
+# Standard
+from typing import Any, Dict
+
+# Third-Party
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+# First-Party
+from mcpgateway.db import get_db
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.schemas import ToolPluginBindingListResponse, ToolPluginBindingRequest, ToolPluginBindingResponse
+from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingNotFoundError, ToolPluginBindingService
+
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
+
+router = APIRouter(prefix="/v1/tools/plugin_bindings", tags=["Tool Plugin Bindings"])
+
+_service = ToolPluginBindingService()
+
+
+# ---------------------------------------------------------------------------
+# POST — upsert bindings
+# ---------------------------------------------------------------------------
+
+
+@router.post("/", response_model=ToolPluginBindingListResponse, status_code=status.HTTP_200_OK)
+@require_permission("tools.manage_plugins")
+async def upsert_tool_plugin_bindings(
+    request: ToolPluginBindingRequest,
+    current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> ToolPluginBindingListResponse:
+    """Create or update tool plugin bindings.
+
+    Each (team_id, tool_name, plugin_id) triple is upserted:
+    - Existing rows are updated in place (id and created_* fields preserved).
+    - New rows are inserted.
+
+    Multiple teams and multiple tools per policy can be configured in a single request.
+
+    Args:
+        request: Validated binding payload keyed by team_id.
+        current_user_ctx: Authenticated user context.
+        db: Database session.
+
+    Returns:
+        ToolPluginBindingListResponse: All created/updated bindings.
+
+    Raises:
+        HTTPException 400: If the request payload is invalid.
+        HTTPException 403: If the caller lacks permission.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(upsert_tool_plugin_bindings)
+        True
+    """
+    try:
+        caller_email: str = current_user_ctx["email"]
+        bindings = _service.upsert_bindings(db, request, caller_email=caller_email)
+        return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
+    except Exception as exc:
+        logger.error("Failed to upsert tool plugin bindings: %s", exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# GET — list all bindings
+# ---------------------------------------------------------------------------
+
+
+@router.get("/", response_model=ToolPluginBindingListResponse)
+@require_permission("tools.read")
+async def list_tool_plugin_bindings(
+    current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> ToolPluginBindingListResponse:
+    """List all tool plugin bindings across all teams.
+
+    Args:
+        current_user_ctx: Authenticated user context.
+        db: Database session.
+
+    Returns:
+        ToolPluginBindingListResponse: All bindings.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(list_tool_plugin_bindings)
+        True
+    """
+    bindings = _service.list_bindings(db, team_id=None)
+    return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
+
+
+# ---------------------------------------------------------------------------
+# GET /{team_id} — list bindings for a team
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{team_id}", response_model=ToolPluginBindingListResponse)
+@require_permission("tools.read")
+async def list_tool_plugin_bindings_for_team(
+    team_id: str,
+    current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> ToolPluginBindingListResponse:
+    """List all tool plugin bindings for a specific team.
+
+    Args:
+        team_id: Team identifier to filter by.
+        current_user_ctx: Authenticated user context.
+        db: Database session.
+
+    Returns:
+        ToolPluginBindingListResponse: Bindings for the specified team.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(list_tool_plugin_bindings_for_team)
+        True
+    """
+    bindings = _service.list_bindings(db, team_id=team_id)
+    return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
+
+
+# ---------------------------------------------------------------------------
+# DELETE /{id} — remove a binding by its UUID
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/{binding_id}", response_model=ToolPluginBindingResponse, status_code=status.HTTP_200_OK)
+@require_permission("tools.manage_plugins")
+async def delete_tool_plugin_binding(
+    binding_id: str,
+    current_user_ctx: Dict[str, Any] = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> ToolPluginBindingResponse:
+    """Delete a tool plugin binding by its unique ID.
+
+    Returns the full details of the deleted binding so callers can
+    confirm exactly what was removed without a prior GET.
+
+    Args:
+        binding_id: UUID of the binding to delete.
+        current_user_ctx: Authenticated user context.
+        db: Database session.
+
+    Returns:
+        ToolPluginBindingResponse: The deleted binding record.
+
+    Raises:
+        HTTPException 404: If no binding with the given ID exists.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(delete_tool_plugin_binding)
+        True
+    """
+    try:
+        return _service.delete_binding(db, binding_id)
+    except ToolPluginBindingNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
