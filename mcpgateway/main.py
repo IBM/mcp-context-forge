@@ -136,7 +136,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.content_security import ContentSizeError
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -2413,6 +2413,30 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
             error_details["plugin_name"] = exc.error.plugin_name
     json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Error: " + message, data=error_details)
     return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
+
+
+@app.exception_handler(ContentTypeError)
+async def content_type_exception_handler(_request: Request, exc: ContentTypeError):
+    """Handle MIME type validation failures globally.
+
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The ContentTypeError with mime_type and allowed_types.
+
+    Returns:
+        ORJSONResponse: A 415 Unsupported Media Type response with error details.
+    """
+    return ORJSONResponse(
+        status_code=415,
+        content={
+            "detail": {
+                "error": "Unsupported MIME type",
+                "message": str(exc),
+                "mime_type": exc.mime_type,
+                "allowed_types": exc.allowed_types[:5],  # Limit to first 5
+            }
+        },
+    )
 
 
 def _normalize_scope_path(scope_path: str, root_path: str) -> str:
@@ -5583,6 +5607,9 @@ async def create_resource(
     except ContentSizeError as e:
         logger.error(f"Content size exceeded in creating resource: {e}")
         raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+    except ContentTypeError as e:
+        logger.error(f"MIME type not allowed in creating resource: {e}")
+        raise HTTPException(status_code=415, detail={"error": "Unsupported Media Type", "message": str(e), "mime_type": e.mime_type, "allowed_types": e.allowed_types})
 
 
 @resource_router.get("/{resource_id}")
@@ -5766,6 +5793,9 @@ async def update_resource(
     except ContentSizeError as e:
         logger.error(f"Content size exceeded in updating resource: {e}")
         raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+    except ContentTypeError as e:
+        logger.error(f"MIME type not allowed in updating resource: {e}")
+        raise HTTPException(status_code=415, detail={"error": "Unsupported Media Type", "message": str(e), "mime_type": e.mime_type, "allowed_types": e.allowed_types})
     db.commit()
     db.close()
     await invalidate_resource_cache(resource_id)

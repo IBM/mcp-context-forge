@@ -11,7 +11,8 @@ Gateways page object for MCP Server & Federated Gateway management.
 import logging
 
 # Third-Party
-from playwright.sync_api import Error as PlaywrightError, expect, Locator
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import expect, Locator
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
@@ -465,9 +466,7 @@ class GatewaysPage(BasePage):
         if self.get_gateway_count() == 0:
             # Clear URL search params before reloading so the x-init HTMX load
             # does not re-apply the search term and leave the table empty again.
-            self.page.evaluate(
-                "window.history.replaceState({}, '', window.location.pathname + window.location.hash)"
-            )
+            self.page.evaluate("window.history.replaceState({}, '', window.location.pathname + window.location.hash)")
             self.page.reload(wait_until="domcontentloaded")
             self.navigate_to_gateways_tab()
             self.wait_for_gateways_table_loaded()
@@ -593,6 +592,22 @@ class GatewaysPage(BasePage):
 
     # ==================== Gateway Row Actions ====================
 
+    def _open_action_dropdown(self, gateway_row: Locator) -> None:
+        """Open the three-dot actions dropdown for a gateway row.
+
+        PR #3802 moved all action buttons inside an Alpine.js-controlled
+        dropdown (menuOpen: false by default). This helper clicks the trigger
+        and waits for the menu to become visible before callers attempt to
+        click individual menu items.
+
+        Args:
+            gateway_row: Playwright Locator for the <tr> row element
+        """
+        gateway_row.scroll_into_view_if_needed()
+        trigger = gateway_row.locator("button[aria-expanded]")
+        trigger.click()
+        gateway_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
+
     def click_test_button(self, gateway_index: int = 0) -> None:
         """Click the Test button for a gateway.
 
@@ -600,7 +615,8 @@ class GatewaysPage(BasePage):
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-        test_btn = gateway_row.locator('button:has-text("Test")')
+        self._open_action_dropdown(gateway_row)
+        test_btn = gateway_row.locator('button[role="menuitem"]:has-text("Test")')
         self.click_locator(test_btn)
 
     def click_view_button(self, gateway_index: int = 0) -> None:
@@ -610,7 +626,8 @@ class GatewaysPage(BasePage):
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-        view_btn = gateway_row.locator('button:has-text("View")')
+        self._open_action_dropdown(gateway_row)
+        view_btn = gateway_row.locator('button[role="menuitem"]:has-text("View")')
         self.click_locator(view_btn)
 
     def click_edit_button(self, gateway_index: int = 0) -> None:
@@ -620,7 +637,8 @@ class GatewaysPage(BasePage):
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-        edit_btn = gateway_row.locator('button:has-text("Edit")')
+        self._open_action_dropdown(gateway_row)
+        edit_btn = gateway_row.locator('button[role="menuitem"]:has-text("Edit")')
         self.click_locator(edit_btn)
 
     def click_deactivate_button(self, gateway_index: int = 0) -> None:
@@ -630,7 +648,8 @@ class GatewaysPage(BasePage):
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-        deactivate_btn = gateway_row.locator('button:has-text("Deactivate")')
+        self._open_action_dropdown(gateway_row)
+        deactivate_btn = gateway_row.locator('button[role="menuitem"]:has-text("Deactivate")')
         self.click_locator(deactivate_btn)
 
     def click_activate_button(self, gateway_index: int = 0) -> None:
@@ -640,7 +659,8 @@ class GatewaysPage(BasePage):
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-        activate_btn = gateway_row.locator('button:text-is("Activate")')
+        self._open_action_dropdown(gateway_row)
+        activate_btn = gateway_row.locator('button[role="menuitem"]:text-is("Activate")')
         self.click_locator(activate_btn)
 
     def _click_delete_and_wait(self, delete_btn, confirm: bool = True) -> None:
@@ -690,11 +710,7 @@ class GatewaysPage(BasePage):
             confirm: Whether to confirm the deletion dialog (default: True)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-
-        # Scroll the row into view first
-        gateway_row.scroll_into_view_if_needed()
-
-        # Find the delete button within the row's action column
+        self._open_action_dropdown(gateway_row)
         delete_btn = gateway_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
         self._click_delete_and_wait(delete_btn, confirm)
 
@@ -721,7 +737,7 @@ class GatewaysPage(BasePage):
             try:
                 gateway_row = self.get_gateway_row_by_name(gateway_name)
                 gateway_row.first.wait_for(state="attached", timeout=5000)
-                gateway_row.first.scroll_into_view_if_needed()
+                self._open_action_dropdown(gateway_row.first)
                 delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
                 self._click_delete_and_wait(delete_btn, confirm)
                 return True
@@ -773,6 +789,7 @@ class GatewaysPage(BasePage):
 
             # Get the delete button and use shared delete+navigation helper
             try:
+                self._open_action_dropdown(gateway_row.first)
                 delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
                 self._click_delete_and_wait(delete_btn, confirm)
 
@@ -882,8 +899,7 @@ class GatewaysPage(BasePage):
         This allows tests that care about auth configuration (not reachability) to
         complete without a live gateway.
         """
-        self.page.evaluate(
-            """() => {
+        self.page.evaluate("""() => {
                 const form = document.getElementById('add-gateway-form');
                 if (!form) return;
                 const select = form.querySelector('select[name="transport"]');
@@ -895,8 +911,7 @@ class GatewaysPage(BasePage):
                     select.appendChild(opt);
                 }
                 select.value = 'HTTP';
-            }"""
-        )
+            }""")
 
     def toggle_one_time_auth(self, enable: bool = True) -> None:
         """Toggle one-time authentication checkbox.

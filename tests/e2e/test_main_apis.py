@@ -1932,15 +1932,15 @@ class TestIntegrationScenarios:
 
     async def test_complete_resource_lifecycle(self, client: AsyncClient, mock_auth):
         """Test complete resource lifecycle: create, read, update, delete."""
-        # Create
+        # Create - use URI without extension to avoid MIME type detection override
         resource_data = {
-            "resource": {"uri": "file:///home/user/documents/report.pdf", "name": "lifecycle_test", "content": "Initial content", "mimeType": "text/plain"},
+            "resource": {"uri": "file:///home/user/documents/report", "name": "lifecycle_test", "content": "Initial content", "mimeType": "text/plain"},
             "team_id": None,
             "visibility": "private",
         }
 
         create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
-        assert create_response.status_code == 200
+        assert create_response.status_code == 200, f"Failed to create resource: {create_response.text}"
         resource_id = create_response.json()["id"]
 
         # Read
