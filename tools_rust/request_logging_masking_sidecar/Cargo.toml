@@ -1,0 +1,12 @@
+[package]
+name = "request_logging_masking_sidecar"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+name = "request_logging_masking_sidecar"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.27.1", features = ["extension-module"] }

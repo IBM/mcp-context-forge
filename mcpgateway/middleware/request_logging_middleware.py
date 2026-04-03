@@ -46,6 +46,7 @@ Examples:
 """
 
 # Standard
+import importlib
 import logging
 import re
 import secrets
@@ -73,6 +74,8 @@ logger = logging_service.get_logger(__name__)
 
 # Initialize structured logger for gateway boundary logging
 structured_logger = get_structured_logger("http_gateway")
+
+_RUST_REQUEST_LOGGING_MODULE = None
 
 SENSITIVE_KEYS = frozenset(
     {
@@ -183,6 +186,9 @@ def mask_sensitive_data(data, max_depth: int = 10):
         >>> mask_sensitive_data({"level": {"nested": {}}}, max_depth=1)
         {'level': '<nested too deep>'}
     """
+    if getattr(settings, "experimental_rust_request_logging_masking_enabled", False) is True:
+        return _load_rust_request_logging_module().mask_sensitive_data(data, max_depth)
+
     if max_depth <= 0:
         return "<nested too deep>"
 
@@ -262,6 +268,9 @@ def mask_sensitive_headers(headers):
         >>> "******" in result["Cookie"]
         True
     """
+    if getattr(settings, "experimental_rust_request_logging_masking_enabled", False) is True:
+        return _load_rust_request_logging_module().mask_sensitive_headers(headers)
+
     masked_headers = {}
     for key, value in headers.items():
         key_lower = key.lower()
@@ -273,6 +282,15 @@ def mask_sensitive_headers(headers):
         else:
             masked_headers[key] = value
     return masked_headers
+
+
+def _load_rust_request_logging_module():
+    """Load the experimental Rust masking sidecar on demand."""
+    global _RUST_REQUEST_LOGGING_MODULE
+
+    if _RUST_REQUEST_LOGGING_MODULE is None:
+        _RUST_REQUEST_LOGGING_MODULE = importlib.import_module("request_logging_masking_sidecar")
+    return _RUST_REQUEST_LOGGING_MODULE
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
