@@ -195,6 +195,10 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         """Return whether the validation sidecar should handle JSON bodies."""
         return self.enabled and self.validation_middleware_enabled and self.experimental_rust_validation_sidecar_enabled
 
+    def _is_warn_only_mode(self) -> bool:
+        """Return whether validation failures should be logged instead of raised."""
+        return settings.environment in ("development", "staging") and not self.strict
+
     def _validate_json_data(self, data: Any):
         """Synchronously validate parsed JSON data using the active backend."""
         try:
@@ -297,13 +301,13 @@ class ValidationMiddleware(BaseHTTPMiddleware):
     def _raise_validation_failure(self, key: str, error_type: str):
         """Raise or log validation failures while preserving middleware mode semantics."""
         if error_type == "max_length":
-            if settings.environment in ("development", "staging"):
+            if self._is_warn_only_mode():
                 logger.warning("Parameter %s exceeds maximum length", key)
                 return
             raise HTTPException(status_code=422, detail=f"Parameter {key} exceeds maximum length")
 
         if error_type == "dangerous_pattern":
-            if settings.environment in ("development", "staging"):
+            if self._is_warn_only_mode():
                 logger.warning("Parameter %s contains dangerous characters", key)
                 return
             raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")

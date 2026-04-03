@@ -514,6 +514,32 @@ class TestValidationMiddleware:
             assert response.body == b"ok"
 
     @pytest.mark.asyncio
+    async def test_sidecar_validation_failures_still_raise_in_strict_development(self):
+        """Test ordinary sidecar validation failures still raise when strict mode stays enabled."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_middleware_enabled = True
+            mock_settings.experimental_rust_validation_middleware_enabled = False
+            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "development"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._validate_json_body_with_sidecar = AsyncMock(side_effect=HTTPException(status_code=422, detail="Parameter name exceeds maximum length"))  # type: ignore[method-assign]
+
+            async def call_next(req):
+                return Response("ok")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware.dispatch(_JSONBodyRequest(b'{"name":"toolong"}'), call_next)
+
+            assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
     async def test_sidecar_transport_failures_return_503(self):
         """Test sidecar transport failures stay fatal even in warn-only mode."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
