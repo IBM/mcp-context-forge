@@ -2459,6 +2459,87 @@ class TestToolService:
         assert "mcp.client.response" in span_names
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_pooled_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
+        """Pooled MCP sessions must NOT receive traceparent/tracestate to prevent context pollution."""
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+        mock_tool.id = "tool-123"
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            result = Mock()
+            result.scalar_one_or_none.return_value = value
+            result.scalars.return_value = result
+            result.all.return_value = [] if value is None else [value]
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="pooled ok")])
+        pooled_session_mock = AsyncMock()
+        pooled_session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        captured_pool_headers = {}
+
+        @asynccontextmanager
+        async def mock_pool_session(**kwargs):
+            captured_pool_headers.update(kwargs.get("headers") or {})
+            pooled = SimpleNamespace(session=pooled_session_mock)
+            yield pooled
+
+        mock_pool = MagicMock()
+        mock_pool.session = mock_pool_session
+
+        @contextmanager
+        def noop_span(name, _attributes=None):
+            yield MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+            patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
+            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
+            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=mock_pool),
+        ):
+            mock_settings.mcp_session_pool_enabled = True
+            mock_settings.default_passthrough_headers = []
+            mock_settings.tool_timeout = 60
+
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        assert result.content[0].text == "pooled ok"
+        # The critical assertion: pooled path must NOT have traceparent/tracestate
+        assert "traceparent" not in captured_pool_headers, "traceparent must not be injected into pooled sessions"
+        assert "tracestate" not in captured_pool_headers, "tracestate must not be injected into pooled sessions"
+        # Correlation ID must also be absent from pooled headers (pinned transport)
+        assert "X-Correlation-ID" not in captured_pool_headers, "X-Correlation-ID must not be injected into pooled sessions"
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
         """Test MCP tool invocation falls back to isError when is_error is None."""
         # Standard
