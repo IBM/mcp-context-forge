@@ -2169,7 +2169,7 @@ class TestCallA2AAgent:
         agent.agent_type = "custom"
         agent.protocol_version = "1.0"
         agent.auth_type = "bearer"
-        agent.auth_value = "my-token"
+        agent.auth_value = "encrypted_bearer_token"  # Simulates encrypted value from DB
         agent.auth_query_params = None
 
         mock_response = MagicMock()
@@ -2179,13 +2179,17 @@ class TestCallA2AAgent:
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_response
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-token"}),
+        ):
             result = await tool_service._call_a2a_agent(agent, {"query": "test"})
         assert result == {"data": "custom"}
         # Verify bearer auth was added
         call_kwargs = mock_client.post.call_args
         headers = call_kwargs[1]["headers"]
         assert "Authorization" in headers
+        assert headers["Authorization"] == "Bearer my-token"
 
     @pytest.mark.asyncio
     async def test_call_a2a_agent_http_error(self, tool_service):
@@ -2297,7 +2301,7 @@ class TestCallA2AAgent:
         agent.agent_type = "generic"
         agent.protocol_version = "1.0"
         agent.auth_type = "api_key"
-        agent.auth_value = "my-api-key"
+        agent.auth_value = "encrypted_api_key"  # Simulates encrypted value from DB
         agent.auth_query_params = None
 
         mock_response = MagicMock()
@@ -2307,7 +2311,10 @@ class TestCallA2AAgent:
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_response
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-api-key"}),
+        ):
             result = await tool_service._call_a2a_agent(agent, {"query": "test"})
         call_kwargs = mock_client.post.call_args
         assert "Bearer my-api-key" in call_kwargs[1]["headers"]["Authorization"]
