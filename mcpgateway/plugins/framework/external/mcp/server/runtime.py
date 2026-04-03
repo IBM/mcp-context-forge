@@ -167,6 +167,20 @@ async def invoke_hook(hook_type: str, plugin_name: str, payload: Dict[str, Any],
     return await SERVER.invoke_hook(hook_type, plugin_name, payload, context)
 
 
+def _should_trace_plugin_server_path(path: str) -> bool:
+    """Trace streamable MCP traffic while excluding health and metrics endpoints.
+
+    Args:
+        path: Incoming plugin server request path.
+
+    Returns:
+        bool: ``True`` when the request path should be traced.
+    """
+
+    normalized = path.rstrip("/") or "/"
+    return normalized not in {"/health", "/metrics/prometheus"}
+
+
 class SSLCapableFastMCP(FastMCP):
     """FastMCP server with SSL/TLS support using MCPServerConfig.
 
@@ -408,10 +422,23 @@ class SSLCapableFastMCP(FastMCP):
         else:
             starlette_app.routes.append(Route("/metrics/prometheus", metrics_disabled, methods=["GET"]))
 
+        app_to_serve: Any = starlette_app
+        if os.getenv("OTEL_ENABLE_OBSERVABILITY", "false").lower() == "true":
+            # Set service name BEFORE importing observability module
+            # The tracer is initialized at import time, so env vars must be set first
+            os.environ.setdefault("OTEL_SERVICE_NAME", MCP_SERVER_NAME)
+
+            # First-Party
+            from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled  # pylint: disable=import-outside-toplevel
+
+            init_telemetry()
+            if otel_tracing_enabled():
+                app_to_serve = OpenTelemetryRequestMiddleware(starlette_app, should_trace_request_path=_should_trace_plugin_server_path)
+
         # Build uvicorn config with optional SSL
         ssl_config = self._get_ssl_config()
         config_kwargs = {
-            "app": starlette_app,
+            "app": app_to_serve,
             "host": self.settings.host,
             "port": self.settings.port,
             "log_level": self.settings.log_level.lower(),

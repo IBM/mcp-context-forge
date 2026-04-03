@@ -38,6 +38,7 @@ from typing import Any, Optional, Union
 from pydantic import BaseModel, RootModel
 
 # First-Party
+from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework.base import HookRef, Plugin
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError, PluginViolationError
 from mcpgateway.plugins.framework.hooks.policies import apply_policy, DefaultHookPolicy, HookPayloadPolicy
@@ -171,127 +172,134 @@ class PluginExecutor:
         current_payload: PluginPayload | None = None
         decision_plugin_name: Optional[str] = None
         max_retry_delay_ms: int = 0
+        executed_plugins = 0
+        skipped_plugins = 0
+        stopped_by_plugin: Optional[str] = None
 
-        for hook_ref in hook_refs:
-            # Skip disabled plugins
-            if hook_ref.plugin_ref.mode == PluginMode.DISABLED:
-                continue
+        with create_span(
+            "plugin.hook.invoke",
+            {
+                "plugin.hook.type": hook_type,
+                "plugin.chain.length": len(hook_refs),
+            },
+        ) as hook_chain_span:
+            for hook_ref in hook_refs:
+                # Skip disabled plugins
+                if hook_ref.plugin_ref.mode == PluginMode.DISABLED:
+                    skipped_plugins += 1
+                    continue
 
-            # Check if plugin conditions match current context
-            if hook_ref.plugin_ref.conditions and not payload_matches(payload, hook_type, hook_ref.plugin_ref.conditions, global_context):
-                logger.debug("Skipping plugin %s - conditions not met", hook_ref.plugin_ref.name)
-                continue
+                # Check if plugin conditions match current context
+                if hook_ref.plugin_ref.conditions and not payload_matches(payload, hook_type, hook_ref.plugin_ref.conditions, global_context):
+                    logger.debug("Skipping plugin %s - conditions not met", hook_ref.plugin_ref.name)
+                    skipped_plugins += 1
+                    continue
 
-            tmp_global_context = GlobalContext(
-                request_id=global_context.request_id,
-                user=global_context.user,
-                tenant_id=global_context.tenant_id,
-                server_id=global_context.server_id,
-                state={} if not global_context.state else copyonwrite(global_context.state),
-                metadata={} if not global_context.metadata else copyonwrite(global_context.metadata),
-            )
-            # Get or create local context for this plugin
-            local_context_key = global_context.request_id + hook_ref.plugin_ref.uuid
-            if local_contexts and local_context_key in local_contexts:
-                local_context = local_contexts[local_context_key]
-                local_context.global_context = tmp_global_context
-            else:
-                local_context = PluginContext(global_context=tmp_global_context)
-            res_local_contexts[local_context_key] = local_context
-
-            # When a policy exists or default=deny is active, deep-copy the
-            # payload before handing it to the plugin.  The plugin operates on
-            # the copy, so in-place nested mutations (e.g. payload.args[k]=v)
-            # cannot pollute the live chain.  model_copy(deep=True) is used
-            # for Pydantic models; copy.deepcopy handles plain dicts that
-            # arrive via cross-type hooks (e.g. http_auth_resolve_user).
-            effective_payload = current_payload if current_payload is not None else payload
-            # RootModel subclasses (e.g. HttpHeaderPayload) wrap mutable containers
-            # that bypass the frozen=True constraint via __setitem__, so they must
-            # always be deep-copied to prevent in-place corruption of the live chain.
-            needs_isolation = policy or self.default_hook_policy == DefaultHookPolicy.DENY or isinstance(effective_payload, RootModel)
-            if needs_isolation:
-                plugin_input = effective_payload.model_copy(deep=True) if isinstance(effective_payload, BaseModel) else copy.deepcopy(effective_payload)
-            else:
-                plugin_input = effective_payload
-
-            # Execute plugin with timeout protection
-            result = await self.execute_plugin(
-                hook_ref,
-                plugin_input,
-                local_context,
-                violations_as_exceptions,
-                global_context,
-                combined_metadata,
-            )
-
-            # Propagate retry signal — take the largest delay requested by any plugin
-            max_retry_delay_ms = max(max_retry_delay_ms, result.retry_delay_ms)
-
-            # Apply policy-based controlled merge (per-plugin)
-            if result.modified_payload is not None:
-                if policy:
-                    if isinstance(result.modified_payload, type(effective_payload)) and isinstance(effective_payload, BaseModel):
-                        # Same-type BaseModel payload — apply field-level policy filtering
-                        filtered = apply_policy(
-                            effective_payload,
-                            result.modified_payload,
-                            policy,
-                        )
-                        if filtered is not None:
-                            current_payload = filtered
-                            decision_plugin_name = hook_ref.plugin_ref.name
-                    else:
-                        # Cross-type payload (e.g. HTTP hooks returning a different
-                        # result type than the input).  Field-level filtering is not
-                        # applicable; the policy's presence authorises the hook.
-                        # Guard: only accept PluginPayload subtypes or dict (used
-                        # by http_auth_resolve_user and similar hooks).
-                        if isinstance(result.modified_payload, (PluginPayload, dict)):
-                            logger.debug(
-                                "Plugin %s returned cross-type payload (%s -> %s) on hook %s; accepting without field filtering",
-                                hook_ref.plugin_ref.name,
-                                type(effective_payload).__name__,
-                                type(result.modified_payload).__name__,
-                                hook_type,
-                            )
-                            current_payload = result.modified_payload
-                            decision_plugin_name = hook_ref.plugin_ref.name
-                        else:
-                            logger.warning(
-                                "Plugin %s returned unexpected type %s on hook %s; ignoring modification",
-                                hook_ref.plugin_ref.name,
-                                type(result.modified_payload).__name__,
-                                hook_type,
-                            )
-                elif self.default_hook_policy == DefaultHookPolicy.ALLOW:
-                    # No explicit policy + default=allow -- accept all modifications
-                    current_payload = result.modified_payload
-                    decision_plugin_name = hook_ref.plugin_ref.name
+                tmp_global_context = GlobalContext(
+                    request_id=global_context.request_id,
+                    user=global_context.user,
+                    tenant_id=global_context.tenant_id,
+                    server_id=global_context.server_id,
+                    state={} if not global_context.state else copyonwrite(global_context.state),
+                    metadata={} if not global_context.metadata else copyonwrite(global_context.metadata),
+                )
+                # Get or create local context for this plugin
+                local_context_key = global_context.request_id + hook_ref.plugin_ref.uuid
+                if local_contexts and local_context_key in local_contexts:
+                    local_context = local_contexts[local_context_key]
+                    local_context.global_context = tmp_global_context
                 else:
-                    # No explicit policy + default=deny -- reject all modifications
-                    logger.warning(
-                        "Plugin %s attempted payload modification on hook %s but no policy is defined and default is deny",
-                        hook_ref.plugin_ref.name,
-                        hook_type,
+                    local_context = PluginContext(global_context=tmp_global_context)
+                res_local_contexts[local_context_key] = local_context
+
+                # When a policy exists or default=deny is active, deep-copy the
+                # payload before handing it to the plugin. The plugin operates on
+                # the copy, so in-place nested mutations cannot pollute the live chain.
+                effective_payload = current_payload if current_payload is not None else payload
+                needs_isolation = policy or self.default_hook_policy == DefaultHookPolicy.DENY or isinstance(effective_payload, RootModel)
+                if needs_isolation:
+                    plugin_input = effective_payload.model_copy(deep=True) if isinstance(effective_payload, BaseModel) else copy.deepcopy(effective_payload)
+                else:
+                    plugin_input = effective_payload
+
+                result = await self.execute_plugin(
+                    hook_ref,
+                    plugin_input,
+                    local_context,
+                    violations_as_exceptions,
+                    global_context,
+                    combined_metadata,
+                )
+                executed_plugins += 1
+
+                # Propagate retry signal — take the largest delay requested by any plugin
+                max_retry_delay_ms = max(max_retry_delay_ms, result.retry_delay_ms)
+
+                # Apply policy-based controlled merge (per-plugin)
+                if result.modified_payload is not None:
+                    if policy:
+                        if isinstance(result.modified_payload, type(effective_payload)) and isinstance(effective_payload, BaseModel):
+                            filtered = apply_policy(
+                                effective_payload,
+                                result.modified_payload,
+                                policy,
+                            )
+                            if filtered is not None:
+                                current_payload = filtered
+                                decision_plugin_name = hook_ref.plugin_ref.name
+                        else:
+                            if isinstance(result.modified_payload, (PluginPayload, dict)):
+                                logger.debug(
+                                    "Plugin %s returned cross-type payload (%s -> %s) on hook %s; accepting without field filtering",
+                                    hook_ref.plugin_ref.name,
+                                    type(effective_payload).__name__,
+                                    type(result.modified_payload).__name__,
+                                    hook_type,
+                                )
+                                current_payload = result.modified_payload
+                                decision_plugin_name = hook_ref.plugin_ref.name
+                            else:
+                                logger.warning(
+                                    "Plugin %s returned unexpected type %s on hook %s; ignoring modification",
+                                    hook_ref.plugin_ref.name,
+                                    type(result.modified_payload).__name__,
+                                    hook_type,
+                                )
+                    elif self.default_hook_policy == DefaultHookPolicy.ALLOW:
+                        current_payload = result.modified_payload
+                        decision_plugin_name = hook_ref.plugin_ref.name
+                    else:
+                        logger.warning(
+                            "Plugin %s attempted payload modification on hook %s but no policy is defined and default is deny",
+                            hook_ref.plugin_ref.name,
+                            hook_type,
+                        )
+
+                # Both ENFORCE and ENFORCE_IGNORE_ERROR honour continue_processing=False
+                # and halt the chain. They differ only in error handling.
+                if not result.continue_processing and hook_ref.plugin_ref.mode in (PluginMode.ENFORCE, PluginMode.ENFORCE_IGNORE_ERROR):
+                    stopped_by_plugin = hook_ref.plugin_ref.name
+                    if hook_chain_span is not None:
+                        hook_chain_span.set_attribute("plugin.chain.stopped", True)
+                        hook_chain_span.set_attribute("plugin.chain.stopped_by", hook_ref.plugin_ref.name)
+                        hook_chain_span.set_attribute("plugin.executed_count", executed_plugins)
+                        hook_chain_span.set_attribute("plugin.skipped_count", skipped_plugins)
+                    if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
+                        combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
+                    return (
+                        PluginResult(
+                            continue_processing=False,
+                            modified_payload=current_payload,
+                            violation=result.violation,
+                            metadata=combined_metadata,
+                        ),
+                        res_local_contexts,
                     )
 
-            # Both ENFORCE and ENFORCE_IGNORE_ERROR honour continue_processing=False
-            # and halt the chain.  They differ only in error handling: ENFORCE raises
-            # on plugin errors/timeouts, while ENFORCE_IGNORE_ERROR swallows them and
-            # lets the chain continue (see execute_plugin exception handlers).
-            if not result.continue_processing and hook_ref.plugin_ref.mode in (PluginMode.ENFORCE, PluginMode.ENFORCE_IGNORE_ERROR):
-                if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
-                    combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
-                return (
-                    PluginResult(
-                        continue_processing=False,
-                        modified_payload=current_payload,
-                        violation=result.violation,
-                        metadata=combined_metadata,
-                    ),
-                    res_local_contexts,
-                )
+            if hook_chain_span is not None:
+                hook_chain_span.set_attribute("plugin.executed_count", executed_plugins)
+                hook_chain_span.set_attribute("plugin.skipped_count", skipped_plugins)
+                hook_chain_span.set_attribute("plugin.chain.stopped", stopped_by_plugin is not None)
 
         if hook_type == HTTP_AUTH_CHECK_PERMISSION_HOOK and decision_plugin_name:
             combined_metadata[DECISION_PLUGIN_METADATA_KEY] = decision_plugin_name
@@ -438,32 +446,52 @@ class PluginExecutor:
             except Exception as e:
                 logger.debug("Plugin observability start_span failed: %s", e)
 
-        # Execute plugin
-        try:
-            result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
-        except Exception:
+        with create_span(
+            "plugin.execute",
+            {
+                "plugin.name": hook_ref.plugin_ref.name,
+                "plugin.uuid": hook_ref.plugin_ref.uuid,
+                "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
+                "plugin.priority": hook_ref.plugin_ref.priority,
+                "plugin.timeout": self.timeout,
+                "plugin.hook.type": hook_ref.name,
+                "plugin.kind": getattr(getattr(hook_ref.plugin_ref.plugin, "config", None), "kind", None),
+                "contextforge.runtime": "python",
+            },
+        ) as otel_span:
+            # Execute plugin
+            try:
+                result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+            except Exception:
+                if span_id is not None:
+                    try:
+                        self.observability.end_span(span_id=span_id, status="error")
+                    except Exception:  # nosec B110
+                        pass
+                raise
+
+            if otel_span is not None:
+                otel_span.set_attribute("plugin.had_violation", result.violation is not None)
+                otel_span.set_attribute("plugin.modified_payload", result.modified_payload is not None)
+                otel_span.set_attribute("plugin.continue_processing", result.continue_processing)
+                otel_span.set_attribute("plugin.stopped_chain", not result.continue_processing)
+
+            # End span with success
             if span_id is not None:
                 try:
-                    self.observability.end_span(span_id=span_id, status="error")
-                except Exception:  # nosec B110
-                    pass
-            raise
+                    self.observability.end_span(
+                        span_id=span_id,
+                        status="ok",
+                        attributes={
+                            "plugin.had_violation": result.violation is not None,
+                            "plugin.modified_payload": result.modified_payload is not None,
+                            "plugin.continue_processing": result.continue_processing,
+                        },
+                    )
+                except Exception as e:
+                    logger.debug("Plugin observability end_span failed: %s", e)
 
-        # End span with success
-        if span_id is not None:
-            try:
-                self.observability.end_span(
-                    span_id=span_id,
-                    status="ok",
-                    attributes={
-                        "plugin.had_violation": result.violation is not None,
-                        "plugin.modified_payload": result.modified_payload is not None,
-                    },
-                )
-            except Exception as e:
-                logger.debug("Plugin observability end_span failed: %s", e)
-
-        return result
+            return result
 
     def _validate_payload_size(self, payload: Any) -> None:
         """Validate that payload doesn't exceed size limits.

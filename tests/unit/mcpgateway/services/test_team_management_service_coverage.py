@@ -962,11 +962,17 @@ class TestCreateTeamMaxMembers:
         mock_query.filter = MagicMock(return_value=mock_filter)
         db.query = MagicMock(return_value=mock_query)
 
-        with patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache, patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin:
+        with (
+            patch("mcpgateway.services.team_management_service.auth_cache") as mock_cache,
+            patch("mcpgateway.services.team_management_service.admin_stats_cache") as mock_admin,
+            patch("mcpgateway.services.team_management_service.settings") as mock_settings,
+        ):
             mock_cache.invalidate_user_teams = AsyncMock()
             mock_cache.invalidate_team_membership = AsyncMock()
             mock_cache.invalidate_user_role = AsyncMock()
             mock_admin.invalidate_teams = AsyncMock()
+            mock_settings.max_teams_per_user = 50
+            mock_settings.max_members_per_team = 100
 
             result = await svc.create_team("Team", "desc", "u@t.com", "public", max_members=50)
 

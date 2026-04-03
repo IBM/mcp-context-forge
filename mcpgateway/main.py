@@ -94,7 +94,7 @@ from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddl
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
-from mcpgateway.observability import init_telemetry
+from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
 from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError, PromptHookType, ResourceHookType
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
@@ -3069,6 +3069,14 @@ if settings.observability_enabled:
     logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
 else:
     logger.info("🔍 Observability middleware disabled")
+
+# Add OTEL request-root tracing middleware when external tracing is enabled.
+# Registered last so it wraps the full request path, including mounted /mcp ASGI handling.
+if otel_tracing_enabled():
+    app.add_middleware(OpenTelemetryRequestMiddleware)
+    logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
+else:
+    logger.info("🧵 OTEL request tracing middleware disabled")
 
 # Database query logging middleware (for N+1 detection)
 if settings.db_query_log_enabled:

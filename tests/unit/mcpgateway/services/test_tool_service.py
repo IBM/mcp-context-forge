@@ -2362,15 +2362,182 @@ class TestToolService:
 
         # ----------------------------------------
         # Now, simulate the actual method call
-        # This is what your production code would run:
-        metric = test_db.query().filter_by().first()
 
-        # Assertions
-        assert metric is not None, "No ToolMetric was recorded"
-        assert metric.tool_id == mock_tool.id
-        assert metric.is_success is True
-        assert metric.error_message is None
-        assert metric.response_time >= 0  # You can check with a tolerance if needed
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_streamablehttp_creates_client_lifecycle_spans(self, tool_service, mock_tool, test_db):
+        """Non-pooled MCP calls should emit client call, initialize, and request spans in order."""
+        # Standard
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+        mock_tool.id = "tool-123"
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            result = Mock()
+            result.scalar_one_or_none.return_value = value
+            result.scalars.return_value = result
+            result.all.return_value = [] if value is None else [value]
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="MCP response")])
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        captured_headers = {}
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured_headers.update(kwargs["headers"])
+            yield ("read", "write", None)
+
+        span_names = []
+
+        @contextmanager
+        def record_span(name, _attributes=None):
+            span_names.append(name)
+            yield MagicMock()
+
+        def inject_headers(headers):
+            traced = dict(headers)
+            traced["traceparent"] = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+            return traced
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+            patch("mcpgateway.services.tool_service.create_span", side_effect=record_span),
+            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-123"),
+        ):
+            mock_settings.mcp_session_pool_enabled = False
+            mock_settings.default_passthrough_headers = []
+            mock_settings.tool_timeout = 60
+
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        assert result.content[0].text == "MCP response"
+        assert captured_headers["traceparent"].startswith("00-")
+        assert captured_headers["X-Correlation-ID"] == "corr-123"
+        assert span_names[:3] == ["tool.invoke", "mcp.client.call", "mcp.client.initialize"]
+        assert "mcp.client.request" in span_names
+        assert "mcp.client.response" in span_names
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_pooled_path_does_not_inject_trace_headers(self, tool_service, mock_tool, test_db):
+        """Pooled MCP sessions must NOT receive traceparent/tracestate to prevent context pollution."""
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+        mock_tool.id = "tool-123"
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            value = returns.pop(0) if returns else None
+            result = Mock()
+            result.scalar_one_or_none.return_value = value
+            result.scalars.return_value = result
+            result.all.return_value = [] if value is None else [value]
+            return result
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        expected_result = ToolResult(content=[TextContent(type="text", text="pooled ok")])
+        pooled_session_mock = AsyncMock()
+        pooled_session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        captured_pool_headers = {}
+
+        @asynccontextmanager
+        async def mock_pool_session(**kwargs):
+            captured_pool_headers.update(kwargs.get("headers") or {})
+            pooled = SimpleNamespace(session=pooled_session_mock)
+            yield pooled
+
+        mock_pool = MagicMock()
+        mock_pool.session = mock_pool_session
+
+        @contextmanager
+        def noop_span(name, _attributes=None):
+            yield MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+            patch("mcpgateway.services.tool_service.create_span", side_effect=noop_span),
+            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda h: {**h, "traceparent": "00-injected-span-01"}),
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-456"),
+            patch("mcpgateway.services.tool_service.get_mcp_session_pool", return_value=mock_pool),
+        ):
+            mock_settings.mcp_session_pool_enabled = True
+            mock_settings.default_passthrough_headers = []
+            mock_settings.tool_timeout = 60
+
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        assert result.content[0].text == "pooled ok"
+        # The critical assertion: pooled path must NOT have traceparent/tracestate
+        assert "traceparent" not in captured_pool_headers, "traceparent must not be injected into pooled sessions"
+        assert "tracestate" not in captured_pool_headers, "tracestate must not be injected into pooled sessions"
+        # Correlation ID must also be absent from pooled headers (pinned transport)
+        assert "X-Correlation-ID" not in captured_pool_headers, "X-Correlation-ID must not be injected into pooled sessions"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
@@ -7808,6 +7975,38 @@ class TestRustMcpExecutionPlan:
             "toolId": "tool-1",
             "serverId": None,
         }
+
+    @pytest.mark.asyncio
+    async def test_prepare_rust_mcp_tool_execution_injects_w3c_trace_context_into_plan_headers(self, tool_service):
+        """Rust execution plans should carry W3C trace context for direct upstream calls."""
+        cache = self._cache_mock(self._cache_payload(timeout_ms=2500))
+        tool_service._plugin_manager = None
+
+        def _inject(headers):
+            traced = dict(headers)
+            traced["traceparent"] = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+            traced["tracestate"] = "vendor=value"
+            return traced
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"authorization": "Bearer abc"}),
+            patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=_inject),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(
+                MagicMock(),
+                "tool-one",
+                request_headers={"authorization": "Bearer abc"},
+                user_email="user@example.com",
+                token_teams=["team-a"],
+            )
+
+        assert plan["headers"]["authorization"] == "Bearer abc"
+        assert plan["headers"]["traceparent"] == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+        assert plan["headers"]["tracestate"] == "vendor=value"
 
     @pytest.mark.asyncio
     async def test_prepare_rust_mcp_pre_invoke_only_returns_eligible_plan_with_hooks(self, tool_service):

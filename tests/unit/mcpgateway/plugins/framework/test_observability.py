@@ -10,6 +10,7 @@ and that start_span/end_span are called during plugin execution.
 """
 
 # Standard
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
     PluginManager,
+    PluginMode,
     PluginResult,
     PromptHookType,
     PromptPrehookPayload,
@@ -78,6 +80,20 @@ class SimplePlugin(Plugin):
 
     async def prompt_pre_fetch(self, payload, context):
         payload.args["traced"] = "yes"
+        return PluginResult(continue_processing=True, modified_payload=payload)
+
+
+class BlockingPlugin(Plugin):
+    """A minimal plugin that stops the hook chain."""
+
+    async def prompt_pre_fetch(self, payload, context):  # noqa: ARG002
+        return PluginResult(continue_processing=False, modified_payload=payload)
+
+
+class PassthroughToolPlugin(Plugin):
+    """A minimal tool plugin that allows the hook chain to complete."""
+
+    async def tool_pre_invoke(self, payload, context):  # noqa: ARG002
         return PluginResult(continue_processing=True, modified_payload=payload)
 
 
@@ -261,6 +277,192 @@ async def test_executor_observability_injection():
     # Also verify default is None
     default_executor = PluginExecutor()
     assert default_executor.observability is None
+
+
+@pytest.mark.asyncio
+async def test_plugin_manager_emits_otel_hook_and_plugin_spans():
+    """Plugin manager should emit OTEL spans for the hook chain and plugin execution."""
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml", observability=None)
+    await manager.initialize()
+
+    config = PluginConfig(
+        name="TracedPlugin",
+        description="Plugin for OTEL test",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="TracedPlugin",
+        hooks=["prompt_pre_fetch"],
+        config={},
+    )
+    plugin = SimplePlugin(config)
+
+    spans: List[Tuple[str, Dict[str, Any] | None]] = []
+
+    @contextmanager
+    def record_span(name: str, attributes: Optional[Dict[str, Any]] = None):
+        spans.append((name, attributes))
+        yield None
+
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(plugin))
+        mock_get.return_value = [hook_ref]
+
+        payload = PromptPrehookPayload(prompt_id="test", args={})
+        global_context = GlobalContext(request_id="req-otel-1")
+
+        with patch("mcpgateway.plugins.framework.manager.create_span", side_effect=record_span):
+            result, _ = await manager.invoke_hook(
+                PromptHookType.PROMPT_PRE_FETCH,
+                payload,
+                global_context=global_context,
+            )
+
+    assert result.continue_processing is True
+    assert [name for name, _ in spans] == ["plugin.hook.invoke", "plugin.execute"]
+    assert spans[0][1]["plugin.hook.type"] == PromptHookType.PROMPT_PRE_FETCH
+    assert spans[1][1]["plugin.name"] == "TracedPlugin"
+    assert spans[1][1]["plugin.hook.type"] == PromptHookType.PROMPT_PRE_FETCH
+
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_plugin_manager_records_when_plugin_stops_chain():
+    """Hook-chain span should record which plugin stopped processing."""
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml", observability=None)
+    await manager.initialize()
+
+    config = PluginConfig(
+        name="BlockingPlugin",
+        description="Plugin for OTEL stop test",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="BlockingPlugin",
+        hooks=["prompt_pre_fetch"],
+        config={},
+        mode=PluginMode.ENFORCE,
+    )
+    plugin = BlockingPlugin(config)
+
+    class RecordingSpan:
+        def __init__(self, name: str, attributes: Optional[Dict[str, Any]] = None):
+            self.name = name
+            self.attributes = dict(attributes or {})
+
+        def set_attribute(self, key: str, value: Any) -> None:
+            self.attributes[key] = value
+
+    recorded: List[RecordingSpan] = []
+
+    @contextmanager
+    def record_span(name: str, attributes: Optional[Dict[str, Any]] = None):
+        span = RecordingSpan(name, attributes)
+        recorded.append(span)
+        yield span
+
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(plugin))
+        mock_get.return_value = [hook_ref]
+
+        payload = PromptPrehookPayload(prompt_id="test", args={})
+        global_context = GlobalContext(request_id="req-otel-stop")
+
+        with patch("mcpgateway.plugins.framework.manager.create_span", side_effect=record_span):
+            result, _ = await manager.invoke_hook(
+                PromptHookType.PROMPT_PRE_FETCH,
+                payload,
+                global_context=global_context,
+            )
+
+    assert result.continue_processing is False
+    hook_chain_span = recorded[0]
+    plugin_span = recorded[1]
+    assert hook_chain_span.name == "plugin.hook.invoke"
+    assert hook_chain_span.attributes["plugin.chain.stopped"] is True
+    assert hook_chain_span.attributes["plugin.chain.stopped_by"] == "BlockingPlugin"
+    assert plugin_span.name == "plugin.execute"
+    assert plugin_span.attributes["plugin.name"] == "BlockingPlugin"
+
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_plugin_manager_records_skipped_and_executed_counts_when_chain_completes():
+    """Completed hook chains should record executed and skipped plugin counts."""
+    # First-Party
+    from mcpgateway.plugins.framework import ToolHookType, ToolPreInvokePayload
+
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml", observability=None)
+    await manager.initialize()
+
+    disabled_config = PluginConfig(
+        name="DisabledPlugin",
+        description="Disabled plugin for OTEL accounting test",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="DisabledPlugin",
+        hooks=["tool_pre_invoke"],
+        config={},
+        mode=PluginMode.DISABLED,
+    )
+    enabled_config = PluginConfig(
+        name="EnabledPlugin",
+        description="Enabled plugin for OTEL accounting test",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="EnabledPlugin",
+        hooks=["tool_pre_invoke"],
+        config={},
+        mode=PluginMode.ENFORCE,
+    )
+
+    disabled_plugin = PassthroughToolPlugin(disabled_config)
+    enabled_plugin = PassthroughToolPlugin(enabled_config)
+
+    class RecordingSpan:
+        def __init__(self, name: str, attributes: Optional[Dict[str, Any]] = None):
+            self.name = name
+            self.attributes = dict(attributes or {})
+
+        def set_attribute(self, key: str, value: Any) -> None:
+            self.attributes[key] = value
+
+    recorded: List[RecordingSpan] = []
+
+    @contextmanager
+    def record_span(name: str, attributes: Optional[Dict[str, Any]] = None):
+        span = RecordingSpan(name, attributes)
+        recorded.append(span)
+        yield span
+
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        mock_get.return_value = [
+            HookRef("tool_pre_invoke", PluginRef(disabled_plugin)),
+            HookRef("tool_pre_invoke", PluginRef(enabled_plugin)),
+        ]
+
+        payload = ToolPreInvokePayload(name="tool-a", args={})
+        global_context = GlobalContext(request_id="req-otel-counts")
+
+        with patch("mcpgateway.plugins.framework.manager.create_span", side_effect=record_span):
+            result, _ = await manager.invoke_hook(
+                ToolHookType.TOOL_PRE_INVOKE,
+                payload,
+                global_context=global_context,
+            )
+
+    assert result.continue_processing is True
+    hook_chain_span = recorded[0]
+    assert hook_chain_span.name == "plugin.hook.invoke"
+    assert hook_chain_span.attributes["plugin.executed_count"] == 1
+    assert hook_chain_span.attributes["plugin.skipped_count"] == 1
+    assert hook_chain_span.attributes["plugin.chain.stopped"] is False
+
+    await manager.shutdown()
 
 
 def test_protocol_method_bodies():
