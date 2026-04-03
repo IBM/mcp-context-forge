@@ -21,7 +21,6 @@ import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
 import os
-from pickle import NONE
 import re
 import ssl
 import time
@@ -3579,7 +3578,8 @@ class ToolService(BaseService):
             ToolInvocationError: If invocation fails.
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
-            PluginError: If encounters issue with plugin
+            PluginError: If encounters issue with plugin.
+            Exception: If authentication decryption fails for A2A agents.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -5993,7 +5993,6 @@ class ToolService(BaseService):
             Exception: If the call fails.
         """
         logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
-        has_auth = agent.auth_value is not NONE
 
         # Build request data based on agent type
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
