@@ -9329,9 +9329,10 @@ class TestA2AListAndGet:
         request.state = MagicMock()
 
         with (
-            patch("mcpgateway.main.a2a_service.get_agent", new=AsyncMock(return_value={"id": "agent-1"})),
+            patch("mcpgateway.main.a2a_service") as mock_service,
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
+            mock_service.get_agent = AsyncMock(return_value={"id": "agent-1"})
             result = await get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["id"] == "agent-1"
 
