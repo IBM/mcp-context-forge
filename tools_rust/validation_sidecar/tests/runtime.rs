@@ -1,7 +1,7 @@
 use contextforge_validation_sidecar::{
     protocol::{ValidationRequest, ValidationResponseEnvelope, read_frame, write_json_frame},
     serve_until,
-    validator::{DEFAULT_DANGEROUS_PATTERNS, ParserBackend},
+    validator::DEFAULT_DANGEROUS_PATTERNS,
 };
 use tempfile::tempdir;
 use tokio::{
@@ -17,7 +17,7 @@ async fn runtime_serves_one_happy_path_request_over_uds() {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
     let server = tokio::spawn(async move {
-        serve_until(listener, ParserBackend::SimdJson, async move {
+        serve_until(listener, async move {
             let _ = shutdown_rx.await;
         })
         .await

@@ -14,14 +14,13 @@ import logging
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Sequence
 
 logger = logging.getLogger(__name__)
 
 FRAME_PREFIX = struct.Struct(">I")
 MAX_FRAME_SIZE = 16 * 1024 * 1024
 MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024
-ValidationParserMode = Literal["simd-json", "serde-json"]
 
 
 class ValidationSidecarError(Exception):
@@ -120,7 +119,6 @@ class ValidationSidecarRequest:
     max_param_length: int
     dangerous_patterns: tuple[str, ...]
     request_id: str | None = None
-    parser: ValidationParserMode | None = None
 
     @classmethod
     def from_body(
@@ -130,7 +128,7 @@ class ValidationSidecarRequest:
         max_param_length: int,
         dangerous_patterns: Sequence[str],
         request_id: str | None = None,
-        parser: ValidationParserMode | None = None,
+        parser: str | None = None,
         allow_parser_selection: bool = False,
     ) -> "ValidationSidecarRequest":
         """Build a request envelope from raw request-body bytes.
@@ -140,20 +138,18 @@ class ValidationSidecarRequest:
             max_param_length: Maximum allowed string length.
             dangerous_patterns: Regex patterns to enforce.
             request_id: Optional request correlation id.
-            parser: Optional benchmark-only parser override.
-            allow_parser_selection: Whether parser overrides are allowed.
+            parser: Deprecated parser override that is no longer supported.
+            allow_parser_selection: Deprecated benchmark flag retained for call compatibility.
 
         Returns:
             A sidecar request envelope instance.
 
         Raises:
-            ValueError: If the body is too large or parser selection is invalid.
+            ValueError: If the body is too large or parser selection is requested.
         """
         if len(body) > MAX_REQUEST_BODY_SIZE:
             raise ValueError(f"request body exceeds maximum size of {MAX_REQUEST_BODY_SIZE} bytes")
-        if parser is not None and not allow_parser_selection:
-            raise ValueError("parser selection is reserved for benchmark/dev mode")
-        if parser is not None and parser not in {"simd-json", "serde-json"}:
+        if parser is not None:
             raise ValueError(f"unsupported parser selection: {parser}")
 
         return cls(
@@ -161,7 +157,6 @@ class ValidationSidecarRequest:
             max_param_length=max_param_length,
             dangerous_patterns=tuple(dangerous_patterns),
             request_id=request_id,
-            parser=parser,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -177,8 +172,6 @@ class ValidationSidecarRequest:
         }
         if self.request_id is not None:
             payload["request_id"] = self.request_id
-        if self.parser is not None:
-            payload["parser"] = self.parser
         return payload
 
     def to_json_bytes(self) -> bytes:

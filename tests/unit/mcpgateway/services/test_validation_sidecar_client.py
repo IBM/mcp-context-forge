@@ -93,29 +93,16 @@ def test_request_envelope_base64_encodes_body() -> None:
     assert "parser" not in envelope
 
 
-def test_request_envelope_rejects_parser_selection_in_production_mode() -> None:
-    """Production requests must reject ad hoc parser overrides."""
-    with pytest.raises(ValueError, match="benchmark/dev"):
+def test_request_envelope_rejects_parser_selection() -> None:
+    """Request envelopes should reject parser selection entirely."""
+    with pytest.raises(ValueError, match="unsupported parser selection"):
         ValidationSidecarRequest.from_body(
             b"{}",
             max_param_length=1,
             dangerous_patterns=[],
             parser="serde-json",
+            allow_parser_selection=True,
         )
-
-
-def test_request_envelope_allows_parser_selection_for_benchmark_mode() -> None:
-    """Benchmark mode may opt into an explicit parser backend."""
-    request = ValidationSidecarRequest.from_body(
-        b"{}",
-        max_param_length=1,
-        dangerous_patterns=[],
-        parser="serde-json",
-        allow_parser_selection=True,
-    )
-
-    envelope = json.loads(request.to_json_bytes())
-    assert envelope["parser"] == "serde-json"
 
 
 def test_sidecar_settings_defaults_and_path_validation(tmp_path: Path) -> None:

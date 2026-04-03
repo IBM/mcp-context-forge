@@ -10,15 +10,14 @@ use crate::protocol::{
     ProtocolError, ValidationRequestEnvelope, ValidationResponseEnvelope, invalid_envelope,
     read_frame, write_json_frame,
 };
-use crate::validator::{ParserBackend, validate_request};
-use std::{future::Future, path::PathBuf, sync::Arc};
+use crate::validator::validate_request;
+use std::{future::Future, path::PathBuf};
 use thiserror::Error;
 use tokio::net::{UnixListener, UnixStream};
 
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub uds_path: PathBuf,
-    pub parser_backend: ParserBackend,
 }
 
 #[derive(Debug, Error)]
@@ -41,7 +40,7 @@ pub async fn run(config: ServerConfig) -> Result<(), SidecarError> {
 
     let listener = UnixListener::bind(&config.uds_path)?;
     let uds_path = config.uds_path.clone();
-    let result = serve_until(listener, config.parser_backend, async {
+    let result = serve_until(listener, async {
         let _ = tokio::signal::ctrl_c().await;
     })
     .await;
@@ -50,15 +49,10 @@ pub async fn run(config: ServerConfig) -> Result<(), SidecarError> {
     result
 }
 
-pub async fn serve_until<F>(
-    listener: UnixListener,
-    parser_backend: ParserBackend,
-    shutdown: F,
-) -> Result<(), SidecarError>
+pub async fn serve_until<F>(listener: UnixListener, shutdown: F) -> Result<(), SidecarError>
 where
     F: Future<Output = ()> + Send,
 {
-    let parser_backend = Arc::new(parser_backend);
     tokio::pin!(shutdown);
 
     loop {
@@ -66,9 +60,8 @@ where
             _ = &mut shutdown => return Ok(()),
             accept_result = listener.accept() => {
                 let (stream, _) = accept_result?;
-                let parser_backend = Arc::clone(&parser_backend);
                 tokio::spawn(async move {
-                    if let Err(err) = handle_connection(stream, *parser_backend).await {
+                    if let Err(err) = handle_connection(stream).await {
                         eprintln!("validation sidecar connection failed: {err}");
                     }
                 });
@@ -77,10 +70,7 @@ where
     }
 }
 
-async fn handle_connection(
-    mut stream: UnixStream,
-    parser_backend: ParserBackend,
-) -> Result<(), SidecarError> {
+async fn handle_connection(mut stream: UnixStream) -> Result<(), SidecarError> {
     loop {
         let payload = match read_frame(&mut stream).await {
             Ok(payload) => payload,
@@ -96,7 +86,7 @@ async fn handle_connection(
         let response = if request.healthcheck {
             ValidationResponseEnvelope::ok()
         } else {
-            match validate_request(&request, parser_backend)? {
+            match validate_request(&request)? {
                 Some(rejection) => ValidationResponseEnvelope::rejected(
                     rejection.key,
                     rejection.error_type,

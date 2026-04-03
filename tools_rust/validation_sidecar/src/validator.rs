@@ -4,8 +4,8 @@
 //! Parser backends and JSON-tree validation logic for the sidecar.
 
 use crate::protocol::ValidationRequest;
-use clap::ValueEnum;
 use regex::Regex;
+use serde::Deserialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -16,15 +16,6 @@ use thiserror::Error;
 pub const MAX_JSON_DEPTH: usize = 1024;
 pub const DEFAULT_DANGEROUS_PATTERNS: [&str; 3] =
     [r"[;&|`$(){}\[\]<>]", r"\.\.[\\/]", r"[\x00-\x1f\x7f-\x9f]"];
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
-pub enum ParserBackend {
-    #[value(name = "simd-json")]
-    #[default]
-    SimdJson,
-    #[value(name = "serde-json")]
-    SerdeJson,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationRejection {
@@ -129,11 +120,10 @@ static VALIDATOR_CACHE: LazyLock<ValidatorCache> = LazyLock::new(ValidatorCache:
 
 pub fn validate_request(
     request: &ValidationRequest,
-    backend: ParserBackend,
 ) -> Result<Option<ValidationRejection>, ValidatorError> {
     let validator =
         VALIDATOR_CACHE.get_or_compile(request.max_param_length, &request.dangerous_patterns)?;
-    match parse_json(&request.raw_body, backend) {
+    match parse_json(&request.raw_body) {
         Ok(value) => Ok(walk_json(&value, &validator, 0)),
         Err(_) => Ok(Some(ValidationRejection::new(
             "payload",
@@ -143,16 +133,11 @@ pub fn validate_request(
     }
 }
 
-fn parse_json(raw_body: &[u8], backend: ParserBackend) -> Result<Value, ValidatorError> {
-    match backend {
-        ParserBackend::SerdeJson => serde_json::from_slice(raw_body)
-            .map_err(|error| ValidatorError::Parse(error.to_string())),
-        ParserBackend::SimdJson => {
-            let mut owned = raw_body.to_vec();
-            simd_json::serde::from_slice(&mut owned)
-                .map_err(|error| ValidatorError::Parse(error.to_string()))
-        }
-    }
+fn parse_json(raw_body: &[u8]) -> Result<Value, ValidatorError> {
+    let mut deserializer = serde_json::Deserializer::from_slice(raw_body);
+    deserializer.disable_recursion_limit();
+    let deserializer = serde_stacker::Deserializer::new(&mut deserializer);
+    Value::deserialize(deserializer).map_err(|error| ValidatorError::Parse(error.to_string()))
 }
 
 fn walk_json(
@@ -229,26 +214,11 @@ mod tests {
     }
 
     #[test]
-    fn simd_json_backend_rejects_dangerous_strings() {
-        let rejection = validate_request(
-            &request(r#"{"name":"<script>"}"#, 64, &default_patterns()),
-            ParserBackend::SimdJson,
-        )
-        .expect("validation")
-        .expect("rejection");
-
-        assert_eq!(rejection.key, "name");
-        assert_eq!(rejection.error_type, "dangerous_pattern");
-    }
-
-    #[test]
     fn serde_json_backend_rejects_dangerous_strings() {
-        let rejection = validate_request(
-            &request(r#"{"name":"<script>"}"#, 64, &default_patterns()),
-            ParserBackend::SerdeJson,
-        )
-        .expect("validation")
-        .expect("rejection");
+        let rejection =
+            validate_request(&request(r#"{"name":"<script>"}"#, 64, &default_patterns()))
+                .expect("validation")
+                .expect("rejection");
 
         assert_eq!(rejection.key, "name");
         assert_eq!(rejection.error_type, "dangerous_pattern");
@@ -256,22 +226,17 @@ mod tests {
 
     #[test]
     fn unicode_length_uses_character_count_not_utf8_bytes() {
-        let result = validate_request(
-            &request(r#"{"name":"é"}"#, 1, &default_patterns()),
-            ParserBackend::SimdJson,
-        )
-        .expect("validation");
+        let result = validate_request(&request(r#"{"name":"é"}"#, 1, &default_patterns()))
+            .expect("validation");
         assert!(result.is_none());
     }
 
     #[test]
     fn list_item_strings_are_validated() {
-        let rejection = validate_request(
-            &request(r#"["safe","<script>"]"#, 64, &default_patterns()),
-            ParserBackend::SimdJson,
-        )
-        .expect("validation")
-        .expect("rejection");
+        let rejection =
+            validate_request(&request(r#"["safe","<script>"]"#, 64, &default_patterns()))
+                .expect("validation")
+                .expect("rejection");
 
         assert_eq!(rejection.key, "list_item");
         assert_eq!(rejection.error_type, "dangerous_pattern");
@@ -279,12 +244,10 @@ mod tests {
 
     #[test]
     fn default_dangerous_patterns_match_python_defaults() {
-        let rejection = validate_request(
-            &request(r#"{"path":"../secret"}"#, 64, &default_patterns()),
-            ParserBackend::SimdJson,
-        )
-        .expect("validation")
-        .expect("rejection");
+        let rejection =
+            validate_request(&request(r#"{"path":"../secret"}"#, 64, &default_patterns()))
+                .expect("validation")
+                .expect("rejection");
 
         assert_eq!(rejection.key, "path");
         assert_eq!(rejection.error_type, "dangerous_pattern");
@@ -292,14 +255,11 @@ mod tests {
 
     #[test]
     fn non_string_scalars_are_ignored() {
-        let result = validate_request(
-            &request(
-                r#"{"count":123,"enabled":true,"value":null}"#,
-                1,
-                &default_patterns(),
-            ),
-            ParserBackend::SimdJson,
-        )
+        let result = validate_request(&request(
+            r#"{"count":123,"enabled":true,"value":null}"#,
+            1,
+            &default_patterns(),
+        ))
         .expect("validation");
 
         assert!(result.is_none());
@@ -312,24 +272,18 @@ mod tests {
             payload = format!(r#"{{"nested":{payload}}}"#);
         }
 
-        let rejection = validate_request(
-            &request(&payload, 64, &default_patterns()),
-            ParserBackend::SimdJson,
-        )
-        .expect("validation")
-        .expect("rejection");
+        let rejection = validate_request(&request(&payload, 64, &default_patterns()))
+            .expect("validation")
+            .expect("rejection");
 
         assert_eq!(rejection.error_type, "max_depth");
     }
 
     #[test]
     fn invalid_json_is_a_validation_verdict() {
-        let rejection = validate_request(
-            &request("{not-json", 64, &default_patterns()),
-            ParserBackend::SimdJson,
-        )
-        .expect("validation")
-        .expect("rejection");
+        let rejection = validate_request(&request("{not-json", 64, &default_patterns()))
+            .expect("validation")
+            .expect("rejection");
 
         assert_eq!(rejection.error_type, "invalid_json");
     }

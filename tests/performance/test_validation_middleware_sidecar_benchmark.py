@@ -128,7 +128,7 @@ def _healthcheck_sidecar(uds_path: Path, timeout_seconds: float = 10.0) -> None:
 
 
 @contextmanager
-def _launch_validation_sidecar(parser: str) -> Iterator[Path]:
+def _launch_validation_sidecar() -> Iterator[Path]:
     with tempfile.TemporaryDirectory(dir="/tmp", prefix="vside-") as tmpdir:
         uds_path = Path(tmpdir) / "v.sock"
         process = subprocess.Popen(
@@ -141,8 +141,6 @@ def _launch_validation_sidecar(parser: str) -> Iterator[Path]:
                 "--",
                 "--uds-path",
                 str(uds_path),
-                "--parser",
-                parser,
             ],
             cwd=REPO_ROOT,
             stdout=subprocess.DEVNULL,
@@ -154,7 +152,7 @@ def _launch_validation_sidecar(parser: str) -> Iterator[Path]:
                 _healthcheck_sidecar(uds_path)
             except RuntimeError as exc:
                 stderr_output = process.stderr.read() if process.stderr is not None else ""
-                raise RuntimeError(f"{exc}\nsidecar stderr ({parser}): {stderr_output}") from exc
+                raise RuntimeError(f"{exc}\nsidecar stderr: {stderr_output}") from exc
             yield uds_path
         finally:
             if process.poll() is None:
@@ -267,15 +265,13 @@ async def _main() -> None:
         ),
     ]
 
-    with _launch_validation_sidecar("serde-json") as serde_uds_path, _launch_validation_sidecar("simd-json") as simd_uds_path:
-        sidecar_serde_fn = _build_uds_sidecar_validator(max_param_length, dangerous_patterns, serde_uds_path)
-        sidecar_simd_fn = _build_uds_sidecar_validator(max_param_length, dangerous_patterns, simd_uds_path)
+    with _launch_validation_sidecar() as sidecar_uds_path:
+        sidecar_fn = _build_uds_sidecar_validator(max_param_length, dangerous_patterns, sidecar_uds_path)
 
         backends = {
             "python": python_fn,
             "pyo3": pyo3_fn,
-            "sidecar-serde": sidecar_serde_fn,
-            "sidecar-simd": sidecar_simd_fn,
+            "sidecar": sidecar_fn,
         }
         await _assert_parity(backends, [orjson.dumps(payload) for payload in parity_payloads])
 
@@ -287,16 +283,14 @@ async def _main() -> None:
                     [
                         ("python", python_fn),
                         ("pyo3", pyo3_fn),
-                        ("sidecar-serde", sidecar_serde_fn),
-                        ("sidecar-simd", sidecar_simd_fn),
+                        ("sidecar", sidecar_fn),
                     ],
                     body,
                     iterations,
                 ),
                 await _measure_ordered(
                     [
-                        ("sidecar-simd", sidecar_simd_fn),
-                        ("sidecar-serde", sidecar_serde_fn),
+                        ("sidecar", sidecar_fn),
                         ("pyo3", pyo3_fn),
                         ("python", python_fn),
                     ],
@@ -306,19 +300,8 @@ async def _main() -> None:
             ]
 
             avg_medians = {backend: statistics.mean(run[backend][0] for run in ordered_runs) for backend in backends}
-            print(
-                "avg_medians="
-                f"python={avg_medians['python']:.3f}ms "
-                f"pyo3={avg_medians['pyo3']:.3f}ms "
-                f"sidecar-serde={avg_medians['sidecar-serde']:.3f}ms "
-                f"sidecar-simd={avg_medians['sidecar-simd']:.3f}ms"
-            )
-            print(
-                "speedups="
-                f"pyo3={avg_medians['python'] / avg_medians['pyo3']:.2f}x "
-                f"sidecar-serde={avg_medians['python'] / avg_medians['sidecar-serde']:.2f}x "
-                f"sidecar-simd={avg_medians['python'] / avg_medians['sidecar-simd']:.2f}x"
-            )
+            print("avg_medians=" f"python={avg_medians['python']:.3f}ms " f"pyo3={avg_medians['pyo3']:.3f}ms " f"sidecar={avg_medians['sidecar']:.3f}ms")
+            print("speedups=" f"pyo3={avg_medians['python'] / avg_medians['pyo3']:.2f}x " f"sidecar={avg_medians['python'] / avg_medians['sidecar']:.2f}x")
 
 
 if __name__ == "__main__":

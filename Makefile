@@ -8680,9 +8680,9 @@ validation-sidecar-test: rust-ensure-deps ## Run tests for the Rust UDS validati
 validation-sidecar-bench-setup: validation-sidecar-build ## Prepare the Rust UDS validation sidecar for benchmark runs
 	@echo "🧪 Validation sidecar benchmark setup complete"
 
-validation-sidecar-run: validation-sidecar-build ## Run the Rust UDS validation sidecar with configurable UDS path and parser
+validation-sidecar-run: validation-sidecar-build ## Run the Rust UDS validation sidecar with configurable UDS path
 	@echo "🧪 Starting validation sidecar..."
-	@tools_rust/validation_sidecar/target/release/contextforge_validation_sidecar --uds-path "$${VALIDATION_SIDECAR_UDS:-/tmp/contextforge-validation-sidecar.sock}" --parser "$${VALIDATION_SIDECAR_PARSER:-simd-json}"
+	@tools_rust/validation_sidecar/target/release/contextforge_validation_sidecar --uds-path "$${VALIDATION_SIDECAR_UDS:-/tmp/contextforge-validation-sidecar.sock}"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
 	@echo "🦀 Building Rust documentation..."

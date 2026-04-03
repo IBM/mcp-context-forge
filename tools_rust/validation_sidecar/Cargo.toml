@@ -12,8 +12,8 @@ base64 = "0.22.1"
 clap = { version = "4.5.60", features = ["derive", "env"] }
 regex = "1.12.2"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-simd-json = { version = "0.15.1", features = ["serde_impl"] }
+serde_json = { version = "1.0.149", features = ["unbounded_depth"] }
+serde_stacker = "0.1.12"
 thiserror = "2.0.16"
 tokio = { version = "1.50.0", features = ["full"] }
 
