@@ -3579,7 +3579,7 @@ class ToolService(BaseService):
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin.
-            Exception: If authentication decryption fails for A2A agents.
+            ToolInvocationError: If authentication decryption fails for A2A agents.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -4813,7 +4813,7 @@ class ToolService(BaseService):
                         request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": a2a_agent_protocol_version}
 
                     # Add authentication
-                    if a2a_agent_auth_type in ("api_key", "bearer", "authheaders") and a2a_agent_auth_value:
+                    if a2a_agent_auth_type in ("api_key", "basic", "bearer", "authheaders") and a2a_agent_auth_value:
                         # Decrypt auth_value before using it
                         if isinstance(a2a_agent_auth_value, str):
                             try:
@@ -4821,7 +4821,7 @@ class ToolService(BaseService):
                                 headers.update(auth_headers)
                             except Exception as e:
                                 logger.error(f"Failed to decrypt authentication for A2A agent '{a2a_agent_name}': {e}")
-                                raise Exception(f"Failed to decrypt authentication: {e}")
+                                raise ToolInvocationError(f"Failed to decrypt authentication for A2A agent '{a2a_agent_name}'")
                         elif isinstance(a2a_agent_auth_value, dict):
                             auth_headers = {str(k): str(v) for k, v in a2a_agent_auth_value.items()}
                             headers.update(auth_headers)
@@ -5930,7 +5930,6 @@ class ToolService(BaseService):
         """
 
         # Extract A2A agent ID from tool annotations
-        logger.info(f"[DEBUG TOOL] _invoke_a2a_tool called for tool '{tool.name}'")
         agent_id = tool.annotations.get("a2a_agent_id")
         if not agent_id:
             raise ToolNotFoundError(f"A2A tool '{tool.name}' missing agent ID in annotations")
@@ -6040,7 +6039,7 @@ class ToolService(BaseService):
         endpoint_url = agent.endpoint_url
 
         # Add authentication if configured
-        if agent.auth_type in ("api_key", "bearer", "authheaders") and agent.auth_value:
+        if agent.auth_type in ("api_key", "basic", "bearer", "authheaders") and agent.auth_value:
             # Decrypt auth_value and extract headers (matches a2a_service.py pattern)
             if isinstance(agent.auth_value, str):
                 try:
@@ -6048,7 +6047,7 @@ class ToolService(BaseService):
                     headers.update(auth_headers)
                 except Exception as e:
                     logger.error(f"Failed to decrypt authentication for A2A agent '{agent.name}': {e}")
-                    raise Exception(f"Failed to decrypt authentication: {e}")
+                    raise ToolInvocationError(f"Failed to decrypt authentication for A2A agent '{agent.name}'")
             elif isinstance(agent.auth_value, dict):
                 auth_headers = {str(k): str(v) for k, v in agent.auth_value.items()}
                 headers.update(auth_headers)

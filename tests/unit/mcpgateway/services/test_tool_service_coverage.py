@@ -2868,8 +2868,26 @@ class TestCallA2AAgentCoverage:
         assert headers["Authorization"] == "Bearer dict-token"
 
     @pytest.mark.asyncio
+    async def test_basic_auth(self, tool_service):
+        """Should decrypt and apply basic auth headers."""
+        agent = self._make_agent(auth_type="basic", auth_value="encrypted_basic_creds")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
+        ):
+            await tool_service._call_a2a_agent(agent, {"query": "test"})
+        headers = mock_client.post.call_args[1]["headers"]
+        assert headers["Authorization"] == "Basic decrypted-value"
+
+    @pytest.mark.asyncio
     async def test_bearer_auth_decrypt_failure(self, tool_service):
-        """Should raise Exception when decode_auth fails."""
+        """Should raise ToolInvocationError when decode_auth fails."""
         agent = self._make_agent(auth_type="bearer", auth_value="invalid_encrypted_value")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -2881,7 +2899,7 @@ class TestCallA2AAgentCoverage:
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
             patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decryption failed")),
         ):
-            with pytest.raises(Exception, match="Failed to decrypt authentication"):
+            with pytest.raises(ToolInvocationError, match="Failed to decrypt authentication"):
                 await tool_service._call_a2a_agent(agent, {"query": "test"})
 
     @pytest.mark.asyncio
@@ -6792,7 +6810,7 @@ class TestInvokeToolA2A:
 
     @pytest.mark.asyncio
     async def test_a2a_decrypt_failure_raises_exception(self, tool_service):
-        """A2A agent with decrypt failure should raise Exception."""
+        """A2A agent with decrypt failure should raise ToolInvocationError."""
         tp = _make_tool_payload(
             integration_type="A2A",
             request_type="POST",
@@ -6820,7 +6838,7 @@ class TestInvokeToolA2A:
 
             tool_service._http_client = AsyncMock()
 
-            with pytest.raises(Exception, match="Failed to decrypt authentication"):
+            with pytest.raises(ToolInvocationError, match="Failed to decrypt authentication"):
                 await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
 
     @pytest.mark.asyncio
