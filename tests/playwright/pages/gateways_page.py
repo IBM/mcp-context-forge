@@ -11,7 +11,8 @@ Gateways page object for MCP Server & Federated Gateway management.
 import logging
 
 # Third-Party
-from playwright.sync_api import Error as PlaywrightError, expect, Locator
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import expect, Locator
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
@@ -465,9 +466,7 @@ class GatewaysPage(BasePage):
         if self.get_gateway_count() == 0:
             # Clear URL search params before reloading so the x-init HTMX load
             # does not re-apply the search term and leave the table empty again.
-            self.page.evaluate(
-                "window.history.replaceState({}, '', window.location.pathname + window.location.hash)"
-            )
+            self.page.evaluate("window.history.replaceState({}, '', window.location.pathname + window.location.hash)")
             self.page.reload(wait_until="domcontentloaded")
             self.navigate_to_gateways_tab()
             self.wait_for_gateways_table_loaded()
@@ -790,6 +789,7 @@ class GatewaysPage(BasePage):
 
             # Get the delete button and use shared delete+navigation helper
             try:
+                self._open_action_dropdown(gateway_row.first)
                 delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
                 self._click_delete_and_wait(delete_btn, confirm)
 
@@ -899,8 +899,7 @@ class GatewaysPage(BasePage):
         This allows tests that care about auth configuration (not reachability) to
         complete without a live gateway.
         """
-        self.page.evaluate(
-            """() => {
+        self.page.evaluate("""() => {
                 const form = document.getElementById('add-gateway-form');
                 if (!form) return;
                 const select = form.querySelector('select[name="transport"]');
@@ -912,8 +911,7 @@ class GatewaysPage(BasePage):
                     select.appendChild(opt);
                 }
                 select.value = 'HTTP';
-            }"""
-        )
+            }""")
 
     def toggle_one_time_auth(self, enable: bool = True) -> None:
         """Toggle one-time authentication checkbox.
