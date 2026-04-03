@@ -19,13 +19,14 @@
 # -----------------------------------------------------------------------------
 
 exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)plugin_templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
+fail_fast: true
 
 default_language_version:
   python: python3.12
 
 repos:
   # -----------------------------------------------------------------------------
-  # 🔐 Security and Secret Detection Hooks
+  # 🔐 Security - Detect Private Keys
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -40,14 +41,6 @@ repos:
         description: Detects the presence of private keys.
         types: [text]
         exclude: 'mcpgateway/utils/generate_keys\.py|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py|plugins_rust/secrets_detection/examples/heavy_workload\.rs|plugins_rust/secrets_detection/src/scanner\.rs|plugins_rust/secrets_detection/src/patterns\.rs'
-
-  - repo: https://github.com/ibm/detect-secrets
-    rev: 076672a9a01abdfc7ecee2e7d14f08cdccb73976 # "0.13.1+ibm.64.dss"
-    hooks:
-      - id: detect-secrets
-        name: 🔐 IBM Detect Secrets
-        description: Detects secrets within a repository using IBM's detect-secrets.
-        args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
 
   # -----------------------------------------------------------------------------
   # ❌ Forbid Specific AI / LLM Patterns
@@ -532,3 +525,18 @@ repos:
         args: [--quiet, --fail-under=100]
         files: ^mcpgateway/
         exclude: _pb2(_grpc)?\.py$
+
+  # -----------------------------------------------------------------------------
+  #  🔐 Security - Detect Secrets
+  # -----------------------------------------------------------------------------
+  #  IBM Detect Secrets - https://github.com/ibm/detect-secrets
+  #  This tool must be run after all other tools have completed.
+  # -----------------------------------------------------------------------------
+  - repo: https://github.com/ibm/detect-secrets
+    rev: 076672a9a01abdfc7ecee2e7d14f08cdccb73976 # "0.13.1+ibm.64.dss"
+    hooks:
+      - id: detect-secrets
+        name: 🔐 IBM Detect Secrets
+        description: Detects secrets within a repository using IBM's detect-secrets.
+        args: ['--baseline', '.secrets.baseline', --use-all-plugins, --fail-on-unaudited]
+        types: [text]
