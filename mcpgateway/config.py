@@ -117,7 +117,18 @@ _normalize_env_list_vars()
 
 
 def _validate_optional_uds_path(value: Optional[str], field_name: str) -> Optional[str]:
-    """Normalize and validate an optional Unix domain socket path."""
+    """Normalize and validate an optional Unix domain socket path.
+
+    Args:
+        value: Raw UDS path value from settings.
+        field_name: Settings field name for error messages.
+
+    Returns:
+        The normalized absolute UDS path, or `None` when unset.
+
+    Raises:
+        ValueError: If the path is not absolute or its parent directory does not exist.
+    """
     if value in (None, ""):
         return None
 
@@ -2219,7 +2230,14 @@ Disallow: /
     @field_validator("experimental_rust_validation_sidecar_uds", mode="after")
     @classmethod
     def _validate_experimental_rust_validation_sidecar_uds(cls, value: Optional[str]) -> Optional[str]:
-        """Validate the optional UDS path used for the Rust validation sidecar."""
+        """Validate the optional UDS path used for the Rust validation sidecar.
+
+        Args:
+            value: Candidate UDS path from settings input.
+
+        Returns:
+            The normalized UDS path, or `None` when unset.
+        """
         return _validate_optional_uds_path(value, "experimental_rust_validation_sidecar_uds")
 
     # -------------------------------
@@ -2689,7 +2707,14 @@ Disallow: /
 
     @model_validator(mode="after")
     def validate_rust_validation_sidecar_settings(self) -> "Settings":
-        """Validate cross-field settings for the experimental validation sidecar."""
+        """Validate cross-field settings for the experimental validation sidecar.
+
+        Returns:
+            The validated settings instance.
+
+        Raises:
+            ValueError: If sidecar mode is enabled without a configured UDS path.
+        """
         if self.experimental_rust_validation_sidecar_enabled and not self.experimental_rust_validation_sidecar_uds:
             raise ValueError("experimental_rust_validation_sidecar_uds must be set when experimental_rust_validation_sidecar_enabled is true")
         return self

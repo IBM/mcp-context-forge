@@ -30,7 +30,11 @@ class ValidationSidecarError(Exception):
     status_code = 503
 
     def __init__(self, message: str) -> None:
-        """Initialize the error with a user-facing message."""
+        """Initialize the error with a user-facing message.
+
+        Args:
+            message: Human-readable error detail.
+        """
         super().__init__(message)
         self.message = message
 
@@ -53,7 +57,14 @@ class ValidationSidecarValidationError(ValidationSidecarError):
     status_code = 422
 
     def __init__(self, message: str, *, key: str | None = None, error_type: str | None = None, detail: str | None = None) -> None:
-        """Initialize the validation error with sidecar rejection details."""
+        """Initialize the validation error with sidecar rejection details.
+
+        Args:
+            message: Human-readable validation failure message.
+            key: Rejected key name reported by the sidecar.
+            error_type: Rejection category reported by the sidecar.
+            detail: Raw detail string returned by the sidecar.
+        """
         super().__init__(message)
         self.key = key
         self.error_type = error_type
@@ -61,14 +72,34 @@ class ValidationSidecarValidationError(ValidationSidecarError):
 
 
 def encode_frame(payload: bytes) -> bytes:
-    """Encode a payload with a 4-byte big-endian length prefix."""
+    """Encode a payload with a 4-byte big-endian length prefix.
+
+    Args:
+        payload: Unframed payload bytes.
+
+    Returns:
+        The framed byte sequence.
+
+    Raises:
+        ValidationSidecarProtocolError: If the payload exceeds the maximum frame size.
+    """
     if len(payload) > MAX_FRAME_SIZE:
         raise ValidationSidecarProtocolError(f"Frame payload exceeds maximum size of {MAX_FRAME_SIZE} bytes")
     return FRAME_PREFIX.pack(len(payload)) + payload
 
 
 def decode_frame(frame: bytes) -> bytes:
-    """Decode a 4-byte big-endian framed payload."""
+    """Decode a 4-byte big-endian framed payload.
+
+    Args:
+        frame: Length-prefixed frame bytes.
+
+    Returns:
+        The decoded payload bytes.
+
+    Raises:
+        ValidationSidecarProtocolError: If the frame is malformed or length mismatched.
+    """
     if len(frame) < FRAME_PREFIX.size:
         raise ValidationSidecarProtocolError("Framed payload is too short to contain a length prefix")
 
@@ -102,7 +133,22 @@ class ValidationSidecarRequest:
         parser: ValidationParserMode | None = None,
         allow_parser_selection: bool = False,
     ) -> "ValidationSidecarRequest":
-        """Build a request envelope from raw request-body bytes."""
+        """Build a request envelope from raw request-body bytes.
+
+        Args:
+            body: Raw JSON request body bytes.
+            max_param_length: Maximum allowed string length.
+            dangerous_patterns: Regex patterns to enforce.
+            request_id: Optional request correlation id.
+            parser: Optional benchmark-only parser override.
+            allow_parser_selection: Whether parser overrides are allowed.
+
+        Returns:
+            A sidecar request envelope instance.
+
+        Raises:
+            ValueError: If the body is too large or parser selection is invalid.
+        """
         if len(body) > MAX_REQUEST_BODY_SIZE:
             raise ValueError(f"request body exceeds maximum size of {MAX_REQUEST_BODY_SIZE} bytes")
         if parser is not None and not allow_parser_selection:
@@ -119,7 +165,11 @@ class ValidationSidecarRequest:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable request envelope."""
+        """Return a JSON-serializable request envelope.
+
+        Returns:
+            A dictionary ready for JSON serialization.
+        """
         payload: dict[str, Any] = {
             "request_body_b64": self.request_body_b64,
             "max_param_length": self.max_param_length,
@@ -132,7 +182,11 @@ class ValidationSidecarRequest:
         return payload
 
     def to_json_bytes(self) -> bytes:
-        """Serialize the request envelope to canonical JSON bytes."""
+        """Serialize the request envelope to canonical JSON bytes.
+
+        Returns:
+            Canonical UTF-8 JSON bytes for the request envelope.
+        """
         return json.dumps(self.to_dict(), separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
@@ -147,7 +201,17 @@ class ValidationSidecarResponse:
 
     @classmethod
     def from_json_bytes(cls, payload: bytes) -> "ValidationSidecarResponse":
-        """Decode a JSON response envelope."""
+        """Decode a JSON response envelope.
+
+        Args:
+            payload: Raw UTF-8 JSON response bytes.
+
+        Returns:
+            A parsed response envelope instance.
+
+        Raises:
+            ValidationSidecarProtocolError: If the response JSON is malformed.
+        """
         try:
             decoded = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -184,7 +248,16 @@ class ValidationSidecarClient:
     """Async client for framed validation requests over a Unix domain socket."""
 
     def __init__(self, uds_path: str, *, timeout_seconds: float, pool_size: int = 2) -> None:
-        """Initialize a pooled validation-sidecar client."""
+        """Initialize a pooled validation-sidecar client.
+
+        Args:
+            uds_path: Absolute Unix domain socket path for the sidecar.
+            timeout_seconds: Per-operation timeout in seconds.
+            pool_size: Maximum number of pooled socket connections.
+
+        Raises:
+            ValueError: If the pool size, timeout, or UDS path is invalid.
+        """
         if pool_size < 1:
             raise ValueError("pool_size must be positive")
         if timeout_seconds <= 0:
@@ -203,11 +276,21 @@ class ValidationSidecarClient:
         self._next_index = 0
 
     async def __aenter__(self) -> "ValidationSidecarClient":
-        """Enter an async context manager for the client."""
+        """Enter an async context manager for the client.
+
+        Returns:
+            The client instance itself.
+        """
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        """Exit the async context manager and close pooled connections."""
+        """Exit the async context manager and close pooled connections.
+
+        Args:
+            exc_type: Raised exception type, if any.
+            exc: Raised exception instance, if any.
+            tb: Raised traceback, if any.
+        """
         await self.aclose()
 
     async def aclose(self) -> None:
@@ -226,7 +309,20 @@ class ValidationSidecarClient:
         dangerous_patterns: Sequence[str],
         request_id: str | None = None,
     ) -> None:
-        """Validate a request body by round-tripping it through the sidecar."""
+        """Validate a request body by round-tripping it through the sidecar.
+
+        Args:
+            body: Raw JSON request body bytes.
+            max_param_length: Maximum allowed string length.
+            dangerous_patterns: Regex patterns to enforce.
+            request_id: Optional request correlation id.
+
+        Raises:
+            ValidationSidecarProtocolError: If the sidecar response is malformed.
+            ValidationSidecarTimeoutError: If a sidecar operation times out.
+            ValidationSidecarTransportError: If the sidecar cannot be reached.
+            ValidationSidecarValidationError: If the sidecar rejects the payload.
+        """
         request = ValidationSidecarRequest.from_body(
             body,
             max_param_length=max_param_length,
@@ -281,14 +377,29 @@ class ValidationSidecarClient:
         raise ValidationSidecarTransportError("Validation sidecar transport failed")
 
     async def _reserve_connection_index(self) -> int:
-        """Return the next pool slot index using round-robin selection."""
+        """Return the next pool slot index using round-robin selection.
+
+        Returns:
+            The selected pooled connection slot index.
+        """
         async with self._pool_lock:
             index = self._next_index
             self._next_index = (self._next_index + 1) % self._pool_size
             return index
 
     async def _ensure_connection(self, index: int) -> _ConnectionState:
-        """Return a live connection for the requested pool slot."""
+        """Return a live connection for the requested pool slot.
+
+        Args:
+            index: Pooled connection slot index.
+
+        Returns:
+            A live pooled connection state object.
+
+        Raises:
+            ValidationSidecarTimeoutError: If connecting to the sidecar times out.
+            ValidationSidecarTransportError: If opening the socket connection fails.
+        """
         async with self._slot_locks[index]:
             connection = self._connections[index]
             if connection is not None and not connection.writer.is_closing():
@@ -308,7 +419,11 @@ class ValidationSidecarClient:
             return connection
 
     async def _drop_connection(self, index: int) -> None:
-        """Close and clear a pooled connection slot after transport failure."""
+        """Close and clear a pooled connection slot after transport failure.
+
+        Args:
+            index: Pooled connection slot index to clear.
+        """
         async with self._slot_locks[index]:
             connection = self._connections[index]
             if connection is None:
@@ -318,7 +433,11 @@ class ValidationSidecarClient:
             self._connections[index] = None
 
     async def _close_writer(self, writer: asyncio.StreamWriter) -> None:
-        """Close a writer and suppress cleanup-only shutdown errors."""
+        """Close a writer and suppress cleanup-only shutdown errors.
+
+        Args:
+            writer: Stream writer to close.
+        """
         writer.close()
         try:
             await asyncio.wait_for(writer.wait_closed(), timeout=min(self._timeout_seconds, 1.0))
@@ -326,12 +445,27 @@ class ValidationSidecarClient:
             pass
 
     async def _write_frame(self, writer: asyncio.StreamWriter, frame: bytes) -> None:
-        """Write a framed request to the sidecar within the configured timeout."""
+        """Write a framed request to the sidecar within the configured timeout.
+
+        Args:
+            writer: Sidecar socket writer.
+            frame: Length-prefixed request frame bytes.
+        """
         writer.write(frame)
         await asyncio.wait_for(writer.drain(), timeout=self._timeout_seconds)
 
     async def _read_frame(self, reader: asyncio.StreamReader) -> bytes:
-        """Read and decode a single framed response from the sidecar."""
+        """Read and decode a single framed response from the sidecar.
+
+        Args:
+            reader: Sidecar socket reader.
+
+        Returns:
+            The decoded response payload bytes.
+
+        Raises:
+            ValidationSidecarProtocolError: If the incoming frame exceeds the maximum size.
+        """
         prefix = await asyncio.wait_for(reader.readexactly(FRAME_PREFIX.size), timeout=self._timeout_seconds)
         length = FRAME_PREFIX.unpack(prefix)[0]
         if length > MAX_FRAME_SIZE:

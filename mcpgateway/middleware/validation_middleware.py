@@ -46,7 +46,15 @@ _MAX_JSON_VALIDATION_DEPTH = 1024
 
 
 def _get_bool_setting(name: str, default: bool = False) -> bool:
-    """Return a boolean setting value without letting MagicMock placeholders leak through."""
+    """Return a boolean setting value without letting MagicMock placeholders leak through.
+
+    Args:
+        name: Settings attribute name to read.
+        default: Fallback boolean to use when the value is unset or mocked.
+
+    Returns:
+        A concrete boolean value for the requested setting.
+    """
     value = getattr(settings, name, default)
     if isinstance(value, bool):
         return value
@@ -192,15 +200,33 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")
 
     def _should_use_sidecar_validation(self) -> bool:
-        """Return whether the validation sidecar should handle JSON bodies."""
+        """Return whether the validation sidecar should handle JSON bodies.
+
+        Returns:
+            `True` when the middleware gates and sidecar flag are all enabled.
+        """
         return self.enabled and self.validation_middleware_enabled and self.experimental_rust_validation_sidecar_enabled
 
     def _is_warn_only_mode(self) -> bool:
-        """Return whether validation failures should be logged instead of raised."""
+        """Return whether validation failures should be logged instead of raised.
+
+        Returns:
+            `True` when the environment is development or staging and strict mode is off.
+        """
         return settings.environment in ("development", "staging") and not self.strict
 
     def _validate_json_data(self, data: Any):
-        """Synchronously validate parsed JSON data using the active backend."""
+        """Synchronously validate parsed JSON data using the active backend.
+
+        Args:
+            data: Parsed JSON payload to validate.
+
+        Returns:
+            `None` when validation succeeds.
+
+        Raises:
+            RuntimeError: If called from an active async event loop.
+        """
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -229,7 +255,14 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             self._raise_validation_failure(key, error_type)
 
     async def _validate_json_body_with_sidecar(self, body: bytes) -> None:
-        """Validate raw JSON body bytes using the Rust validation sidecar."""
+        """Validate raw JSON body bytes using the Rust validation sidecar.
+
+        Args:
+            body: Raw request body bytes to validate.
+
+        Raises:
+            HTTPException: If the sidecar is unavailable or rejects the body.
+        """
         if self._validation_sidecar_client is None:
             raise HTTPException(status_code=503, detail="Validation sidecar is not configured")
 
@@ -247,7 +280,11 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     def _load_rust_validation_module(self):
-        """Load the experimental Rust validation sidecar on demand."""
+        """Load the experimental Rust validation sidecar on demand.
+
+        Returns:
+            The imported PyO3 validation module.
+        """
         global _RUST_VALIDATION_MODULE
 
         if _RUST_VALIDATION_MODULE is None:
@@ -255,7 +292,17 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         return _RUST_VALIDATION_MODULE
 
     def _validate_json_data_with_rust(self, data: Any) -> tuple[str, str] | None:
-        """Validate JSON data with the Rust sidecar, falling back to Python on sidecar failures."""
+        """Validate JSON data with the Rust sidecar, falling back to Python on sidecar failures.
+
+        Args:
+            data: Parsed JSON payload to validate.
+
+        Returns:
+            A `(key, error_type)` tuple when validation fails, otherwise `None`.
+
+        Raises:
+            HTTPException: If the Rust validator reports a max-depth error.
+        """
         try:
             return self._load_rust_validation_module().validate_json_data(data, settings.max_param_length, self.dangerous_pattern_strings)
         except ValueError as exc:
@@ -268,7 +315,18 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             return self._validate_json_data_with_python(data)
 
     def _validate_json_data_with_python(self, data: Any, depth: int = 0) -> tuple[str, str] | None:
-        """Validate JSON data with the Python implementation."""
+        """Validate JSON data with the Python implementation.
+
+        Args:
+            data: Parsed JSON payload to validate.
+            depth: Current container depth in the recursive traversal.
+
+        Returns:
+            A `(key, error_type)` tuple when validation fails, otherwise `None`.
+
+        Raises:
+            HTTPException: If the payload exceeds the supported nesting depth.
+        """
         if depth > _MAX_JSON_VALIDATION_DEPTH:
             raise HTTPException(status_code=422, detail="JSON payload exceeds maximum supported nesting depth")
 
@@ -299,7 +357,15 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         return None
 
     def _raise_validation_failure(self, key: str, error_type: str):
-        """Raise or log validation failures while preserving middleware mode semantics."""
+        """Raise or log validation failures while preserving middleware mode semantics.
+
+        Args:
+            key: Logical field name associated with the validation failure.
+            error_type: Failure type returned by the active validator backend.
+
+        Raises:
+            HTTPException: If the failure should be surfaced to the caller.
+        """
         if error_type == "max_length":
             if self._is_warn_only_mode():
                 logger.warning("Parameter %s exceeds maximum length", key)
