@@ -1123,7 +1123,12 @@ class TestObservability:
             ("/servers/demo/mcp", True),
             ("/servers/demo/message/", True),
             ("/_internal/mcp/plugin", True),
+            ("/mcp/sse", True),
+            ("/mcp/message", True),
+            ("/mcp/sse/", True),
+            ("/mcp/message/", True),
             ("/health", False),
+            ("/mcp/unknown", False),
         ],
     )
     def test_should_trace_request_path_handles_transport_variants(self, path, expected):

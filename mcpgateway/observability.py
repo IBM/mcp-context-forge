@@ -611,7 +611,7 @@ def _should_trace_request_path(path: str) -> bool:
     """
 
     normalized = path.rstrip("/") or "/"
-    if normalized in {"/rpc", "/mcp", "/message", "/sse"}:
+    if normalized in {"/rpc", "/mcp", "/mcp/sse", "/mcp/message", "/message", "/sse"}:
         return True
     if normalized.startswith("/servers/") and (normalized.endswith("/mcp") or normalized.endswith("/message") or normalized.endswith("/sse")):
         return True
@@ -719,7 +719,7 @@ class OpenTelemetryRequestMiddleware:
                 status_code = int(message.get("status", 0) or 0)
                 status_code_holder["status"] = status_code
                 if span is not None and status_code:
-                    span.set_attribute("http.response.status_code", status_code)
+                    set_span_attribute(span, "http.response.status_code", status_code)
                     if OTEL_AVAILABLE and Status and StatusCode:
                         if status_code >= 500:
                             span.set_status(Status(StatusCode.ERROR))
@@ -731,7 +731,7 @@ class OpenTelemetryRequestMiddleware:
             if span is not None:
                 for key, value in span_attributes.items():
                     if value is not None:
-                        span.set_attribute(key, value)
+                        set_span_attribute(span, key, value)
 
             try:
                 await self.app(scope, receive, _send_with_span_status)
