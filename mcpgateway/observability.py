@@ -739,12 +739,10 @@ class OpenTelemetryRequestMiddleware:
                     span.set_status(Status(StatusCode.OK))
             except Exception as exc:
                 if span is not None:
-                    span.record_exception(exc)
-                    span.set_attribute("error", True)
-                    span.set_attribute("error.type", type(exc).__name__)
-                    span.set_attribute("error.message", str(exc))
+                    error_message = _sanitize_span_exception_message(exc)
+                    set_span_error(span, exc, record_exception=True)
                     if OTEL_AVAILABLE and Status and StatusCode:
-                        span.set_status(Status(StatusCode.ERROR, str(exc)))
+                        span.set_status(Status(StatusCode.ERROR, error_message))
                 raise
 
 

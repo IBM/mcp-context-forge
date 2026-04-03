@@ -1329,7 +1329,7 @@ class TestObservability:
                     with pytest.raises(RuntimeError, match="boom"):
                         await middleware(scope, receive, send)
 
-        span.record_exception.assert_called_once()
+        span.add_event.assert_called_once()
         span.set_attribute.assert_any_call("error", True)
         span.set_attribute.assert_any_call("error.type", "RuntimeError")
         span.set_attribute.assert_any_call("error.message", "boom")

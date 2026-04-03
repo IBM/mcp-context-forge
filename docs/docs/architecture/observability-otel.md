@@ -10,7 +10,7 @@ The OTEL integration provides:
 - **Request-Root Spans**: Every HTTP request creates a root span in the observability middleware
 - **MCP Client Spans**: Detailed tracing of MCP protocol operations (initialize, request, response)
 - **Plugin Hook Spans**: Visibility into plugin execution lifecycle
-- **Session Pool Compatibility**: Trace context flows through pooled MCP sessions
+- **Session Pool Awareness**: Non-pooled sessions propagate trace context; pooled sessions skip injection to prevent context pollution
 
 ## Architecture
 
