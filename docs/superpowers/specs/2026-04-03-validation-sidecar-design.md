@@ -50,6 +50,36 @@ The gateway will have two body-validation modes:
    - The Rust sidecar parses and validates the request body from raw bytes.
    - If the sidecar is unavailable, unhealthy, times out, or returns an invalid response, the request fails closed.
 
+### Flag Compatibility And Migration
+
+The existing `experimental_rust_validation_middleware_enabled` flag controls the current PyO3 path. The sidecar redesign should not overload that flag.
+
+Migration rules:
+
+- `experimental_rust_validation_middleware_enabled` remains the legacy PyO3 flag during transition.
+- `experimental_rust_validation_sidecar_enabled` is the new authoritative flag for the UDS sidecar.
+- If both are disabled, the gateway uses Python mode.
+- If the PyO3 flag is enabled and the sidecar flag is disabled, the gateway uses the legacy PyO3 path.
+- If the sidecar flag is enabled, the gateway uses sidecar mode and it takes precedence over the PyO3 flag.
+
+This keeps rollout explicit and allows benchmarks to compare Python, PyO3, and sidecar modes during transition without ambiguous behavior.
+
+### Integration Contract With Existing Middleware Gates
+
+The sidecar is not a separate activation path. It is a backend for the existing validation middleware.
+
+Activation rules:
+
+- `validation_middleware_enabled=false` means the middleware is not mounted, regardless of any Rust flags
+- `experimental_validate_io=false` means body validation is effectively disabled, regardless of any Rust flags
+- `validation_middleware_enabled=true` and `experimental_validate_io=true` are required before any body-validation backend is used
+- once those gates are satisfied:
+  - sidecar flag on => sidecar backend
+  - sidecar flag off + PyO3 flag on => legacy PyO3 backend
+  - both Rust flags off => Python backend
+
+This keeps the existing middleware mount/enable semantics intact and swaps only the body-validation backend.
+
 ### Ownership Boundary
 
 Python continues to own:
@@ -67,6 +97,12 @@ The sidecar owns:
 - max-length checks
 - dangerous-pattern checks
 - maximum nesting-depth enforcement
+
+Behavioral parity requirements:
+
+- max-length semantics must match current Python `len()` behavior on decoded Unicode strings, not UTF-8 byte length and not grapheme-cluster length
+- only JSON string values are validated for length and dangerous-pattern matches
+- non-string scalar leaves such as numbers, booleans, and null are ignored for these checks
 
 ## Components
 
@@ -118,6 +154,15 @@ Responsibilities:
 - validate data
 - return compact structured responses
 
+Legacy artifact handling:
+
+- the existing `tools_rust/validation_middleware_sidecar` crate remains the legacy PyO3 implementation during transition
+- the new out-of-process binary lives in a separate crate, `tools_rust/validation_sidecar`
+- benchmarks must target both artifacts during transition:
+  - legacy PyO3 crate for the in-process Rust comparison
+  - new `validation_sidecar` binary for the UDS sidecar comparison
+- the implementation plan should treat retirement of the PyO3 crate as follow-up work, not part of the first sidecar delivery
+
 ### 4. Benchmark Harness
 
 Primary file:
@@ -149,17 +194,36 @@ Rationale:
 - supports arbitrary payload sizes cleanly
 - more production-ready than NDJSON for hot-path use
 
+Wire format:
+
+| Field | Value |
+| --- | --- |
+| Length prefix | 4-byte unsigned integer |
+| Byte order | big-endian |
+| Payload | one JSON document per frame |
+| Max raw request-body size | 1 MiB initially |
+| Connection model | single-flight per connection |
+| Multiplexing | none in v1 |
+
+Python may maintain a small pool of persistent single-flight connections, but each individual connection handles one request at a time.
+
+The 1 MiB limit applies to the raw request-body bytes before base64 encoding. The framed JSON envelope will be larger because of base64 expansion and envelope metadata.
+
 ### Request Envelope
 
 Each request frame carries JSON with:
 
-- raw request-body bytes or body payload encoded for transport
+- request-body bytes encoded as base64 within the JSON envelope
 - `max_param_length`
 - `dangerous_patterns`
 - optional parser selection for benchmark mode only
 - optional request id for logging/tracing
 
 Production sidecar mode should use one configured parser implementation, not per-request parser switching. Parser selection exists only for benchmark and development comparisons.
+
+Although the transport uses length-prefixed binary framing, the frame payload itself is a JSON document. The request body must therefore be base64-encoded inside that JSON envelope to make the wire format deterministic.
+
+Benchmark/dev parser selection should be exposed as an internal benchmark harness choice, not as a production request parameter.
 
 ### Response Envelope
 
@@ -211,6 +275,17 @@ Rationale:
 
 The implementation should support both for benchmarking, but production should default to `simd-json` unless compatibility testing proves otherwise.
 
+### Regex Compatibility Rule
+
+The sidecar must preserve current configured behavior for the repo's default dangerous-pattern set. Because Python `re` and Rust regex engines are not fully equivalent, the sidecar design should treat regex compatibility as explicit policy:
+
+- the default dangerous-pattern set must remain sidecar-compatible
+- sidecar mode is only supported for patterns accepted by the Rust regex engine used in the implementation
+- incompatible patterns must be rejected during sidecar startup or configuration load, not deferred to first request
+- startup/config incompatibility should surface as a sidecar-readiness failure and therefore map to `503` on affected requests while sidecar mode is enabled
+
+The implementation plan must include parity coverage for the default patterns and explicit failure coverage for incompatible custom patterns.
+
 ## Data Flow
 
 ### Python Mode
@@ -247,6 +322,28 @@ The implementation should support both for benchmarking, but production should d
 
 There is no fallback to Python validation in sidecar mode.
 
+### Strict Vs Warn-Only Behavior
+
+When the sidecar returns a normal validation failure (`max_length`, `dangerous_pattern`, `max_depth`, `invalid_json`), the gateway should preserve the existing strict vs warn-only behavior:
+
+- production or strict mode => return `422`
+- development/staging with `validation_strict=false` => log and allow the request, consistent with current middleware behavior
+
+Fail-closed sidecar behavior applies to sidecar transport/readiness failures, not to ordinary validation verdicts. A healthy sidecar returning a validation failure is still part of the normal validation path.
+
+### HTTP Error Mapping
+
+| Failure class | HTTP status | Behavior |
+| --- | --- | --- |
+| validation failure reported by sidecar | `422` | preserve existing validation-style error response |
+| invalid JSON reported by sidecar | `422` | controlled request failure, not transport failure |
+| sidecar unavailable | `503` | fail closed with sidecar-unavailable detail |
+| sidecar timeout | `503` | fail closed with timeout detail |
+| malformed sidecar response | `503` | fail closed with protocol error detail |
+| sidecar startup/health failure in enabled mode | `503` on affected requests until resolved | operational failure, not validation failure |
+
+The implementation plan should preserve existing `422` behavior for validation failures and reserve `503` for sidecar transport/readiness failures.
+
 ## Testing Strategy
 
 ### Unit Tests
@@ -282,6 +379,8 @@ Must compare:
 - sidecar + `serde_json`
 - sidecar + `simd-json`
 
+The benchmark remains a standalone performance script and should stay outside the default test run, similar to the current `tests/performance/` treatment.
+
 Payload sets must include:
 
 - nested safe payloads
@@ -295,6 +394,7 @@ Payload sets must include:
 - Operators start the sidecar separately, similar in spirit to the Rust MCP runtime sidecar model.
 - The gateway is configured with the UDS path and timeout.
 - Enabling sidecar mode without a running sidecar is a configuration error that manifests as request failures.
+- Health/readiness for the sidecar is defined as: socket reachable, framed request/response exchange succeeds, and the sidecar returns a valid protocol response.
 
 This is intentional: sidecar mode is authoritative, not best-effort.
 
