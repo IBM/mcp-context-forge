@@ -721,12 +721,7 @@ async def test_get_user_roles_public_only_token_with_team_id_returns_global_pers
     # Public-only token with team_id should exclude team roles but keep global/personal
     roles = await svc._get_user_roles("user@test.com", team_id="team-a", token_teams=[])
 
-    # Should return empty list per the early return in the fix
-    # Actually, the fix changes this - it should NOT return [] but continue with global/personal
-    # Let me check the actual behavior...
-    # The condition is: if token_teams is not None and (len(token_teams) == 0 or team_id not in token_teams)
-    # For token_teams=[], this is True, so we log warning but DON'T return []
-    # We just don't add team-scoped roles to scope_conditions
+    # Team-scoped roles are excluded, but global/personal roles are still returned
     assert len(roles) == 1
     assert roles[0].scope == "global"
 
