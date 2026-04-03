@@ -242,7 +242,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         except ValidationSidecarValidationError as exc:
             self._raise_validation_failure(exc.key or "payload", exc.error_type or "validation")
         except ValidationSidecarProtocolError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (ValidationSidecarTimeoutError, ValidationSidecarTransportError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 

@@ -22,6 +22,7 @@ from mcpgateway.services.validation_sidecar_client import (
     ValidationSidecarProtocolError,
     ValidationSidecarTimeoutError,
     ValidationSidecarTransportError,
+    ValidationSidecarValidationError,
 )
 
 
@@ -567,7 +568,40 @@ class TestValidationMiddleware:
 
     @pytest.mark.asyncio
     async def test_sidecar_invalid_json_verdict_maps_to_422(self):
-        """Test malformed sidecar verdicts map to HTTP 422 responses."""
+        """Test sidecar invalid-json validation verdicts map to HTTP 422 responses."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_middleware_enabled = True
+            mock_settings.experimental_rust_validation_middleware_enabled = False
+            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            fake_client = MagicMock()
+            fake_client.validate_json_body = AsyncMock(
+                side_effect=ValidationSidecarValidationError(
+                    "Request body contains invalid JSON",
+                    key="payload",
+                    error_type="invalid_json",
+                    detail="Request body contains invalid JSON",
+                )
+            )
+            middleware._validation_sidecar_client = fake_client
+
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
+
+            assert exc_info.value.status_code == 422
+            assert "failed validation" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_sidecar_malformed_response_maps_to_503(self):
+        """Test malformed sidecar protocol responses fail closed with HTTP 503."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
@@ -588,8 +622,34 @@ class TestValidationMiddleware:
             with pytest.raises(HTTPException) as exc_info:
                 await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
 
-            assert exc_info.value.status_code == 422
+            assert exc_info.value.status_code == 503
             assert "Malformed sidecar response" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_sidecar_malformed_response_is_not_warn_only_in_development(self):
+        """Test malformed sidecar responses stay fatal even when warn-only mode is active."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_middleware_enabled = True
+            mock_settings.experimental_rust_validation_middleware_enabled = False
+            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.validation_strict = False
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "development"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._validate_json_body_with_sidecar = AsyncMock(side_effect=HTTPException(status_code=503, detail="Malformed sidecar response: invalid JSON"))  # type: ignore[method-assign]
+
+            async def call_next(req):
+                return Response("ok")
+
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware.dispatch(_JSONBodyRequest(b'{"name":"safe"}'), call_next)
+
+            assert exc_info.value.status_code == 503
 
     @pytest.mark.parametrize(
         "sidecar_error",
