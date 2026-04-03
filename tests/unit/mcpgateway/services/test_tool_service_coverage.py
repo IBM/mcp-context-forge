@@ -6913,7 +6913,6 @@ class TestInvokeToolA2A:
             result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
         assert captured_headers.get("X-Custom-Auth") == "custom-value"
 
-
     @pytest.mark.asyncio
     async def test_a2a_decrypt_failure_raises_exception(self, tool_service):
         """A2A agent with decrypt failure should raise ToolInvocationError."""

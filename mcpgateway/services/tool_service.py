@@ -5988,6 +5988,7 @@ class ToolService(BaseService):
             Response from the A2A agent.
 
         Raises:
+            ToolInvocationError: If authentication decryption fails.
             Exception: If the call fails.
         """
         logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
