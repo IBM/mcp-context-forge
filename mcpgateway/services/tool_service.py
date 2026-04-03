@@ -3575,11 +3575,10 @@ class ToolService(BaseService):
 
         Raises:
             ToolNotFoundError: If tool not found or access denied.
-            ToolInvocationError: If invocation fails.
+            ToolInvocationError: If invocation fails or A2A authentication decryption fails.
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin.
-            ToolInvocationError: If authentication decryption fails for A2A agents.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
