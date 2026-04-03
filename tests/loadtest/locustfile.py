@@ -1256,10 +1256,18 @@ class MCPJsonRpcUser(BaseUser):
         Uses JSON-RPC validation to detect errors returned with HTTP 200.
         Tolerates 502/504 from reverse proxy under high concurrency.
         """
+        # Add baggage test headers for OTEL tracing validation
+        headers = {
+            **self.auth_headers,
+            "Content-Type": "application/json",
+            "X-Tenant-ID": f"tenant-{self.environment.runner.user_count}",
+            "X-User-ID": f"user-{id(self)}",
+            "X-Request-ID": f"req-{time.time()}",
+        }
         with self.client.post(
             "/rpc",
             json=payload,
-            headers={**self.auth_headers, "Content-Type": "application/json"},
+            headers=headers,
             name=name,
             catch_response=True,
         ) as response:

@@ -755,6 +755,19 @@ class OpenTelemetryRequestMiddleware:
                 for key, value in span_attributes.items():
                     if value is not None:
                         set_span_attribute(span, key, value)
+                        set_span_attribute(span, key, value)
+
+                # Inject baggage as span attributes so request-root spans retain
+                # the same trace context dimensions carried on child spans.
+                try:
+                    if OTEL_AVAILABLE and otel_baggage:
+                        baggage_dict = otel_baggage.get_all()
+                        if baggage_dict:
+                            for key, value in baggage_dict.items():
+                                set_span_attribute(span, f"baggage.{key}", value)
+                            logger.debug("Injected %d baggage entries into request span", len(baggage_dict))
+                except Exception as exc:
+                    logger.debug("Failed to inject baggage into request span: %s", exc)
 
             try:
                 await self.app(scope, receive, _send_with_span_status)
