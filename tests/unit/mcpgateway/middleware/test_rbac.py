@@ -2633,3 +2633,63 @@ def test_rbac_get_db_backwards_compatibility():
                 pass
 
             mock_session.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# check_globally parameter tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_require_permission_check_globally_overrides_team_id(monkeypatch):
+    """check_globally=True must pass team_id=None to check_permission even when team_id kwarg is present."""
+
+    async def dummy_func(user=None, team_id=None):
+        return "ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db, "token_teams": []}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    decorated = rbac.require_permission("teams.join", check_globally=True)(dummy_func)
+    result = await decorated(user=mock_user, team_id="some-team-id")
+    assert result == "ok"
+    # team_id must be None, not "some-team-id"
+    assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+    # check_any_team must be False (global/personal roles only)
+    assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+
+@pytest.mark.asyncio
+async def test_require_permission_check_globally_false_preserves_team_id(monkeypatch):
+    """Default check_globally=False must NOT override team_id."""
+
+    async def dummy_func(user=None, team_id=None):
+        return "ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db, "token_teams": ["some-team-id"]}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    decorated = rbac.require_permission("teams.join")(dummy_func)
+    result = await decorated(user=mock_user, team_id="some-team-id")
+    assert result == "ok"
+    assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "some-team-id"
+
+
+@pytest.mark.asyncio
+async def test_require_permission_check_globally_metadata():
+    """check_globally value must be stored as function attribute for introspection."""
+
+    async def dummy_func(user=None):
+        return "ok"
+
+    decorated = rbac.require_permission("teams.join", check_globally=True)(dummy_func)
+    assert getattr(decorated, "_check_globally", None) is True
+
+    decorated_default = rbac.require_permission("teams.join")(dummy_func)
+    assert getattr(decorated_default, "_check_globally", None) is False

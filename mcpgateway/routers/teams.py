@@ -886,7 +886,7 @@ async def cancel_team_invitation(invitation_id: str, current_user: dict = Depend
 
 
 @teams_router.post("/{team_id}/join", response_model=TeamJoinRequestResponse)
-@require_permission("teams.join")
+@require_permission("teams.join", check_globally=True)
 async def request_to_join_team(
     team_id: str,
     join_request: TeamJoinRequest,

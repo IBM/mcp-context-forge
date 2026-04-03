@@ -265,7 +265,7 @@ class RBACMockManager:
             self.app.dependency_overrides.update(self.original_overrides)
 
 
-def mock_require_permission_decorator(permission: str, resource_type: Optional[str] = None):
+def mock_require_permission_decorator(permission: str, resource_type: Optional[str] = None, **kwargs):
     """Mock version of the require_permission decorator that always allows access.
 
     This decorator bypasses all permission checks and simply executes the

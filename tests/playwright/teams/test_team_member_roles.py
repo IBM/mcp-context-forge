@@ -100,8 +100,8 @@ class TestTeamMemberRoles:
         team_id = team_with_member["team"]["id"]
         member = team_with_member["member_email"]
 
-        # Leave as the member
-        member_jwt = _make_jwt(member, is_admin=False)
+        # Leave as the member (session token resolves DB team membership)
+        member_jwt = _make_jwt(member, is_admin=False, token_use="session")
         member_ctx = playwright.request.new_context(
             base_url=BASE_URL,
             extra_http_headers={"Authorization": f"Bearer {member_jwt}", "Accept": "application/json"},

@@ -72,7 +72,7 @@ from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
+from mcpgateway.db import EmailApiToken, EmailTeam, EmailTeamJoinRequest, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
@@ -6765,7 +6765,7 @@ async def admin_remove_team_member(
 
 
 @admin_router.post("/teams/{team_id}/leave")
-@require_permission("teams.join", allow_admin_bypass=False)  # Users who can join can also leave
+@require_permission("teams.join", allow_admin_bypass=False, check_globally=True)  # Users who can join can also leave
 async def admin_leave_team(
     team_id: str,
     request: Request,  # pylint: disable=unused-argument
@@ -6838,7 +6838,7 @@ async def admin_leave_team(
 
 
 @admin_router.post("/teams/{team_id}/join-request")
-@require_permission("teams.join", allow_admin_bypass=False)
+@require_permission("teams.join", allow_admin_bypass=False, check_globally=True)
 async def admin_create_join_request(
     team_id: str,
     request: Request,
@@ -6927,7 +6927,7 @@ async def admin_create_join_request(
 
 
 @admin_router.delete("/teams/{team_id}/join-request/{request_id}")
-@require_permission("teams.join", allow_admin_bypass=False)
+@require_permission("teams.join", allow_admin_bypass=False, check_globally=True)
 async def admin_cancel_join_request(
     team_id: str,
     request_id: str,
@@ -6951,6 +6951,11 @@ async def admin_cancel_join_request(
     try:
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
+
+        # Verify the join request belongs to this team before cancelling
+        join_request = db.query(EmailTeamJoinRequest).filter(EmailTeamJoinRequest.id == request_id, EmailTeamJoinRequest.team_id == team_id).first()
+        if not join_request:
+            return HTMLResponse(content='<div class="text-red-500">Join request not found for this team</div>', status_code=404)
 
         # Cancel the join request
         success = await team_service.cancel_join_request(request_id, user_email)

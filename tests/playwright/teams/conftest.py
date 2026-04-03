@@ -26,10 +26,13 @@ BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 TEST_PASSWORD = "SecureTestPass123!"
 
 
-def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
+def _make_jwt(email: str, is_admin: bool = False, teams=None, token_use: str = None) -> str:
     """Create a JWT token for testing."""
+    payload = {"sub": email}
+    if token_use:
+        payload["token_use"] = token_use
     return _create_jwt_token(
-        {"sub": email},
+        payload,
         user_data={"email": email, "is_admin": is_admin, "auth_provider": "local"},
         teams=teams,
     )
