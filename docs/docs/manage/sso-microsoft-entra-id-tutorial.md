@@ -475,7 +475,7 @@ ContextForge includes these default roles:
 1. **`platform_admin`** (global scope) - Full platform access with all permissions
 2. **`team_admin`** (team scope) - Team management, tools, resources, prompts
 3. **`developer`** (team scope) - Tool execution and resource access
-4. **`viewer`** (team scope) - Read-only access
+4. **`viewer`** (team scope) - Read access and tool execution within team scope
 
 ### 8.5.1 Prerequisites
 

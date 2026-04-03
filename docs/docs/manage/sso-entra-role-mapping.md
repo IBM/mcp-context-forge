@@ -38,8 +38,8 @@ ContextForge includes a comprehensive RBAC system with the following default rol
 
 4. **`viewer`** (team scope)
 
-   - Permissions: Read-only access to tools, resources, prompts
-   - Cannot execute tools or modify resources
+   - Permissions: Read access to tools, resources, prompts; tool execution within team scope
+   - Cannot modify resources
 
 ### Implementation Components
 
