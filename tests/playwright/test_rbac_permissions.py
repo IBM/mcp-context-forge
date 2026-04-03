@@ -1314,9 +1314,8 @@ class TestRPCToolExecutionRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Visibility test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}},
+                    "tool": {"name": tool_name, "description": "Visibility test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": team_id,
-                    "visibility": "team",
                 }
             ),
             headers={"Content-Type": "application/json"},
@@ -1490,9 +1489,8 @@ class TestSessionTokenCookieRBAC:
             "/tools",
             data=_json.dumps(
                 {
-                    "tool": {"name": tool_name, "description": "Cross-team test (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}},
+                    "tool": {"name": tool_name, "description": "Cross-team test (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
                     "team_id": other_team_id,
-                    "visibility": "team",
                 }
             ),
             headers={"Content-Type": "application/json"},
