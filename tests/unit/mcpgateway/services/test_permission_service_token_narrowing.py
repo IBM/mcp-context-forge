@@ -154,6 +154,7 @@ async def test_get_user_roles_no_filter_when_token_teams_none(svc, mock_db):
     compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
     assert "is_personal" in compiled
 
+
 @pytest.mark.asyncio
 async def test_check_permission_public_only_token_blocks_team_perms(svc):
     """Public-only token (token_teams=[]) blocks ALL team permissions (Option A strict isolation).
@@ -181,6 +182,7 @@ async def test_check_permission_public_only_token_blocks_team_perms(svc):
                 token_teams=[],
             )
             assert result is False, "Public-only token must block team permissions (Option A strict isolation)"
+
 
 @pytest.mark.asyncio
 async def test_get_user_roles_preserves_global_team_roles_when_narrowed(svc, mock_db):
@@ -369,12 +371,7 @@ async def test_explicit_team_id_rejects_out_of_scope_team(svc, mock_db):
     mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
 
     # Request roles for team-b, but token is narrowed to team-a only
-    result = await svc._get_user_roles(
-        "user@test.com",
-        team_id="team-b",  # Explicit team_id from route
-        include_all_teams=False,
-        token_teams=["team-a"]  # Narrowed to team-a only
-    )
+    result = await svc._get_user_roles("user@test.com", team_id="team-b", include_all_teams=False, token_teams=["team-a"])  # Explicit team_id from route  # Narrowed to team-a only
 
     # Should return empty list (access denied)
     assert result == [], "Should reject access to team-b when token is narrowed to team-a"
@@ -388,12 +385,7 @@ async def test_explicit_team_id_allows_in_scope_team(svc, mock_db):
     mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = [user_role]
 
     # Request roles for team-a, token is narrowed to team-a
-    result = await svc._get_user_roles(
-        "user@test.com",
-        team_id="team-a",  # Explicit team_id
-        include_all_teams=False,
-        token_teams=["team-a", "team-b"]  # team-a is in scope
-    )
+    result = await svc._get_user_roles("user@test.com", team_id="team-a", include_all_teams=False, token_teams=["team-a", "team-b"])  # Explicit team_id  # team-a is in scope
 
     # Should return roles (access allowed)
     assert len(result) > 0, "Should allow access to team-a when it's in token_teams"
@@ -409,12 +401,7 @@ async def test_admin_bypass_suppressed_for_public_only_non_admin_perm(svc):
     with patch.object(svc, "_is_user_admin", return_value=True):
         with patch.object(svc, "get_user_permissions", return_value=set()):
             # Admin user with public-only token trying to access teams.read
-            result = await svc.check_permission(
-                "admin@test.com",
-                "teams.read",  # Non-admin.* permission
-                token_teams=[],  # Public-only token
-                allow_admin_bypass=True
-            )
+            result = await svc.check_permission("admin@test.com", "teams.read", token_teams=[], allow_admin_bypass=True)  # Non-admin.* permission  # Public-only token
 
             # Should be denied (admin bypass suppressed)
             assert result is False, "Admin bypass should be suppressed for token_teams=[] on non-admin.* perms"
@@ -425,12 +412,7 @@ async def test_admin_bypass_works_for_narrowed_token(svc):
     """Admin bypass still works for narrowed (non-empty) tokens."""
     with patch.object(svc, "_is_user_admin", return_value=True):
         # Admin with narrowed token should still get admin bypass
-        result = await svc.check_permission(
-            "admin@test.com",
-            "teams.read",
-            token_teams=["team-a"],  # Narrowed, not public-only
-            allow_admin_bypass=True
-        )
+        result = await svc.check_permission("admin@test.com", "teams.read", token_teams=["team-a"], allow_admin_bypass=True)  # Narrowed, not public-only
 
         # Should be allowed (admin bypass works)
         assert result is True, "Admin bypass should work for narrowed tokens"
@@ -441,12 +423,7 @@ async def test_admin_bypass_works_for_unnarrowed_token(svc):
     """Admin bypass still works for un-narrowed tokens."""
     with patch.object(svc, "_is_user_admin", return_value=True):
         # Admin with un-narrowed token should get admin bypass
-        result = await svc.check_permission(
-            "admin@test.com",
-            "teams.read",
-            token_teams=None,  # Un-narrowed
-            allow_admin_bypass=True
-        )
+        result = await svc.check_permission("admin@test.com", "teams.read", token_teams=None, allow_admin_bypass=True)  # Un-narrowed
 
         # Should be allowed (admin bypass works)
         assert result is True, "Admin bypass should work for un-narrowed tokens"
@@ -471,10 +448,7 @@ async def test_check_admin_permission_respects_token_teams(svc):
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", side_effect=mock_get_user_permissions):
             # Non-admin user with admin permissions via roles, but public-only token
-            result = await svc.check_admin_permission(
-                "user@test.com",
-                token_teams=[]  # Public-only token
-            )
+            result = await svc.check_admin_permission("user@test.com", token_teams=[])  # Public-only token
 
             # Should be denied (token_teams=[] filters out team roles)
             assert result is False, "check_admin_permission should respect token_teams=[]"
@@ -488,10 +462,7 @@ async def test_check_admin_permission_allows_with_proper_scope(svc):
     with patch.object(svc, "_is_user_admin", return_value=False):
         with patch.object(svc, "get_user_permissions", return_value=set(admin_perms)):
             # User with admin permissions and properly scoped token
-            result = await svc.check_admin_permission(
-                "user@test.com",
-                token_teams=["team-a"]  # Narrowed token
-            )
+            result = await svc.check_admin_permission("user@test.com", token_teams=["team-a"])  # Narrowed token
 
             # Should be allowed
             assert result is True, "check_admin_permission should allow with proper token scope"
@@ -543,10 +514,12 @@ async def test_narrowed_token_includes_specified_teams(svc, mock_db):
 
 @pytest.mark.asyncio
 async def test_explicit_team_id_rejects_public_only_token(svc, mock_db):
-    """_get_user_roles rejects explicit team_id when token_teams=[] (public-only).
+    """_get_user_roles excludes team-scoped roles when token_teams=[] (public-only).
 
-    Public-only tokens must never access team-specific roles, even when
-    an explicit team_id is provided in the request.
+    Public-only tokens must never access team-specific roles, even when an explicit
+    team_id is provided.  Global and personal roles are still queried so that
+    platform-wide permissions (e.g. teams.join via platform_viewer) remain available
+    without granting membership-derived rights in the target team.
     """
     mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
 
@@ -557,8 +530,69 @@ async def test_explicit_team_id_rejects_public_only_token(svc, mock_db):
         token_teams=[],  # Public-only
     )
 
-    assert result == [], "Public-only token must reject explicit team_id lookups"
-    assert not mock_db.execute.called, "Should short-circuit before querying DB"
+    assert result == [], "Public-only token must not return team-specific roles"
+
+    # Global/personal roles are still queried — verify no team-scoped condition
+    # for the out-of-scope team appears in the compiled query.
+    assert mock_db.execute.called, "DB should be queried for global/personal roles"
+    query_arg = mock_db.execute.call_args[0][0]
+    compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+    assert "team-a" not in compiled, "team-scoped roles for the out-of-scope team must not be queried"
+
+
+@pytest.mark.asyncio
+async def test_explicit_team_id_excludes_out_of_scope_narrowed_token(svc, mock_db):
+    """_get_user_roles excludes team-scoped roles when team_id is outside narrowed token_teams.
+
+    When token_teams=["team-a"] but team_id="team-b", team-scoped roles for
+    team-b must not appear in the query.  Global and personal roles are still
+    queried so that platform-wide permissions (e.g. teams.join) remain available.
+    """
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
+
+    result = await svc._get_user_roles(
+        "user@test.com",
+        team_id="team-b",
+        include_all_teams=False,
+        token_teams=["team-a"],  # Narrowed — team-b is out of scope
+    )
+
+    assert result == [], "Out-of-scope team must not return team-specific roles"
+
+    # Global/personal roles are still queried — verify no team-scoped condition
+    # for the out-of-scope team appears in the compiled query.
+    assert mock_db.execute.called, "DB should be queried for global/personal roles"
+    query_arg = mock_db.execute.call_args[0][0]
+    compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+    assert "team-b" not in compiled, "team-scoped roles for the out-of-scope team must not be queried"
+
+
+@pytest.mark.asyncio
+async def test_explicit_team_id_includes_team_roles_when_token_unrestricted(svc, mock_db):
+    """_get_user_roles includes team-scoped roles when token_teams is None (unrestricted).
+
+    Unrestricted tokens (token_teams=None) skip the narrowing guard entirely,
+    so team-scoped roles for the explicit team_id must appear in the query.
+    """
+    role = SimpleNamespace(name="developer", permissions=["tools.read"], get_effective_permissions=lambda: ["tools.read"])
+    team_user_role = SimpleNamespace(role=role, role_id="r1", scope="team", scope_id="team-a")
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = [team_user_role]
+
+    result = await svc._get_user_roles(
+        "user@test.com",
+        team_id="team-a",
+        include_all_teams=False,
+        token_teams=None,  # Unrestricted
+    )
+
+    assert len(result) == 1
+    assert result[0].scope == "team"
+    assert result[0].scope_id == "team-a"
+
+    # Verify the compiled query includes team-scoped condition for team-a
+    query_arg = mock_db.execute.call_args[0][0]
+    compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+    assert "team-a" in compiled, "Unrestricted token must include team-scoped roles for the requested team"
 
 
 @pytest.mark.asyncio
@@ -661,6 +695,4 @@ async def test_public_only_excludes_scope_id_null_team_roles(svc, mock_db):
     compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
 
     # The compiled query must NOT include scope='team' conditions when token_teams=[]
-    assert 'scope = \'team\'' not in compiled.lower().replace('"', "'"), (
-        "Public-only token must exclude all team-scoped roles including scope_id=NULL"
-    )
+    assert "scope = 'team'" not in compiled.lower().replace('"', "'"), "Public-only token must exclude all team-scoped roles including scope_id=NULL"

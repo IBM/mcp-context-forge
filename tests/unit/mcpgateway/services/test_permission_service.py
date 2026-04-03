@@ -649,6 +649,129 @@ async def test_log_permission_check(svc, mock_db):
     mock_db.commit.assert_called_once()
 
 
+# ---------- Token narrowing regression tests (PR #3932 fix) ----------
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_out_of_scope_team_preserves_global_roles(svc, mock_db):
+    """Out-of-scope team_id should still return global roles (regression test for PR #3932)."""
+    global_role = SimpleNamespace(
+        name="platform_viewer",
+        permissions=["servers.read", "tools.read"],
+        get_effective_permissions=lambda: ["servers.read", "tools.read"],
+    )
+    global_user_role = SimpleNamespace(role=global_role, role_id="r1", scope="global", scope_id=None)
+
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = [global_user_role]
+
+    # User has token scoped to team-a, but requests roles for team-b (out of scope)
+    roles = await svc._get_user_roles("user@test.com", team_id="team-b", token_teams=["team-a"])
+
+    # Team-scoped roles for team-b are excluded, but global roles are preserved
+    assert len(roles) == 1
+    assert roles[0].scope == "global"
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_out_of_scope_team_preserves_personal_roles(svc, mock_db):
+    """Out-of-scope team_id should still return personal roles (regression test for PR #3932)."""
+    personal_role = SimpleNamespace(
+        name="personal_role",
+        permissions=["tools.read"],
+        get_effective_permissions=lambda: ["tools.read"],
+    )
+    personal_user_role = SimpleNamespace(role=personal_role, role_id="r2", scope="personal", scope_id="user@test.com")
+
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = [personal_user_role]
+
+    # User has token scoped to team-a, but requests roles for team-b (out of scope)
+    roles = await svc._get_user_roles("user@test.com", team_id="team-b", token_teams=["team-a"])
+
+    # Should still return personal roles
+    assert len(roles) == 1
+    assert roles[0].scope == "personal"
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_out_of_scope_team_excludes_team_roles(svc, mock_db):
+    """Out-of-scope team_id should exclude team-scoped roles (security invariant)."""
+    # Mock returns no roles because team-scoped roles are filtered out
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
+
+    # User has token scoped to team-a, but requests roles for team-b (out of scope)
+    roles = await svc._get_user_roles("user@test.com", team_id="team-b", token_teams=["team-a"])
+
+    # Should return empty because no global/personal roles exist and team roles are excluded
+    assert len(roles) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_public_only_token_with_team_id_returns_global_personal_only(svc, mock_db):
+    """Public-only token (token_teams=[]) with team_id should return only global/personal roles."""
+    global_role = SimpleNamespace(
+        name="platform_viewer",
+        permissions=["servers.read"],
+        get_effective_permissions=lambda: ["servers.read"],
+    )
+    global_user_role = SimpleNamespace(role=global_role, role_id="r1", scope="global", scope_id=None)
+
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = [global_user_role]
+
+    # Public-only token with team_id should exclude team roles but keep global/personal
+    roles = await svc._get_user_roles("user@test.com", team_id="team-a", token_teams=[])
+
+    # Team-scoped roles are excluded, but global/personal roles are still returned
+    assert len(roles) == 1
+    assert roles[0].scope == "global"
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_in_scope_team_includes_team_roles(svc, mock_db):
+    """In-scope team_id should include team-scoped roles."""
+    team_role = SimpleNamespace(
+        name="team_admin",
+        permissions=["servers.create", "tools.create"],
+        get_effective_permissions=lambda: ["servers.create", "tools.create"],
+    )
+    team_user_role = SimpleNamespace(role=team_role, role_id="r3", scope="team", scope_id="team-a")
+
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = [team_user_role]
+
+    # User has token scoped to team-a and requests roles for team-a (in scope)
+    roles = await svc._get_user_roles("user@test.com", team_id="team-a", token_teams=["team-a"])
+
+    # Should include team-scoped roles
+    assert len(roles) == 1
+    assert roles[0].scope == "team"
+    assert roles[0].scope_id == "team-a"
+
+
+@pytest.mark.asyncio
+async def test_check_permission_join_endpoint_with_global_role(svc, mock_db):
+    """Join endpoint should work with global roles even when team_id is out of scope (regression test)."""
+    global_role = SimpleNamespace(
+        name="platform_viewer",
+        permissions=["teams.join"],
+        get_effective_permissions=lambda: ["teams.join"],
+    )
+    global_user_role = SimpleNamespace(role=global_role, role_id="r1", scope="global", scope_id=None)
+
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = [global_user_role]
+
+    with patch.object(svc, "_is_user_admin", return_value=False):
+        # User with API token (token_teams=[]) tries to join team-a
+        # Before fix: _get_user_roles returned [], so no permissions
+        # After fix: _get_user_roles returns global roles, so teams.join is granted
+        granted = await svc.check_permission(
+            user_email="user@test.com",
+            permission="teams.join",
+            team_id="team-a",
+            token_teams=[],  # Public-only token
+        )
+
+    assert granted is True, "User with global teams.join permission should be able to join teams"
+
+
 # ---------- _get_roles_for_audit ----------
 
 

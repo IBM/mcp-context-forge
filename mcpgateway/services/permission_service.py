@@ -513,15 +513,17 @@ class PermissionService:
         if team_id:
             # Security: Verify team_id is within token scope when narrowed.
             # Public-only tokens (token_teams=[]) must never access team-specific roles.
+            # When team_id is out of scope, we skip adding team-scoped roles but still
+            # return global and personal roles (needed for join endpoint and other operations).
             if token_teams is not None and (len(token_teams) == 0 or team_id not in token_teams):
-                logger.warning(
+                logger.debug(
                     f"[RBAC] Team {SecurityValidator.sanitize_log_message(team_id)} not in token scope "
-                    f"{SecurityValidator.sanitize_log_message(token_teams)} for {SecurityValidator.sanitize_log_message(user_email)}"
+                    f"{SecurityValidator.sanitize_log_message(token_teams)} for {SecurityValidator.sanitize_log_message(user_email)}: "
+                    f"excluding team-scoped roles but keeping global/personal roles"
                 )
-                return []
-
-            # Filter to specific team's roles only.
-            scope_conditions.append(and_(UserRole.scope == "team", or_(UserRole.scope_id == team_id, UserRole.scope_id.is_(None))))
+            else:
+                # Team is in scope: include team-scoped roles for this team
+                scope_conditions.append(and_(UserRole.scope == "team", or_(UserRole.scope_id == team_id, UserRole.scope_id.is_(None))))
         elif include_all_teams:
             # Include ALL team-scoped roles EXCEPT personal team roles.
             # Personal teams are auto-created for every user with team_admin permissions,
