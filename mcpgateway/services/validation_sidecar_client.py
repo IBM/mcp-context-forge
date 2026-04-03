@@ -21,6 +21,7 @@ FRAME_PREFIX = struct.Struct(">I")
 METADATA_PREFIX = struct.Struct(">I")
 MAX_FRAME_SIZE = 16 * 1024 * 1024
 MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024
+OK_RESPONSE_BYTES = b'{"ok":true}'
 
 
 class ValidationSidecarError(Exception):
@@ -205,6 +206,9 @@ class ValidationSidecarResponse:
         Raises:
             ValidationSidecarProtocolError: If the response JSON is malformed.
         """
+        if payload == OK_RESPONSE_BYTES:
+            return cls(ok=True)
+
         try:
             decoded = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:

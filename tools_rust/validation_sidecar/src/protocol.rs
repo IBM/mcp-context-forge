@@ -12,6 +12,7 @@ pub const FRAME_PREFIX_LEN: usize = 4;
 pub const METADATA_PREFIX_LEN: usize = 4;
 pub const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 pub const MAX_RAW_BODY_SIZE: usize = 1024 * 1024;
+pub const OK_RESPONSE_BYTES: &[u8] = br#"{"ok":true}"#;
 
 #[derive(Debug, Error)]
 pub enum ProtocolError {
@@ -272,6 +273,13 @@ where
     write_frame(writer, &payload).await
 }
 
+pub async fn write_ok_frame<W>(writer: &mut W) -> Result<(), ProtocolError>
+where
+    W: AsyncWrite + Unpin,
+{
+    write_frame(writer, OK_RESPONSE_BYTES).await
+}
+
 pub fn invalid_envelope<M: Display>(message: M) -> ProtocolError {
     ProtocolError::InvalidEnvelope(message.to_string())
 }
@@ -396,5 +404,17 @@ mod tests {
             encode_frame(br#"{"ok":true}"#).expect("encoded frame")
         );
         assert_eq!(writer.flush_calls, 0);
+    }
+
+    #[tokio::test]
+    async fn write_ok_frame_uses_compact_preencoded_payload() {
+        let mut writer = RecordingWriter::default();
+
+        write_ok_frame(&mut writer).await.expect("write ok frame");
+
+        assert_eq!(
+            writer.written,
+            encode_frame(OK_RESPONSE_BYTES).expect("encoded frame")
+        );
     }
 }

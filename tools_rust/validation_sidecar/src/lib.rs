@@ -8,7 +8,7 @@ pub mod validator;
 
 use crate::protocol::{
     ProtocolError, ValidationResponseEnvelope, decode_request_payload, invalid_envelope,
-    read_frame, write_json_frame,
+    read_frame, write_json_frame, write_ok_frame,
 };
 use crate::validator::validate_request;
 use std::{future::Future, path::PathBuf};
@@ -81,16 +81,20 @@ async fn handle_connection(mut stream: UnixStream) -> Result<(), SidecarError> {
         };
 
         let request = decode_request_payload(&payload)?;
-        let response = if request.healthcheck {
-            ValidationResponseEnvelope::ok()
-        } else {
-            match validate_request(&request)? {
-                Some(rejection) => ValidationResponseEnvelope::rejected(
-                    rejection.key,
-                    rejection.error_type,
-                    rejection.detail,
-                ),
-                None => ValidationResponseEnvelope::ok(),
+        if request.healthcheck {
+            write_ok_frame(&mut stream).await?;
+            continue;
+        }
+
+        let response = match validate_request(&request)? {
+            Some(rejection) => ValidationResponseEnvelope::rejected(
+                rejection.key,
+                rejection.error_type,
+                rejection.detail,
+            ),
+            None => {
+                write_ok_frame(&mut stream).await?;
+                continue;
             }
         };
 
