@@ -57,10 +57,7 @@ def _find_cookie(page: Page, name: str) -> Optional[Dict[str, Any]]:
 
 # Iframe tests require X_FRAME_OPTIONS=ALLOW-ALL to function properly
 # Skip marker for when this requirement is not met
-_requires_allow_all = pytest.mark.skipif(
-    settings.x_frame_options != "ALLOW-ALL",
-    reason="Iframe embedding tests require X_FRAME_OPTIONS=ALLOW-ALL environment variable"
-)
+_requires_allow_all = pytest.mark.skipif(settings.x_frame_options != "ALLOW-ALL", reason="Iframe embedding tests require X_FRAME_OPTIONS=ALLOW-ALL environment variable")
 
 
 @pytest.fixture
@@ -203,13 +200,11 @@ class TestSecurityHeadersInIframeContext:
 
         _ensure_admin_logged_in(page, base_url)
         admin_url = f"{base_url}/admin/"
-        page.set_content(
-            f"""<!DOCTYPE html>
+        page.set_content(f"""<!DOCTYPE html>
 <html><head><title>deny test</title></head>
 <body>
 <iframe id="admin-frame" src="{admin_url}" style="width:100%;height:100vh;border:none"></iframe>
-</body></html>"""
-        )
+</body></html>""")
 
         frame = page.frame_locator("#admin-frame")
         try:
@@ -376,15 +371,13 @@ class TestEmbeddedModeUIBehavior:
         page.route(admin_pattern, _strip_headers)
 
         admin_url = f"{base_url}/admin/?ui_hide=metrics"
-        page.set_content(
-            f"""<!DOCTYPE html>
+        page.set_content(f"""<!DOCTYPE html>
 <html><head><title>ui_hide iframe test</title></head>
 <body>
 <iframe id="admin-frame" src="{admin_url}" style="width:100%;height:100vh;border:none"
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals">
 </iframe>
-</body></html>"""
-        )
+</body></html>""")
 
         frame = page.frame_locator("#admin-frame")
         try:
@@ -440,16 +433,14 @@ class TestCORSInIframeContext:
     def test_same_origin_fetch_from_iframe(self, page: Page, iframe_host):
         """fetch('/health') from inside the iframe succeeds (same-origin)."""
         frame = iframe_host
-        result = frame.locator("body").evaluate(
-            """async () => {
+        result = frame.locator("body").evaluate("""async () => {
                 try {
                     const resp = await fetch('/health');
                     return { status: resp.status, ok: resp.ok };
                 } catch (e) {
                     return { error: e.message };
                 }
-            }"""
-        )
+            }""")
         assert "error" not in result, f"Same-origin fetch from iframe failed: {result.get('error')}"
         assert result["status"] == 200, f"Expected 200 from /health, got {result['status']}"
 
@@ -595,10 +586,7 @@ class TestIframeFormSubmission:
         iframe_host.locator('[data-testid="servers-tab"]').wait_for(state="visible", timeout=30000)
 
         # Wait for JS initialization (Admin object + HTMX) - also critical
-        iframe_frame.wait_for_function(
-            "typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'",
-            timeout=15000
-        )
+        iframe_frame.wait_for_function("typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'", timeout=15000)
 
         # Give HTMX a moment to settle after page load
         page.wait_for_timeout(500)
@@ -619,8 +607,7 @@ class TestIframeFormSubmission:
             search_input.fill(gw_name)
             # Wait for the HTMX indicator to disappear (search response settled)
             page.wait_for_function(
-                "() => !document.querySelector('#admin-frame')?.contentDocument"
-                "?.querySelector('#gateways-loading.htmx-request')",
+                "() => !document.querySelector('#admin-frame')?.contentDocument" "?.querySelector('#gateways-loading.htmx-request')",
                 timeout=10000,
             )
         except (PlaywrightTimeoutError, Exception):
@@ -649,9 +636,7 @@ class TestIframeFormSubmission:
             panel.wait_for(state="visible", timeout=5000)
         except PlaywrightTimeoutError:
             try:
-                iframe_frame.evaluate(
-                    "() => { if (typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function') window.Admin.showTab('gateways'); }"
-                )
+                iframe_frame.evaluate("() => { if (typeof window.Admin !== 'undefined' && typeof window.Admin.showTab === 'function') window.Admin.showTab('gateways'); }")
             except Exception:
                 pass
             panel.wait_for(state="visible", timeout=15000)
@@ -665,7 +650,7 @@ class TestIframeFormSubmission:
                     // Either has data rows or shows empty state
                     return tbody.children.length > 0 || tbody.textContent.includes('No');
                 }""",
-                timeout=15000
+                timeout=15000,
             )
         except PlaywrightTimeoutError:
             pass  # Table may still be loading; proceed with what is available
@@ -716,8 +701,7 @@ class TestIframeFormSubmission:
             # Override transport to HTTP so _initialize_gateway skips the external
             # connection check (only SSE/StreamableHTTP try to connect).
             iframe_frame = page.frames[-1]
-            iframe_frame.evaluate(
-                """() => {
+            iframe_frame.evaluate("""() => {
                     const form = document.getElementById('add-gateway-form');
                     if (!form) return;
                     const select = form.querySelector('select[name="transport"]');
@@ -729,8 +713,7 @@ class TestIframeFormSubmission:
                         select.appendChild(opt);
                     }
                     select.value = 'HTTP';
-                }"""
-            )
+                }""")
 
             # Submit and wait for the POST response from the admin form handler.
             # The admin form uses JS fetch() so the page does NOT navigate.
@@ -846,7 +829,7 @@ class TestIframeFormSubmission:
 
             # Click the edit button for this specific gateway
             # tojson_attr encodes the ID with double quotes → onclick='Admin.editGateway("id")'
-            edit_btn = frame.locator(f'button[onclick*=\'editGateway("{gw_id}")\']').first
+            edit_btn = frame.locator(f"button[onclick*='editGateway(\"{gw_id}\")']").first
             try:
                 edit_btn.wait_for(state="visible", timeout=15000)
             except PlaywrightTimeoutError:
@@ -896,9 +879,13 @@ class TestIframeFormSubmission:
             # Auto-accept confirmation dialogs on the HOST page
             page.on("dialog", lambda d: d.accept())
 
-            # Click delete button (use .first for responsive layouts)
+            # Open the actions dropdown (PR #3802 moved buttons into Alpine.js menu)
+            gw_row = frame.locator(f'tr[id="gateway-row-{gw_id}"]').first
+            gw_row.wait_for(state="attached", timeout=10000)
+            gw_row.scroll_into_view_if_needed()
+            gw_row.locator("button[aria-expanded]").click()
+            gw_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
             delete_btn = frame.locator(f'form[action*="/gateways/{gw_id}/delete"] button[type="submit"]').first
-            delete_btn.wait_for(state="visible", timeout=5000)
 
             with page.expect_response(lambda r: f"/gateways/{gw_id}/delete" in r.url, timeout=15000):
                 delete_btn.click()
@@ -926,9 +913,13 @@ class TestIframeFormSubmission:
             # Search by name so the gateway is visible regardless of pagination
             self._search_gateway_in_iframe(page, frame, gw_name)
 
-            # Click the deactivate/toggle button for this gateway
+            # Open the actions dropdown (PR #3802 moved buttons into Alpine.js menu)
+            gw_row = frame.locator(f'tr[id="gateway-row-{gw_id}"]').first
+            gw_row.wait_for(state="attached", timeout=10000)
+            gw_row.scroll_into_view_if_needed()
+            gw_row.locator("button[aria-expanded]").click()
+            gw_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
             toggle_btn = frame.locator(f'form[action*="/gateways/{gw_id}/state"] button[type="submit"]')
-            toggle_btn.first.wait_for(state="visible", timeout=5000)
 
             with page.expect_response(lambda r: f"/gateways/{gw_id}/state" in r.url, timeout=15000):
                 toggle_btn.first.click()
