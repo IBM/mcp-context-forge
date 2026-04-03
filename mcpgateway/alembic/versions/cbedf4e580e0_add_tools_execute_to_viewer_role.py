@@ -30,9 +30,10 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-ROLE_PERMISSION_ADDITIONS = {
-    "viewer": ["tools.execute"],
-}
+ROLE_PERMISSION_ADDITIONS: list[tuple[str, str, list[str]]] = [
+    # (role_name, scope, permissions_to_add)
+    ("viewer", "team", ["tools.execute"]),
+]
 
 
 def _load_permissions(raw_permissions: object) -> list[str]:
@@ -63,18 +64,19 @@ def _load_permissions(raw_permissions: object) -> list[str]:
     return []
 
 
-def _update_role_permissions(conn, role_name: str, permissions: list[str], add: bool) -> None:
+def _update_role_permissions(conn, role_name: str, scope: str, permissions: list[str], add: bool) -> None:
     """Add or remove permissions from a role, idempotently.
 
     Args:
         conn: Active Alembic connection.
         role_name: Role name to update.
+        scope: Role scope ('team' or 'global') to disambiguate roles with the same name.
         permissions: Permission values to add or remove.
         add: When True, add permissions; when False, remove permissions.
     """
     row = conn.execute(
-        text("SELECT id, permissions FROM roles WHERE name = :name LIMIT 1"),
-        {"name": role_name},
+        text("SELECT id, permissions FROM roles WHERE name = :name AND scope = :scope LIMIT 1"),
+        {"name": role_name, "scope": scope},
     ).fetchone()
 
     if not row:
@@ -129,8 +131,8 @@ def upgrade() -> None:
         print("roles table not found. Skipping migration.")
         return
 
-    for role_name, permissions in ROLE_PERMISSION_ADDITIONS.items():
-        _update_role_permissions(conn, role_name, permissions, add=True)
+    for role_name, scope, permissions in ROLE_PERMISSION_ADDITIONS:
+        _update_role_permissions(conn, role_name, scope, permissions, add=True)
 
 
 def downgrade() -> None:
@@ -140,5 +142,5 @@ def downgrade() -> None:
     if "roles" not in inspector.get_table_names():
         return
 
-    for role_name, permissions in ROLE_PERMISSION_ADDITIONS.items():
-        _update_role_permissions(conn, role_name, permissions, add=False)
+    for role_name, scope, permissions in ROLE_PERMISSION_ADDITIONS:
+        _update_role_permissions(conn, role_name, scope, permissions, add=False)

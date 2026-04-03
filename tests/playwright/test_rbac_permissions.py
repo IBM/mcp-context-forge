@@ -1275,7 +1275,9 @@ class TestRPCToolExecutionRBAC:
             headers={"Content-Type": "application/json"},
         )
         assert create_resp.status in (200, 201), f"Failed to create test tool: {create_resp.status}"
-        tool_id = create_resp.json().get("id")
+        created_tool = create_resp.json()
+        tool_id = created_tool.get("id")
+        assert created_tool.get("visibility") == "team", f"Tool should be team-scoped but got visibility={created_tool.get('visibility')}"
 
         try:
             token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
@@ -1289,9 +1291,9 @@ class TestRPCToolExecutionRBAC:
                     data='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' + tool_name + '","arguments":{}}}',
                 )
                 body = rpc_resp.json()
-                error_code = body.get("error", {}).get("code")
-                assert error_code != -32003, f"Viewer should be allowed tools.execute but got access denied (-32003). " f"Full response: {body}"
-                logger.info("Viewer /rpc tools/call: HTTP %d — correctly allowed", rpc_resp.status)
+                assert rpc_resp.status == 200, f"RPC request failed with HTTP {rpc_resp.status}"
+                assert "result" in body, f"Viewer tools/call should return a result, got: {body}"
+                logger.info("Viewer /rpc tools/call: HTTP %d — successfully executed", rpc_resp.status)
             finally:
                 viewer_ctx.dispose()
         finally:
@@ -1423,7 +1425,9 @@ class TestSessionTokenCookieRBAC:
             headers={"Content-Type": "application/json"},
         )
         assert create_resp.status in (200, 201), f"Failed to create tool: {create_resp.status}"
-        tool_id = create_resp.json().get("id")
+        created_tool = create_resp.json()
+        tool_id = created_tool.get("id")
+        assert created_tool.get("visibility") == "team", f"Tool should be team-scoped but got visibility={created_tool.get('visibility')}"
 
         try:
             _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
@@ -1440,9 +1444,9 @@ class TestSessionTokenCookieRBAC:
                 }""",
                 tool_name,
             )
-            error_code = result["body"].get("error", {}).get("code")
-            assert error_code != -32003, f"Viewer cookie session should NOT get -32003 (access denied) but did. " f"Response: {result['body']}"
-            logger.info("Viewer cookie /rpc tools/call: error_code=%s — correctly allowed (not -32003)", error_code)
+            assert result["status"] == 200, f"RPC request failed with HTTP {result['status']}"
+            assert "result" in result["body"], f"Viewer cookie tools/call should return a result, got: {result['body']}"
+            logger.info("Viewer cookie /rpc tools/call: HTTP %d — successfully executed", result["status"])
         finally:
             if tool_id:
                 admin_api.delete(f"/tools/{tool_id}")
