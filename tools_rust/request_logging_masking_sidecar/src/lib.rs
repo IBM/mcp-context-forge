@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
+use std::collections::HashMap;
 
 const MASKED_VALUE: &str = "******";
 const NESTED_TOO_DEEP: &str = "<nested too deep>";
@@ -43,48 +44,6 @@ fn has_non_sensitive_suffix(normalized_key: &str) -> bool {
     .any(|suffix| normalized_key.ends_with(suffix))
 }
 
-fn normalized_contains_sensitive_phrase(normalized_key: &str) -> bool {
-    const SINGLE_TOKENS: &[&str] = &[
-        "password",
-        "passphrase",
-        "secret",
-        "token",
-        "apikey",
-        "authorization",
-    ];
-    const DOUBLE_TOKENS: &[&str] = &[
-        "api_key",
-        "access_token",
-        "refresh_token",
-        "client_secret",
-        "auth_token",
-        "jwt_token",
-        "private_key",
-    ];
-
-    let parts: Vec<&str> = normalized_key
-        .split('_')
-        .filter(|part| !part.is_empty())
-        .collect();
-
-    if parts.iter().any(|part| SINGLE_TOKENS.contains(part)) {
-        return true;
-    }
-
-    if parts.len() < 2 {
-        return false;
-    }
-
-    for window in parts.windows(2) {
-        let joined = format!("{}_{}", window[0], window[1]);
-        if DOUBLE_TOKENS.iter().any(|candidate| *candidate == joined) {
-            return true;
-        }
-    }
-
-    false
-}
-
 fn is_sensitive_key(key: &str) -> bool {
     let normalized_key = normalize_key_for_masking(key);
     if normalized_key.is_empty() {
@@ -124,7 +83,42 @@ fn is_sensitive_key(key: &str) -> bool {
         return false;
     }
 
-    normalized_contains_sensitive_phrase(&normalized_key)
+    let mut previous = "";
+    for token in normalized_key.split('_').filter(|part| !part.is_empty()) {
+        if matches!(
+            token,
+            "password" | "passphrase" | "secret" | "token" | "apikey" | "authorization"
+        ) {
+            return true;
+        }
+
+        if matches!(
+            (previous, token),
+            ("api", "key")
+                | ("access", "token")
+                | ("refresh", "token")
+                | ("client", "secret")
+                | ("auth", "token")
+                | ("jwt", "token")
+                | ("private", "key")
+        ) {
+            return true;
+        }
+
+        previous = token;
+    }
+
+    false
+}
+
+fn is_sensitive_key_cached(key: &str, cache: &mut HashMap<String, bool>) -> bool {
+    if let Some(result) = cache.get(key) {
+        return *result;
+    }
+
+    let result = is_sensitive_key(key);
+    cache.insert(key.to_owned(), result);
+    result
 }
 
 fn mask_cookie_header(cookie_header: &str) -> String {
@@ -156,6 +150,7 @@ fn mask_sensitive_data_inner(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
     max_depth: i32,
+    key_cache: &mut HashMap<String, bool>,
 ) -> PyResult<Py<PyAny>> {
     if max_depth <= 0 {
         return Ok(PyString::new(py, NESTED_TOO_DEEP).into_any().unbind());
@@ -165,10 +160,13 @@ fn mask_sensitive_data_inner(
         let masked = PyDict::new(py);
         for (key, value) in dict.iter() {
             let key_string = key.str()?.to_string_lossy().into_owned();
-            if is_sensitive_key(&key_string) {
+            if is_sensitive_key_cached(&key_string, key_cache) {
                 masked.set_item(key, MASKED_VALUE)?;
             } else {
-                masked.set_item(key, mask_sensitive_data_inner(py, &value, max_depth - 1)?)?;
+                masked.set_item(
+                    key,
+                    mask_sensitive_data_inner(py, &value, max_depth - 1, key_cache)?,
+                )?;
             }
         }
         return Ok(masked.into_any().unbind());
@@ -177,7 +175,12 @@ fn mask_sensitive_data_inner(
     if let Ok(list) = data.cast::<PyList>() {
         let masked = PyList::empty(py);
         for item in list.iter() {
-            masked.append(mask_sensitive_data_inner(py, &item, max_depth - 1)?)?;
+            masked.append(mask_sensitive_data_inner(
+                py,
+                &item,
+                max_depth - 1,
+                key_cache,
+            )?)?;
         }
         return Ok(masked.into_any().unbind());
     }
@@ -191,17 +194,19 @@ fn mask_sensitive_data(
     data: &Bound<'_, PyAny>,
     max_depth: Option<i32>,
 ) -> PyResult<Py<PyAny>> {
-    mask_sensitive_data_inner(py, data, max_depth.unwrap_or(10))
+    let mut key_cache = HashMap::new();
+    mask_sensitive_data_inner(py, data, max_depth.unwrap_or(10), &mut key_cache)
 }
 
 #[pyfunction]
 fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let source = headers.cast::<PyDict>()?;
     let masked = PyDict::new(py);
+    let mut key_cache = HashMap::with_capacity(source.len());
 
     for (key, value) in source.iter() {
         let key_string = key.str()?.to_string_lossy().into_owned();
-        if is_sensitive_key(&key_string) {
+        if is_sensitive_key_cached(&key_string, &mut key_cache) {
             masked.set_item(key, MASKED_VALUE)?;
             continue;
         }
