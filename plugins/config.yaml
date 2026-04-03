@@ -434,19 +434,32 @@ plugins:
   # Output Length Guard - enforce bounds or truncate tool outputs
   - name: "OutputLengthGuardPlugin"
     kind: "plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin"
-    description: "Guards tool outputs by enforcing min/max length; block or truncate"
-    version: "0.1.0"
+    description: "Guards tool outputs by enforcing min/max character/token length; block or truncate strategies"
+    version: "1.0.0"
     author: "ContextForge"
     hooks: ["tool_post_invoke"]
-    tags: ["guard", "length", "outputs", "truncate", "block"]
+    tags: ["guard", "length", "outputs", "truncate", "block", "mcp", "structured", "word-boundary", "tokens"]
     mode: "disabled"  # use "enforce" with strategy: block for strict behavior
     priority: 160  # run after other transformers
     conditions: []
     config:
-      min_chars: 0
-      max_chars: 15000
+      # Output limits
+      min_chars: 0  # minimum character limit (0 disables)
+      max_chars: 15000  # maximum character limit (0 or null disables)
+      min_tokens: 0  # minimum allowed tokens (0 disables)
+      max_tokens: null  # maximum allowed tokens (null disables)
+      chars_per_token: 4  # characters per token ratio for estimation (1-10)
+
+      # Behavior
+      limit_mode: "character"  # "character" or "token" - choose ONE enforcement method
       strategy: "truncate"  # truncate | block
       ellipsis: "…"
+      word_boundary: false  # true = truncate at word boundaries to avoid mid-word cuts
+
+      # Security limits (optional, defaults shown)
+      max_text_length: 1000000  # 1MB text limit
+      max_structure_size: 10000  # Maximum items in list/dict
+      max_recursion_depth: 100  # Maximum nesting depth
 
   # Summarizer - summarize long content via OpenAI
   - name: "Summarizer"
