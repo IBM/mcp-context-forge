@@ -98,6 +98,20 @@ password_reset_completions_counter = Counter(
     ["outcome"],
 )
 
+# Content Security Metrics (US-2)
+content_size_violations_counter = Counter(
+    "content_size_violations_total",
+    "Total number of content size limit violations",
+    ["content_type"],  # "resource" or "prompt"
+)
+
+content_type_violations_counter = Counter(
+    "content_type_violations_total",
+    "Total number of MIME type violations",
+    ["content_type"],  # "resource" or "prompt" — rejected type is in logs, not labels (unbounded cardinality)
+)
+
+# MCP Auth Cache Metrics
 mcp_auth_cache_events_counter = Counter(
     "mcp_auth_cache_events_total",
     "Total number of MCP auth cache events by outcome",

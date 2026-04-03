@@ -125,7 +125,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
-from mcpgateway.services.content_security import ContentSizeError
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -12595,7 +12595,18 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_add_resource: {ex}")
-            return ORJSONResponse(content={"message": str(ex), "success": False, "actual_size": ex.actual_size, "max_size": ex.max_size}, status_code=413)
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=413)
+        if isinstance(ex, ContentTypeError):
+            LOGGER.error(f"ContentTypeError in admin_add_resource: {ex}")
+            return ORJSONResponse(
+                content={
+                    "message": str(ex),
+                    "success": False,
+                    "mime_type": ex.mime_type,
+                    "allowed_types": ex.allowed_types,
+                },
+                status_code=415,
+            )
         LOGGER.error(f"Error in admin_add_resource: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -12694,6 +12705,14 @@ async def admin_edit_resource(
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
+        # Roll back to discard any dirty tracked state from the failed update.
+        try:
+            active_transaction = db.get_transaction() if hasattr(db, "get_transaction") else None
+            if db.is_active and active_transaction is not None:
+                db.rollback()
+        except (InvalidRequestError, OperationalError) as rollback_error:
+            LOGGER.warning("Rollback failed (ignoring for SQLite compatibility): %s", rollback_error)
+
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
@@ -12706,7 +12725,18 @@ async def admin_edit_resource(
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_edit_resource: {ex}")
-            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False, "actual_size": ex.actual_size, "max_size": ex.max_size})
+            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
+        if isinstance(ex, ContentTypeError):
+            LOGGER.error(f"ContentTypeError in admin_edit_resource: {ex}")
+            return ORJSONResponse(
+                status_code=415,
+                content={
+                    "message": str(ex),
+                    "success": False,
+                    "mime_type": ex.mime_type,
+                    "allowed_types": ex.allowed_types,
+                },
+            )
         LOGGER.error(f"Error in admin_edit_resource: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -12940,10 +12970,18 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, PromptArgumentsJSONError):
             LOGGER.error(f"PromptArgumentsJSONError in admin_add_prompt: {ex}")
-            return ORJSONResponse(status_code=422, content={"message": str(ex), "success": False, "field": ex.field_name})
+            return ORJSONResponse(
+                status_code=422,
+                content={
+                    "message": f"Invalid JSON in {ex.field_name}: {ex.json_error}",
+                    "field": ex.field_name,
+                    "success": False,
+                },
+            )
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_add_prompt: {ex}")
-            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False, "actual_size": ex.actual_size, "max_size": ex.max_size})
+            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
+
         LOGGER.error(f"Error in admin_add_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -13053,10 +13091,17 @@ async def admin_edit_prompt(
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, PromptArgumentsJSONError):
             LOGGER.error(f"PromptArgumentsJSONError in admin_edit_prompt: {ex}")
-            return ORJSONResponse(status_code=422, content={"message": str(ex), "success": False, "field": ex.field_name})
+            return ORJSONResponse(
+                status_code=422,
+                content={
+                    "message": f"Invalid JSON in {ex.field_name}: {ex.json_error}",
+                    "field": ex.field_name,
+                    "success": False,
+                },
+            )
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_edit_prompt: {ex}")
-            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False, "actual_size": ex.actual_size, "max_size": ex.max_size})
+            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 

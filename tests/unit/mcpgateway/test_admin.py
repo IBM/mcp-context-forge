@@ -991,14 +991,16 @@ class TestAdminServerRoutes:
         existing_team_id = "team-original"
 
         # Form data WITHOUT team_id (simulates All Teams view edit)
-        form_data = FakeForm({
-            "id": server_id,
-            "name": "My_Server",
-            "visibility": "team",
-            "associatedTools": [],
-            "associatedResources": [],
-            "associatedPrompts": [],
-        })
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "My_Server",
+                "visibility": "team",
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
@@ -1036,15 +1038,17 @@ class TestAdminServerRoutes:
         server_id = "00000000-0000-0000-0000-000000000099"
         explicit_team_id = "team-new"
 
-        form_data = FakeForm({
-            "id": server_id,
-            "name": "My_Server",
-            "visibility": "team",
-            "team_id": explicit_team_id,
-            "associatedTools": [],
-            "associatedResources": [],
-            "associatedPrompts": [],
-        })
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "My_Server",
+                "visibility": "team",
+                "team_id": explicit_team_id,
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
@@ -2497,9 +2501,11 @@ class TestAdminResourceRoutes:
         result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
+
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_content_size_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
         """Test adding resource with ContentSizeError."""
+        # First-Party
         from mcpgateway.services.content_security import ContentSizeError
 
         team_service = MagicMock()
@@ -2510,16 +2516,31 @@ class TestAdminResourceRoutes:
             lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
         )
 
-        mock_register_resource.side_effect = ContentSizeError(
-            content_type="resource",
-            actual_size=200000,
-            max_size=102400
-        )
+        mock_register_resource.side_effect = ContentSizeError(content_type="resource", actual_size=200000, max_size=102400)
 
         result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 413
 
+    @patch.object(ResourceService, "register_resource")
+    async def test_admin_add_resource_content_type_error(self, mock_register_resource, mock_request, mock_db, monkeypatch):
+        """Test adding resource with ContentTypeError."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentTypeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+        )
+
+        mock_register_resource.side_effect = ContentTypeError(mime_type="application/x-executable", allowed_types=["text/plain", "application/json"])
+
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 415
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_validation_conflict_and_rollback_failure(self, mock_register_resource, mock_request, mock_db, monkeypatch):
@@ -2573,14 +2594,16 @@ class TestAdminResourceRoutes:
         resource_id = "resource-99"
         existing_team_id = "team-original"
 
-        form_data = FakeForm({
-            "uri": "/test/resource",
-            "name": "My Resource",
-            "mimeType": "text/plain",
-            "content": "hello",
-            "template": "t",
-            "visibility": "team",
-        })
+        form_data = FakeForm(
+            {
+                "uri": "/test/resource",
+                "name": "My Resource",
+                "mimeType": "text/plain",
+                "content": "hello",
+                "template": "t",
+                "visibility": "team",
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_existing_resource = MagicMock()
@@ -2607,6 +2630,7 @@ class TestAdminResourceRoutes:
     @patch.object(ResourceService, "update_resource")
     async def test_admin_edit_resource_content_size_error(self, mock_request, mock_db, monkeypatch):
         """Test editing resource with ContentSizeError."""
+        # First-Party
         from mcpgateway.services.content_security import ContentSizeError
 
         team_service = MagicMock()
@@ -2621,16 +2645,37 @@ class TestAdminResourceRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock the module-level resource_service instance
-        mock_update = AsyncMock(side_effect=ContentSizeError(
-            content_type="resource",
-            actual_size=200000,
-            max_size=102400
-        ))
+        mock_update = AsyncMock(side_effect=ContentSizeError(content_type="resource", actual_size=200000, max_size=102400))
         monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
 
         result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert isinstance(result, JSONResponse)
         assert result.status_code == 413
+
+    @patch.object(ResourceService, "update_resource")
+    async def test_admin_edit_resource_content_type_error(self, mock_request, mock_db, monkeypatch):
+        """Test editing resource with ContentTypeError."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentTypeError
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
+        )
+
+        form_data = FakeForm({"uri": "/test/resource", "name": "Updated", "mimeType": "text/plain", "content": "x", "template": "t"})
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # Mock the module-level resource_service instance to raise ContentTypeError
+        mock_update = AsyncMock(side_effect=ContentTypeError(mime_type="text/plain", allowed_types=["application/json", "application/xml"]))
+        monkeypatch.setattr("mcpgateway.admin.resource_service.update_resource", mock_update)
+
+        result = await admin_edit_resource("test-id", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 415
 
     async def test_admin_edit_resource_error_handlers(self, mock_request, mock_db, monkeypatch):
         """Cover admin_edit_resource error branches (permission, validation, integrity, conflict, generic)."""
@@ -2841,6 +2886,7 @@ class TestAdminPromptRoutes:
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_error_handlers(self, mock_register_prompt, mock_request, mock_db, monkeypatch):
         """Cover ValidationError/IntegrityError/name conflict and generic exception paths in admin_add_prompt."""
+        # First-Party
         from mcpgateway.services.content_security import ContentSizeError
         from mcpgateway.services.prompt_service import PromptNameConflictError
 
@@ -2883,14 +2929,9 @@ class TestAdminPromptRoutes:
         mock_register_prompt.side_effect = RuntimeError("boom")
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 500
-        mock_register_prompt.side_effect = ContentSizeError(
-            content_type="prompt",
-            actual_size=20000,
-            max_size=10240
-        )
+        mock_register_prompt.side_effect = ContentSizeError(content_type="prompt", actual_size=20000, max_size=10240)
         resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert resp.status_code == 413
-
 
     @patch.object(PromptService, "update_prompt")
     async def test_admin_edit_prompt_preserves_team_id_when_not_in_form(self, mock_update_prompt, mock_request, mock_db, monkeypatch):
@@ -2898,11 +2939,13 @@ class TestAdminPromptRoutes:
         prompt_id = "prompt-99"
         existing_team_id = "team-original"
 
-        form_data = FakeForm({
-            "name": "My Prompt",
-            "template": "Hello {{name}}",
-            "visibility": "team",
-        })
+        form_data = FakeForm(
+            {
+                "name": "My Prompt",
+                "template": "Hello {{name}}",
+                "visibility": "team",
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_existing_prompt = MagicMock()
@@ -3048,16 +3091,12 @@ class TestAdminPromptRoutes:
         mock_update_prompt.side_effect = Exception("boom")
         response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 500
+        # First-Party
         from mcpgateway.services.content_security import ContentSizeError
 
-        mock_update_prompt.side_effect = ContentSizeError(
-            content_type="prompt",
-            actual_size=20000,
-            max_size=10240
-        )
+        mock_update_prompt.side_effect = ContentSizeError(content_type="prompt", actual_size=20000, max_size=10240)
         response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         assert response.status_code == 413
-
 
     @patch.object(PromptService, "set_prompt_state")
     async def test_admin_set_prompt_state_edge_cases(self, mock_toggle_status, mock_request, mock_db):
@@ -3255,12 +3294,14 @@ class TestAdminGatewayRoutes:
         gateway_id = "gateway-99"
         existing_team_id = "team-original"
 
-        form_data = FakeForm({
-            "name": "Updated_Gateway",
-            "url": "http://example.com:9000/sse",
-            "transport": "SSE",
-            "visibility": "team",
-        })
+        form_data = FakeForm(
+            {
+                "name": "Updated_Gateway",
+                "url": "http://example.com:9000/sse",
+                "transport": "SSE",
+                "visibility": "team",
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_existing_gw = MagicMock()
@@ -5370,7 +5411,9 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=FakeForm({"test_message": "Hello"}))
 
         result = await admin_test_a2a_agent(
-            "agent-1", mock_request, mock_db,
+            "agent-1",
+            mock_request,
+            mock_db,
             user={"email": "admin@example.com", "is_admin": True, "token_teams": None, "db": mock_db},
         )
 
@@ -5397,7 +5440,9 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=FakeForm({"test_message": "Hello"}))
 
         result = await admin_test_a2a_agent(
-            "agent-1", mock_request, mock_db,
+            "agent-1",
+            mock_request,
+            mock_db,
             user={"email": "dev@example.com", "is_admin": False, "token_teams": ["team-1"], "db": mock_db},
         )
 
@@ -5422,7 +5467,9 @@ class TestA2AAgentManagement:
 
         # Proxy auth: is_admin=False, no token_teams key at all
         result = await admin_test_a2a_agent(
-            "agent-1", mock_request, mock_db,
+            "agent-1",
+            mock_request,
+            mock_db,
             user={"email": "proxy@example.com", "is_admin": False, "db": mock_db},
         )
 
@@ -8814,7 +8861,14 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
         return_value=SimpleNamespace(
             data=[
                 SimpleNamespace(
-                    email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False, is_account_locked=lambda: False
+                    email=current_user_email,
+                    full_name="Owner",
+                    is_active=True,
+                    is_admin=True,
+                    auth_provider="local",
+                    created_at=datetime.now(timezone.utc),
+                    password_change_required=False,
+                    is_account_locked=lambda: False,
                 )
             ],
             pagination=SimpleNamespace(model_dump=lambda: {"page": 1}),
@@ -10128,6 +10182,7 @@ async def test_admin_servers_partial_html_conversion_error_is_logged_and_skipped
     assert isinstance(response, HTMLResponse)
     assert server_service.convert_server_to_read.called
 
+
 @pytest.mark.asyncio
 async def test_admin_servers_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
     """Verify include_inactive defaults to True so inactive servers appear on first load (issue #3234)."""
@@ -10156,7 +10211,6 @@ async def test_admin_servers_partial_html_default_includes_inactive(monkeypatch,
     assert isinstance(response, HTMLResponse)
     context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
     assert context["query_params"]["include_inactive"] == "true"
-
 
 
 @pytest.mark.asyncio
@@ -10749,6 +10803,7 @@ async def test_admin_gateways_partial_html_team_filter_denied(monkeypatch, mock_
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
 
 @pytest.mark.asyncio
 async def test_admin_gateways_partial_html_default_includes_inactive(monkeypatch, mock_request, mock_db):
@@ -12334,11 +12389,13 @@ class TestAdminAdditionalCoverage:
         )
 
         # Form data WITHOUT team_id
-        form_data = FakeForm({
-            "name": "Agent Updated",
-            "endpoint_url": "http://example.com/agent",
-            "visibility": "team",
-        })
+        form_data = FakeForm(
+            {
+                "name": "Agent Updated",
+                "endpoint_url": "http://example.com/agent",
+                "visibility": "team",
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_existing_agent = MagicMock()
@@ -21397,7 +21454,9 @@ class TestPaginationSwapStyle:
         env = Environment(loader=FileSystemLoader(templates_dir))
 
         def tojson_attr(value: object) -> str:
+            # Standard
             import json as _json
+
             s = _json.dumps(value)
             s = s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("'", "\\u0027")
             return s

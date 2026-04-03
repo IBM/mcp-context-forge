@@ -114,6 +114,34 @@ For production deployments, always include JTI in issued tokens to enable proper
 - **Header and payload hygiene.** Passthrough headers strip control characters, clamp values to 4 KB, and refuse malformed names; request/response retries honour jitter and backoff to mitigate abuse.
 - **Secure invitation flows.** Team invitations use cryptographically random, URL-safe tokens, enforce owner-only issuance, respect expiry, and prevent over-subscribing teams (`TeamInvitationService`).
 
+## Content Security & Resource Protection
+
+- **Content size limits.** `ContentSecurityService` enforces configurable size limits for resources (`CONTENT_MAX_RESOURCE_SIZE`, default 100KB) and prompts (`CONTENT_MAX_PROMPT_SIZE`, default 10KB) to prevent memory exhaustion and DoS attacks. Violations return HTTP 413 (Payload Too Large) with detailed size information.
+- **MIME type validation.** Resource MIME types are validated against a configurable allowlist (`CONTENT_ALLOWED_RESOURCE_MIMETYPES`) to prevent malicious content injection. In strict mode, only types explicitly listed in the allowlist are accepted — vendor types (`application/x-*`, `text/x-*`) and structured-syntax suffix types (e.g., `application/vnd.api+json`) must be added explicitly if needed. Violations return HTTP 415 (Unsupported Media Type).
+- **Feature flag for safe migration.** `CONTENT_STRICT_MIME_VALIDATION` enables log-only mode (default `false`) where MIME type violations are logged but not blocked, allowing gradual rollout and monitoring before enforcement.
+- **Prometheus metrics.** Content security violations are tracked via `content_size_violations_total` (labeled by `content_type`: resource/prompt) and `content_type_violations_total` (labeled by `content_type` and `mime_type`) for monitoring and alerting.
+- **PII-safe audit logging.** All content security events log sanitized user context (SHA256-hashed email, masked IP addresses) to enable security investigations while protecting privacy.
+- **Service-layer enforcement.** Validation occurs in `ResourceService.register_resource()` and `ResourceService.update_resource()` before database operations, ensuring consistent enforcement across all entry points (REST API, MCP protocol, bulk import).
+
+**Configuration Example:**
+
+```bash
+# Enable strict MIME type validation
+CONTENT_STRICT_MIME_VALIDATION=true
+
+# Customize size limits (bytes)
+CONTENT_MAX_RESOURCE_SIZE=204800  # 200KB
+CONTENT_MAX_PROMPT_SIZE=20480     # 20KB
+
+# Customize allowed MIME types (comma-separated)
+CONTENT_ALLOWED_RESOURCE_MIMETYPES=text/plain,text/markdown,application/json,image/png,image/jpeg
+```
+
+**Default Allowed MIME Types:**
+
+The default allowlist includes common text, data, and media formats: `text/plain`, `text/markdown`, `text/html`, `text/csv`, `application/json`, `application/xml`, `application/yaml`, `application/pdf`, `image/png`, `image/jpeg`, `image/gif`, `image/svg+xml`, `image/webp`, `audio/mpeg`, `audio/wav`, `video/mp4`, `video/webm`.
+
+
 ## Operational Security & Monitoring
 
 - **Startup enforcement.** `validate_security_configuration()` blocks boot when critical issues remain and `REQUIRE_STRONG_SECRETS=true`, and otherwise prints actionable warnings (default secrets, disabled auth, SSL verification overrides).

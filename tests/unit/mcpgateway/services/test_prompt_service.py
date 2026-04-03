@@ -413,7 +413,11 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(
+            content_type="Prompt template",
+            actual_size=15000,
+            max_size=10240
+        )
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
@@ -1153,7 +1157,11 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(
+            content_type="Prompt template",
+            actual_size=15000,
+            max_size=10240
+        )
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
