@@ -21,6 +21,7 @@ import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
 import os
+from pickle import NONE
 import re
 import ssl
 import time
@@ -5992,7 +5993,7 @@ class ToolService(BaseService):
             Exception: If the call fails.
         """
         logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
-        logger.info(f"[DEBUG] _call_a2a_agent called for agent '{agent.name}', auth_type='{agent.auth_type}', has_auth_value={agent.auth_value is not None}")
+        has_auth = agent.auth_value is not NONE
 
         # Build request data based on agent type
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
@@ -6052,8 +6053,6 @@ class ToolService(BaseService):
             elif isinstance(agent.auth_value, dict):
                 auth_headers = {str(k): str(v) for k, v in agent.auth_value.items()}
                 headers.update(auth_headers)
-            # DEBUG: Log what we're sending
-            logger.info(f"[DEBUG] A2A agent '{agent.name}' auth headers being sent: {headers}")
         elif agent.auth_type == "query_param" and agent.auth_query_params:
             # Handle query parameter authentication (imports at top: decode_auth, apply_query_param_auth, sanitize_url_for_logging)
             auth_query_params_decrypted: dict[str, str] = {}

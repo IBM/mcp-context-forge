@@ -2820,28 +2820,34 @@ class TestCallA2AAgentCoverage:
 
     @pytest.mark.asyncio
     async def test_api_key_auth(self, tool_service):
-        agent = self._make_agent(auth_type="api_key", auth_value="secret-key")
+        agent = self._make_agent(auth_type="api_key", auth_value="encrypted_secret_key")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {}
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_resp
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer secret-key"}),
+        ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer secret-key"
 
     @pytest.mark.asyncio
     async def test_bearer_auth(self, tool_service):
-        agent = self._make_agent(auth_type="bearer", auth_value="bearer-token")
+        agent = self._make_agent(auth_type="bearer", auth_value="encrypted_bearer_token")
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {}
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_resp
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
+        ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer bearer-token"
@@ -6475,7 +6481,7 @@ class TestInvokeToolA2A:
             annotations={"a2a_agent_id": "agent-uuid-1"},
         )
         db = MagicMock()
-        a2a_agent = _make_a2a_agent(auth_type="api_key", auth_value="my-api-key")
+        a2a_agent = _make_a2a_agent(auth_type="api_key", auth_value="encrypted_api_key")
         db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
 
         captured_headers = {}
@@ -6495,6 +6501,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-api-key"}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
