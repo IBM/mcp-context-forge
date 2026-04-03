@@ -17,6 +17,7 @@ Examples:
 """
 
 # Standard
+import importlib
 import logging
 from pathlib import Path
 import re
@@ -31,6 +32,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
+
+_RUST_VALIDATION_MODULE = None
 
 
 def is_path_traversal(uri: str) -> bool:
@@ -165,6 +168,17 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Raises:
             HTTPException: If validation fails in strict mode
         """
+        if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
+            result = self._load_rust_validation_module().validate_json_data(data, settings.max_param_length, list(settings.dangerous_patterns))
+            if result is not None:
+                key, error_type = result
+                if error_type == "max_length":
+                    raise HTTPException(status_code=422, detail=f"Parameter {key} exceeds maximum length")
+                if error_type == "dangerous_pattern":
+                    raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")
+                raise HTTPException(status_code=422, detail=f"Parameter {key} failed validation")
+            return
+
         if isinstance(data, dict):
             for key, value in data.items():
                 if isinstance(value, str):
@@ -174,6 +188,14 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         elif isinstance(data, list):
             for item in data:
                 self._validate_json_data(item)
+
+    def _load_rust_validation_module(self):
+        """Load the experimental Rust validation sidecar on demand."""
+        global _RUST_VALIDATION_MODULE
+
+        if _RUST_VALIDATION_MODULE is None:
+            _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_sidecar")
+        return _RUST_VALIDATION_MODULE
 
     def validate_resource_path(self, path: str) -> str:
         """Validate and normalize resource paths to prevent traversal attacks.

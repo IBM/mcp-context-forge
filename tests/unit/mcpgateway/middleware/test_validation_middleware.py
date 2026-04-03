@@ -8,7 +8,6 @@ Tests for the validation middleware.
 """
 
 # Standard
-import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -349,6 +348,45 @@ class TestValidationMiddleware:
 
             # Should not raise for valid data
             middleware._validate_json_data([{"name": "item1"}, {"name": "item2"}])
+
+    def test_validate_json_data_uses_rust_sidecar_when_enabled(self):
+        """Test JSON validation uses the Rust sidecar when explicitly enabled."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_module = MagicMock()
+            rust_module.validate_json_data.return_value = None
+
+            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
+                middleware._validate_json_data({"name": "safe"})
+
+            rust_module.validate_json_data.assert_called_once_with({"name": "safe"}, 1000, [r"<script"])
+
+    def test_validate_json_data_missing_sidecar_is_hard_failure_when_enabled(self):
+        """Test Rust mode fails hard when the sidecar cannot be loaded."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            with patch.object(middleware, "_load_rust_validation_module", side_effect=ModuleNotFoundError("missing sidecar")):
+                with pytest.raises(ModuleNotFoundError, match="missing sidecar"):
+                    middleware._validate_json_data({"name": "<script>"})
 
     def test_validate_resource_path_traversal(self):
         """Test resource path validation for traversal."""
