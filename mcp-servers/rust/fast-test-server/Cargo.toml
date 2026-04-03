@@ -10,8 +10,11 @@ authors = ["ContextForge Contributors"]
 # MCP protocol implementation
 rmcp = { version = "0.12", features = [
     "server",
+    "client",
     "macros",
     "transport-streamable-http-server",
+    "transport-streamable-http-client",
+    "transport-streamable-http-client-reqwest",
     "axum",
 ] }
 
@@ -35,6 +38,9 @@ rand_distr = "0.4"
 
 # Error handling
 anyhow = "1.0"
+
+# HTTP client (for custom connector in latency_test)
+reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # Logging
 tracing = "0.1"
