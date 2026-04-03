@@ -667,8 +667,7 @@ async def test_get_user_roles_out_of_scope_team_preserves_global_roles(svc, mock
     # User has token scoped to team-a, but requests roles for team-b (out of scope)
     roles = await svc._get_user_roles("user@test.com", team_id="team-b", token_teams=["team-a"])
 
-    # Should return empty list because team-b is out of scope
-    # But the fix ensures global roles are still included via scope_conditions
+    # Team-scoped roles for team-b are excluded, but global roles are preserved
     assert len(roles) == 1
     assert roles[0].scope == "global"
 

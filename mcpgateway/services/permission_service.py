@@ -516,7 +516,7 @@ class PermissionService:
             # When team_id is out of scope, we skip adding team-scoped roles but still
             # return global and personal roles (needed for join endpoint and other operations).
             if token_teams is not None and (len(token_teams) == 0 or team_id not in token_teams):
-                logger.warning(
+                logger.debug(
                     f"[RBAC] Team {SecurityValidator.sanitize_log_message(team_id)} not in token scope "
                     f"{SecurityValidator.sanitize_log_message(token_teams)} for {SecurityValidator.sanitize_log_message(user_email)}: "
                     f"excluding team-scoped roles but keeping global/personal roles"

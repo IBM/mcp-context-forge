@@ -568,6 +568,34 @@ async def test_explicit_team_id_excludes_out_of_scope_narrowed_token(svc, mock_d
 
 
 @pytest.mark.asyncio
+async def test_explicit_team_id_includes_team_roles_when_token_unrestricted(svc, mock_db):
+    """_get_user_roles includes team-scoped roles when token_teams is None (unrestricted).
+
+    Unrestricted tokens (token_teams=None) skip the narrowing guard entirely,
+    so team-scoped roles for the explicit team_id must appear in the query.
+    """
+    role = SimpleNamespace(name="developer", permissions=["tools.read"], get_effective_permissions=lambda: ["tools.read"])
+    team_user_role = SimpleNamespace(role=role, role_id="r1", scope="team", scope_id="team-a")
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = [team_user_role]
+
+    result = await svc._get_user_roles(
+        "user@test.com",
+        team_id="team-a",
+        include_all_teams=False,
+        token_teams=None,  # Unrestricted
+    )
+
+    assert len(result) == 1
+    assert result[0].scope == "team"
+    assert result[0].scope_id == "team-a"
+
+    # Verify the compiled query includes team-scoped condition for team-a
+    query_arg = mock_db.execute.call_args[0][0]
+    compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+    assert "team-a" in compiled, "Unrestricted token must include team-scoped roles for the requested team"
+
+
+@pytest.mark.asyncio
 async def test_has_admin_permission_suppresses_bypass_for_public_only(svc):
     """has_admin_permission suppresses admin bypass for token_teams=[].
 
