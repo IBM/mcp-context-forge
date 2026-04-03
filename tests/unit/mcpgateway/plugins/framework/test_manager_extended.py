@@ -207,8 +207,13 @@ async def test_manager_initialize_skips_plugin_load_errors_when_configured():
     PluginManager.reset()
     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
 
-    with patch.object(manager._loader, "load_and_instantiate_plugin", side_effect=RuntimeError("plugin offline")):
+    with (
+        patch.object(manager._loader, "load_and_instantiate_plugin", side_effect=RuntimeError("plugin offline")),
+        patch("mcpgateway.plugins.framework.manager.logger") as mock_logger,
+    ):
         await manager.initialize()
+
+    mock_logger.warning.assert_called_with("Skipping plugin %s because fail_on_plugin_error is disabled", "ReplaceBadWordsPlugin")
 
     assert manager.initialized is True
     assert manager.plugin_count == 0
