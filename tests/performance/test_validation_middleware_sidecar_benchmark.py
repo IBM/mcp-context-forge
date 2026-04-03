@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Benchmark Python, PyO3, and UDS sidecar validation middleware paths."""
+"""Benchmark Python and UDS sidecar validation middleware paths."""
 
 # Standard
 from __future__ import annotations
 
-import importlib
 import asyncio
 import json
 import os
@@ -28,7 +27,6 @@ from mcpgateway.config import settings
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PYO3_SIDECAR_MANIFEST = REPO_ROOT / "tools_rust" / "validation_middleware_sidecar" / "Cargo.toml"
 UDS_SIDECAR_MANIFEST = REPO_ROOT / "tools_rust" / "validation_sidecar" / "Cargo.toml"
 FRAME_PREFIX = struct.Struct(">I")
 METADATA_PREFIX = struct.Struct(">I")
@@ -47,15 +45,6 @@ class _JSONBodyRequest:
         return self._body
 
 
-def _ensure_sidecar_installed() -> Any:
-    subprocess.run(
-        ["uv", "run", "maturin", "develop", "--release", "--manifest-path", str(PYO3_SIDECAR_MANIFEST)],
-        check=True,
-        cwd=REPO_ROOT,
-    )
-    return importlib.import_module("validation_middleware_sidecar")
-
-
 def _configure_common_settings(max_param_length: int, dangerous_patterns: list[str]) -> None:
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
@@ -71,19 +60,6 @@ def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]
     settings.experimental_rust_validation_sidecar_enabled = False
     middleware = ValidationMiddleware(app=None)
     middleware.dangerous_patterns = [re.compile(pattern) for pattern in dangerous_patterns]
-
-    async def _run(body: bytes) -> None:
-        await middleware._validate_request(_JSONBodyRequest(body))
-
-    return _run
-
-
-def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:
-    _ensure_sidecar_installed()
-    _configure_common_settings(max_param_length, dangerous_patterns)
-    settings.experimental_rust_validation_middleware_enabled = True
-    settings.experimental_rust_validation_sidecar_enabled = False
-    middleware = ValidationMiddleware(app=None)
 
     async def _run(body: bytes) -> None:
         await middleware._validate_request(_JSONBodyRequest(body))
@@ -232,7 +208,6 @@ async def _main() -> None:
     dangerous_patterns = [r"[;&|`$(){}\[\]<>]", r"\.\.[\\/]", r"[\x00-\x1f\x7f-\x9f]"]
 
     python_fn = _build_python_validator(max_param_length, dangerous_patterns)
-    pyo3_fn = _build_rust_validator(max_param_length, dangerous_patterns)
 
     parity_payloads = [
         {"name": "safe", "nested": {"description": "still safe"}},
@@ -271,7 +246,6 @@ async def _main() -> None:
 
         backends = {
             "python": python_fn,
-            "pyo3": pyo3_fn,
             "sidecar": sidecar_fn,
         }
         await _assert_parity(backends, [orjson.dumps(payload) for payload in parity_payloads])
@@ -283,7 +257,6 @@ async def _main() -> None:
                 await _measure_ordered(
                     [
                         ("python", python_fn),
-                        ("pyo3", pyo3_fn),
                         ("sidecar", sidecar_fn),
                     ],
                     body,
@@ -292,7 +265,6 @@ async def _main() -> None:
                 await _measure_ordered(
                     [
                         ("sidecar", sidecar_fn),
-                        ("pyo3", pyo3_fn),
                         ("python", python_fn),
                     ],
                     body,
@@ -301,8 +273,8 @@ async def _main() -> None:
             ]
 
             avg_medians = {backend: statistics.mean(run[backend][0] for run in ordered_runs) for backend in backends}
-            print("avg_medians=" f"python={avg_medians['python']:.3f}ms " f"pyo3={avg_medians['pyo3']:.3f}ms " f"sidecar={avg_medians['sidecar']:.3f}ms")
-            print("speedups=" f"pyo3={avg_medians['python'] / avg_medians['pyo3']:.2f}x " f"sidecar={avg_medians['python'] / avg_medians['sidecar']:.2f}x")
+            print("avg_medians=" f"python={avg_medians['python']:.3f}ms " f"sidecar={avg_medians['sidecar']:.3f}ms")
+            print("speedups=" f"sidecar={avg_medians['python'] / avg_medians['sidecar']:.2f}x")
 
 
 if __name__ == "__main__":
