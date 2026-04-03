@@ -170,3 +170,80 @@ class TestMCPTransportAuthMatrix:
 
         assert isinstance(response, str)
         assert "Parse error" in response or "jsonrpc" in response
+
+
+class TestApiTokenLastUsedViaMCP:
+    """Verify API token last_used is updated when accessing virtual servers via MCP Streamable HTTP."""
+
+    @pytest.fixture(autouse=True)
+    def _api_token(self, admin_api: APIRequestContext, playwright: Playwright):
+        """Create an API token via session JWT and expose its access_token and id."""
+        # admin_api uses a session JWT, which CAN create tokens
+        resp = admin_api.post("/tokens", data={"name": f"last-used-test-{uuid.uuid4().hex[:8]}", "expires_in_days": 1})
+        if resp.status == 404:
+            pytest.skip("/tokens endpoint unavailable")
+        assert resp.status in (200, 201), f"Failed to create token: {resp.status} {resp.text()}"
+        payload = resp.json()
+        self._access_token = payload["access_token"]
+        token_obj = payload.get("token", payload)
+        self._token_id = token_obj.get("id") or token_obj.get("token_id")
+        yield
+        # cleanup: revoke the token
+        with suppress(Exception):
+            admin_api.delete(f"/tokens/{self._token_id}")
+
+    def test_mcp_streamable_http_updates_last_used(self, admin_api: APIRequestContext, playwright: Playwright, public_server_id: str):
+        """Accessing /servers/{id}/mcp with an API token should update last_used."""
+        # 1. Check initial last_used (should be None for new token)
+        detail = admin_api.get(f"/tokens/{self._token_id}")
+        if detail.status == 404:
+            pytest.skip("Token detail endpoint unavailable")
+        initial_last_used = detail.json().get("last_used")
+
+        # 2. Make MCP Streamable HTTP request with the API token
+        token_ctx = _api_context(playwright, self._access_token)
+        try:
+            mcp_resp = token_ctx.post(
+                f"/servers/{public_server_id}/mcp",
+                data={"jsonrpc": "2.0", "id": "1", "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "e2e-test", "version": "1.0.0"}}},
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            )
+        finally:
+            token_ctx.dispose()
+
+        if mcp_resp.status == 404:
+            pytest.skip("Streamable HTTP endpoint unavailable")
+        assert mcp_resp.status != 401, f"API token auth rejected: {mcp_resp.text()}"
+
+        # 3. Verify last_used was updated
+        # Standard
+        import time
+
+        time.sleep(2)  # Allow async update to complete
+        detail2 = admin_api.get(f"/tokens/{self._token_id}")
+        updated_last_used = detail2.json().get("last_used")
+
+        assert updated_last_used is not None, f"last_used not updated after MCP access. Initial: {initial_last_used}, After: {updated_last_used}"
+
+    def test_mcp_request_records_token_usage_log(self, admin_api: APIRequestContext, playwright: Playwright, public_server_id: str):
+        """MCP requests with API tokens should appear in the token usage log."""
+        token_ctx = _api_context(playwright, self._access_token)
+        try:
+            token_ctx.post(
+                f"/servers/{public_server_id}/mcp",
+                data={"jsonrpc": "2.0", "id": "2", "method": "ping", "params": {}},
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            )
+        finally:
+            token_ctx.dispose()
+
+        # Standard
+        import time
+
+        time.sleep(2)
+        usage_resp = admin_api.get(f"/tokens/{self._token_id}/usage")
+        if usage_resp.status == 404:
+            pytest.skip("Token usage endpoint unavailable")
+        assert usage_resp.status == 200, f"Usage stats failed: {usage_resp.status}"
+        total = usage_resp.json().get("total_requests", 0)
+        assert total > 0, f"Token usage log should have entries after MCP access, got {total}"
