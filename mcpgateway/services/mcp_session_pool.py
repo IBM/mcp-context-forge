@@ -381,7 +381,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Multi-worker session affinity via Redis pub/sub
         # Track pending responses for forwarded RPC requests
         self._rpc_listener_task: Optional[asyncio.Task[None]] = None
-        self._pending_responses: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
+        self._heartbeat_task: Optional[asyncio.Task[None]] = None
 
         # Session affinity metrics
         self._session_affinity_local_hits = 0
@@ -397,6 +397,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         Returns:
             MCPSessionPool: This pool instance.
         """
+        if settings.mcpgateway_session_affinity_enabled:
+            self._heartbeat_task = asyncio.create_task(self._start_heartbeat())
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -587,6 +589,40 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     def _pool_owner_key(mcp_session_id: str) -> str:
         """Return Redis key for session ownership tracking."""
         return f"mcpgw:pool_owner:{mcp_session_id}"
+
+    def _worker_heartbeat_key(self) -> str:
+        """Redis key for this worker's heartbeat."""
+        return f"mcpgw:worker_heartbeat:{WORKER_ID}"
+
+    async def _start_heartbeat(self) -> None:
+        """Maintain worker heartbeat in Redis."""
+        # First-Party
+        from mcpgateway.utils.redis_client import get_redis_client
+
+        while not self._closed:
+            try:
+                redis = await get_redis_client()
+                if redis:
+                    # Refresh heartbeat with 30s TTL (much shorter than session TTL)
+                    await redis.setex(self._worker_heartbeat_key(), 30, "alive")
+            except Exception as e:
+                logger.debug(f"Heartbeat update failed: {e}")
+
+            await asyncio.sleep(10)  # Refresh every 10s
+
+    async def _is_worker_alive(self, worker_id: str) -> bool:
+        """Check if a worker is alive via heartbeat."""
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client
+            redis = await get_redis_client()
+            if not redis:
+                return True  # Assume alive if Redis unavailable
+
+            heartbeat_key = f"mcpgw:worker_heartbeat:{worker_id}"
+            return await redis.exists(heartbeat_key) > 0
+        except Exception:
+            return True  # Fail open
 
     async def register_session_mapping(
         self,
@@ -844,11 +880,24 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
                     owner = await self._get_pool_session_owner(mcp_session_id)
                     if owner and owner != WORKER_ID:
-                        # Another worker claimed ownership - should have been forwarded
-                        # Release semaphore and raise to trigger forwarding
-                        semaphore.release()
-                        logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({WORKER_ID})")
-                        raise RuntimeError(f"Session owned by another worker: {owner}")
+                        # Check if owner is still alive
+                        if not await self._is_worker_alive(owner):
+                            # Owner is dead - reclaim ownership atomically
+                            # First-Party
+                            from mcpgateway.utils.redis_client import get_redis_client
+                            redis = await get_redis_client()
+                            if redis:
+                                owner_key = self._pool_owner_key(mcp_session_id)
+                                # Atomic reclaim: delete old owner, set new owner
+                                await redis.delete(owner_key)
+                                await redis.set(owner_key, WORKER_ID, ex=settings.mcpgateway_session_affinity_ttl)
+                                logger.info(f"Reclaimed ownership from dead worker {owner}: {mcp_session_id[:8]}...")
+                                # Continue to create session locally
+                        else:
+                            # Owner is alive - should have been forwarded
+                            semaphore.release()
+                            logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({WORKER_ID})")
+                            raise RuntimeError(f"Session owned by another worker: {owner}")
 
             pooled = await asyncio.wait_for(
                 self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout, gateway_id),
@@ -1015,6 +1064,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._locks.pop(pool_key, None)
                 self._semaphores.pop(pool_key, None)
                 self._pool_last_used.pop(pool_key, None)
+
+                # Clean up session mappings pointing to this evicted pool key
+                async with self._mcp_session_mapping_lock:
+                    stale_mappings = [k for k, v in self._mcp_session_mapping.items() if v == pool_key]
+                    for mapping_key in stale_mappings:
+                        self._mcp_session_mapping.pop(mapping_key, None)
+
                 self._pool_keys_evicted += 1
                 logger.debug(f"Evicted idle pool key: {pool_key[0][:8]}|{pool_key[1]}|{pool_key[2][:8]}")
 
@@ -1388,6 +1444,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             self._active.clear()
             self._locks.clear()
             self._semaphores.clear()
+            self._mcp_session_mapping.clear()
 
         # Stop RPC listener if running
         if self._rpc_listener_task and not self._rpc_listener_task.done():
@@ -1397,6 +1454,15 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             except asyncio.CancelledError:
                 pass
             self._rpc_listener_task = None
+
+        # Stop heartbeat if running
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
 
         logger.info("All sessions closed")
 
@@ -1424,6 +1490,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
             self._pools.clear()
             self._active.clear()
+            self._mcp_session_mapping.clear()
 
         logger.info("All pooled sessions drained; pool remains operational")
 
@@ -1558,6 +1625,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
                 return None  # We own it - execute locally
 
+            if not await self._is_worker_alive(owner_id):
+                logger.warning(f"[AFFINITY] Owner {owner_id} is dead, executing locally")
+                # Clean up dead owner's key
+                await redis.delete(self._pool_owner_key(mcp_session_id))
+                return None  # Execute locally
+
             logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
 
             # Forward to owner worker via pub/sub
@@ -1584,9 +1657,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                 # Wait for response
                 async with asyncio.timeout(effective_timeout):
-                    while True:
-                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
-                        if msg and msg["type"] == "message":
+                    async for msg in pubsub.listen():
+                        if msg["type"] == "message":
                             return orjson.loads(msg["data"])
             finally:
                 await pubsub.unsubscribe(response_channel)

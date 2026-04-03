@@ -1492,10 +1492,14 @@ class TestForwardRequestToOwner:
         request_data = {"method": "tools/call", "params": {"name": "test_tool"}}
         expected = {"result": {"ok": True}}
 
+        # Mock pubsub.listen() to return an async iterator with the message
+        async def mock_listen():
+            yield {"type": "message", "data": orjson.dumps(expected)}
+
         mock_pubsub = AsyncMock()
         mock_pubsub.subscribe = AsyncMock()
         mock_pubsub.unsubscribe = AsyncMock()
-        mock_pubsub.get_message = AsyncMock(return_value={"type": "message", "data": orjson.dumps(expected)})
+        mock_pubsub.listen = mock_listen
 
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(return_value=b"other-worker")
@@ -1528,6 +1532,156 @@ class TestForwardRequestToOwner:
 
         assert result is None
         assert pool._forwarded_request_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_forward_request_to_owner_timeout_raises(self):
+        """When forwarding times out, should raise TimeoutError and increment metric."""
+        import orjson
+
+        pool = MCPSessionPool()
+
+        # Mock pubsub.listen() to never yield a message (causes timeout)
+        async def mock_listen_timeout():
+            await asyncio.sleep(10)  # Sleep longer than timeout
+            yield {"type": "message", "data": orjson.dumps({"result": "too late"})}
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.listen = mock_listen_timeout
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"other-worker")
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.1  # Very short timeout
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                    with pytest.raises(asyncio.TimeoutError):
+                        await pool.forward_request_to_owner("sess-123", {"method": "tools/call"}, timeout=0.1)
+
+        assert pool._forwarded_request_timeouts == 1
+        mock_pubsub.unsubscribe.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# New tests for heartbeat functionality
+# ---------------------------------------------------------------------------
+class TestHeartbeatFunctionality:
+    """Cover heartbeat mechanism for dead-worker detection."""
+
+    @pytest.mark.asyncio
+    async def test_worker_heartbeat_key_format(self):
+        """Verify heartbeat key format includes worker ID."""
+        pool = MCPSessionPool()
+        key = pool._worker_heartbeat_key()
+        assert key.startswith("mcpgw:worker_heartbeat:")
+        assert ":" in key  # Should contain worker ID
+
+    @pytest.mark.asyncio
+    async def test_is_worker_alive_returns_true_when_heartbeat_exists(self):
+        """Should return True when worker heartbeat key exists in Redis."""
+        pool = MCPSessionPool()
+        mock_redis = AsyncMock()
+        mock_redis.exists = AsyncMock(return_value=1)
+
+        with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+            result = await pool._is_worker_alive("worker-123")
+            assert result is True
+            mock_redis.exists.assert_awaited_once_with("mcpgw:worker_heartbeat:worker-123")
+
+    @pytest.mark.asyncio
+    async def test_is_worker_alive_returns_false_when_heartbeat_missing(self):
+        """Should return False when worker heartbeat key doesn't exist in Redis."""
+        pool = MCPSessionPool()
+        mock_redis = AsyncMock()
+        mock_redis.exists = AsyncMock(return_value=0)
+
+        with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+            result = await pool._is_worker_alive("worker-123")
+            assert result is False
+            mock_redis.exists.assert_awaited_once_with("mcpgw:worker_heartbeat:worker-123")
+
+
+# ---------------------------------------------------------------------------
+# Tests for dead-worker ownership reclaim
+# ---------------------------------------------------------------------------
+class TestDeadWorkerOwnershipReclaim:
+    """Cover ownership reclaim logic when detecting dead workers."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_reclaims_ownership_from_dead_worker(self):
+        """When owner is dead, acquire should reclaim ownership and create session locally."""
+        pool = MCPSessionPool()
+        mcp_session_id = "sess-dead-owner"
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"dead-worker")
+        mock_redis.exists = AsyncMock(return_value=0)  # Heartbeat doesn't exist = dead
+        mock_redis.delete = AsyncMock()
+        mock_redis.set = AsyncMock()
+
+        # Mock session creation
+        mock_session = MagicMock()
+        mock_session.age_seconds = 0
+        mock_session.idle_seconds = 0
+        mock_session.url = "http://test.com"
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_session_affinity_ttl = 300
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                    with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
+                        with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="dead-worker"):
+                            with patch.object(pool, "_is_worker_alive", new_callable=AsyncMock, return_value=False):
+                                try:
+                                    result = await pool.acquire(
+                                        url="http://test.com",
+                                        headers={"x-mcp-session-id": mcp_session_id},
+                                        transport_type=TransportType.STREAMABLE_HTTP,
+                                    )
+                                    # Should have reclaimed ownership
+                                    mock_redis.delete.assert_awaited_once()
+                                    mock_redis.set.assert_awaited_once()
+                                    assert result == mock_session
+                                finally:
+                                    pool._closed = True
+
+
+# ---------------------------------------------------------------------------
+# Tests for session owner cleanup timeout
+# ---------------------------------------------------------------------------
+class TestSessionOwnerCleanupTimeout:
+    """Cover timeout handling in _cleanup_pool_session_owner."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_pool_session_owner_with_completed_task(self):
+        """When owner task is already done, cleanup should succeed quickly."""
+        from mcpgateway.services.mcp_session_pool import PooledSession
+
+        pool = MCPSessionPool()
+
+        # Create a task that completes immediately
+        async def quick_task():
+            return "done"
+
+        owner_task = asyncio.create_task(quick_task())
+        await owner_task  # Wait for it to complete
+
+        mock_session = MagicMock(spec=PooledSession)
+        mock_session.owner_task = owner_task
+        mock_session.url = "http://test.com"
+
+        # This should complete without timeout
+        await pool._cleanup_pool_session_owner(mock_session)
+
+        # Task should be done
+        assert owner_task.done()
+
 
 
 # ---------------------------------------------------------------------------
