@@ -364,12 +364,12 @@ class TestDeveloperVsTeamAdmin:
 
 
 # ---------------------------------------------------------------------------
-# D1.4: Viewer Permission Matrix (Read-Only)
+# D1.4: Viewer Permission Matrix
 # ---------------------------------------------------------------------------
 
 
 class TestViewerPermissions:
-    """Viewer should only have read-only and dashboard permissions."""
+    """Viewer should have read, dashboard, and tools.execute permissions."""
 
     @pytest.mark.parametrize("permission", VIEWER_PERMISSIONS)
     def test_viewer_granted_permissions(self, matrix_db, permission):
@@ -394,7 +394,7 @@ class TestViewerPermissions:
 
 
 class TestPlatformViewerPermissions:
-    """Platform viewer should have same read-only permissions as viewer, at global scope."""
+    """Platform viewer should have read-only permissions at global scope (no tools.execute)."""
 
     @pytest.mark.parametrize("permission", PLATFORM_VIEWER_PERMISSIONS)
     def test_platform_viewer_granted_permissions(self, matrix_db, permission):

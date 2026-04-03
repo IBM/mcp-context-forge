@@ -798,10 +798,10 @@ The user interface adapts based on the user's assigned roles:
 - **Create Resources**: Can create new tools, resources, and prompts within their teams
 
 #### Viewer Experience
-- **Read-Only Access**: Can view tools, resources, and prompts but cannot execute or modify them
+- **Read and Execute Access**: Can view tools, resources, and prompts and execute tools within team scope
 - **No Creation Rights**: Cannot create new resources or tools
 - **No Management Access**: Cannot manage team membership or settings
-- **Limited Interaction**: Primarily for reviewing and consuming existing resources
+- **Limited Mutation**: Can execute tools but cannot create, update, or delete resources
 
 ### Default Visibility & Sharing
 
