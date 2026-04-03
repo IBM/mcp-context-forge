@@ -1346,6 +1346,19 @@
             "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS": {
               "type": "string"
             },
+            "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS": {
+              "type": "string"
+            },
+            "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS": {
+              "type": "string"
+            },
             "VALIDATION_MIDDLEWARE_ENABLED": {
               "type": "string"
             },

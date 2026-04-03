@@ -21,6 +21,11 @@ EXPERIMENTAL_VALIDATE_IO=true
 # Optional: enable the Rust JSON validation sidecar after `make rust-sidecar-install`
 EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=false
 
+# Optional: enable the UDS validation sidecar after `make validation-sidecar-build`
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED=false
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=/tmp/contextforge-validation-sidecar.sock
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS=30.0
+
 # Enable validation middleware (default: false)
 VALIDATION_MIDDLEWARE_ENABLED=true
 
@@ -59,6 +64,16 @@ EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=true
 ```
 
 Enable this only after the sidecar is installed into the active virtual environment. If the sidecar is unavailable, the middleware falls back to the Python validator for standard validation failures.
+
+#### Optional UDS Validation Sidecar
+```bash
+make validation-sidecar-build
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED=true
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=/tmp/contextforge-validation-sidecar.sock
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS=30.0
+```
+
+This mode routes JSON body validation to the external Rust sidecar over a Unix domain socket. When enabled, the sidecar is authoritative and malformed/unavailable sidecar responses fail closed instead of falling back to Python validation.
 
 #### Phase 1: Log-Only Mode (Dev/Staging)
 ```bash
