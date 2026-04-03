@@ -413,6 +413,14 @@ class TestPlatformViewerPermissions:
         result = asyncio.run(svc.check_permission(user_email="pviewer@test.local", permission=permission, allow_admin_bypass=False))
         assert result is False, f"platform_viewer should NOT have mutation permission {permission}"
 
+    def test_platform_viewer_denied_tools_execute(self, matrix_db):
+        """platform_viewer (global) must NOT have tools.execute — only team-scoped viewer gets it."""
+        db, roles, team_id = matrix_db
+        svc = PermissionService(db, audit_enabled=False)
+        svc.clear_cache()
+        result = asyncio.run(svc.check_permission(user_email="pviewer@test.local", permission="tools.execute", allow_admin_bypass=False))
+        assert result is False, "platform_viewer should NOT have tools.execute"
+
 
 # ---------------------------------------------------------------------------
 # D1.6: No-Role User
