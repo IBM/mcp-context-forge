@@ -3,13 +3,13 @@
 
 //! Framing and request/response envelopes for the validation sidecar.
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt::Display;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 pub const FRAME_PREFIX_LEN: usize = 4;
+pub const METADATA_PREFIX_LEN: usize = 4;
 pub const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 pub const MAX_RAW_BODY_SIZE: usize = 1024 * 1024;
 
@@ -25,8 +25,6 @@ pub enum ProtocolError {
     RawBodyTooLarge,
     #[error("invalid JSON envelope: {0}")]
     InvalidJson(#[from] serde_json::Error),
-    #[error("invalid base64 request body: {0}")]
-    InvalidBase64(#[from] base64::DecodeError),
     #[error("{0}")]
     InvalidEnvelope(String),
     #[error("io error: {0}")]
@@ -35,7 +33,7 @@ pub enum ProtocolError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidationRequestEnvelope {
-    pub request_body_b64: String,
+    pub raw_body_len: usize,
     pub max_param_length: usize,
     #[serde(default)]
     pub dangerous_patterns: Vec<String>,
@@ -55,14 +53,18 @@ pub struct ValidationRequest {
 }
 
 impl ValidationRequestEnvelope {
-    pub fn into_request(self) -> Result<ValidationRequest, ProtocolError> {
+    pub fn into_request(self, raw_body: Vec<u8>) -> Result<ValidationRequest, ProtocolError> {
         if self.max_param_length == 0 {
             return Err(ProtocolError::InvalidEnvelope(
                 "max_param_length must be greater than zero".to_owned(),
             ));
         }
 
-        let raw_body = STANDARD.decode(self.request_body_b64.as_bytes())?;
+        if self.raw_body_len != raw_body.len() {
+            return Err(ProtocolError::InvalidEnvelope(
+                "raw_body_len does not match attached request body".to_owned(),
+            ));
+        }
         if raw_body.len() > MAX_RAW_BODY_SIZE {
             return Err(ProtocolError::RawBodyTooLarge);
         }
@@ -98,13 +100,53 @@ impl ValidationRequest {
 
     pub fn to_envelope(&self) -> ValidationRequestEnvelope {
         ValidationRequestEnvelope {
-            request_body_b64: STANDARD.encode(self.raw_body.as_slice()),
+            raw_body_len: self.raw_body.len(),
             max_param_length: self.max_param_length,
             dangerous_patterns: self.dangerous_patterns.clone(),
             request_id: self.request_id.clone(),
             healthcheck: self.healthcheck,
         }
     }
+}
+
+pub fn encode_request_payload(request: &ValidationRequest) -> Result<Vec<u8>, ProtocolError> {
+    let metadata = serde_json::to_vec(&request.to_envelope())?;
+    if metadata.len() > MAX_FRAME_SIZE {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+
+    let total_len = METADATA_PREFIX_LEN + metadata.len() + request.raw_body.len();
+    if total_len > MAX_FRAME_SIZE {
+        return Err(ProtocolError::FrameTooLarge);
+    }
+
+    let mut payload = Vec::with_capacity(total_len);
+    payload.extend_from_slice(&(metadata.len() as u32).to_be_bytes());
+    payload.extend_from_slice(&metadata);
+    payload.extend_from_slice(&request.raw_body);
+    Ok(payload)
+}
+
+pub fn decode_request_payload(payload: &[u8]) -> Result<ValidationRequest, ProtocolError> {
+    if payload.len() < METADATA_PREFIX_LEN {
+        return Err(ProtocolError::ShortFrame);
+    }
+
+    let metadata_len =
+        u32::from_be_bytes(payload[..METADATA_PREFIX_LEN].try_into().expect("prefix length"))
+            as usize;
+    let metadata_start = METADATA_PREFIX_LEN;
+    let metadata_end = metadata_start + metadata_len;
+    if metadata_end > payload.len() {
+        return Err(ProtocolError::LengthMismatch {
+            expected: metadata_end,
+            received: payload.len(),
+        });
+    }
+
+    let envelope: ValidationRequestEnvelope =
+        serde_json::from_slice(&payload[metadata_start..metadata_end])?;
+    envelope.into_request(payload[metadata_end..].to_vec())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -296,14 +338,12 @@ mod tests {
     }
 
     #[test]
-    fn request_envelope_round_trip_base64_encodes_raw_body() {
+    fn request_payload_round_trip_preserves_raw_body_outside_metadata() {
         let request =
             ValidationRequest::from_raw_body(br#"{"hello":"world"}"#, 32, &default_patterns())
                 .expect("request");
-        let encoded = serde_json::to_vec(&request.to_envelope()).expect("json");
-        let decoded: ValidationRequestEnvelope =
-            serde_json::from_slice(&encoded).expect("decode envelope");
-        let round_trip = decoded.into_request().expect("into request");
+        let encoded = encode_request_payload(&request).expect("payload");
+        let round_trip = decode_request_payload(&encoded).expect("into request");
 
         assert_eq!(round_trip.raw_body, br#"{"hello":"world"}"#);
         assert_eq!(round_trip.dangerous_patterns, default_patterns());
@@ -311,23 +351,23 @@ mod tests {
 
     #[test]
     fn request_envelope_rejects_invalid_json_and_oversized_bodies() {
-        let invalid_json = br#"{"request_body_b64":"***","max_param_length":1}"#;
+        let invalid_json = br#"{"raw_body_len":1,"max_param_length":1}"#;
         let envelope: ValidationRequestEnvelope =
             serde_json::from_slice(invalid_json).expect("envelope");
         assert!(matches!(
-            envelope.into_request(),
-            Err(ProtocolError::InvalidBase64(_))
+            envelope.into_request(vec![]),
+            Err(ProtocolError::InvalidEnvelope(message)) if message.contains("raw_body_len")
         ));
 
         let oversized = ValidationRequestEnvelope {
-            request_body_b64: STANDARD.encode(vec![b'a'; MAX_RAW_BODY_SIZE + 1]),
+            raw_body_len: MAX_RAW_BODY_SIZE + 1,
             max_param_length: 8,
             dangerous_patterns: Vec::new(),
             request_id: None,
             healthcheck: false,
         };
         assert!(matches!(
-            oversized.into_request(),
+            oversized.into_request(vec![b'a'; MAX_RAW_BODY_SIZE + 1]),
             Err(ProtocolError::RawBodyTooLarge)
         ));
     }

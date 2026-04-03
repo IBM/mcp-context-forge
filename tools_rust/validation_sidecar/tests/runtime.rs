@@ -1,5 +1,5 @@
 use contextforge_validation_sidecar::{
-    protocol::{ValidationRequest, ValidationResponseEnvelope, read_frame, write_json_frame},
+    protocol::{ValidationRequest, ValidationResponseEnvelope, encode_request_payload, read_frame, write_frame},
     serve_until,
     validator::DEFAULT_DANGEROUS_PATTERNS,
 };
@@ -30,15 +30,15 @@ async fn runtime_serves_one_happy_path_request_over_uds() {
         .map(ToString::to_string)
         .collect::<Vec<_>>();
     let request = ValidationRequest::from_raw_body(br#"{"name":"safe"}"#, 64, &dangerous_patterns)
-        .expect("request")
-        .to_envelope();
+        .expect("request");
 
-    write_json_frame(&mut stream, &request)
+    let payload = encode_request_payload(&request).expect("payload");
+    write_frame(&mut stream, &payload)
         .await
         .expect("write request");
-    let payload = read_frame(&mut stream).await.expect("read response");
+    let response_payload = read_frame(&mut stream).await.expect("read response");
     let response: ValidationResponseEnvelope =
-        serde_json::from_slice(&payload).expect("decode response");
+        serde_json::from_slice(&response_payload).expect("decode response");
 
     assert_eq!(response, ValidationResponseEnvelope::ok());
 

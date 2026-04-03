@@ -7,7 +7,7 @@ pub mod protocol;
 pub mod validator;
 
 use crate::protocol::{
-    ProtocolError, ValidationRequestEnvelope, ValidationResponseEnvelope, invalid_envelope,
+    ProtocolError, ValidationResponseEnvelope, decode_request_payload, invalid_envelope,
     read_frame, write_json_frame,
 };
 use crate::validator::validate_request;
@@ -80,9 +80,7 @@ async fn handle_connection(mut stream: UnixStream) -> Result<(), SidecarError> {
             Err(error) => return Err(error.into()),
         };
 
-        let envelope: ValidationRequestEnvelope =
-            serde_json::from_slice(&payload).map_err(ProtocolError::from)?;
-        let request = envelope.into_request()?;
+        let request = decode_request_payload(&payload)?;
         let response = if request.healthcheck {
             ValidationResponseEnvelope::ok()
         } else {

@@ -8,7 +8,6 @@ Validation sidecar client for framed Unix domain socket requests.
 
 # Standard
 import asyncio
-import base64
 import json
 import logging
 import struct
@@ -19,6 +18,7 @@ from typing import Any, Sequence
 logger = logging.getLogger(__name__)
 
 FRAME_PREFIX = struct.Struct(">I")
+METADATA_PREFIX = struct.Struct(">I")
 MAX_FRAME_SIZE = 16 * 1024 * 1024
 MAX_REQUEST_BODY_SIZE = 1 * 1024 * 1024
 
@@ -115,7 +115,7 @@ def decode_frame(frame: bytes) -> bytes:
 class ValidationSidecarRequest:
     """Typed helper for the validation sidecar request envelope."""
 
-    request_body_b64: str
+    raw_body_len: int
     max_param_length: int
     dangerous_patterns: tuple[str, ...]
     request_id: str | None = None
@@ -153,7 +153,7 @@ class ValidationSidecarRequest:
             raise ValueError(f"unsupported parser selection: {parser}")
 
         return cls(
-            request_body_b64=base64.b64encode(body).decode("ascii"),
+            raw_body_len=len(body),
             max_param_length=max_param_length,
             dangerous_patterns=tuple(dangerous_patterns),
             request_id=request_id,
@@ -166,7 +166,7 @@ class ValidationSidecarRequest:
             A dictionary ready for JSON serialization.
         """
         payload: dict[str, Any] = {
-            "request_body_b64": self.request_body_b64,
+            "raw_body_len": self.raw_body_len,
             "max_param_length": self.max_param_length,
             "dangerous_patterns": self.dangerous_patterns,
         }
@@ -317,7 +317,7 @@ class ValidationSidecarClient:
             ValidationSidecarTransportError: If the sidecar cannot be reached.
             ValidationSidecarValidationError: If the sidecar rejects the payload.
         """
-        request_payload = self._build_request_json_bytes(
+        request_payload = self._build_request_payload_bytes(
             body,
             max_param_length=max_param_length,
             dangerous_patterns=dangerous_patterns,
@@ -370,7 +370,7 @@ class ValidationSidecarClient:
             raise ValidationSidecarTransportError(f"Validation sidecar transport failed after retry: {last_error}") from last_error
         raise ValidationSidecarTransportError("Validation sidecar transport failed")
 
-    def _build_request_json_bytes(
+    def _build_request_payload_bytes(
         self,
         body: bytes,
         *,
@@ -387,7 +387,7 @@ class ValidationSidecarClient:
             request_id: Optional request correlation id.
 
         Returns:
-            Canonical UTF-8 JSON request bytes for the sidecar.
+            Request payload bytes with metadata length, metadata JSON, and raw body bytes.
 
         Raises:
             ValueError: If the request body is too large.
@@ -395,20 +395,21 @@ class ValidationSidecarClient:
         if len(body) > MAX_REQUEST_BODY_SIZE:
             raise ValueError(f"request body exceeds maximum size of {MAX_REQUEST_BODY_SIZE} bytes")
 
-        encoded_body = base64.b64encode(body)
         patterns_key = tuple(dangerous_patterns)
         if request_id is not None:
-            return ValidationSidecarRequest.from_body(
+            metadata = ValidationSidecarRequest.from_body(
                 body,
                 max_param_length=max_param_length,
                 dangerous_patterns=patterns_key,
                 request_id=request_id,
             ).to_json_bytes()
+            return METADATA_PREFIX.pack(len(metadata)) + metadata + body
 
         metadata = self._request_metadata_cache.get((max_param_length, patterns_key))
         if metadata is None:
             metadata = json.dumps(
                 {
+                    "raw_body_len": 0,
                     "max_param_length": max_param_length,
                     "dangerous_patterns": patterns_key,
                 },
@@ -416,7 +417,8 @@ class ValidationSidecarClient:
             ).encode("utf-8")
             self._request_metadata_cache[(max_param_length, patterns_key)] = metadata
 
-        return b'{"request_body_b64":"' + encoded_body + b'",' + metadata[1:]
+        metadata = metadata.replace(b'"raw_body_len":0', f'"raw_body_len":{len(body)}'.encode("ascii"), 1)
+        return METADATA_PREFIX.pack(len(metadata)) + metadata + body
 
     async def _reserve_connection_index(self) -> int:
         """Return the next pool slot index using round-robin selection.

@@ -3,12 +3,11 @@
 
 # Standard
 import asyncio
-import base64
 import json
+from pathlib import Path
 import struct
 import sys
 from types import SimpleNamespace
-from pathlib import Path
 import uuid
 
 # Third-Party
@@ -18,6 +17,7 @@ from pydantic import ValidationError
 # First-Party
 from mcpgateway.config import Settings
 from mcpgateway.services.validation_sidecar_client import (
+    METADATA_PREFIX,
     ValidationSidecarClient,
     ValidationSidecarProtocolError,
     ValidationSidecarRequest,
@@ -74,8 +74,8 @@ def test_frame_round_trip_uses_big_endian_length_prefix() -> None:
     assert decode_frame(frame) == payload
 
 
-def test_request_envelope_base64_encodes_body() -> None:
-    """Request envelopes should base64 encode raw request bytes."""
+def test_request_envelope_preserves_raw_body_outside_metadata() -> None:
+    """Request payloads should carry raw body bytes outside the metadata JSON."""
     body = b'{"hello":"world"}'
 
     request = ValidationSidecarRequest.from_body(
@@ -85,12 +85,12 @@ def test_request_envelope_base64_encodes_body() -> None:
         request_id="req-1",
     )
 
-    envelope = json.loads(request.to_json_bytes())
-    assert envelope["request_body_b64"] == base64.b64encode(body).decode("ascii")
-    assert envelope["max_param_length"] == 42
-    assert envelope["dangerous_patterns"] == [r"<script", r"javascript:"]
-    assert envelope["request_id"] == "req-1"
-    assert "parser" not in envelope
+    metadata = json.loads(request.to_json_bytes())
+    assert metadata["raw_body_len"] == len(body)
+    assert metadata["max_param_length"] == 42
+    assert metadata["dangerous_patterns"] == [r"<script", r"javascript:"]
+    assert metadata["request_id"] == "req-1"
+    assert "request_body_b64" not in metadata
 
 
 def test_request_envelope_rejects_parser_selection() -> None:
@@ -103,6 +103,29 @@ def test_request_envelope_rejects_parser_selection() -> None:
             parser="serde-json",
             allow_parser_selection=True,
         )
+
+
+def test_client_builds_binary_request_payload_without_base64(tmp_path: Path) -> None:
+    """Client request payloads should encode metadata length plus raw body bytes."""
+    client = ValidationSidecarClient(uds_path=str(tmp_path / "sidecar.sock"), timeout_seconds=0.1)
+    body = b'{"hello":"world"}'
+
+    payload = client._build_request_payload_bytes(
+        body,
+        max_param_length=42,
+        dangerous_patterns=[r"<script", r"javascript:"],
+        request_id="req-1",
+    )
+
+    metadata_len = METADATA_PREFIX.unpack(payload[: METADATA_PREFIX.size])[0]
+    metadata = json.loads(payload[METADATA_PREFIX.size : METADATA_PREFIX.size + metadata_len])
+    raw_body = payload[METADATA_PREFIX.size + metadata_len :]
+
+    assert metadata["raw_body_len"] == len(body)
+    assert metadata["max_param_length"] == 42
+    assert metadata["dangerous_patterns"] == [r"<script", r"javascript:"]
+    assert metadata["request_id"] == "req-1"
+    assert raw_body == body
 
 
 def test_sidecar_settings_defaults_and_path_validation(tmp_path: Path) -> None:

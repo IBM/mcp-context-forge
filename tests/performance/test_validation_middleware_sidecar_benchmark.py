@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import importlib
 import asyncio
-import base64
 import json
 import os
 import re
@@ -32,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PYO3_SIDECAR_MANIFEST = REPO_ROOT / "tools_rust" / "validation_middleware_sidecar" / "Cargo.toml"
 UDS_SIDECAR_MANIFEST = REPO_ROOT / "tools_rust" / "validation_sidecar" / "Cargo.toml"
 FRAME_PREFIX = struct.Struct(">I")
+METADATA_PREFIX = struct.Struct(">I")
 
 
 class _JSONBodyRequest:
@@ -93,13 +93,14 @@ def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) 
 
 def _healthcheck_sidecar(uds_path: Path, timeout_seconds: float = 10.0) -> None:
     deadline = time.time() + timeout_seconds
-    envelope = {
-        "request_body_b64": base64.b64encode(b"{}").decode("ascii"),
+    metadata = {
+        "raw_body_len": 2,
         "max_param_length": 1,
         "dangerous_patterns": [],
         "healthcheck": True,
     }
-    payload = json.dumps(envelope, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    metadata_bytes = json.dumps(metadata, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload = METADATA_PREFIX.pack(len(metadata_bytes)) + metadata_bytes + b"{}"
     frame = FRAME_PREFIX.pack(len(payload)) + payload
 
     while time.time() < deadline:
