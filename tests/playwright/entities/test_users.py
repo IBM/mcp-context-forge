@@ -75,6 +75,12 @@ class TestUsersCRUD:
         card_text = card.text_content() or ""
         assert updated_name in card_text
 
+        # Re-open the edit modal and verify the form pre-populates with the updated name
+        users_page.click_edit_button(test_user_data["email"])
+        edit_name_value = users_page.user_edit_modal_content.locator('input[name="full_name"]').input_value()
+        assert edit_name_value == updated_name, f"Edit form should show updated name '{updated_name}', got '{edit_name_value}'"
+        users_page.close_edit_modal()
+
         # Cleanup
         cleanup_user(users_page.page, test_user_data["email"])
 

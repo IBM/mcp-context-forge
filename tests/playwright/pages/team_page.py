@@ -104,6 +104,24 @@ class TeamPage(BasePage):
         """Navigate to Teams tab and wait for panel to be visible."""
         self.sidebar.click_teams_tab()
 
+    # ==================== Search ====================
+
+    def search_teams(self, query: str) -> None:
+        """Type a query into the team search box and wait for the results.
+
+        The search is server-side with a 300 ms debounce.  We capture the
+        resulting GET to ``/admin/teams/partial`` with ``expect_response`` so
+        the wait is exactly as long as the round-trip, with no fixed sleeps.
+
+        Args:
+            query: Search string to type into ``#team-search``
+        """
+        with self.page.expect_response(
+            lambda r: "/admin/teams/partial" in r.url and r.request.method == "GET"
+        ) as response_info:
+            self.page.locator("#team-search").fill(query)
+        assert response_info.value.status == 200, f"Team search returned status {response_info.value.status}"
+
     # ==================== High-Level Team Operations ====================
 
     def create_team(self, team_name: str) -> None:
@@ -162,6 +180,85 @@ class TeamPage(BasePage):
         # Wait for the team card to be visible
         team_card = self.get_team_card(team_name)
         expect(team_card).to_be_visible(timeout=timeout)
+
+    def wait_for_teams_loaded(self, timeout: int = 30000) -> None:
+        """Wait for the teams list to finish loading via HTMX.
+
+        The initial state of ``#unified-teams-list`` contains a spinner.
+        ``initializeTeamManagement()`` runs 100-500 ms after the panel is shown
+        and replaces that spinner with team cards (or an empty-state message).
+        Waiting for the spinner to disappear is the most reliable signal that
+        the HTMX response has been applied.
+
+        Args:
+            timeout: Maximum time to wait in milliseconds
+        """
+        self.page.wait_for_selector("#teams-panel:not(.hidden)", timeout=timeout)
+        # Wait until the initial loading spinner is replaced by actual content.
+        self.page.wait_for_function(
+            """() => {
+                const list = document.querySelector('#unified-teams-list');
+                return list ? !list.querySelector('.animate-spin') : false;
+            }""",
+            timeout=timeout,
+        )
+
+    def reload_and_navigate_to_teams(self) -> None:
+        """Reload the page and navigate to the teams tab for a fresh list.
+
+        Navigates to /admin and explicitly clicks the teams tab so that
+        initializeTeamManagement() is triggered by the tab-click handler
+        (100 ms delay) rather than the less-reliable hash-based init (500 ms).
+        """
+        try:
+            self.page.wait_for_function(
+                "() => !document.querySelector('.htmx-request')",
+                timeout=10000,
+            )
+        except PlaywrightTimeoutError:
+            pass
+        self.page.goto("/admin", wait_until="domcontentloaded")
+        # Wait for the sidebar to be ready before clicking
+        self.page.wait_for_selector('[data-testid="teams-tab"]', timeout=15000)
+        self.sidebar.click_teams_tab()
+        self.wait_for_teams_loaded()
+
+    def click_edit_settings(self, team_name: str) -> None:
+        """Click the Edit Settings button on a team card and wait for the modal.
+
+        Args:
+            team_name: The name of the team to edit
+        """
+        self.click_locator(self.get_team_edit_settings_btn(team_name))
+        self.page.wait_for_selector("#team-edit-modal:not(.hidden)", timeout=10000)
+        self.page.wait_for_selector("#team-edit-modal-content form", timeout=10000)
+
+    def get_edit_form_name_value(self) -> str:
+        """Return the current value of the name input in the team edit modal.
+
+        Returns:
+            Current value of the name input field
+        """
+        return self.page.locator("#team-edit-modal-content").locator('input[name="name"]').input_value()
+
+    def submit_edit_team_form(self, name: str) -> None:
+        """Fill the name field and submit the team edit form.
+
+        Args:
+            name: New team name to set
+        """
+        modal_content = self.page.locator("#team-edit-modal-content")
+        modal_content.locator('input[name="name"]').fill(name)
+        modal_content.locator('button[type="submit"]').click()
+
+    def close_team_edit_modal(self) -> None:
+        """Close the team edit modal via JavaScript."""
+        self.page.evaluate("""
+            const modal = document.getElementById('team-edit-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
+        """)
 
     def wait_for_team_hidden(self, team_name: str, timeout: int = 30000) -> None:
         """Wait for a team to be hidden from the list.
