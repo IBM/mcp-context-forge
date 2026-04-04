@@ -227,13 +227,16 @@ mcpContextForge:
               parallel_evaluation: true
 
   image:
-    repository: ghcr.io/ibm/mcp-context-forge
-    tag: latest
+    repository: docker.io/gandhipratik203/mcp-context-forge
+    tag: rust
     pullPolicy: Always                     # Always pull to get latest image
 
   config:
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"    # needed for in-cluster MCP server registration
     LOG_LEVEL: INFO
+    # --- Rust MCP runtime ---
+    RUST_MCP_MODE: "full"                  # enable full Rust MCP runtime
+    RUST_MCP_LOG: "warn"
     # --- Gunicorn tuning (match VM benchmark) ---
     GUNICORN_WORKERS: "8"                  # 8 workers per pod × 3 pods = 24 total (matches VM)
     GUNICORN_MAX_REQUESTS: "1000000"       # recycle after 1M requests (VM: 1M)
