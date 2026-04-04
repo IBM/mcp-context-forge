@@ -397,8 +397,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         Returns:
             MCPSessionPool: This pool instance.
         """
-        if settings.mcpgateway_session_affinity_enabled:
-            self._heartbeat_task = asyncio.create_task(self._start_heartbeat())
+        self.start_heartbeat()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -594,7 +593,18 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         """Redis key for this worker's heartbeat."""
         return f"mcpgw:worker_heartbeat:{WORKER_ID}"
 
-    async def _start_heartbeat(self) -> None:
+    def start_heartbeat(self) -> None:
+        """Start the worker heartbeat background task.
+
+        Must be called from an async context. Safe to call multiple times;
+        subsequent calls are no-ops if the heartbeat is already running.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+        if self._heartbeat_task is None or self._heartbeat_task.done():
+            self._heartbeat_task = asyncio.create_task(self._run_heartbeat_loop())
+
+    async def _run_heartbeat_loop(self) -> None:
         """Maintain worker heartbeat in Redis."""
         # First-Party
         from mcpgateway.utils.redis_client import get_redis_client
@@ -1640,7 +1650,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 return None  # We own it - execute locally
 
             if not await self._is_worker_alive(owner_id):
-                logger.warning(f"[AFFINITY] Owner {owner_id} is dead, executing locally")
+                logger.warning(f"[AFFINITY] Owner {owner_id} is dead for session {mcp_session_id[:8]}...")
                 # CAS: reclaim only if still owned by the dead worker
                 cas_script = """
                 local cur = redis.call('GET', KEYS[1])
@@ -1651,8 +1661,18 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 return 0
                 """
                 ttl = int(settings.mcpgateway_session_affinity_ttl)
-                await redis.eval(cas_script, 1, self._pool_owner_key(mcp_session_id), owner_id, WORKER_ID, ttl)
-                return None  # Execute locally
+                reclaimed = await redis.eval(cas_script, 1, self._pool_owner_key(mcp_session_id), owner_id, WORKER_ID, ttl)
+                if reclaimed == 1:
+                    logger.info(f"[AFFINITY] Reclaimed session {mcp_session_id[:8]}... from dead worker {owner_id} → execute locally")
+                    return None  # We won the reclaim - execute locally
+                # Another worker already reclaimed; re-read the new owner and forward
+                new_owner = await redis.get(self._pool_owner_key(mcp_session_id))
+                if not new_owner:
+                    return None  # Key vanished - execute locally
+                owner_id = new_owner.decode() if isinstance(new_owner, bytes) else new_owner
+                if owner_id == WORKER_ID:
+                    return None  # We ended up as owner
+                logger.info(f"[AFFINITY] Session {mcp_session_id[:8]}... reclaimed by {owner_id} → forwarding to new owner")
 
             logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
 

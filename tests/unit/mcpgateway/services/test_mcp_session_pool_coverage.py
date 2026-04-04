@@ -1698,29 +1698,34 @@ class TestSessionOwnerCleanupTimeout:
     """Cover timeout handling in _cleanup_pool_session_owner."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_pool_session_owner_with_completed_task(self):
-        """When owner task is already done, cleanup should succeed quickly."""
-        # First-Party
-        from mcpgateway.services.mcp_session_pool import PooledSession
-
+    async def test_cleanup_pool_session_owner_deletes_owned_key(self):
+        """Should delete ownership key in Redis when this worker owns it."""
         pool = MCPSessionPool()
 
-        # Create a task that completes immediately
-        async def quick_task():
-            return "done"
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"my-worker")  # We own it
+        mock_redis.delete = AsyncMock()
 
-        owner_task = asyncio.create_task(quick_task())
-        await owner_task  # Wait for it to complete
+        with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                await pool._cleanup_pool_session_owner("sess-123")
 
-        mock_session = MagicMock(spec=PooledSession)
-        mock_session.owner_task = owner_task
-        mock_session.url = "http://test.com"
+        mock_redis.delete.assert_awaited_once()
 
-        # This should complete without timeout
-        await pool._cleanup_pool_session_owner(mock_session)
+    @pytest.mark.asyncio
+    async def test_cleanup_pool_session_owner_skips_unowned_key(self):
+        """Should NOT delete ownership key when another worker owns it."""
+        pool = MCPSessionPool()
 
-        # Task should be done
-        assert owner_task.done()
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"other-worker")  # Someone else owns it
+        mock_redis.delete = AsyncMock()
+
+        with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+            with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                await pool._cleanup_pool_session_owner("sess-123")
+
+        mock_redis.delete.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1746,8 +1751,8 @@ class TestIsWorkerAliveEdgeCases:
             assert result is True
 
 
-class TestStartHeartbeat:
-    """Cover _start_heartbeat loop behavior."""
+class TestHeartbeatLoop:
+    """Cover _run_heartbeat_loop behavior."""
 
     @pytest.mark.asyncio
     async def test_start_heartbeat_sets_redis_key(self):
@@ -1767,7 +1772,7 @@ class TestStartHeartbeat:
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                await pool._start_heartbeat()
+                await pool._run_heartbeat_loop()
 
         mock_redis.setex.assert_awaited_once()
         args = mock_redis.setex.call_args[0]
@@ -1792,7 +1797,7 @@ class TestStartHeartbeat:
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=get_redis_side_effect):
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                await pool._start_heartbeat()
+                await pool._run_heartbeat_loop()
 
         assert call_count == 2  # Continued after first failure
 
@@ -1811,7 +1816,7 @@ class TestStartHeartbeat:
 
         with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=get_redis_none):
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                await pool._start_heartbeat()
+                await pool._run_heartbeat_loop()
 
         assert call_count >= 2
 
@@ -1820,8 +1825,8 @@ class TestForwardRequestDeadOwner:
     """Cover forward_request_to_owner dead-owner detection path."""
 
     @pytest.mark.asyncio
-    async def test_forward_returns_none_when_owner_dead(self):
-        """When owner is dead, should reclaim via CAS and return None for local execution."""
+    async def test_forward_returns_none_when_owner_dead_and_cas_wins(self):
+        """When owner is dead and CAS succeeds, should return None for local execution."""
         pool = MCPSessionPool()
 
         mock_redis = AsyncMock()
@@ -1838,8 +1843,89 @@ class TestForwardRequestDeadOwner:
                     result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
 
         assert result is None
-        # Should have called CAS script to reclaim ownership
         mock_redis.eval.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_forward_forwards_to_new_owner_when_cas_loses(self):
+        """When CAS returns 0 (another worker reclaimed), should forward to the new owner."""
+        # Third-Party
+        import orjson
+
+        pool = MCPSessionPool()
+        expected = {"result": {"ok": True}}
+
+        # Mock pubsub.listen() to return a response from the new owner
+        async def mock_listen():
+            yield {"type": "message", "data": orjson.dumps(expected)}
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.listen = mock_listen
+
+        # First get() returns dead-worker, second get() (re-read) returns new-owner
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=[b"dead-worker", b"new-owner"])
+        mock_redis.exists = AsyncMock(return_value=0)  # dead-worker heartbeat missing
+        mock_redis.eval = AsyncMock(return_value=0)  # CAS failed - another worker won
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_session_affinity_ttl = 300
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                    result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
+
+        # Should have forwarded to the new owner, not executed locally
+        assert result == expected
+        mock_redis.publish.assert_awaited_once()
+        mock_pubsub.subscribe.assert_awaited()
+        mock_pubsub.unsubscribe.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_forward_returns_none_when_cas_loses_and_key_vanished(self):
+        """When CAS fails and the ownership key is gone, execute locally."""
+        pool = MCPSessionPool()
+
+        # First get() returns dead-worker, second get() (re-read) returns None
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=[b"dead-worker", None])
+        mock_redis.exists = AsyncMock(return_value=0)
+        mock_redis.eval = AsyncMock(return_value=0)  # CAS failed
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_session_affinity_ttl = 300
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                    result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
+
+        assert result is None  # Key vanished - safe to execute locally
+
+    @pytest.mark.asyncio
+    async def test_forward_returns_none_when_cas_loses_and_we_are_new_owner(self):
+        """When CAS fails but the new owner is us, execute locally."""
+        pool = MCPSessionPool()
+
+        # First get() returns dead-worker, second get() (re-read) returns us
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(side_effect=[b"dead-worker", b"my-worker"])
+        mock_redis.exists = AsyncMock(return_value=0)
+        mock_redis.eval = AsyncMock(return_value=0)  # CAS failed
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_session_affinity_ttl = 300
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                    result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
+
+        assert result is None  # We're the owner - execute locally
 
 
 class TestEvictionSessionMappingCleanup:
@@ -1918,22 +2004,22 @@ class TestDrainAllLifecycle:
         assert not pool._closed  # drain_all should NOT mark pool as closed
 
 
-class TestAenterHeartbeat:
-    """Cover __aenter__ heartbeat start behavior."""
+class TestHeartbeatStartup:
+    """Cover heartbeat start via start_heartbeat() and __aenter__."""
 
     @pytest.mark.asyncio
     async def test_aenter_starts_heartbeat_when_affinity_enabled(self):
-        """__aenter__ should start heartbeat task when session affinity is enabled."""
+        """__aenter__ delegates to start_heartbeat(), which creates the task."""
         pool = MCPSessionPool()
 
         with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
             mock_settings.mcpgateway_session_affinity_enabled = True
-            with patch.object(pool, "_start_heartbeat", new_callable=AsyncMock) as mock_hb:
+            with patch.object(pool, "_run_heartbeat_loop", new_callable=AsyncMock):
                 result = await pool.__aenter__()
 
         assert result is pool
         assert pool._heartbeat_task is not None
-        # Clean up the created task
+        # Clean up
         pool._heartbeat_task.cancel()
         try:
             await pool._heartbeat_task
@@ -1951,6 +2037,53 @@ class TestAenterHeartbeat:
 
         assert result is pool
         assert pool._heartbeat_task is None
+
+    @pytest.mark.asyncio
+    async def test_start_heartbeat_creates_task_when_affinity_enabled(self):
+        """start_heartbeat() should create a background task (production init path)."""
+        pool = MCPSessionPool()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            with patch.object(pool, "_run_heartbeat_loop", new_callable=AsyncMock):
+                pool.start_heartbeat()
+
+        assert pool._heartbeat_task is not None
+        pool._heartbeat_task.cancel()
+        try:
+            await pool._heartbeat_task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_start_heartbeat_noop_when_affinity_disabled(self):
+        """start_heartbeat() should be a no-op when session affinity is disabled."""
+        pool = MCPSessionPool()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            pool.start_heartbeat()
+
+        assert pool._heartbeat_task is None
+
+    @pytest.mark.asyncio
+    async def test_start_heartbeat_idempotent(self):
+        """Calling start_heartbeat() twice should not create a second task."""
+        pool = MCPSessionPool()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            with patch.object(pool, "_run_heartbeat_loop", new_callable=AsyncMock):
+                pool.start_heartbeat()
+                first_task = pool._heartbeat_task
+                pool.start_heartbeat()
+                assert pool._heartbeat_task is first_task
+
+        first_task.cancel()
+        try:
+            await first_task
+        except asyncio.CancelledError:
+            pass
 
 
 class TestAcquireReclaim:
