@@ -23,7 +23,7 @@ fail_fast: true
 
 repos:
   # -----------------------------------------------------------------------------
-  # 🔐 Security and Secret Detection Hooks
+  # 🔐 Security - Detect Private Keys
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
