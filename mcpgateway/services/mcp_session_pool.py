@@ -615,6 +615,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         try:
             # First-Party
             from mcpgateway.utils.redis_client import get_redis_client
+
             redis = await get_redis_client()
             if not redis:
                 return True  # Assume alive if Redis unavailable
@@ -882,17 +883,30 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     if owner and owner != WORKER_ID:
                         # Check if owner is still alive
                         if not await self._is_worker_alive(owner):
-                            # Owner is dead - reclaim ownership atomically
+                            # Owner is dead - reclaim ownership with compare-and-swap
                             # First-Party
                             from mcpgateway.utils.redis_client import get_redis_client
+
                             redis = await get_redis_client()
                             if redis:
                                 owner_key = self._pool_owner_key(mcp_session_id)
-                                # Atomic reclaim: delete old owner, set new owner
-                                await redis.delete(owner_key)
-                                await redis.set(owner_key, WORKER_ID, ex=settings.mcpgateway_session_affinity_ttl)
-                                logger.info(f"Reclaimed ownership from dead worker {owner}: {mcp_session_id[:8]}...")
-                                # Continue to create session locally
+                                # Lua CAS: only reclaim if still owned by the dead worker
+                                cas_script = """
+                                local cur = redis.call('GET', KEYS[1])
+                                if cur == ARGV[1] then
+                                  redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+                                  return 1
+                                end
+                                return 0
+                                """
+                                ttl = int(settings.mcpgateway_session_affinity_ttl)
+                                reclaimed = await redis.eval(cas_script, 1, owner_key, owner, WORKER_ID, ttl)
+                                if reclaimed == 1:
+                                    logger.info(f"Reclaimed ownership from dead worker {owner}: {mcp_session_id[:8]}...")
+                                else:
+                                    # Another worker already reclaimed - let it handle
+                                    semaphore.release()
+                                    raise RuntimeError(f"Session reclaimed by another worker: {mcp_session_id[:8]}...")
                         else:
                             # Owner is alive - should have been forwarded
                             semaphore.release()
@@ -1627,8 +1641,17 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
             if not await self._is_worker_alive(owner_id):
                 logger.warning(f"[AFFINITY] Owner {owner_id} is dead, executing locally")
-                # Clean up dead owner's key
-                await redis.delete(self._pool_owner_key(mcp_session_id))
+                # CAS: reclaim only if still owned by the dead worker
+                cas_script = """
+                local cur = redis.call('GET', KEYS[1])
+                if cur == ARGV[1] then
+                  redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+                  return 1
+                end
+                return 0
+                """
+                ttl = int(settings.mcpgateway_session_affinity_ttl)
+                await redis.eval(cas_script, 1, self._pool_owner_key(mcp_session_id), owner_id, WORKER_ID, ttl)
                 return None  # Execute locally
 
             logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
