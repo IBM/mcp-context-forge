@@ -3575,10 +3575,10 @@ class ToolService(BaseService):
 
         Raises:
             ToolNotFoundError: If tool not found or access denied.
-            ToolInvocationError: If invocation fails.
+            ToolInvocationError: If invocation fails or A2A authentication decryption fails.
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
-            PluginError: If encounters issue with plugin
+            PluginError: If encounters issue with plugin.
 
         Examples:
             >>> # Note: This method requires extensive mocking of SQLAlchemy models,
@@ -4812,10 +4812,18 @@ class ToolService(BaseService):
                         request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": a2a_agent_protocol_version}
 
                     # Add authentication
-                    if a2a_agent_auth_type == "api_key" and a2a_agent_auth_value:
-                        headers["Authorization"] = f"Bearer {a2a_agent_auth_value}"
-                    elif a2a_agent_auth_type == "bearer" and a2a_agent_auth_value:
-                        headers["Authorization"] = f"Bearer {a2a_agent_auth_value}"
+                    if a2a_agent_auth_type in ("api_key", "basic", "bearer", "authheaders") and a2a_agent_auth_value:
+                        # Decrypt auth_value before using it
+                        if isinstance(a2a_agent_auth_value, str):
+                            try:
+                                auth_headers = decode_auth(a2a_agent_auth_value)
+                                headers.update(auth_headers)
+                            except Exception as e:
+                                logger.error(f"Failed to decrypt authentication for A2A agent '{a2a_agent_name}': {e}")
+                                raise ToolInvocationError(f"Failed to decrypt authentication for A2A agent '{a2a_agent_name}'")
+                        elif isinstance(a2a_agent_auth_value, dict):
+                            auth_headers = {str(k): str(v) for k, v in a2a_agent_auth_value.items()}
+                            headers.update(auth_headers)
                     elif a2a_agent_auth_type == "query_param" and a2a_agent_auth_query_params:
                         auth_query_params_decrypted: dict[str, str] = {}
                         for param_key, encrypted_value in a2a_agent_auth_query_params.items():
@@ -5980,6 +5988,7 @@ class ToolService(BaseService):
             Response from the A2A agent.
 
         Raises:
+            ToolInvocationError: If authentication decryption fails.
             Exception: If the call fails.
         """
         logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
@@ -6030,10 +6039,18 @@ class ToolService(BaseService):
         endpoint_url = agent.endpoint_url
 
         # Add authentication if configured
-        if agent.auth_type == "api_key" and agent.auth_value:
-            headers["Authorization"] = f"Bearer {agent.auth_value}"
-        elif agent.auth_type == "bearer" and agent.auth_value:
-            headers["Authorization"] = f"Bearer {agent.auth_value}"
+        if agent.auth_type in ("api_key", "basic", "bearer", "authheaders") and agent.auth_value:
+            # Decrypt auth_value and extract headers (matches a2a_service.py pattern)
+            if isinstance(agent.auth_value, str):
+                try:
+                    auth_headers = decode_auth(agent.auth_value)
+                    headers.update(auth_headers)
+                except Exception as e:
+                    logger.error(f"Failed to decrypt authentication for A2A agent '{agent.name}': {e}")
+                    raise ToolInvocationError(f"Failed to decrypt authentication for A2A agent '{agent.name}'")
+            elif isinstance(agent.auth_value, dict):
+                auth_headers = {str(k): str(v) for k, v in agent.auth_value.items()}
+                headers.update(auth_headers)
         elif agent.auth_type == "query_param" and agent.auth_query_params:
             # Handle query parameter authentication (imports at top: decode_auth, apply_query_param_auth, sanitize_url_for_logging)
             auth_query_params_decrypted: dict[str, str] = {}
