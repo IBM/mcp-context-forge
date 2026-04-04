@@ -31,7 +31,7 @@ use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
-use tracing::log::trace;
+use tracing::trace;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:9080";
@@ -348,8 +348,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Bind and serve
     let tcp_listener = tokio::net::TcpListener::bind(&bind_address)
-        .await
-        .unwrap()
+        .await?
         .tap_io(|tcp_stream| {
             if let Err(err) = tcp_stream.set_nodelay(true) {
                 trace!("failed to set TCP_NODELAY on incoming connection: {err:#}");
@@ -505,5 +504,10 @@ mod tests {
     fn test_unknown_timezone() {
         let result = parse_timezone("Invalid/Timezone");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default_server() {
+        let _server = FastTestServer::default();
     }
 }
