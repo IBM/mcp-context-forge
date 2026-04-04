@@ -8776,6 +8776,7 @@ async def admin_tool_ops_partial(
 @admin_router.get("/tools/ids", response_class=JSONResponse)
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_get_all_tool_ids(
+    q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -8788,6 +8789,7 @@ async def admin_get_all_tool_ids(
     This is used by "Select All" to get all tool IDs without loading full data.
 
     Args:
+        q (str): Search query to filter tools by name, ID, or description
         include_inactive (bool): Whether to include inactive tools in the results
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local tools).
         team_id (Optional[str]): Filter by team ID.
@@ -8806,6 +8808,21 @@ async def admin_get_all_tool_ids(
 
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
+
+    # Apply search filter if provided
+    if q:
+        search_query = _normalize_search_query(q)
+        if search_query:
+            search_conditions = [
+                _like_contains(func.lower(DbTool.id), search_query),
+                _like_contains(func.lower(DbTool.original_name), search_query),
+                _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.description, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.url, "")), search_query),
+            ]
+            query = query.where(or_(*search_conditions))
+            LOGGER.debug(f"Filtering tool IDs by search query: {search_query}")
 
     # Apply optional gateway/server scoping (comma-separated ids). Accepts the
     # literal value 'null' to indicate NULL gateway_id (local tools).
@@ -10020,6 +10037,7 @@ async def admin_resources_partial_html(
 @admin_router.get("/prompts/ids", response_class=JSONResponse)
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def admin_get_all_prompt_ids(
+    q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -10032,6 +10050,7 @@ async def admin_get_all_prompt_ids(
     of prompts the requesting user can access (owner, team, or public).
 
     Args:
+        q (str): Search query to filter prompts by name or description.
         include_inactive (bool): When True include prompts that are inactive.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local prompts).
         team_id (Optional[str]): Filter by team ID.
@@ -10047,6 +10066,21 @@ async def admin_get_all_prompt_ids(
     team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbPrompt.id)
+
+    if not include_inactive:
+        query = query.where(DbPrompt.enabled.is_(True))
+
+    # Apply search filter if provided
+    if q:
+        search_query = _normalize_search_query(q)
+        if search_query:
+            search_conditions = [
+                _like_contains(func.lower(DbPrompt.id), search_query),
+                _like_contains(func.lower(DbPrompt.name), search_query),
+                _like_contains(func.lower(coalesce(DbPrompt.description, "")), search_query),
+            ]
+            query = query.where(or_(*search_conditions))
+            LOGGER.debug(f"Filtering prompt IDs by search query: {search_query}")
 
     # Apply optional gateway/server scoping
     if gateway_id:
@@ -10105,6 +10139,7 @@ async def admin_get_all_prompt_ids(
 @admin_router.get("/resources/ids", response_class=JSONResponse)
 @require_permission("resources.read", allow_admin_bypass=False)
 async def admin_get_all_resource_ids(
+    q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -10117,6 +10152,7 @@ async def admin_get_all_resource_ids(
     of resources the requesting user can access (owner, team, or public).
 
     Args:
+        q (str): Search query to filter resources by name, URI, or description.
         include_inactive (bool): Whether to include inactive resources in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local resources).
         team_id (Optional[str]): Filter by team ID.
@@ -10132,6 +10168,22 @@ async def admin_get_all_resource_ids(
     team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbResource.id)
+
+    if not include_inactive:
+        query = query.where(DbResource.enabled.is_(True))
+
+    # Apply search filter if provided
+    if q:
+        search_query = _normalize_search_query(q)
+        if search_query:
+            search_conditions = [
+                _like_contains(func.lower(DbResource.id), search_query),
+                _like_contains(func.lower(DbResource.name), search_query),
+                _like_contains(func.lower(coalesce(DbResource.uri, "")), search_query),
+                _like_contains(func.lower(coalesce(DbResource.description, "")), search_query),
+            ]
+            query = query.where(or_(*search_conditions))
+            LOGGER.debug(f"Filtering resource IDs by search query: {search_query}")
 
     # Apply optional gateway/server scoping
     if gateway_id:
