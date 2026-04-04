@@ -724,27 +724,11 @@ class TestClusterMode:
 
     @pytest.mark.asyncio
     async def test_cluster_mode_non_zero_db_raises_error(self):
-        """get_redis_client() returns None when cluster mode has non-zero DB."""
-        mock_redis_cluster_cls = MagicMock()
-
+        """get_redis_client() raises ValueError when cluster mode has non-zero DB."""
         with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.cache_type = "redis"
             mock_settings.redis_url = "redis://:pass@redis-cluster:6379/1"
-            mock_settings.redis_decode_responses = True
-            mock_settings.redis_max_connections = 10
-            mock_settings.redis_socket_timeout = 5.0
-            mock_settings.redis_socket_connect_timeout = 5.0
-            mock_settings.redis_retry_on_timeout = True
-            mock_settings.redis_health_check_interval = 30
-            mock_settings.redis_parser = "auto"
             mock_settings.redis_cluster_mode = True
 
-            mock_aioredis = MagicMock()
-            mock_aioredis.RedisCluster = mock_redis_cluster_cls
-
-            with patch.dict("sys.modules", {"redis.asyncio": mock_aioredis}):
-                with patch("redis.asyncio", mock_aioredis):
-                    client = await get_redis_client()
-
-                    assert client is None
-                    mock_redis_cluster_cls.from_url.assert_not_called()
+            with pytest.raises(ValueError, match="Redis Cluster only supports database 0"):
+                await get_redis_client()

@@ -270,6 +270,12 @@ async def get_redis_client() -> Optional[Any]:
         _initialized = True
         return None
 
+    # Validate cluster URL before attempting connection so
+    # misconfigurations (e.g. /1) crash immediately instead of
+    # being silently swallowed by the generic except below.
+    if settings.redis_cluster_mode:
+        _strip_db_from_url(settings.redis_url)
+
     try:
         # Get parser configuration (ADR-026)
         parser_class, _parser_info = _get_async_parser_class(settings.redis_parser)
