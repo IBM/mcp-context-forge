@@ -4354,7 +4354,7 @@ class TestLifespanAdvanced:
         monkeypatch.setattr("mcpgateway.services.mcp_session_pool.init_mcp_session_pool", MagicMock())
         monkeypatch.setattr("mcpgateway.services.mcp_session_pool.start_pool_notification_service", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.mcp_session_pool.close_mcp_session_pool", AsyncMock())
-        pool = SimpleNamespace(start_rpc_listener=AsyncMock())
+        pool = SimpleNamespace(start_rpc_listener=AsyncMock(), start_heartbeat=MagicMock())
         monkeypatch.setattr("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", MagicMock(return_value=pool))
 
         # Cache invalidation subscriber
