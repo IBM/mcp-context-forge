@@ -1923,7 +1923,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await shutdown_services(services_to_shutdown)
 
         # Shutdown MCP session pool (before shared HTTP client)
-        if settings.mcp_session_pool_enabled:
+        # Must match the init condition (pool OR affinity) to cover affinity-only deployments.
+        if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
             # First-Party
             from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
