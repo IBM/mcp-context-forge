@@ -651,43 +651,19 @@ class TestClusterMode:
                     # Directly test the helper
                     from mcpgateway.utils.redis_client import _create_cluster_client
 
-                    client = await _create_cluster_client(mock_settings, mock_aioredis, None)
+                    client = await _create_cluster_client(mock_settings, mock_aioredis)
 
                     assert client is mock_cluster
                     mock_redis_cluster_cls.from_url.assert_called_once()
                     # Verify /0 was stripped from URL
                     call_args = mock_redis_cluster_cls.from_url.call_args
                     assert "/0" not in call_args[0][0]
-                    # Verify parser_class is NOT passed when None
+                    # RedisCluster does not support parser_class or retry_on_timeout
                     assert "parser_class" not in call_args[1]
-
-    @pytest.mark.asyncio
-    async def test_cluster_client_with_explicit_parser(self):
-        """_create_cluster_client passes parser_class when specified."""
-        mock_cluster = AsyncMock()
-        mock_cluster.ping = AsyncMock(return_value=True)
-
-        mock_redis_cluster_cls = MagicMock()
-        mock_redis_cluster_cls.from_url = MagicMock(return_value=mock_cluster)
-
-        mock_settings = MagicMock()
-        mock_settings.redis_url = "redis://:pass@host:6379/0"
-        mock_settings.redis_decode_responses = True
-        mock_settings.redis_socket_timeout = 5.0
-        mock_settings.redis_socket_connect_timeout = 5.0
-        mock_settings.redis_retry_on_timeout = True
-
-        mock_aioredis = MagicMock()
-        mock_aioredis.RedisCluster = mock_redis_cluster_cls
-
-        from mcpgateway.utils.redis_client import _create_cluster_client
-
-        sentinel_parser = object()
-        client = await _create_cluster_client(mock_settings, mock_aioredis, sentinel_parser)
-
-        assert client is mock_cluster
-        call_kwargs = mock_redis_cluster_cls.from_url.call_args[1]
-        assert call_kwargs["parser_class"] is sentinel_parser
+                    assert "retry_on_timeout" not in call_args[1]
+                    # But it does support max_connections and health_check_interval
+                    assert call_args[1]["max_connections"] == 10
+                    assert call_args[1]["health_check_interval"] == 30
 
     @pytest.mark.asyncio
     async def test_cluster_mode_true_via_get_redis_client(self):
@@ -721,6 +697,10 @@ class TestClusterMode:
                     mock_redis_cluster_cls.from_url.assert_called_once()
                     call_args = mock_redis_cluster_cls.from_url.call_args
                     assert "/0" not in call_args[0][0]
+                    # Verify unsupported kwargs are NOT passed
+                    assert "parser_class" not in call_args[1]
+                    assert "retry_on_timeout" not in call_args[1]
+                    assert "single_connection_client" not in call_args[1]
 
     @pytest.mark.asyncio
     async def test_cluster_mode_non_zero_db_raises_error(self):

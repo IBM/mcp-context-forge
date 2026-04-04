@@ -103,7 +103,7 @@ def _strip_db_from_url(url: str) -> str:
         url: Redis connection URL, e.g. ``redis://:pass@host:6379/0``
 
     Returns:
-        URL without the trailing database path, e.g. ``redis://:pass@host:6379``
+        str: URL without the trailing database path.
 
     Raises:
         ValueError: If the URL specifies a non-zero database number.
@@ -122,10 +122,7 @@ def _strip_db_from_url(url: str) -> str:
     if parsed.path and parsed.path not in ("", "/"):
         db_str = parsed.path.lstrip("/")
         if db_str and db_str != "0":
-            raise ValueError(
-                f"Redis Cluster only supports database 0, but REDIS_URL "
-                f"specifies /{db_str}. Remove the database selector or use /0."
-            )
+            raise ValueError(f"Redis Cluster only supports database 0, but REDIS_URL " f"specifies /{db_str}. Remove the database selector or use /0.")
         cleaned = parsed._replace(path="")
         return cleaned.geturl()
     return url
@@ -141,7 +138,7 @@ def _mask_redis_url(url: str) -> str:
         url: Redis connection URL, e.g. ``redis://:secret@host:6379``
 
     Returns:
-        Masked URL, e.g. ``redis://:***@host:6379``
+        str: URL with password replaced by ``***``.
 
     Examples:
         >>> _mask_redis_url("redis://:secret@host:6379")
@@ -157,32 +154,33 @@ def _mask_redis_url(url: str) -> str:
     return url
 
 
-async def _create_cluster_client(settings: Any, aioredis: Any, parser_class: Any) -> Any:
+async def _create_cluster_client(settings: Any, aioredis: Any) -> Any:
     """Create a ``redis.asyncio.RedisCluster`` client.
 
     Args:
         settings: Application settings object.
         aioredis: The ``redis.asyncio`` module.
-        parser_class: Optional parser class override (or *None* for auto).
 
     Returns:
         An initialised ``RedisCluster`` async client.
+
+    Note:
+        ``RedisCluster`` does not accept ``retry_on_timeout``,
+        ``parser_class``, or ``single_connection_client``.  It does
+        accept ``max_connections`` and ``health_check_interval``.
+        ``publish()`` and ``pubsub()`` are **not** available on the
+        async cluster client (redis-py 7.x).
     """
     url = _strip_db_from_url(settings.redis_url)
 
-    # RedisCluster accepts a subset of the standalone kwargs.
-    # ``max_connections`` and ``single_connection_client`` are not valid here;
-    # the cluster client manages per-node connection pools internally.
     cluster_kwargs: dict[str, Any] = {
         "decode_responses": settings.redis_decode_responses,
+        "max_connections": settings.redis_max_connections,
         "socket_timeout": settings.redis_socket_timeout,
         "socket_connect_timeout": settings.redis_socket_connect_timeout,
-        "retry_on_timeout": settings.redis_retry_on_timeout,
+        "health_check_interval": settings.redis_health_check_interval,
         "encoding": "utf-8",
     }
-
-    if parser_class is not None:
-        cluster_kwargs["parser_class"] = parser_class
 
     client = aioredis.RedisCluster.from_url(url, **cluster_kwargs)
     await client.ping()
@@ -281,12 +279,14 @@ async def get_redis_client() -> Optional[Any]:
         parser_class, _parser_info = _get_async_parser_class(settings.redis_parser)
 
         if settings.redis_cluster_mode:
-            _client = await _create_cluster_client(settings, aioredis, parser_class)
+            _client = await _create_cluster_client(settings, aioredis)
             masked_url = _mask_redis_url(_strip_db_from_url(settings.redis_url))
-            logger.info(
-                f"Redis Cluster client initialized: parser={_parser_info}, "
-                f"timeout={settings.redis_socket_timeout}s, "
-                f"url={masked_url}"
+            logger.info(f"Redis Cluster client initialized: parser={_parser_info}, " f"timeout={settings.redis_socket_timeout}s, " f"url={masked_url}")
+            logger.warning(
+                "Redis Cluster mode: async RedisCluster does not support "
+                "publish()/pubsub(). Cross-worker cache invalidation, "
+                "session broadcasting, and cancellation propagation will "
+                "not function until those callers are migrated."
             )
         else:
             _client = await _create_standalone_client(settings, aioredis, parser_class)
