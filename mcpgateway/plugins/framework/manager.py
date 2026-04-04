@@ -820,6 +820,9 @@ class PluginManager:
                 except Exception as e:
                     # Clean error message without stack trace spam
                     logger.error("Failed to load plugin %s: {%s}", plugin_config.name, str(e))
+                    if self._config and not self._config.plugin_settings.fail_on_plugin_error:
+                        logger.warning("Skipping plugin %s because fail_on_plugin_error is disabled", plugin_config.name)
+                        continue
                     # Let it crash gracefully with a clean error
                     raise RuntimeError(f"Plugin initialization failed: {plugin_config.name} - {str(e)}") from e
 
