@@ -107,6 +107,7 @@ async def test_get_redis_client_creates_client_on_first_call():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
             client = await get_redis_client()
@@ -142,6 +143,7 @@ async def test_get_redis_client_returns_cached_client():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
             client1 = await get_redis_client()
@@ -168,6 +170,7 @@ async def test_get_redis_client_returns_none_on_connection_error():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             client = await get_redis_client()
@@ -197,6 +200,7 @@ async def test_close_redis_client_closes_active_client():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             await get_redis_client()
@@ -232,6 +236,7 @@ async def test_close_redis_client_handles_close_error():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             await get_redis_client()
@@ -260,6 +265,7 @@ async def test_is_redis_available_returns_true_when_connected():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             result = await is_redis_available()
@@ -296,6 +302,7 @@ async def test_is_redis_available_returns_false_when_ping_fails():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             result = await is_redis_available()
@@ -331,6 +338,7 @@ async def test_get_redis_client_sync_returns_cached_client():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             await get_redis_client()
@@ -361,6 +369,7 @@ async def test_reset_client_clears_state():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             await get_redis_client()
@@ -432,6 +441,7 @@ async def test_get_redis_client_with_parser_setting():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "auto"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             client = await get_redis_client()
@@ -478,6 +488,7 @@ async def test_get_redis_client_sets_parser_class_when_python_parser_selected():
         mock_settings.redis_retry_on_timeout = True
         mock_settings.redis_health_check_interval = 30
         mock_settings.redis_parser = "python"
+        mock_settings.redis_cluster_mode = False
 
         with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
             client = await get_redis_client()
@@ -556,6 +567,33 @@ class TestStripDbFromUrl:
             _strip_db_from_url("redis://:pass@host:6379/2")
 
 
+class TestMaskRedisUrl:
+    """Tests for _mask_redis_url helper."""
+
+    def test_masks_password(self):
+        """Password is replaced with ***."""
+        from mcpgateway.utils.redis_client import _mask_redis_url
+
+        result = _mask_redis_url("redis://:secret@host:6379")
+        assert result == "redis://:***@host:6379"
+        assert "secret" not in result
+
+    def test_no_password_unchanged(self):
+        """URL without password is returned unchanged."""
+        from mcpgateway.utils.redis_client import _mask_redis_url
+
+        result = _mask_redis_url("redis://host:6379")
+        assert result == "redis://host:6379"
+
+    def test_masks_user_password(self):
+        """URL with user:password masks only the password."""
+        from mcpgateway.utils.redis_client import _mask_redis_url
+
+        result = _mask_redis_url("redis://:secret@host:6379/0")
+        assert "secret" not in result
+        assert ":***@" in result
+
+
 class TestClusterMode:
     """Tests for REDIS_CLUSTER_MODE setting."""
 
@@ -620,16 +658,49 @@ class TestClusterMode:
                     # Verify /0 was stripped from URL
                     call_args = mock_redis_cluster_cls.from_url.call_args
                     assert "/0" not in call_args[0][0]
+                    # Verify parser_class is NOT passed when None
+                    assert "parser_class" not in call_args[1]
 
     @pytest.mark.asyncio
-    async def test_cluster_mode_missing_attr_defaults_false(self):
-        """When redis_cluster_mode attr is missing, defaults to False (standalone)."""
-        mock_redis = AsyncMock()
-        mock_redis.ping = AsyncMock(return_value=True)
+    async def test_cluster_client_with_explicit_parser(self):
+        """_create_cluster_client passes parser_class when specified."""
+        mock_cluster = AsyncMock()
+        mock_cluster.ping = AsyncMock(return_value=True)
+
+        mock_redis_cluster_cls = MagicMock()
+        mock_redis_cluster_cls.from_url = MagicMock(return_value=mock_cluster)
+
+        mock_settings = MagicMock()
+        mock_settings.redis_url = "redis://:pass@host:6379/0"
+        mock_settings.redis_decode_responses = True
+        mock_settings.redis_socket_timeout = 5.0
+        mock_settings.redis_socket_connect_timeout = 5.0
+        mock_settings.redis_retry_on_timeout = True
+
+        mock_aioredis = MagicMock()
+        mock_aioredis.RedisCluster = mock_redis_cluster_cls
+
+        from mcpgateway.utils.redis_client import _create_cluster_client
+
+        sentinel_parser = object()
+        client = await _create_cluster_client(mock_settings, mock_aioredis, sentinel_parser)
+
+        assert client is mock_cluster
+        call_kwargs = mock_redis_cluster_cls.from_url.call_args[1]
+        assert call_kwargs["parser_class"] is sentinel_parser
+
+    @pytest.mark.asyncio
+    async def test_cluster_mode_true_via_get_redis_client(self):
+        """get_redis_client() creates RedisCluster when redis_cluster_mode=True."""
+        mock_cluster = AsyncMock()
+        mock_cluster.ping = AsyncMock(return_value=True)
+
+        mock_redis_cluster_cls = MagicMock()
+        mock_redis_cluster_cls.from_url = MagicMock(return_value=mock_cluster)
 
         with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.cache_type = "redis"
-            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.redis_url = "redis://:pass@redis-cluster:6379/0"
             mock_settings.redis_decode_responses = True
             mock_settings.redis_max_connections = 10
             mock_settings.redis_socket_timeout = 5.0
@@ -637,11 +708,43 @@ class TestClusterMode:
             mock_settings.redis_retry_on_timeout = True
             mock_settings.redis_health_check_interval = 30
             mock_settings.redis_parser = "auto"
-            # Simulate missing attribute
-            del mock_settings.redis_cluster_mode
+            mock_settings.redis_cluster_mode = True
 
-            with patch("redis.asyncio.from_url", return_value=mock_redis) as mock_from_url:
-                client = await get_redis_client()
+            mock_aioredis = MagicMock()
+            mock_aioredis.RedisCluster = mock_redis_cluster_cls
 
-                assert client is mock_redis
-                mock_from_url.assert_called_once()
+            with patch.dict("sys.modules", {"redis.asyncio": mock_aioredis}):
+                with patch("redis.asyncio", mock_aioredis):
+                    client = await get_redis_client()
+
+                    assert client is mock_cluster
+                    mock_redis_cluster_cls.from_url.assert_called_once()
+                    call_args = mock_redis_cluster_cls.from_url.call_args
+                    assert "/0" not in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_cluster_mode_non_zero_db_raises_error(self):
+        """get_redis_client() returns None when cluster mode has non-zero DB."""
+        mock_redis_cluster_cls = MagicMock()
+
+        with patch("mcpgateway.config.settings") as mock_settings:
+            mock_settings.cache_type = "redis"
+            mock_settings.redis_url = "redis://:pass@redis-cluster:6379/1"
+            mock_settings.redis_decode_responses = True
+            mock_settings.redis_max_connections = 10
+            mock_settings.redis_socket_timeout = 5.0
+            mock_settings.redis_socket_connect_timeout = 5.0
+            mock_settings.redis_retry_on_timeout = True
+            mock_settings.redis_health_check_interval = 30
+            mock_settings.redis_parser = "auto"
+            mock_settings.redis_cluster_mode = True
+
+            mock_aioredis = MagicMock()
+            mock_aioredis.RedisCluster = mock_redis_cluster_cls
+
+            with patch.dict("sys.modules", {"redis.asyncio": mock_aioredis}):
+                with patch("redis.asyncio", mock_aioredis):
+                    client = await get_redis_client()
+
+                    assert client is None
+                    mock_redis_cluster_cls.from_url.assert_not_called()

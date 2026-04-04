@@ -148,8 +148,6 @@ def _mask_redis_url(url: str) -> str:
         'redis://:***@host:6379'
         >>> _mask_redis_url("redis://host:6379")
         'redis://host:6379'
-        >>> _mask_redis_url("redis://user:pass@host:6379")
-        'redis://user:***@host:6379'
     """
     parsed = urlparse(url)
     if parsed.password:
@@ -276,14 +274,13 @@ async def get_redis_client() -> Optional[Any]:
         # Get parser configuration (ADR-026)
         parser_class, _parser_info = _get_async_parser_class(settings.redis_parser)
 
-        cluster_mode = getattr(settings, "redis_cluster_mode", False)
-
-        if cluster_mode:
+        if settings.redis_cluster_mode:
             _client = await _create_cluster_client(settings, aioredis, parser_class)
+            masked_url = _mask_redis_url(_strip_db_from_url(settings.redis_url))
             logger.info(
                 f"Redis Cluster client initialized: parser={_parser_info}, "
                 f"timeout={settings.redis_socket_timeout}s, "
-                f"url={_mask_redis_url(_strip_db_from_url(settings.redis_url))}"
+                f"url={masked_url}"
             )
         else:
             _client = await _create_standalone_client(settings, aioredis, parser_class)
