@@ -905,11 +905,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                                     logger.info(f"Reclaimed ownership from dead worker {owner}: {mcp_session_id[:8]}...")
                                 else:
                                     # Another worker already reclaimed - let it handle
-                                    semaphore.release()
+                                    # (outer except BaseException releases the semaphore)
                                     raise RuntimeError(f"Session reclaimed by another worker: {mcp_session_id[:8]}...")
                         else:
                             # Owner is alive - should have been forwarded
-                            semaphore.release()
+                            # (outer except BaseException releases the semaphore)
                             logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({WORKER_ID})")
                             raise RuntimeError(f"Session owned by another worker: {owner}")
 
