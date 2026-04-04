@@ -849,6 +849,7 @@ async def test_list_prompts_with_server_id(monkeypatch):
     assert len(result[0].arguments) == 1
     assert isinstance(result[0].arguments[0], PromptArgument)
     assert result[0].arguments[0].name == "arg1"
+    assert result[0].arguments[0].required is False
 
 
 @pytest.mark.asyncio
