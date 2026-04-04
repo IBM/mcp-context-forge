@@ -1682,15 +1682,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             await start_pool_notification_service(gateway_service)
 
-            # Start RPC listener for multi-worker session affinity
-            if settings.mcpgateway_session_affinity_enabled:
-                # First-Party
-                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+        # Start heartbeat and RPC listener for multi-worker session affinity.
+        # This must be outside the mcp_session_pool_enabled guard because
+        # affinity-only deployments (pool disabled, affinity enabled) still
+        # need heartbeat and RPC forwarding.
+        if settings.mcpgateway_session_affinity_enabled:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
-                pool = get_mcp_session_pool()
-                pool.start_heartbeat()
-                pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
-                logger.info("Multi-worker session affinity heartbeat and RPC listener started")
+            pool = get_mcp_session_pool()
+            pool.start_heartbeat()
+            pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
+            logger.info("Multi-worker session affinity heartbeat and RPC listener started")
 
         await root_service.initialize()
         await completion_service.initialize()
