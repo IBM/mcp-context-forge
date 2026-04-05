@@ -24,7 +24,7 @@ window.__obsExecAndStrip = function(html) {
   while ((m = scriptRe.exec(html)) !== null) {
     var attrs = m[1];
     var code = m[2].trim();
-    if (/\bsrc\s*=/i.test(attrs)) {
+    if (/(?:^|\s)src\s*=/i.test(attrs)) {
       console.warn('[obs] external <script src> not supported in dynamic partials, skipped');
       continue;
     }

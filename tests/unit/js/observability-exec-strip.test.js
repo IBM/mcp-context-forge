@@ -31,7 +31,7 @@ function defineObsExecAndStrip(window) {
     while ((m = scriptRe.exec(html)) !== null) {
       var attrs = m[1];
       var code = m[2].trim();
-      if (/\bsrc\s*=/i.test(attrs)) {
+      if (/(?:^|\s)src\s*=/i.test(attrs)) {
         console.warn(
           "[obs] external <script src> not supported in dynamic partials, skipped",
         );
@@ -194,6 +194,20 @@ describe("__obsExecAndStrip", () => {
     const clean = win.__obsExecAndStrip(html);
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(clean).toBe("<div>ok</div>");
+    warnSpy.mockRestore();
+  });
+
+  test("does not false-positive on data-src attribute", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const html =
+      '<script data-src="config">window.__dataSrcRan = true;</script><div>ok</div>';
+
+    const clean = win.__obsExecAndStrip(html);
+
+    // data-src is NOT an external script — it should execute normally
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(win.__dataSrcRan).toBe(true);
     expect(clean).toBe("<div>ok</div>");
     warnSpy.mockRestore();
   });
