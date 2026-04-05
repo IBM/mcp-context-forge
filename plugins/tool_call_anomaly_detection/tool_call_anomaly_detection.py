@@ -21,9 +21,9 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Literal, Set
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from mcpgateway.plugins.framework import (
     Plugin,
@@ -74,7 +74,15 @@ class AnomalyDetectionConfig(BaseModel):
     off_hours_start: int = Field(default=22, ge=0, le=23)
     off_hours_end: int = Field(default=6, ge=0, le=23)
     off_hours_score_bonus: float = Field(default=0.15, ge=0.0, le=1.0)
-    action: str = Field(default="warn")  # "warn" | "block"
+    action: Literal["warn", "block"] = Field(default="warn")
+
+    @model_validator(mode="after")
+    def _check_thresholds(self) -> "AnomalyDetectionConfig":
+        """Ensure warn_threshold <= block_threshold."""
+        if self.warn_threshold > self.block_threshold:
+            msg = f"warn_threshold ({self.warn_threshold}) must be <= block_threshold ({self.block_threshold})"
+            raise ValueError(msg)
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +209,7 @@ class ToolCallAnomalyDetectionPlugin(Plugin):
         return 0.0
 
     def _composite_score(
-        self, novelty: float, burst: float, frequency: float
+        self, novelty: float, burst: float, frequency: float, *, off_hours: bool
     ) -> float:
         """Compute the weighted composite risk score."""
         cfg = self._cfg
@@ -210,7 +218,7 @@ class ToolCallAnomalyDetectionPlugin(Plugin):
             + burst * cfg.burst_score_weight
             + frequency * cfg.frequency_score_weight
         )
-        if self._is_off_hours():
+        if off_hours:
             raw += cfg.off_hours_score_bonus
         return min(1.0, raw)
 
@@ -259,20 +267,18 @@ class ToolCallAnomalyDetectionPlugin(Plugin):
             )
 
         # Score the call
+        off_hours = self._is_off_hours()
         novelty = self._score_novelty(tool_name, arg_keys, baseline)
         burst = self._score_burst(baseline, now)
         frequency = self._score_frequency(tool_name, baseline)
-        risk_score = self._composite_score(novelty, burst, frequency)
-
-        # Always record (keeps baseline fresh)
-        self._record_call(user_id, tool_name, arg_keys, now)
+        risk_score = self._composite_score(novelty, burst, frequency, off_hours=off_hours)
 
         meta: Dict[str, Any] = {
             "anomaly_risk_score": round(risk_score, 4),
             "anomaly_novelty": round(novelty, 4),
             "anomaly_burst": round(burst, 4),
             "anomaly_frequency": round(frequency, 4),
-            "anomaly_off_hours": self._is_off_hours(),
+            "anomaly_off_hours": off_hours,
             "anomaly_user": user_id,
             "anomaly_tool": tool_name,
         }
@@ -300,6 +306,9 @@ class ToolCallAnomalyDetectionPlugin(Plugin):
                     details=meta,
                 ),
             )
+
+        # Record only after allowing — blocked calls should not train the baseline
+        self._record_call(user_id, tool_name, arg_keys, now)
 
         if risk_score >= self._cfg.warn_threshold:
             logger.info(

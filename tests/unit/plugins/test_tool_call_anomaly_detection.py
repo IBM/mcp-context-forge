@@ -23,7 +23,6 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.hooks.tools import ToolHookType
 from plugins.tool_call_anomaly_detection.tool_call_anomaly_detection import (
-    AnomalyDetectionConfig,
     ToolCallAnomalyDetectionPlugin,
 )
 
@@ -150,6 +149,7 @@ class TestDetectionPhase:
         plugin = self._build_trained_plugin(
             action="block",
             block_threshold=0.3,  # low threshold for testing
+            warn_threshold=0.1,
         )
         ctx = _make_context()
 
@@ -191,24 +191,25 @@ class TestDetectionPhase:
 class TestOffHours:
     @pytest.mark.asyncio
     async def test_off_hours_bonus(self):
-        plugin = ToolCallAnomalyDetectionPlugin(
-            _make_config(
-                learning_window_seconds=0,
-                off_hours_start=0,
-                off_hours_end=23,  # always off-hours
-                off_hours_score_bonus=0.15,
+        with patch.object(ToolCallAnomalyDetectionPlugin, "_is_off_hours", return_value=True):
+            plugin = ToolCallAnomalyDetectionPlugin(
+                _make_config(
+                    learning_window_seconds=0,
+                    off_hours_start=0,
+                    off_hours_end=23,
+                    off_hours_score_bonus=0.15,
+                )
             )
-        )
-        baseline = plugin._get_baseline("alice@example.com")
-        baseline.first_seen = time.time() - 7200
-        baseline.known_tools.add("db_query")
-        baseline.known_arg_signatures["db_query"].add(frozenset(["query"]))
-        baseline.tool_counts["db_query"] = 50
+            baseline = plugin._get_baseline("alice@example.com")
+            baseline.first_seen = time.time() - 7200
+            baseline.known_tools.add("db_query")
+            baseline.known_arg_signatures["db_query"].add(frozenset(["query"]))
+            baseline.tool_counts["db_query"] = 50
 
-        ctx = _make_context()
-        result = await plugin.tool_pre_invoke(_pre_payload("db_query", {"query": "x"}), ctx)
+            ctx = _make_context()
+            result = await plugin.tool_pre_invoke(_pre_payload("db_query", {"query": "x"}), ctx)
 
-        assert result.metadata["anomaly_off_hours"] is True
+            assert result.metadata["anomaly_off_hours"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +246,6 @@ class TestPruning:
         plugin = ToolCallAnomalyDetectionPlugin(
             _make_config(learning_window_seconds=9999, max_history_per_user=10)
         )
-        ctx = _make_context()
 
         for i in range(20):
             await plugin.tool_pre_invoke(_pre_payload(f"tool_{i}"), _make_context())

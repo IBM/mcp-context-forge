@@ -6,8 +6,8 @@
 Learns per-user/agent tool-calling baselines and flags behavioral anomalies in real time — burst invocations, access to unfamiliar tools, unusual frequency patterns, and off-hours activity.
 
 ## Hooks
-- `tool_pre_invoke` — Scores the incoming call against the user's baseline; warns or blocks above threshold
-- `tool_post_invoke` — Records the call into the baseline and enriches response metadata with risk scores
+- `tool_pre_invoke` — Scores the incoming call against the user's baseline, updates the baseline (allowed calls only), and may warn or block above threshold
+- `tool_post_invoke` — Reads anomaly metadata from context and enriches the tool response with risk scores
 
 ## Configuration
 
@@ -46,19 +46,22 @@ During the configurable learning window, the plugin records each user's tool-cal
 ### Anomaly Signals
 - **Novelty** — Tool name never seen in the user's history
 - **Burst** — Call rate exceeds threshold within the sliding window
-- **Frequency** — Tool called significantly more than its historical average
+- **Frequency** — Tool called significantly less than its historical average (unusually rare usage)
 - **Off-hours** — Activity outside normal working hours adds a score bonus
 
 ### Operating Modes
 - **disabled** — Plugin inactive
 - **permissive** — Scores and logs anomalies but never blocks
-- **enforce** — Blocks calls that exceed `block_threshold`
+- **enforce** — Enables blocking; calls are blocked only when `action: "block"` and the composite score exceeds `block_threshold`. Setting `action: "warn"` with enforce mode will still log but not block.
 
 ### Metadata Exposed
 - `anomaly_risk_score` — Composite risk score (0.0–1.0)
-- `anomaly_signals` — Dict of individual signal scores (novelty, burst, frequency)
-- `anomaly_off_hours` — Whether off-hours bonus was applied
-- `anomaly_action` — Action taken (allow / warn / block)
+- `anomaly_novelty` — Novelty signal score contributing to the composite risk
+- `anomaly_burst` — Burst-rate signal score contributing to the composite risk
+- `anomaly_frequency` — Frequency-pattern signal score contributing to the composite risk
+- `anomaly_off_hours` — Whether an off-hours bonus was applied when scoring
+- `anomaly_user` — The user identifier
+- `anomaly_tool` — The tool name
 
 ## Testing
 

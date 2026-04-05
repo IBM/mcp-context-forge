@@ -1080,7 +1080,7 @@ plugins:
     author: "Anuj Shrivastava"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "anomaly-detection", "behavioral", "audit"]
-    mode: "disabled"  # set to "permissive" to observe, "enforce" to block
+    mode: "disabled"  # set to "permissive" to observe; "enforce" + action: "block" to block
     priority: 201  # Run after telemetry exporter, before late-stage plugins
     conditions: []
     config:
