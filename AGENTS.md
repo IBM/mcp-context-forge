@@ -48,8 +48,9 @@ llms/                       # End-user LLM guidance (not for code agents)
 ```bash
 cp .env.example .env && make install-dev check-env    # Complete setup
 make venv                          # Create virtual environment with uv
-make install-dev                   # Install with dev dependencies
+make install-dev                   # Install with dev dependencies (includes build-ui)
 make check-env                     # Verify .env against .env.example
+make build-ui                      # Rebuild Admin UI JS bundle (requires npm)
 ```
 
 ### Development

@@ -655,7 +655,7 @@ For detailed setup, workflows, and GitHub Codespaces instructions, see **[Develo
 ## Installation
 
 ```bash
-make venv install          # create .venv + install deps
+make venv install-dev      # create .venv + install deps + build Admin UI
 make serve                 # gunicorn on :4444
 ```
 

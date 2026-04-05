@@ -101,6 +101,29 @@ The Admin UI uses plain JavaScript (not TypeScript). Frontend tooling requires N
 npm install        # install frontend dev dependencies
 ```
 
+### Building the Admin UI Bundle
+
+The Admin UI JavaScript is bundled with Vite. The bundle is not committed to the repository — it is built locally during `make install-dev` (which calls `make build-ui`). Rebuild after any changes to files under `mcpgateway/admin_ui/`.
+
+```bash
+make build-ui          # build mcpgateway/static/bundle-<hash>.js (requires npm)
+```
+
+Or manually:
+
+```bash
+npm ci                 # install dependencies from lockfile (if not already done)
+npm run vite:build     # produce mcpgateway/static/bundle-<hash>.js
+```
+
+The server reads `mcpgateway/static/.vite/manifest.json` at startup to locate the hashed bundle filename.
+
+For iterative development you can use watch mode:
+
+```bash
+npx vite build --watch
+```
+
 ### Linting & Formatting
 
 ```bash
