@@ -283,7 +283,7 @@ dev: js-build
 	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 .PHONY: dev-echo
-dev-echo:                        ## Run dev server with SQL query logging enabled
+dev-echo: js-build               ## Run dev server with SQL query logging enabled
 	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
