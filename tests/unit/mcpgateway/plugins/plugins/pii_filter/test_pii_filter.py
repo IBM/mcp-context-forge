@@ -27,6 +27,7 @@ from mcpgateway.plugins.framework import (
     PromptPosthookPayload,
     PromptPrehookPayload,
 )
+from plugins.pii_filter import pii_filter as pii_filter_module
 
 # Import the PII Filter plugin
 from plugins.pii_filter.pii_filter import (
@@ -34,13 +35,14 @@ from plugins.pii_filter.pii_filter import (
     PIIDetector,
     PIIFilterConfig,
     PIIFilterPlugin,
+    PIIPattern,
     PIIType,
 )
-from plugins.pii_filter import pii_filter as pii_filter_module
 
 # Try to import Rust implementation
 try:
-    from plugins.pii_filter.pii_filter import RustPIIDetector, RUST_AVAILABLE
+    # First-Party
+    from plugins.pii_filter.pii_filter import RUST_AVAILABLE, RustPIIDetector
 except ImportError:
     RUST_AVAILABLE = False
     RustPIIDetector = None
@@ -502,7 +504,7 @@ class TestPIIDetectorParametric:
 
     def test_secret_like_values_are_not_pii(self, detector):
         """Secret-style tokens belong to the secrets detection plugin, not PII filter."""
-        text = "AWS_KEY=AKIAIOSFODNN7EXAMPLE X-API-Key: test12345678901234567890"  # gitleaks:allow
+        text = "AWS_KEY=AKIAIOSFODNN7EXAMPLE X-API-Key: test12345678901234567890"  # gitleaks:allow  # pragma: allowlist secret
         detections = detector.detect(text)
 
         detection_keys = normalize_detection_keys(detections)
@@ -699,6 +701,7 @@ class TestRustPIIDetectorSpecific:
         """Test that Rust detector is available when imported."""
         # This test originally checked for ImportError when Rust unavailable
         # Since Rust is now available and working, we verify it can be imported
+        # First-Party
         from plugins.pii_filter.pii_filter import RustPIIDetector as RustDet
 
         config = PIIFilterConfig()
@@ -1124,6 +1127,126 @@ class TestPIIFilterPlugin:
         assert isinstance(plugin.detector, PIIDetector)
         warning_messages = [record.message for record in caplog.records if "legacy Python PII filter detector is deprecated" in record.message]
         assert len(warning_messages) == 1
+
+
+class TestPythonDefaultMaskStrategyHonored:
+    """Verify that the Python PIIDetector respects default_mask_strategy for all built-in PII types.
+
+    Regression tests for #3724: previously each built-in pattern had a hardcoded
+    mask_strategy (PARTIAL or REDACT) that overrode the config value.
+    """
+
+    def test_default_redact_strategy_applied_to_all_types(self):
+        """With default config (REDACT), all detections should carry the redact strategy."""
+        config = PIIFilterConfig(default_mask_strategy=MaskingStrategy.REDACT)
+        detector = PIIDetector(config)
+
+        text = "SSN: 123-45-6789 Email: john@example.com Phone: 555-123-4567"
+        detections = detector.detect(text)
+
+        for pii_type, items in detections.items():
+            for item in items:
+                assert item["mask_strategy"] == MaskingStrategy.REDACT, f"{pii_type} should use REDACT, got {item['mask_strategy']}"
+
+    def test_partial_strategy_applied_to_all_types(self):
+        """When config sets PARTIAL, every built-in pattern should use PARTIAL."""
+        config = PIIFilterConfig(default_mask_strategy=MaskingStrategy.PARTIAL)
+        detector = PIIDetector(config)
+
+        text = "SSN: 123-45-6789 Email: john@example.com Phone: 555-123-4567 IP: 192.168.1.1"
+        detections = detector.detect(text)
+
+        for pii_type, items in detections.items():
+            for item in items:
+                assert item["mask_strategy"] == MaskingStrategy.PARTIAL, f"{pii_type} should use PARTIAL, got {item['mask_strategy']}"
+
+    def test_hash_strategy_applied_to_all_types(self):
+        """When config sets HASH, every built-in pattern should use HASH."""
+        config = PIIFilterConfig(
+            detect_ssn=True,
+            detect_email=True,
+            detect_phone=False,
+            detect_bank_account=False,
+            default_mask_strategy=MaskingStrategy.HASH,
+        )
+        detector = PIIDetector(config)
+
+        text = "SSN: 123-45-6789 Email: john@example.com"
+        detections = detector.detect(text)
+        masked = detector.mask(text, detections)
+
+        for pii_type, items in detections.items():
+            for item in items:
+                assert item["mask_strategy"] == MaskingStrategy.HASH, f"{pii_type} should use HASH, got {item['mask_strategy']}"
+
+        assert "[HASH:" in masked
+        assert "123-45-6789" not in masked
+        assert "john@example.com" not in masked
+
+    def test_redact_masks_ssn_completely(self):
+        """SSN should be fully redacted (not partially masked) when strategy is REDACT."""
+        config = PIIFilterConfig(detect_ssn=True, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.REDACT)
+        detector = PIIDetector(config)
+
+        text = "SSN: 123-45-6789"
+        detections = detector.detect(text)
+        masked = detector.mask(text, detections)
+
+        assert "[REDACTED]" in masked
+        assert "6789" not in masked
+
+    def test_redact_masks_ip_address(self):
+        """IP address should use the configured strategy, not a hardcoded one."""
+        config = PIIFilterConfig(detect_ip_address=True, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.PARTIAL)
+        detector = PIIDetector(config)
+
+        text = "Server: 192.168.1.1"
+        detections = detector.detect(text)
+        masked = detector.mask(text, detections)
+
+        assert "192.168.1.1" not in masked
+        assert "[REDACTED]" not in masked
+
+    def test_custom_pattern_keeps_explicit_strategy(self):
+        """Custom patterns with explicit mask_strategy should not be overridden by the global default."""
+        config = PIIFilterConfig(
+            detect_ssn=False,
+            detect_phone=False,
+            detect_bank_account=False,
+            default_mask_strategy=MaskingStrategy.HASH,
+            custom_patterns=[
+                PIIPattern(type=PIIType.CUSTOM, pattern=r"\bEMP\d{6}\b", description="Employee ID", mask_strategy=MaskingStrategy.PARTIAL),
+            ],
+        )
+        detector = PIIDetector(config)
+
+        text = "Employee EMP123456"
+        detections = detector.detect(text)
+
+        custom_key = next(k for k in detections.keys() if "custom" in str(k).lower())
+        assert detections[custom_key][0]["mask_strategy"] == MaskingStrategy.PARTIAL
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [MaskingStrategy.REDACT, MaskingStrategy.PARTIAL, MaskingStrategy.HASH, MaskingStrategy.TOKENIZE, MaskingStrategy.REMOVE],
+    )
+    def test_all_strategies_propagate_to_detections(self, strategy):
+        """Every MaskingStrategy value should propagate to all built-in pattern detections."""
+        config = PIIFilterConfig(
+            detect_ssn=True,
+            detect_email=True,
+            detect_phone=False,
+            detect_bank_account=False,
+            default_mask_strategy=strategy,
+        )
+        detector = PIIDetector(config)
+
+        text = "SSN: 123-45-6789 Email: john@example.com"
+        detections = detector.detect(text)
+
+        for pii_type, items in detections.items():
+            for item in items:
+                assert item["mask_strategy"] == strategy, f"{pii_type} should use {strategy.value}, got {item['mask_strategy']}"
 
 
 if __name__ == "__main__":
