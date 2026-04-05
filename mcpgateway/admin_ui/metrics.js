@@ -1494,7 +1494,7 @@ export const updateTableRows = function (
     avgTimeCell.className =
       "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
     const avgTime = item.avg_response_time ?? item.avgResponseTime;
-    avgTimeCell.textContent = avgTime != null ? `${Math.round(Number(avgTime) * 1000)}ms` : "N/A" ;
+    avgTimeCell.textContent = avgTime != null ? `${Math.round(Number(avgTime) * 1000)}ms` : "N/A";
     row.appendChild(avgTimeCell);
 
     // Success Rate
@@ -1554,7 +1554,7 @@ item.execution_count ||
 item.executions ||
 0,
 ),
-item.avg_response_time ?? item.avgResponseTime
+(item.avg_response_time ?? item.avgResponseTime) != null
 ? `${Math.round((item.avg_response_time ?? item.avgResponseTime) * 1000)}ms`
 : "N/A",
 `${calculateSuccessRate(item)}%`,
@@ -1659,20 +1659,7 @@ export const createPerformanceCard = function (performanceData) {
 
       const valueSpan = document.createElement("span");
       valueSpan.className = "font-medium dark:text-gray-200";
-      let displayValue;
-      if (value === "N/A") {
-        displayValue = "N/A";
-      } else if (metric.key === "avgResponseTime") {
-        const ms = Number(value);
-        displayValue = isNaN(ms) ? "N/A" : `${(ms * 1000).toFixed(1)} ms`;
-      } else if (metric.key === "lastExecutionTime") {
-        displayValue = typeof value === "string" && value.includes("T")
-          ? value.slice(0, 16).replace("T", " ")
-          : String(value);
-      } else {
-        displayValue = String(value);
-      }
-      valueSpan.textContent = displayValue;
+      valueSpan.textContent = value === "N/A" ? "N/A" : String(value);
 
       metricRow.appendChild(label);
       metricRow.appendChild(valueSpan);
