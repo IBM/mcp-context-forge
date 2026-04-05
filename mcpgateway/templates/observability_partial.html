@@ -13,7 +13,34 @@ if (!window.getChartDefaults) {
     };
   };
 }
-</script>
+/**
+ * Execute <script> blocks from raw HTML text and return clean HTML.
+ * Uses regex to extract scripts (avoids DOM innerHTML parsing issues)
+ * and document.createElement('script') for reliable execution.
+ */
+window.__obsExecAndStrip = function(html) {
+  var scriptRe = new RegExp('<' + 'script\\b([^>]*)>([\\s\\S]*?)</' + 'script>', 'gi');
+  var m;
+  while ((m = scriptRe.exec(html)) !== null) {
+    var attrs = m[1];
+    var code = m[2].trim();
+    if (/(?:^|\s)src\s*=/i.test(attrs)) {
+      console.warn('[obs] external <script src> not supported in dynamic partials, skipped');
+      continue;
+    }
+    if (code) {
+      try {
+        var s = document.createElement('script');
+        s.text = code;
+        document.head.appendChild(s);
+        s.remove();
+      } catch (e) {
+        console.error('[obs] script exec error:', e);
+      }
+    }
+  }
+  return html.replace(new RegExp('<' + 'script\\b[^>]*>[\\s\\S]*?</' + 'script>', 'gi'), '');
+};</script>
 <div class="observability-container" x-data="{
     viewMode: 'traces',
     selectedTrace: null,
@@ -79,26 +106,19 @@ if (!window.getChartDefaults) {
                     return;
                 }
 
-                container.innerHTML = html;
+                // Extract scripts from raw text and execute synchronously,
+                // then get clean HTML without <script> tags
+                const cleanHtml = window.__obsExecAndStrip(html);
 
-                // Execute any script tags (innerHTML doesn't execute them)
-                const scripts = container.querySelectorAll('script');
-                scripts.forEach(script => {
-                    const newScript = document.createElement('script');
-                    if (script.src) {
-                        newScript.src = script.src;
-                    } else {
-                        newScript.textContent = script.textContent;
-                    }
-                    document.head.appendChild(newScript);
-                });
-
-                // Wait for scripts to execute and charts to render
-                await new Promise(resolve => setTimeout(resolve, 100));
-
-                // Re-initialize Alpine.js
-                if (window.Alpine) {
+                // Insert script-free HTML with Alpine MutationObserver disabled,
+                // then explicitly initialize Alpine components
+                if (window.Alpine && typeof window.Alpine.mutateDom === 'function' && typeof window.Alpine.initTree === 'function') {
+                    window.Alpine.mutateDom(() => {
+                        container.innerHTML = cleanHtml;
+                    });
                     window.Alpine.initTree(container);
+                } else {
+                    container.innerHTML = cleanHtml;
                 }
 
                 // Only mark as loaded if we're still on the metrics view
@@ -149,26 +169,15 @@ if (!window.getChartDefaults) {
                     return;
                 }
 
-                container.innerHTML = html;
+                const cleanHtml = window.__obsExecAndStrip(html);
 
-                // Execute any script tags (innerHTML doesn't execute them)
-                const scripts = container.querySelectorAll('script');
-                scripts.forEach(script => {
-                    const newScript = document.createElement('script');
-                    if (script.src) {
-                        newScript.src = script.src;
-                    } else {
-                        newScript.textContent = script.textContent;
-                    }
-                    document.head.appendChild(newScript);
-                });
-
-                // Wait for scripts to execute and charts to render
-                await new Promise(resolve => setTimeout(resolve, 100));
-
-                // Re-initialize Alpine.js
-                if (window.Alpine) {
+                if (window.Alpine && typeof window.Alpine.mutateDom === 'function' && typeof window.Alpine.initTree === 'function') {
+                    window.Alpine.mutateDom(() => {
+                        container.innerHTML = cleanHtml;
+                    });
                     window.Alpine.initTree(container);
+                } else {
+                    container.innerHTML = cleanHtml;
                 }
 
                 // Only mark as loaded if we're still on the tools view
@@ -219,26 +228,15 @@ if (!window.getChartDefaults) {
                     return;
                 }
 
-                container.innerHTML = html;
+                const cleanHtml = window.__obsExecAndStrip(html);
 
-                // Execute any script tags (innerHTML doesn't execute them)
-                const scripts = container.querySelectorAll('script');
-                scripts.forEach(script => {
-                    const newScript = document.createElement('script');
-                    if (script.src) {
-                        newScript.src = script.src;
-                    } else {
-                        newScript.textContent = script.textContent;
-                    }
-                    document.head.appendChild(newScript);
-                });
-
-                // Wait for scripts to execute and charts to render
-                await new Promise(resolve => setTimeout(resolve, 100));
-
-                // Re-initialize Alpine.js
-                if (window.Alpine) {
+                if (window.Alpine && typeof window.Alpine.mutateDom === 'function' && typeof window.Alpine.initTree === 'function') {
+                    window.Alpine.mutateDom(() => {
+                        container.innerHTML = cleanHtml;
+                    });
                     window.Alpine.initTree(container);
+                } else {
+                    container.innerHTML = cleanHtml;
                 }
 
                 // Only mark as loaded if we're still on the prompts view
@@ -289,26 +287,15 @@ if (!window.getChartDefaults) {
                     return;
                 }
 
-                container.innerHTML = html;
+                const cleanHtml = window.__obsExecAndStrip(html);
 
-                // Execute any script tags (innerHTML doesn't execute them)
-                const scripts = container.querySelectorAll('script');
-                scripts.forEach(script => {
-                    const newScript = document.createElement('script');
-                    if (script.src) {
-                        newScript.src = script.src;
-                    } else {
-                        newScript.textContent = script.textContent;
-                    }
-                    document.head.appendChild(newScript);
-                });
-
-                // Wait for scripts to execute
-                await new Promise(resolve => setTimeout(resolve, 100));
-
-                // Re-initialize Alpine.js
-                if (window.Alpine) {
+                if (window.Alpine && typeof window.Alpine.mutateDom === 'function' && typeof window.Alpine.initTree === 'function') {
+                    window.Alpine.mutateDom(() => {
+                        container.innerHTML = cleanHtml;
+                    });
                     window.Alpine.initTree(container);
+                } else {
+                    container.innerHTML = cleanHtml;
                 }
 
                 // Only mark as loaded if we're still on the resources view
