@@ -31,10 +31,13 @@ def main():
         print("🧬 Starting mutation testing (sample mode)...")
         print("💡 Tip: Use 'python run_mutmut.py --full' for complete testing")
 
-    # Clean previous runs
+    # Clean previous runs — only tolerate missing dirs, not permission errors
     print("🧹 Cleaning previous mutants...")
     for path in ["mutants", ".mutmut-cache"]:
-        shutil.rmtree(path, ignore_errors=True)
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
 
     # Generate mutants (will fail at stats but mutants are created)
     print("📝 Generating mutants (this may take a minute)...")

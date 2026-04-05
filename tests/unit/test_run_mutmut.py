@@ -96,7 +96,7 @@ class TestMutmutCleanup:
         assert not (tmp_path / ".mutmut-cache").exists()
 
     def test_missing_dirs_do_not_raise(self, tmp_path, _mutmut_module):
-        """ignore_errors=True means absent directories are silently skipped."""
+        """FileNotFoundError is caught so absent directories are silently skipped."""
         assert not (tmp_path / "mutants").exists()
         assert not (tmp_path / ".mutmut-cache").exists()
 
@@ -105,15 +105,16 @@ class TestMutmutCleanup:
 
         assert result == 1  # returns 1 because mutants/ never appears
 
-    def test_rmtree_called_with_correct_args(self, _mutmut_module):
-        """shutil.rmtree is called exactly twice, with ignore_errors=True."""
+    def test_rmtree_called_without_ignore_errors(self, _mutmut_module):
+        """shutil.rmtree is called without ignore_errors (real errors must propagate)."""
         with patch.object(_mutmut_module.shutil, "rmtree") as mock_rm:
             with patch.object(_mutmut_module, "run_command", return_value=("", "", 1)):
                 _mutmut_module.main()
 
+        # rmtree must be called without ignore_errors — only FileNotFoundError is caught
         assert mock_rm.call_args_list == [
-            call("mutants", ignore_errors=True),
-            call(".mutmut-cache", ignore_errors=True),
+            call("mutants"),
+            call(".mutmut-cache"),
         ]
 
     def test_partial_dir_removal(self, tmp_path, _mutmut_module):
@@ -124,6 +125,22 @@ class TestMutmutCleanup:
             _mutmut_module.main()
 
         assert not (tmp_path / ".mutmut-cache").exists()
+
+    def test_permission_error_propagates(self, tmp_path, _mutmut_module):
+        """Non-FileNotFoundError exceptions (e.g. PermissionError) must not be swallowed.
+
+        If stale directories can't actually be removed, the script must fail
+        rather than silently proceeding with stale mutant data.
+        """
+
+        def rmtree_perm_error(path):
+            if path == "mutants":
+                raise PermissionError(f"Cannot remove {path}")
+
+        with patch.object(_mutmut_module.shutil, "rmtree", side_effect=rmtree_perm_error):
+            with patch.object(_mutmut_module, "run_command", return_value=("", "", 1)):
+                with pytest.raises(PermissionError, match="Cannot remove mutants"):
+                    _mutmut_module.main()
 
 
 class TestMutmutSecurityRegression:
