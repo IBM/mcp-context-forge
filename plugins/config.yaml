@@ -1072,6 +1072,32 @@ plugins:
         timeout_ms: 1000
         parallel_evaluation: true
 
+  # Tool Call Anomaly Detection - behavioral baseline monitoring for agentic tool calls
+  - name: "ToolCallAnomalyDetection"
+    kind: "plugins.tool_call_anomaly_detection.tool_call_anomaly_detection.ToolCallAnomalyDetectionPlugin"
+    description: "Detects anomalous tool-calling patterns per user/agent using behavioral baselines"
+    version: "0.1.0"
+    author: "Anuj Shrivastava"
+    hooks: ["tool_pre_invoke", "tool_post_invoke"]
+    tags: ["security", "anomaly-detection", "behavioral", "audit"]
+    mode: "disabled"  # set to "permissive" to observe; "enforce" + action: "block" to block
+    priority: 201  # Run after telemetry exporter, before late-stage plugins
+    conditions: []
+    config:
+      learning_window_seconds: 3600
+      burst_window_seconds: 60
+      burst_threshold: 20
+      novelty_score_weight: 0.35
+      burst_score_weight: 0.35
+      frequency_score_weight: 0.15
+      block_threshold: 0.8
+      warn_threshold: 0.5
+      max_history_per_user: 1000
+      off_hours_start: 22
+      off_hours_end: 6
+      off_hours_score_bonus: 0.15
+      action: "warn"
+
   # JWT Claims Extraction — extracts claims for downstream Cedar/OPA authorization
   - name: "JwtClaimsExtractionPlugin"
     kind: "plugins.jwt_claims_extraction.jwt_claims_extraction.JwtClaimsExtractionPlugin"

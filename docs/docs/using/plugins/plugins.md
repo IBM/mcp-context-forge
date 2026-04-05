@@ -31,6 +31,7 @@ Plugins for protecting against security threats, detecting sensitive data, and m
 | [VirusTotal Checker](https://github.com/IBM/mcp-context-forge/tree/main/plugins/virus_total_checker) | Native | Integrates with VirusTotal v3 to check URLs, domains, IPs, and file hashes before fetching with configurable blocking policies |
 | [LLMGuard](https://github.com/IBM/mcp-context-forge/tree/main/plugins/external/llmguard) | External | Comprehensive AI guardrails utilizing LLM Guard library with filters and sanitizers for input prompts and model outputs. Supports complex policy expressions and vault-based anonymization |
 | [ClamAV Remote](https://github.com/IBM/mcp-context-forge/tree/main/plugins/external/clamav_server) | External | External MCP server plugin that scans files and text content using ClamAV for malware detection in resources, prompts, and tool outputs |
+| [Tool Call Anomaly Detection](https://github.com/IBM/mcp-context-forge/tree/main/plugins/tool_call_anomaly_detection) | Native | Learns per-user tool-calling baselines and flags behavioral deviations: burst invocations, novel tool access, unusual frequency patterns, and off-hours activity |
 
 ## Reliability & Performance
 

@@ -2,6 +2,12 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [Unreleased]
+
+### Added
+
+- **Tool Call Anomaly Detection Plugin** — Learns per-user tool-calling baselines and flags behavioral deviations: burst invocations, novel tool access, unusual frequency patterns, and off-hours activity. Runs on `tool_pre_invoke` and `tool_post_invoke` hooks with zero external dependencies. ([#3846](https://github.com/IBM/mcp-context-forge/pull/3846), closes [#3845](https://github.com/IBM/mcp-context-forge/issues/3845))
+
 ## [1.0.0] - 2026-03-31 - General Availability
 
 ### Overview
