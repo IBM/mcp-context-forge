@@ -272,6 +272,34 @@ install-db: venv
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
+	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+		echo "🦀 Building Rust plugins..."; \
+		$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"; \
+	else \
+		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
+	fi
+	@$(MAKE) build-ui
+
+# help: build-ui              - Build Admin UI JS bundle with Vite (requires npm; set SKIP_UI_BUILD=1 to bypass)
+.PHONY: build-ui
+build-ui:
+	@if [ "$(SKIP_UI_BUILD)" = "1" ]; then \
+		echo "⏭️  SKIP_UI_BUILD=1 — skipping Admin UI build (the Admin UI will not load at runtime)"; \
+	elif command -v npm >/dev/null 2>&1; then \
+		echo "🔨 Building Admin UI bundle..."; \
+		if [ -f package-lock.json ]; then \
+			npm ci --no-audit --no-fund; \
+		else \
+			echo "ℹ️  package-lock.json not found — falling back to 'npm install'"; \
+			npm install --no-audit --no-fund; \
+		fi && \
+		npm run vite:build; \
+	else \
+		echo "❌ npm not found — install Node.js (https://nodejs.org) to build the Admin UI."; \
+		echo "   Without the bundle, /admin will fail to load at runtime."; \
+		echo "   To bypass this step intentionally, re-run with SKIP_UI_BUILD=1."; \
+		exit 1; \
+	fi
 
 .PHONY: update
 update:
