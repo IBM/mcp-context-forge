@@ -749,12 +749,29 @@ export const initPromptSelect = function (
             ? getSelectedGatewayIds()
             : [];
           const selectedTeamId = getCurrentTeamId();
+          const searchInputId =
+            selectId === "edit-server-prompts"
+              ? "searchEditPrompts"
+              : "searchPrompts";
+          const searchInput = document.getElementById(searchInputId);
+          const searchTerm = searchInput ? searchInput.value.trim() : "";
           const params = new URLSearchParams();
           if (selectedGatewayIds && selectedGatewayIds.length) {
             params.set("gateway_id", selectedGatewayIds.join(","));
           }
           if (selectedTeamId) {
             params.set("team_id", selectedTeamId);
+          }
+          if (searchTerm) {
+            params.set("q", searchTerm);
+          }
+          const viewPublicId =
+            selectId === "edit-server-prompts"
+              ? "edit-server-view-public"
+              : "add-server-view-public";
+          const viewPublicCb = document.getElementById(viewPublicId);
+          if (viewPublicCb && viewPublicCb.checked) {
+            params.set("include_public", "true");
           }
           const queryString = params.toString();
           const resp = await fetch(

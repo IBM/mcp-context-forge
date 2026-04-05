@@ -11258,6 +11258,7 @@ async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, m
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -11275,9 +11276,9 @@ async def test_admin_get_all_tool_ids_team_scoped_includes_public(monkeypatch, m
 
 @pytest.mark.asyncio
 async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch, mock_db):
-    """When team_id is set, the SQL query must include a standalone visibility='public'
-    condition so platform-public prompts appear in team-scoped Select All fetches.
-    Regression test for issue #3446."""
+    """When team_id is set and include_public=True, the SQL query must include a standalone
+    visibility='public' condition so platform-public prompts appear in team-scoped Select All
+    fetches.  Regression test for issue #3446."""
     # Standard
     import re
 
@@ -11291,6 +11292,7 @@ async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch,
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -11305,9 +11307,9 @@ async def test_admin_get_all_prompt_ids_team_scoped_includes_public(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_admin_get_all_resource_ids_team_scoped_includes_public(monkeypatch, mock_db):
-    """When team_id is set, the SQL query must include a standalone visibility='public'
-    condition so platform-public resources appear in team-scoped Select All fetches.
-    Regression test for issue #3446."""
+    """When team_id is set and include_public=True, the SQL query must include a standalone
+    visibility='public' condition so platform-public resources appear in team-scoped Select All
+    fetches.  Regression test for issue #3446."""
     # Standard
     import re
 
@@ -11321,6 +11323,7 @@ async def test_admin_get_all_resource_ids_team_scoped_includes_public(monkeypatc
         include_inactive=False,
         gateway_id=None,
         team_id="team-1",
+        include_public=True,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )

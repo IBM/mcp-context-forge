@@ -892,3 +892,123 @@ describe("runPromptTest - Extended", () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ---------------------------------------------------------------------------
+// initPromptSelect - Select All respects search filter
+// ---------------------------------------------------------------------------
+describe("initPromptSelect - Select All respects search filter", () => {
+  test("passes search query to /admin/prompts/ids when search input has value", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const container = document.createElement("div");
+    container.id = "associatedPrompts";
+    document.body.appendChild(container);
+
+    const pillsBox = document.createElement("div");
+    pillsBox.id = "prompt-pills-sa";
+    document.body.appendChild(pillsBox);
+    const warnBox = document.createElement("div");
+    warnBox.id = "prompt-warn-sa";
+    document.body.appendChild(warnBox);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.id = "selectAllPromptsBtn";
+    document.body.appendChild(selectBtn);
+
+    const scrollTrigger = document.createElement("div");
+    scrollTrigger.id = "prompts-scroll-trigger-1";
+    document.body.appendChild(scrollTrigger);
+
+    const searchInput = document.createElement("input");
+    searchInput.id = "searchPrompts";
+    searchInput.value = "  code  ";
+    document.body.appendChild(searchInput);
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({ prompt_ids: ["prompt-code-1"], count: 1 }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    initPromptSelect(
+      "associatedPrompts",
+      "prompt-pills-sa",
+      "prompt-warn-sa",
+      6,
+      "selectAllPromptsBtn"
+    );
+
+    const btn = document.getElementById("selectAllPromptsBtn");
+    await btn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const fetchUrl = fetchSpy.mock.calls[0][0];
+    expect(fetchUrl).toContain("/admin/prompts/ids");
+    expect(fetchUrl).toContain("q=code");
+
+    consoleSpy.mockRestore();
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  test("uses searchEditPrompts input in edit-server mode", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const container = document.createElement("div");
+    container.id = "edit-server-prompts";
+    document.body.appendChild(container);
+
+    const pillsBox = document.createElement("div");
+    pillsBox.id = "prompt-pills-edit";
+    document.body.appendChild(pillsBox);
+    const warnBox = document.createElement("div");
+    warnBox.id = "prompt-warn-edit";
+    document.body.appendChild(warnBox);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.id = "selectAllEditPromptsBtn";
+    document.body.appendChild(selectBtn);
+
+    const scrollTrigger = document.createElement("div");
+    scrollTrigger.id = "prompts-scroll-trigger-1";
+    document.body.appendChild(scrollTrigger);
+
+    const searchInput = document.createElement("input");
+    searchInput.id = "searchEditPrompts";
+    searchInput.value = "review";
+    document.body.appendChild(searchInput);
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({ prompt_ids: ["prompt-review-1"], count: 1 }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    initPromptSelect(
+      "edit-server-prompts",
+      "prompt-pills-edit",
+      "prompt-warn-edit",
+      6,
+      "selectAllEditPromptsBtn"
+    );
+
+    const btn = document.getElementById("selectAllEditPromptsBtn");
+    await btn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const fetchUrl = fetchSpy.mock.calls[0][0];
+    expect(fetchUrl).toContain("q=review");
+
+    consoleSpy.mockRestore();
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+});

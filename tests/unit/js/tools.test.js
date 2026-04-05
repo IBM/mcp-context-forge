@@ -2917,3 +2917,198 @@ describe("loadTools - edge cases", () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ---------------------------------------------------------------------------
+// initToolSelect - Select All passes search query
+// ---------------------------------------------------------------------------
+describe("initToolSelect - Select All respects search filter", () => {
+  test("passes search query to /admin/tools/ids when search input has value", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Set up container
+    const container = document.createElement("div");
+    container.id = "associatedTools";
+    document.body.appendChild(container);
+
+    // Pills and warning
+    const pillsBox = document.createElement("div");
+    pillsBox.id = "test-pills-sa";
+    document.body.appendChild(pillsBox);
+    const warnBox = document.createElement("div");
+    warnBox.id = "test-warn-sa";
+    document.body.appendChild(warnBox);
+
+    // Select All button
+    const selectBtn = document.createElement("button");
+    selectBtn.id = "selectAllToolsBtn";
+    document.body.appendChild(selectBtn);
+
+    // Pagination trigger (forces fetch path instead of visible-only path)
+    const scrollTrigger = document.createElement("div");
+    scrollTrigger.id = "tools-scroll-trigger-1";
+    document.body.appendChild(scrollTrigger);
+
+    // Search input with a search term
+    const searchInput = document.createElement("input");
+    searchInput.id = "searchTools";
+    searchInput.value = "  git  ";
+    document.body.appendChild(searchInput);
+
+    // Mock global fetch
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tool_ids: ["tool-git-1"], count: 1 }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    // Initialize
+    initToolSelect(
+      "associatedTools",
+      "test-pills-sa",
+      "test-warn-sa",
+      6,
+      "selectAllToolsBtn"
+    );
+
+    // Click Select All
+    const btn = document.getElementById("selectAllToolsBtn");
+    await btn.click();
+    // Allow microtask queue to flush
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Verify fetch was called with q=git (trimmed)
+    expect(fetchSpy).toHaveBeenCalled();
+    const fetchUrl = fetchSpy.mock.calls[0][0];
+    expect(fetchUrl).toContain("/admin/tools/ids");
+    expect(fetchUrl).toContain("q=git");
+
+    consoleSpy.mockRestore();
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  test("uses searchEditTools input in edit-server mode", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Set up container for edit mode
+    const container = document.createElement("div");
+    container.id = "edit-server-tools";
+    document.body.appendChild(container);
+
+    const pillsBox = document.createElement("div");
+    pillsBox.id = "test-pills-edit";
+    document.body.appendChild(pillsBox);
+    const warnBox = document.createElement("div");
+    warnBox.id = "test-warn-edit";
+    document.body.appendChild(warnBox);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.id = "selectAllEditToolsBtn";
+    document.body.appendChild(selectBtn);
+
+    const scrollTrigger = document.createElement("div");
+    scrollTrigger.id = "tools-scroll-trigger-1";
+    document.body.appendChild(scrollTrigger);
+
+    // Edit mode search input
+    const searchInput = document.createElement("input");
+    searchInput.id = "searchEditTools";
+    searchInput.value = "python";
+    document.body.appendChild(searchInput);
+
+    // Also add the add-mode input to verify it's NOT used
+    const addSearchInput = document.createElement("input");
+    addSearchInput.id = "searchTools";
+    addSearchInput.value = "should-not-use-this";
+    document.body.appendChild(addSearchInput);
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tool_ids: ["tool-py-1"], count: 1 }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    initToolSelect(
+      "edit-server-tools",
+      "test-pills-edit",
+      "test-warn-edit",
+      6,
+      "selectAllEditToolsBtn"
+    );
+
+    const btn = document.getElementById("selectAllEditToolsBtn");
+    await btn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const fetchUrl = fetchSpy.mock.calls[0][0];
+    expect(fetchUrl).toContain("q=python");
+    expect(fetchUrl).not.toContain("should-not-use-this");
+
+    consoleSpy.mockRestore();
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  test("does not include q param when search input is empty", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const container = document.createElement("div");
+    container.id = "associatedTools";
+    document.body.appendChild(container);
+
+    const pillsBox = document.createElement("div");
+    pillsBox.id = "test-pills-empty";
+    document.body.appendChild(pillsBox);
+    const warnBox = document.createElement("div");
+    warnBox.id = "test-warn-empty";
+    document.body.appendChild(warnBox);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.id = "selectAllToolsBtnEmpty";
+    document.body.appendChild(selectBtn);
+
+    const scrollTrigger = document.createElement("div");
+    scrollTrigger.id = "tools-scroll-trigger-1";
+    document.body.appendChild(scrollTrigger);
+
+    // Empty search input
+    const searchInput = document.createElement("input");
+    searchInput.id = "searchTools";
+    searchInput.value = "";
+    document.body.appendChild(searchInput);
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ tool_ids: ["tool-1", "tool-2"], count: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    initToolSelect(
+      "associatedTools",
+      "test-pills-empty",
+      "test-warn-empty",
+      6,
+      "selectAllToolsBtnEmpty"
+    );
+
+    const btn = document.getElementById("selectAllToolsBtnEmpty");
+    await btn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const fetchUrl = fetchSpy.mock.calls[0][0];
+    expect(fetchUrl).toContain("/admin/tools/ids");
+    expect(fetchUrl).not.toContain("q=");
+
+    consoleSpy.mockRestore();
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+});

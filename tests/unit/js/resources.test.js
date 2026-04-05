@@ -856,3 +856,123 @@ describe("initResourceSelect - with elements", () => {
     expect(spans.length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// initResourceSelect - Select All respects search filter
+// ---------------------------------------------------------------------------
+describe("initResourceSelect - Select All respects search filter", () => {
+  test("passes search query to /admin/resources/ids when search input has value", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const container = document.createElement("div");
+    container.id = "associatedResources";
+    document.body.appendChild(container);
+
+    const pillsBox = document.createElement("div");
+    pillsBox.id = "res-pills-sa";
+    document.body.appendChild(pillsBox);
+    const warnBox = document.createElement("div");
+    warnBox.id = "res-warn-sa";
+    document.body.appendChild(warnBox);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.id = "selectAllResourcesBtn";
+    document.body.appendChild(selectBtn);
+
+    const scrollTrigger = document.createElement("div");
+    scrollTrigger.id = "resources-scroll-trigger-1";
+    document.body.appendChild(scrollTrigger);
+
+    const searchInput = document.createElement("input");
+    searchInput.id = "searchResources";
+    searchInput.value = "  file  ";
+    document.body.appendChild(searchInput);
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({ resource_ids: ["res-file-1"], count: 1 }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    initResourceSelect(
+      "associatedResources",
+      "res-pills-sa",
+      "res-warn-sa",
+      6,
+      "selectAllResourcesBtn"
+    );
+
+    const btn = document.getElementById("selectAllResourcesBtn");
+    await btn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const fetchUrl = fetchSpy.mock.calls[0][0];
+    expect(fetchUrl).toContain("/admin/resources/ids");
+    expect(fetchUrl).toContain("q=file");
+
+    consoleSpy.mockRestore();
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  test("uses searchEditResources input in edit-server mode", async () => {
+    window.ROOT_PATH = "";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const container = document.createElement("div");
+    container.id = "edit-server-resources";
+    document.body.appendChild(container);
+
+    const pillsBox = document.createElement("div");
+    pillsBox.id = "res-pills-edit";
+    document.body.appendChild(pillsBox);
+    const warnBox = document.createElement("div");
+    warnBox.id = "res-warn-edit";
+    document.body.appendChild(warnBox);
+
+    const selectBtn = document.createElement("button");
+    selectBtn.id = "selectAllEditResourcesBtn";
+    document.body.appendChild(selectBtn);
+
+    const scrollTrigger = document.createElement("div");
+    scrollTrigger.id = "resources-scroll-trigger-1";
+    document.body.appendChild(scrollTrigger);
+
+    const searchInput = document.createElement("input");
+    searchInput.id = "searchEditResources";
+    searchInput.value = "config";
+    document.body.appendChild(searchInput);
+
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({ resource_ids: ["res-config-1"], count: 1 }),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    initResourceSelect(
+      "edit-server-resources",
+      "res-pills-edit",
+      "res-warn-edit",
+      6,
+      "selectAllEditResourcesBtn"
+    );
+
+    const btn = document.getElementById("selectAllEditResourcesBtn");
+    await btn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const fetchUrl = fetchSpy.mock.calls[0][0];
+    expect(fetchUrl).toContain("q=config");
+
+    consoleSpy.mockRestore();
+    warnSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+});
