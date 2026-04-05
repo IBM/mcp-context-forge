@@ -41,6 +41,7 @@ from mcpgateway.services.tool_service import (
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
     _protect_tool_headers_for_storage,
+    apply_mapping_into_target,
     extract_using_jq,
     TextContent,
     ToolError,
@@ -4316,6 +4317,69 @@ def test_extract_using_jq_short_circuits_and_errors():
 
 
 # --------------------------------------------------------------------------- #
+#                         apply_mapping_into_target                            #
+# --------------------------------------------------------------------------- #
+
+
+class TestApplyMappingIntoTarget:
+    """Unit tests for the apply_mapping_into_target utility function."""
+
+    def test_maps_matching_keys_and_renames(self):
+        data = {"query": "test", "page": 1}
+        mapping = {"query": "q", "page": "p"}
+        result = apply_mapping_into_target(data, mapping)
+        assert result == {"q": "test", "p": 1}
+
+    def test_merges_into_existing_target(self):
+        data = {"query": "test"}
+        mapping = {"query": "q"}
+        target = {"existing": "1"}
+        result = apply_mapping_into_target(data, mapping, target)
+        assert result == {"existing": "1", "q": "test"}
+
+    def test_mapped_keys_overwrite_target(self):
+        data = {"key": "new_value"}
+        mapping = {"key": "shared"}
+        target = {"shared": "old_value"}
+        result = apply_mapping_into_target(data, mapping, target)
+        assert result == {"shared": "new_value"}
+
+    def test_none_mapping_returns_target(self):
+        target = {"a": 1}
+        result = apply_mapping_into_target({"x": 10}, None, target)
+        assert result == {"a": 1}
+
+    def test_empty_mapping_returns_target(self):
+        target = {"a": 1}
+        result = apply_mapping_into_target({"x": 10}, {}, target)
+        assert result == {"a": 1}
+
+    def test_none_mapping_none_target_returns_empty_dict(self):
+        result = apply_mapping_into_target({"x": 10}, None)
+        assert result == {}
+
+    def test_unmapped_keys_excluded_from_result(self):
+        data = {"mapped": "yes", "unmapped": "dropped"}
+        mapping = {"mapped": "m"}
+        result = apply_mapping_into_target(data, mapping)
+        assert result == {"m": "yes"}
+        assert "unmapped" not in result
+        assert "dropped" not in result
+
+    def test_empty_data_with_mapping_returns_target_only(self):
+        result = apply_mapping_into_target({}, {"k": "v"}, {"existing": "1"})
+        assert result == {"existing": "1"}
+
+    def test_does_not_mutate_inputs(self):
+        data = {"a": 1}
+        mapping = {"a": "b"}
+        target = {"c": 2}
+        apply_mapping_into_target(data, mapping, target)
+        assert data == {"a": 1}
+        assert target == {"c": 2}
+
+
+# --------------------------------------------------------------------------- #
 #                         Cache Behavior Tests                                #
 # --------------------------------------------------------------------------- #
 
@@ -5794,8 +5858,6 @@ class TestToolServiceHelpers:
             owner_email="owner@example.com",
             visibility="team",
             tags=None,
-            query_mapping={},
-            header_mapping={}
         )
 
         payload = service._build_tool_cache_payload(tool, gateway)
@@ -5803,6 +5865,8 @@ class TestToolServiceHelpers:
         assert payload["status"] == "active"
         assert payload["tool"]["headers"] == {}
         assert payload["tool"]["input_schema"]["type"] == "object"
+        assert payload["tool"]["query_mapping"] == {}
+        assert payload["tool"]["header_mapping"] == {}
         assert "auth_value" not in payload["tool"]
         assert "oauth_config" not in payload["tool"]
         assert payload["gateway"]["passthrough_headers"] == []
@@ -7746,6 +7810,8 @@ class TestRustMcpExecutionPlan:
             tags=[],
             gateway_id="gw-1",
             gateway=gateway,
+            query_mapping=None,
+            header_mapping=None,
         )
 
         with (
@@ -7818,6 +7884,8 @@ class TestRustMcpExecutionPlan:
             tags=[],
             gateway_id="gw-1",
             gateway=gateway,
+            query_mapping=None,
+            header_mapping=None,
         )
 
         with (

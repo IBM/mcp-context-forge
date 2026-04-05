@@ -453,14 +453,7 @@ def apply_mapping_into_target(data_obj: dict, mapping_obj: dict | None, target_o
     if not mapping_obj:
         return target_obj
 
-    return {
-        **target_obj,
-        **{
-            mapping_obj[k]: v
-            for k, v in data_obj.items()
-            if k in mapping_obj
-        }
-    }
+    return {**target_obj, **{mapping_obj[k]: v for k, v in data_obj.items() if k in mapping_obj}}
 
 
 class ToolError(Exception):
