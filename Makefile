@@ -255,36 +255,45 @@ check-env-dev:
 # help: run                  - Execute helper script ./run.sh
 
 .PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
-        certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
+        certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
+        js-build
+
+## --- JS build ----------------------------------------------------------------
+js-build:                        ## Install npm dependencies and build JS bundle with Vite
+	@if command -v npm >/dev/null 2>&1; then \
+		npm install --no-audit --no-fund && npm run vite:build; \
+	else \
+		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
+	fi
 
 ## --- Primary servers ---------------------------------------------------------
-serve:                           ## Run production server with Gunicorn + Uvicorn (default)
+serve: js-build                  ## Run production server with Gunicorn + Uvicorn (default)
 	./run-gunicorn.sh
 
-serve-ssl: certs                 ## Run Gunicorn with TLS enabled
+serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
 
-serve-granian:                   ## Run production server with Granian (Rust-based, alternative)
+serve-granian: js-build          ## Run production server with Granian (Rust-based, alternative)
 	./run-granian.sh
 
-serve-granian-ssl: certs         ## Run Granian with TLS enabled
+serve-granian-ssl: js-build certs ## Run Granian with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
-serve-granian-http2: certs       ## Run Granian with HTTP/2 and TLS
+serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
-dev:
+dev: js-build
 	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 .PHONY: dev-echo
-dev-echo:                        ## Run dev server with SQL query logging enabled
+dev-echo: js-build               ## Run dev server with SQL query logging enabled
 	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 dev-remote: DEBUG_IP = 127.0.0.1
 dev-remote: DEBUG_WAIT = --wait-for-client
-dev-remote:                      ## Run dev server with remote debugging (debugpy on port 5678, remote: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=)
+dev-remote: js-build             ## Run dev server with remote debugging (debugpy on port 5678, remote: make dev-remote DEBUG_IP=0.0.0.0 DEBUG_WAIT=)
 	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/python -m debugpy \
 		--listen $(DEBUG_IP):5678 \
 		$(DEBUG_WAIT) \
@@ -306,7 +315,7 @@ stop-serve:                      ## Stop gunicorn production server (port 4444)
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
 	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
 
-run:
+run: js-build
 	./run.sh
 
 ## --- Certificate helper ------------------------------------------------------
