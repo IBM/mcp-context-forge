@@ -260,8 +260,11 @@ check-env-dev:
 
 ## --- JS build ----------------------------------------------------------------
 js-build:                        ## Install npm dependencies and build JS bundle with Vite
-	npm install
-	npm run vite:build
+	@if command -v npm >/dev/null 2>&1; then \
+		npm install --no-audit --no-fund && npm run vite:build; \
+	else \
+		echo "WARNING: npm not found — skipping JS bundle build (admin UI may not load)"; \
+	fi
 
 ## --- Primary servers ---------------------------------------------------------
 serve: js-build                  ## Run production server with Gunicorn + Uvicorn (default)
