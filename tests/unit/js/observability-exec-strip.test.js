@@ -7,22 +7,36 @@
  * logic here (same regex, same createElement approach) so we can
  * validate correctness in jsdom without loading the full template.
  *
+ * NOTE: Because the helper lives in an inline template <script>, it
+ * cannot be imported as a module. If the template implementation
+ * changes, this replica must be updated to match.
+ *
  * Covers PR #3967 — fix Alpine.js MutationObserver race condition.
  */
 
 import { describe, test, expect, vi, beforeEach } from "vitest";
 import { JSDOM } from "jsdom";
 
-/** Exact copy of the function from observability_partial.html. */
+/**
+ * Replica of window.__obsExecAndStrip from observability_partial.html.
+ * Keep in sync with the template implementation.
+ */
 function defineObsExecAndStrip(window) {
   window.__obsExecAndStrip = function (html) {
     var scriptRe = new RegExp(
-      "<" + 'script\\b[^>]*>([\\s\\S]*?)</' + "script>",
+      "<" + 'script\\b([^>]*)>([\\s\\S]*?)</' + "script>",
       "gi",
     );
     var m;
     while ((m = scriptRe.exec(html)) !== null) {
-      var code = m[1].trim();
+      var attrs = m[1];
+      var code = m[2].trim();
+      if (/\bsrc\s*=/i.test(attrs)) {
+        console.warn(
+          "[obs] external <script src> not supported in dynamic partials, skipped",
+        );
+        continue;
+      }
       if (code) {
         try {
           var s = window.document.createElement("script");
@@ -154,6 +168,36 @@ describe("__obsExecAndStrip", () => {
     expect(headScriptsAfter).toBe(headScriptsBefore);
   });
 
+  test("warns and skips external script src tags", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const html =
+      '<script src="https://cdn.example.com/lib.js"></script>' +
+      "<script>window.__inlineRan = true;</script>" +
+      "<div>content</div>";
+
+    const clean = win.__obsExecAndStrip(html);
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[obs] external <script src> not supported in dynamic partials, skipped",
+    );
+    // External script stripped from HTML, inline script still executed
+    expect(win.__inlineRan).toBe(true);
+    expect(clean).toBe("<div>content</div>");
+    warnSpy.mockRestore();
+  });
+
+  test("warns on script src with extra attributes", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const html =
+      '<script defer src="lib.js"></script><div>ok</div>';
+
+    const clean = win.__obsExecAndStrip(html);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(clean).toBe("<div>ok</div>");
+    warnSpy.mockRestore();
+  });
+
   test("simulates real observability controller pattern", () => {
     // This mirrors what observability_tools.html actually produces
     const html = [
@@ -190,6 +234,25 @@ describe("__obsExecAndStrip", () => {
 // B. Alpine.mutateDom + initTree injection pattern
 // ---------------------------------------------------------------------------
 describe("Alpine.mutateDom + initTree injection pattern", () => {
+  /**
+   * Helper that replicates the hardened Alpine guard from
+   * observability_partial.html (matches initialization.js pattern).
+   */
+  function injectWithAlpineGuard(alpine, container, cleanHtml) {
+    if (
+      alpine &&
+      typeof alpine.mutateDom === "function" &&
+      typeof alpine.initTree === "function"
+    ) {
+      alpine.mutateDom(() => {
+        container.innerHTML = cleanHtml;
+      });
+      alpine.initTree(container);
+    } else {
+      container.innerHTML = cleanHtml;
+    }
+  }
+
   test("mutateDom suppresses observer during innerHTML assignment", () => {
     const container = doc.createElement("div");
     doc.body.appendChild(container);
@@ -205,14 +268,7 @@ describe("Alpine.mutateDom + initTree injection pattern", () => {
     };
 
     const cleanHtml = '<div x-data="test()">content</div>';
-
-    // Replicate the pattern from observability_partial.html
-    if (win.Alpine) {
-      win.Alpine.mutateDom(() => {
-        container.innerHTML = cleanHtml;
-      });
-      win.Alpine.initTree(container);
-    }
+    injectWithAlpineGuard(win.Alpine, container, cleanHtml);
 
     expect(mutateDomCalls).toHaveLength(1);
     expect(initTreeCalls).toHaveLength(1);
@@ -224,19 +280,46 @@ describe("Alpine.mutateDom + initTree injection pattern", () => {
     const container = doc.createElement("div");
     doc.body.appendChild(container);
 
-    // No Alpine defined
     delete win.Alpine;
 
     const cleanHtml = "<div>fallback content</div>";
+    injectWithAlpineGuard(win.Alpine, container, cleanHtml);
 
-    if (win.Alpine) {
-      win.Alpine.mutateDom(() => {
-        container.innerHTML = cleanHtml;
-      });
-      win.Alpine.initTree(container);
-    } else {
-      container.innerHTML = cleanHtml;
-    }
+    expect(container.innerHTML).toBe(cleanHtml);
+  });
+
+  test("falls back when Alpine exists but mutateDom is missing", () => {
+    const container = doc.createElement("div");
+    doc.body.appendChild(container);
+
+    win.Alpine = { initTree: () => {} };
+
+    const cleanHtml = "<div>partial Alpine</div>";
+    injectWithAlpineGuard(win.Alpine, container, cleanHtml);
+
+    expect(container.innerHTML).toBe(cleanHtml);
+  });
+
+  test("falls back when Alpine exists but initTree is missing", () => {
+    const container = doc.createElement("div");
+    doc.body.appendChild(container);
+
+    win.Alpine = { mutateDom: (fn) => fn() };
+
+    const cleanHtml = "<div>partial Alpine</div>";
+    injectWithAlpineGuard(win.Alpine, container, cleanHtml);
+
+    expect(container.innerHTML).toBe(cleanHtml);
+  });
+
+  test("falls back when Alpine has non-function mutateDom/initTree", () => {
+    const container = doc.createElement("div");
+    doc.body.appendChild(container);
+
+    win.Alpine = { version: "3.x", mutateDom: "not-a-fn", initTree: 42 };
+
+    const cleanHtml = "<div>wrong types</div>";
+    injectWithAlpineGuard(win.Alpine, container, cleanHtml);
 
     expect(container.innerHTML).toBe(cleanHtml);
   });
@@ -263,10 +346,7 @@ describe("Alpine.mutateDom + initTree injection pattern", () => {
     // Controller should be defined BEFORE DOM insertion
     expect(typeof win.createToolsController).toBe("function");
 
-    win.Alpine.mutateDom(() => {
-      container.innerHTML = cleanHtml;
-    });
-    win.Alpine.initTree(container);
+    injectWithAlpineGuard(win.Alpine, container, cleanHtml);
 
     expect(initTreeCalls).toHaveLength(1);
     expect(container.querySelector(".tools-dashboard")).not.toBeNull();

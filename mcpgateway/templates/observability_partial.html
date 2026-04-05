@@ -19,10 +19,15 @@ if (!window.getChartDefaults) {
  * and document.createElement('script') for reliable execution.
  */
 window.__obsExecAndStrip = function(html) {
-  var scriptRe = new RegExp('<' + 'script\\b[^>]*>([\\s\\S]*?)</' + 'script>', 'gi');
+  var scriptRe = new RegExp('<' + 'script\\b([^>]*)>([\\s\\S]*?)</' + 'script>', 'gi');
   var m;
   while ((m = scriptRe.exec(html)) !== null) {
-    var code = m[1].trim();
+    var attrs = m[1];
+    var code = m[2].trim();
+    if (/\bsrc\s*=/i.test(attrs)) {
+      console.warn('[obs] external <script src> not supported in dynamic partials, skipped');
+      continue;
+    }
     if (code) {
       try {
         var s = document.createElement('script');
@@ -107,7 +112,7 @@ window.__obsExecAndStrip = function(html) {
 
                 // Insert script-free HTML with Alpine MutationObserver disabled,
                 // then explicitly initialize Alpine components
-                if (window.Alpine) {
+                if (window.Alpine && typeof window.Alpine.mutateDom === 'function' && typeof window.Alpine.initTree === 'function') {
                     window.Alpine.mutateDom(() => {
                         container.innerHTML = cleanHtml;
                     });
@@ -166,7 +171,7 @@ window.__obsExecAndStrip = function(html) {
 
                 const cleanHtml = window.__obsExecAndStrip(html);
 
-                if (window.Alpine) {
+                if (window.Alpine && typeof window.Alpine.mutateDom === 'function' && typeof window.Alpine.initTree === 'function') {
                     window.Alpine.mutateDom(() => {
                         container.innerHTML = cleanHtml;
                     });
@@ -225,7 +230,7 @@ window.__obsExecAndStrip = function(html) {
 
                 const cleanHtml = window.__obsExecAndStrip(html);
 
-                if (window.Alpine) {
+                if (window.Alpine && typeof window.Alpine.mutateDom === 'function' && typeof window.Alpine.initTree === 'function') {
                     window.Alpine.mutateDom(() => {
                         container.innerHTML = cleanHtml;
                     });
@@ -284,7 +289,7 @@ window.__obsExecAndStrip = function(html) {
 
                 const cleanHtml = window.__obsExecAndStrip(html);
 
-                if (window.Alpine) {
+                if (window.Alpine && typeof window.Alpine.mutateDom === 'function' && typeof window.Alpine.initTree === 'function') {
                     window.Alpine.mutateDom(() => {
                         container.innerHTML = cleanHtml;
                     });
