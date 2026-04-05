@@ -1768,7 +1768,8 @@ describe("runToolTest - additional", () => {
     );
     await runToolTest();
 
-    expect(consoleSpy).toHaveBeenCalledWith("Tool test already running");
+    // When button is disabled, runToolTest returns silently without making a request
+    expect(fetchWithTimeout).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 
@@ -2189,7 +2190,7 @@ describe("runToolTest - scalar parameter types", () => {
     const { runToolTest } = await import("../../../mcpgateway/admin_ui/tools.js");
     await runToolTest();
     const body = JSON.parse(fetchWithTimeout.mock.calls.at(-1)[1].body);
-    expect(body.params[paramKey]).toEqual(expected);
+    expect(body.params.arguments[paramKey]).toEqual(expected);
     consoleSpy.mockRestore();
   });
 
@@ -2244,7 +2245,7 @@ describe("runToolTest - array parameter types", () => {
     const { runToolTest } = await import("../../../mcpgateway/admin_ui/tools.js");
     await runToolTest();
     const body = JSON.parse(fetchWithTimeout.mock.calls.at(-1)[1].body);
-    expect(body.params[paramKey]).toEqual(expected);
+    expect(body.params.arguments[paramKey]).toEqual(expected);
     consoleSpy.mockRestore();
   });
 
