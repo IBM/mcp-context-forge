@@ -14620,7 +14620,15 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
             captured.update(kwargs)
             return MockResponse()
 
-    gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "client_credentials"})
+    gateway = SimpleNamespace(
+        id="gw-1",
+        name="GW",
+        auth_type="oauth",
+        oauth_config={"grant_type": "client_credentials"},
+        ca_certificate=None,
+        client_cert=None,
+        client_key=None
+    )
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
 
     oauth_manager = MagicMock()

@@ -529,8 +529,15 @@ class TestOAuthManager:
                         assert result["success"] == expected["success"]
                         assert result["expires_at"] == expected["expires_at"]
 
-                        # PKCE: Now includes code_verifier parameter
-                        mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_code_verifier_123")
+                        # PKCE: Now includes code_verifier parameter and CA certificate parameters
+                        mock_exchange.assert_called_once_with(
+                            credentials,
+                            code,
+                            code_verifier="test_code_verifier_123",
+                            ca_certificate=None,
+                            client_cert=None,
+                            client_key=None
+                        )
                         mock_extract_user.assert_called_once_with(token_response, credentials)
                         mock_store_tokens.assert_called_once()
 
@@ -1015,8 +1022,15 @@ class TestOAuthManager:
                         expected = {"success": True, "user_id": "user123", "expires_at": None}  # No token storage means no expiration tracking
                         assert result == expected
 
-                        # PKCE: Now includes code_verifier parameter
-                        mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_verifier_abc123")
+                        # PKCE: Now includes code_verifier parameter and CA certificate parameters
+                        mock_exchange.assert_called_once_with(
+                            credentials,
+                            code,
+                            code_verifier="test_verifier_abc123",
+                            ca_certificate=None,
+                            client_cert=None,
+                            client_key=None
+                        )
                         mock_extract_user.assert_called_once_with(token_response, credentials)
 
     @pytest.mark.asyncio

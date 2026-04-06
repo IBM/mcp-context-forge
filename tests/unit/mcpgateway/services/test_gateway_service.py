@@ -101,6 +101,8 @@ def _make_gateway(**overrides):
         "one_time_auth": False,
         "ca_certificate": None,
         "ca_certificate_sig": None,
+        "client_cert": None,
+        "client_key": None,
         "signing_algorithm": None,
         "visibility": "public",
         "enabled": True,
@@ -2361,7 +2363,12 @@ class TestGatewayService:
             oauth_config=oauth_config,
         )
 
-        gateway_service.oauth_manager.get_access_token.assert_awaited_once_with(oauth_config)
+        gateway_service.oauth_manager.get_access_token.assert_awaited_once_with(
+            oauth_config,
+            ca_certificate=None,
+            client_cert=None,
+            client_key=None
+        )
         _, auth_headers, *_ = gateway_service.connect_to_sse_server.call_args.args
         assert auth_headers == {"Authorization": "Bearer token123"}
 
@@ -5431,7 +5438,12 @@ class TestCheckSingleGatewayHealth:
         monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
 
         await gateway_service._check_single_gateway_health(gw)
-        gateway_service.oauth_manager.get_access_token.assert_awaited_once()
+        gateway_service.oauth_manager.get_access_token.assert_awaited_once_with(
+            {"grant_type": "client_credentials", "token_url": "http://auth/token"},
+            ca_certificate=None,
+            client_cert=None,
+            client_key=None
+        )
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_client_creds_failure(self, gateway_service, monkeypatch):

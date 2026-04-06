@@ -256,6 +256,11 @@ class ResourceService(BaseService):
 
         # Initialize mime types
         mimetypes.init()
+        # Register common MIME types that may not be in system database
+        if not mimetypes.guess_type("file.md")[0]:
+            mimetypes.add_type("text/markdown", ".md")
+        if not mimetypes.guess_type("file.markdown")[0]:
+            mimetypes.add_type("text/markdown", ".markdown")
 
     async def initialize(self) -> None:
         """Initialize the service."""
@@ -1886,7 +1891,12 @@ class ResourceService(BaseService):
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
-                                    access_token: str = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                                    access_token: str = await self.oauth_manager.get_access_token(
+                                        gateway_oauth_config,
+                                        ca_certificate=gateway.ca_certificate,
+                                        client_cert=gateway.client_cert,
+                                        client_key=gateway.client_key
+                                    )
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 except Exception as e:
                                     if span:
