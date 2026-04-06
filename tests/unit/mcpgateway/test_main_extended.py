@@ -38,6 +38,7 @@ import mcpgateway.db as db_mod
 from mcpgateway.main import (
     _build_internal_mcp_auth_scope,
     _build_internal_mcp_forwarded_user,
+    _create_jwt_identity_extractor,
     _decode_internal_mcp_auth_context,
     _enforce_internal_mcp_server_scope,
     _ensure_rpc_permission,
@@ -280,6 +281,171 @@ class TestConditionalPaths:
         # Test the functionality that exercises the loop path
         response = test_client.get("/health", headers=auth_headers)
         assert response.status_code == 200
+
+
+class TestJwtIdentityExtractor:
+    """Test _create_jwt_identity_extractor() factory and returned closure."""
+
+    def test_extractor_returns_sub_claim(self):
+        """Valid JWT with sub claim should return sub value."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"sub": "user-123", "email": "user@example.com"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user-123"
+
+    def test_extractor_returns_email_claim_when_no_sub(self):
+        """Valid JWT with email but no sub should return email value."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"email": "user@example.com", "user_id": "uid-456"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user@example.com"
+
+    def test_extractor_returns_user_id_claim_when_no_sub_or_email(self):
+        """Valid JWT with user_id but no sub/email should return user_id value."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"user_id": "uid-789", "iat": 1234567890}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "uid-789"
+
+    def test_extractor_returns_none_for_malformed_token(self):
+        """Malformed JWT should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": "Bearer not-a-valid-jwt"}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_non_bearer_header(self):
+        """Non-Bearer auth header should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": "Basic dXNlcjpwYXNz"}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_empty_authorization_header(self):
+        """Empty Authorization header should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": ""}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_bearer_only_header(self):
+        """Header containing only 'Bearer ' with no token should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {"Authorization": "Bearer "}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_missing_authorization_header(self):
+        """Missing Authorization header should return None."""
+        extractor = _create_jwt_identity_extractor()
+        headers = {}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_returns_none_for_token_with_no_identity_claims(self):
+        """JWT with none of the three identity claims should return None."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"iat": 1234567890, "exp": 1234567890, "jti": "random-id"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result is None
+
+    def test_extractor_handles_lowercase_bearer(self):
+        """Lowercase 'bearer' prefix should be handled correctly."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"sub": "user-lowercase"}, "secret", algorithm="HS256")
+        headers = {"Authorization": f"bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user-lowercase"
+
+    def test_extractor_handles_case_insensitive_header_lookup(self):
+        """Extractor should handle both 'authorization' and 'Authorization' keys."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode({"sub": "user-case"}, "secret", algorithm="HS256")
+
+        # Test lowercase key
+        headers_lower = {"authorization": f"Bearer {token}"}
+        assert extractor(headers_lower) == "user-case"
+
+        # Test uppercase key
+        headers_upper = {"Authorization": f"Bearer {token}"}
+        assert extractor(headers_upper) == "user-case"
+
+    def test_extractor_returns_none_on_jwt_decode_exception(self):
+        """JWT decode raising an exception should return None and log debug message."""
+        # Third-Party
+        from unittest.mock import patch
+
+        extractor = _create_jwt_identity_extractor()
+
+        # Create a valid-looking token that will fail decode
+        with patch("jwt.decode", side_effect=Exception("Decode failed")):
+            headers = {"Authorization": "Bearer some-token"}
+            result = extractor(headers)
+            assert result is None
+
+    def test_extractor_prefers_sub_over_email_and_user_id(self):
+        """When all three claims present, sub should be preferred."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode(
+            {"sub": "user-sub", "email": "user@example.com", "user_id": "uid-123"},
+            "secret",
+            algorithm="HS256"
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user-sub"
+
+    def test_extractor_prefers_email_over_user_id(self):
+        """When email and user_id present but no sub, email should be preferred."""
+        # Third-Party
+        import jwt
+
+        extractor = _create_jwt_identity_extractor()
+        token = jwt.encode(
+            {"email": "user@example.com", "user_id": "uid-123"},
+            "secret",
+            algorithm="HS256"
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+
+        result = extractor(headers)
+        assert result == "user@example.com"
 
 
 class TestInternalTrustedMcpTransportBridge:
@@ -4268,6 +4434,7 @@ class TestLifespanAdvanced:
         # Feature flags
         monkeypatch.setattr(main_mod.settings, "mcp_session_pool_enabled", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "mcp_session_pool_jwt_identity_extraction", True)
         monkeypatch.setattr(main_mod.settings, "enable_header_passthrough", True)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_tool_cancellation_enabled", False)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_elicitation_enabled", True)

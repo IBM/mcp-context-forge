@@ -1655,6 +1655,16 @@ class Settings(BaseSettings):
     # Timeout in seconds for each health check attempt
     mcp_session_pool_health_check_timeout: float = 5.0
     mcp_session_pool_identity_headers: List[str] = ["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie", "x-mcp-session-id"]
+    # Global session caps to prevent resource exhaustion (0 = unlimited for backwards compat)
+    mcp_session_pool_max_total_keys: int = 0  # Max total pool keys across all buckets (0 = unlimited)
+    # Soft cap with eventual enforcement - in high-concurrency scenarios, multiple concurrent
+    # acquire() calls may pass the check before sessions are added to _active, temporarily
+    # overshooting the limit. Prevents unbounded growth but not strict at exact threshold.
+    mcp_session_pool_max_total_sessions: int = 0  # Max total active sessions across all buckets (0 = unlimited, soft cap)
+    # JWT identity extraction - decode JWT to extract stable user ID instead of hashing full token
+    # Prevents bucket explosion from rotating JWTs (different jti/exp/iat per request)
+    # When enabled, extracts 'sub', 'email', or 'user_id' claim from JWT for identity hash
+    mcp_session_pool_jwt_identity_extraction: bool = True
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
     # memory streams) don't respond to cancellation. Does NOT affect tool execution

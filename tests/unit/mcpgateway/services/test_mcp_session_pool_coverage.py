@@ -11,6 +11,7 @@ SPDX-License-Identifier: Apache-2.0
 import asyncio
 import hashlib
 import time
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -3506,4 +3507,332 @@ class TestAcquireCircuitBreaker:
         pool._circuit_open_until["http://test:8080"] = time.time() + 9999
         with pytest.raises(RuntimeError, match="Circuit breaker open"):
             await pool.acquire("http://test:8080")
+        await pool.close_all()
+
+
+# ---------------------------------------------------------------------------
+# New tests for review findings - Blocking coverage gaps
+# ---------------------------------------------------------------------------
+class TestMaxTotalKeysLimit:
+    """Cover max_total_keys enforcement and RuntimeError conversion."""
+
+    @pytest.mark.asyncio
+    async def test_max_total_keys_limit_raises_runtime_error(self):
+        """_get_or_create_pool should raise RuntimeError when max_total_keys is reached."""
+        pool = MCPSessionPool(max_total_keys=2)
+
+        # Create two pool keys to reach the limit
+        key1 = ("user1", "http://test1:8080", "hash1", "streamablehttp", "")
+        key2 = ("user2", "http://test2:8080", "hash2", "streamablehttp", "")
+        await pool._get_or_create_pool(key1)
+        await pool._get_or_create_pool(key2)
+
+        # Third key should raise RuntimeError
+        key3 = ("user3", "http://test3:8080", "hash3", "streamablehttp", "")
+        with pytest.raises(RuntimeError, match="Maximum pool keys.*reached"):
+            await pool._get_or_create_pool(key3)
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_max_total_keys_converted_to_timeout_error_in_acquire(self):
+        """acquire should convert RuntimeError from key limit to asyncio.TimeoutError."""
+        pool = MCPSessionPool(max_total_keys=1, session_create_timeout_seconds=0.1)
+
+        # Mock _create_session to return a fake session quickly
+        async def mock_create(url, *args, **kwargs):
+            mock_session = MagicMock()
+            mock_session.identity_key = "hash1"
+            mock_session.user_identity = "user1"
+            mock_session.url = url
+            mock_session.created_at = time.time()
+            mock_session.last_used = time.time()
+            mock_session.transport_type = TransportType.STREAMABLE_HTTP
+            mock_session.gateway_id = None
+            return mock_session
+
+        with patch.object(pool, "_create_session", side_effect=mock_create):
+            # First acquire succeeds and creates a pool key
+            session1 = await pool.acquire("http://test1:8080", headers={"Authorization": "Bearer token1"})
+
+            # Second acquire with different identity should hit the limit and raise TimeoutError
+            with pytest.raises(asyncio.TimeoutError):
+                await pool.acquire("http://test2:8080", headers={"Authorization": "Bearer token2"})
+
+        # Don't release - just close all to avoid hitting limit again
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_non_capacity_runtime_error_propagates_from_acquire(self):
+        """RuntimeError not related to key cap should propagate unmodified (covers bare raise)."""
+        pool = MCPSessionPool(max_total_keys=10)
+
+        with patch.object(pool, "_get_or_create_pool", side_effect=RuntimeError("unexpected internal error")):
+            with pytest.raises(RuntimeError, match="unexpected internal error"):
+                await pool.acquire("http://test:8080")
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_80_percent_warning_emitted(self):
+        """Should emit warning when pool key count reaches 80% of max_total_keys."""
+        pool = MCPSessionPool(max_total_keys=10)
+
+        # Create 8 pool keys to reach 80% threshold (warning at 8/10)
+        # Patch the logger at the module level where it's imported
+        import mcpgateway.services.mcp_session_pool as pool_module
+        with patch.object(pool_module, "logger") as mock_logger:
+            # Warning fires when len(self._pools) BEFORE adding the new key >= threshold (8).
+            # Creating 9 keys means the 9th call sees len=8 >= 8 and emits the warning.
+            for i in range(9):
+                key = (f"user{i}", f"http://test{i}:8080", f"hash{i}", "streamablehttp", "")
+                await pool._get_or_create_pool(key)
+
+            # Check that warning was logged when the pool count reached 80% of 10
+            warning_calls = [call for call in mock_logger.warning.call_args_list
+                           if "approaching limit" in str(call).lower()]
+            assert len(warning_calls) > 0, f"Expected warning about approaching limit. Got calls: {mock_logger.warning.call_args_list}"
+
+        await pool.close_all()
+
+
+class TestReleaseWithMaxTotalKeys:
+    """Cover release() graceful handling when _get_or_create_pool hits max_total_keys."""
+
+    @pytest.mark.asyncio
+    async def test_release_discards_session_when_pool_key_limit_reached(self):
+        """release() should discard the session instead of crashing when max_total_keys is hit."""
+        pool = MCPSessionPool(max_total_keys=1)
+
+        # Create a fake session that looks like it was checked out
+        mock_session = MagicMock()
+        mock_session.url = "http://test:8080"
+        mock_session.identity_key = "hash1"
+        mock_session.user_identity = "user1"
+        mock_session.transport_type = TransportType.STREAMABLE_HTTP
+        mock_session.gateway_id = ""
+        mock_session.is_closed = False
+        mock_session.age_seconds = 0.0
+
+        # Fill pool key limit with a different key
+        other_key = ("other", "http://other:8080", "hash_other", "streamablehttp", "")
+        await pool._get_or_create_pool(other_key)
+
+        # release() should NOT raise — it should discard the session gracefully
+        await pool.release(mock_session)
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_release_discards_session_when_evicted_pool_key_hits_limit(self):
+        """release() should discard when pool key is evicted mid-release and re-creation fails."""
+        pool = MCPSessionPool(max_total_keys=2, max_sessions_per_key=2)
+
+        session_key = (
+            hashlib.sha256(b"user1").hexdigest(),
+            "http://test:8080",
+            "hash1",
+            "streamablehttp",
+            "",
+        )
+        await pool._get_or_create_pool(session_key)
+
+        mock_session = MagicMock()
+        mock_session.url = "http://test:8080"
+        mock_session.identity_key = "hash1"
+        mock_session.user_identity = "user1"
+        mock_session.transport_type = TransportType.STREAMABLE_HTTP
+        mock_session.gateway_id = ""
+        mock_session.is_closed = False
+        mock_session.age_seconds = 0.0
+
+        # Wrap _get_or_create_pool: first call succeeds then evicts the key from _pools,
+        # second call raises RuntimeError (simulating another key filling the slot).
+        real_method = pool._get_or_create_pool
+        call_count = [0]
+
+        async def evict_then_fail(key):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                result = await real_method(key)
+                # Simulate eviction between the two _get_or_create_pool calls in release()
+                pool._pools.pop(key, None)
+                return result
+            raise RuntimeError("Maximum pool keys (2) reached. Cannot create new session pool.")
+
+        pool._get_or_create_pool = evict_then_fail
+
+        await pool.release(mock_session)
+
+        await pool.close_all()
+
+
+class TestMaxTotalSessionsLimit:
+    """Cover max_total_sessions enforcement."""
+
+    @pytest.mark.asyncio
+    async def test_max_total_sessions_limit_raises_timeout_error(self):
+        """acquire should raise asyncio.TimeoutError when max_total_sessions is reached."""
+        pool = MCPSessionPool(max_sessions_per_key=2, max_total_sessions=2, session_create_timeout_seconds=0.1)
+
+        # Mock _create_session to return fake sessions quickly
+        call_count = [0]
+        async def mock_create(url, *args, **kwargs):
+            call_count[0] += 1
+            mock_session = MagicMock()
+            mock_session.identity_key = f"hash{call_count[0]}"
+            mock_session.user_identity = f"user{call_count[0]}"
+            mock_session.url = url
+            mock_session.created_at = time.time()
+            mock_session.last_used = time.time()
+            mock_session.transport_type = TransportType.STREAMABLE_HTTP
+            mock_session.gateway_id = ""  # must match _make_pool_key normalisation (gateway_id or "")
+            return mock_session
+
+        with patch.object(pool, "_create_session", side_effect=mock_create):
+            # Acquire two sessions to reach the limit
+            session1 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token1"})
+            session2 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token2"})
+
+            # Third acquire should raise TimeoutError
+            with pytest.raises(asyncio.TimeoutError):
+                await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token3"})
+
+            await pool.release(session1)
+            await pool.release(session2)
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_max_total_sessions_allows_acquire_after_release(self):
+        """After releasing a session, acquire should succeed by reusing from pool."""
+        pool = MCPSessionPool(max_sessions_per_key=3, max_total_sessions=2, session_create_timeout_seconds=0.1)
+
+        # Mock _create_session to return fake sessions quickly
+        call_count = [0]
+        async def mock_create(url, *args, **kwargs):
+            call_count[0] += 1
+            mock_session = MagicMock()
+            mock_session.url = url
+            mock_session.created_at = time.time()
+            mock_session.last_used = time.time()
+            mock_session.transport_type = TransportType.STREAMABLE_HTTP
+            mock_session.gateway_id = ""  # must match _make_pool_key normalisation (gateway_id or "")
+            mock_session.is_closed = False  # prevent release() discarding session as "closed"
+            mock_session.age_seconds = 0.0  # prevent TTL discard in release() and _validate_session()
+            mock_session.idle_seconds = 0.0  # prevent health-check branch in _validate_session()
+            return mock_session
+
+        with patch.object(pool, "_create_session", side_effect=mock_create):
+            # Acquire two sessions to reach the limit (use same auth to get same pool key)
+            session1 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token1"})
+            session2 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token1"})
+
+            # Verify we're at the limit (2 active sessions in same pool)
+            pool_key = list(pool._active.keys())[0]
+            assert len(pool._active[pool_key]) == 2
+
+            # Release one session - it goes back to the pool
+            await pool.release(session1)
+
+            # Now we have 1 active (session2) and 1 in pool (session1)
+            # Acquiring should reuse session1 from the pool, not create a new one
+            session3 = await pool.acquire("http://test:8080", headers={"Authorization": "Bearer token1"})
+
+            # Should still have 2 active sessions (session2 and reused session1)
+            assert len(pool._active[pool_key]) == 2
+            # Only 2 sessions should have been created total
+            assert call_count[0] == 2
+
+        await pool.close_all()
+
+
+class TestJwtIdentityExtractorNone:
+    """Cover jwt_identity_extractor returning None on invalid input."""
+
+    @pytest.mark.asyncio
+    async def test_jwt_identity_extractor_returns_none_on_invalid_token(self):
+        """When jwt_identity_extractor returns None, should fall back to header hash."""
+        def extractor_returns_none(headers: dict) -> Optional[str]:
+            return None
+
+        pool = MCPSessionPool(identity_extractor=extractor_returns_none)
+
+        # Should not crash and should fall back to normal identity computation
+        identity_hash = pool._compute_identity_hash({"Authorization": "Bearer invalid"})
+
+        # Should not be "anonymous" since we have an Authorization header
+        assert identity_hash != "anonymous"
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_jwt_identity_extractor_exception_falls_back(self):
+        """When jwt_identity_extractor raises, should fall back to header hash."""
+        def extractor_raises(headers: dict) -> Optional[str]:
+            raise ValueError("Invalid JWT")
+
+        pool = MCPSessionPool(identity_extractor=extractor_raises)
+
+        # Should not crash and should fall back to normal identity computation
+        identity_hash = pool._compute_identity_hash({"Authorization": "Bearer token"})
+
+        # Should not be "anonymous" since we have an Authorization header
+        assert identity_hash != "anonymous"
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_session_reraises_non_capacity_runtime_error(self):
+        """Test that RuntimeError without 'Maximum pool keys' message is re-raised as-is."""
+        pool = MCPSessionPool(max_total_keys=1, max_sessions_per_key=1)
+
+        # Mock _get_or_create_pool to raise RuntimeError with different message
+        async def mock_get_or_create_pool(pool_key):
+            raise RuntimeError("Some other runtime error")
+
+        pool._get_or_create_pool = mock_get_or_create_pool
+
+        # Should re-raise the RuntimeError as-is (not convert to TimeoutError)
+        with pytest.raises(RuntimeError, match="Some other runtime error"):
+            async with pool.session(
+                url="http://test.com",
+                transport_type=TransportType.SSE,
+                headers={},
+            ):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_jwt_identity_extractor_with_real_jwt_decode_failure(self):
+        """Test the actual jwt_identity_extractor implementation with invalid JWT."""
+        # Standard
+        import jwt
+
+        def jwt_identity_extractor(headers: dict) -> Optional[str]:
+            """Mimics the real implementation from main.py."""
+            auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
+            if not auth_header:
+                return None
+
+            token = auth_header.replace("Bearer ", "").replace("bearer ", "").strip()
+            if not token:
+                return None
+
+            try:
+                claims = jwt.decode(
+                    token,
+                    options={"verify_signature": False},
+                    algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"]
+                )
+                return claims.get("sub") or claims.get("email") or claims.get("user_id")
+            except Exception:
+                return None
+
+        pool = MCPSessionPool(identity_extractor=jwt_identity_extractor)
+
+        # Test with invalid JWT (not a valid JWT format)
+        identity_hash = pool._compute_identity_hash({"Authorization": "Bearer not-a-jwt"})
+
+        # Should fall back to header-based identity (not anonymous since we have auth header)
+        assert identity_hash != "anonymous"
+
         await pool.close_all()

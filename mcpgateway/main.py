@@ -41,7 +41,7 @@ import re
 import signal
 import sys
 import threading
-from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -59,6 +59,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
+import jwt
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -1515,6 +1516,57 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
+def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
+    """Create JWT identity extractor function for session pool.
+
+    Extracts stable user ID from JWT token to prevent bucket explosion
+    when using short-lived JWTs with rotating jti/exp/iat claims.
+
+    Returns:
+        Callable that extracts stable user identifier from request headers,
+        or None if extraction fails.
+    """
+
+    def jwt_identity_extractor(headers: dict) -> Optional[str]:
+        """Extract stable user ID from JWT token.
+
+        Decodes JWT without signature verification to extract sub, email, or user_id claim.
+        This prevents bucket explosion when using short-lived JWTs with rotating jti/exp/iat.
+
+        Args:
+            headers: Request headers dict (case-insensitive lookup handled by caller).
+
+        Returns:
+            Stable user identifier (sub, email, or user_id claim), or None if extraction fails.
+        """
+        auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
+        if not auth_header:
+            return None
+
+        # Extract token from "Bearer <token>" format
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+        else:
+            token = auth_header.strip()
+        if not token:
+            return None
+
+        try:
+            # SECURITY NOTE: JWT decoded without signature verification for session pool bucketing only.
+            # This is NOT a security boundary - authentication happens separately via get_current_user.
+            # We only extract stable identity (sub/email/user_id) to group sessions by user.
+            # Crafted JWTs could influence pool key selection but cannot bypass authentication.
+            # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
+            claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
+            # Try standard claims in order of preference
+            return claims.get("sub") or claims.get("email") or claims.get("user_id")
+        except Exception as e:
+            logger.debug(f"JWT identity extraction failed: {e}")
+            return None
+
+    return jwt_identity_extractor
+
+
 async def attempt_to_bootstrap_sso_providers():
     """
     Try to bootstrap SSO provider services based on settings.
@@ -1623,6 +1675,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
 
         max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
+
+        # Create JWT identity extractor if enabled (prevents bucket explosion from rotating tokens)
+        identity_extractor = None
+        if settings.mcp_session_pool_jwt_identity_extraction:
+            identity_extractor = _create_jwt_identity_extractor()
+            logger.info("JWT identity extraction enabled for session pool")
+
         init_mcp_session_pool(
             max_sessions_per_key=max_sessions_per_key,
             session_ttl_seconds=settings.mcp_session_pool_ttl,
@@ -1632,6 +1691,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
             circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
             identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
+            identity_extractor=identity_extractor,
             idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
             # Use dedicated transport timeout (default 30s to match MCP SDK default).
             # This is separate from health_check_timeout to allow long-running tool calls.
@@ -1639,6 +1699,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             # Configurable health check chain - ordered list of methods to try.
             health_check_methods=settings.mcp_session_pool_health_check_methods,
             health_check_timeout_seconds=settings.mcp_session_pool_health_check_timeout,
+            max_total_keys=settings.mcp_session_pool_max_total_keys,
+            max_total_sessions=settings.mcp_session_pool_max_total_sessions,
         )
         logger.info("MCP session pool initialized")
 

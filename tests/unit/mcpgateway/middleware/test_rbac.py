@@ -287,6 +287,7 @@ async def test_permission_checker_methods(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_permission_checker_has_permission_passes_token_teams(monkeypatch):
+    """PermissionChecker must forward token_teams to check_permission for Layer 1 enforcement."""
     mock_db = MagicMock()
     mock_user = {"email": "admin@example.com", "db": mock_db, "token_teams": []}
     mock_perm_service = AsyncMock()

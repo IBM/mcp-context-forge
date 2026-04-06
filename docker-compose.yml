@@ -550,8 +550,23 @@ services:
       # Session pooling for MCP ClientSessions reduces per-request overhead from
       # ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant
       # via identity hashing to prevent cross-user session sharing.
+      #
+      # IMPORTANT: Total session formula (without global caps):
+      #   max_open_connections = num_buckets × MAX_PER_KEY
+      #   num_buckets = num_users × num_servers × num_transports × num_token_rotations
+      #
+      # Example blast radius with MAX_PER_KEY=200 and rotating JWTs:
+      #   10 users × 3 servers × 2 transports × 32 token rotations = 1,920 buckets
+      #   1,920 buckets × 200 sessions = 384,000 open connections (!)
+      #
+      # Mitigation strategies:
+      #   1. Enable MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION=true (prevents token rotation bucket explosion)
+      #   2. Set MCP_SESSION_POOL_MAX_TOTAL_KEYS (hard cap on total buckets, e.g., 1000)
+      #   3. Set MCP_SESSION_POOL_MAX_TOTAL_SESSIONS (hard cap on total sessions, e.g., 10000)
+      #   4. Keep MAX_PER_KEY low (10-20) unless global caps are configured
+      #
       - MCP_SESSION_POOL_ENABLED=${MCP_SESSION_POOL_ENABLED:-true}  # Session pooling (broken sessions are now evicted on error)
-      - MCP_SESSION_POOL_MAX_PER_KEY=200           # Max sessions per (URL, identity, transport) - increased from 150 for 4000+ users
+      - MCP_SESSION_POOL_MAX_PER_KEY=10            # Max sessions per (URL, identity, transport) - use 10-20 unless global caps configured
       - MCP_SESSION_POOL_TTL=300.0                 # Session TTL in seconds (default: 300)
       - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0  # Idle time before health check (default: 60)
       - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60.0     # Timeout waiting for session slot (default: 30)
@@ -565,6 +580,13 @@ services:
       # Options: ping, list_tools, list_prompts, list_resources, skip
       - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["ping", "skip"]  # Try ping, fall back to skip if unsupported
       - MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0               # Timeout per health check attempt
+      # Global session caps - DEFAULTS ARE UNLIMITED (0). Operators should set explicit limits
+      # based on expected load. Recommended starting points: MAX_TOTAL_KEYS=1000, MAX_TOTAL_SESSIONS=5000.
+      # See blast-radius mitigation comments above for guidance on sizing these limits.
+      - MCP_SESSION_POOL_MAX_TOTAL_KEYS=0         # Max total pool keys across all buckets (0 = unlimited, SET MANUALLY)
+      - MCP_SESSION_POOL_MAX_TOTAL_SESSIONS=0     # Max total active sessions across all buckets (0 = unlimited, SET MANUALLY)
+      # JWT identity extraction - prevents bucket explosion from rotating tokens
+      - MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION=true   # Extract stable user ID from JWT (sub/email/user_id)
       # ═══════════════════════════════════════════════════════════════════════════
       # CPU Spin Loop Mitigation (Issue #2360, anyio#695)
       # ═══════════════════════════════════════════════════════════════════════════

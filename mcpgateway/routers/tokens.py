@@ -527,6 +527,11 @@ async def list_all_tokens(
 ) -> TokenListResponse:
     """Admin endpoint to list all tokens or tokens for a specific user.
 
+    SECURITY: Requires un-narrowed admin access (token_teams must be None).
+    Narrowed or public-only admin sessions must not access the token oversight surface.
+    This prevents API tokens with team-scoped admin privileges from enumerating
+    or managing tokens outside their authorized scope.
+
     Args:
         user_email: Filter tokens by user email (admin only)
         include_inactive: Include inactive/expired tokens
@@ -539,15 +544,18 @@ async def list_all_tokens(
         TokenListResponse: List of tokens
 
     Raises:
-        HTTPException: If user is not admin
+        HTTPException: If user is not admin or has narrowed token scope
     """
     _require_authenticated_session(current_user)
+
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     # SECURITY: Require un-narrowed admin. Narrowed/public-only admin sessions
     # must not access the token oversight surface to prevent privilege escalation.
     token_teams = current_user.get("token_teams")
-    if not current_user.get("is_admin") or token_teams is not None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    if token_teams is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token oversight requires un-narrowed admin access")
 
     service = TokenCatalogService(db)
 
@@ -619,6 +627,11 @@ async def admin_revoke_token(
 ) -> None:
     """Admin endpoint to revoke any token.
 
+    SECURITY: Requires un-narrowed admin access (token_teams must be None).
+    Narrowed or public-only admin sessions must not access the token oversight surface.
+    This prevents API tokens with team-scoped admin privileges from revoking
+    tokens outside their authorized scope.
+
     Args:
         token_id: Token ID to revoke
         request: Optional revocation request with reason
@@ -626,15 +639,18 @@ async def admin_revoke_token(
         db: Database session
 
     Raises:
-        HTTPException: If user is not admin or token not found
+        HTTPException: If user is not admin, has narrowed token scope, or token not found
     """
     _require_authenticated_session(current_user)
 
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
     # SECURITY: Require un-narrowed admin. Narrowed/public-only admin sessions
     # must not revoke arbitrary tokens to prevent privilege escalation.
-    revoke_token_teams = current_user.get("token_teams")
-    if not current_user.get("is_admin") or revoke_token_teams is not None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    token_teams = current_user.get("token_teams")
+    if token_teams is not None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token oversight requires un-narrowed admin access")
 
     service = TokenCatalogService(db)
     admin_email = current_user["email"]

@@ -653,6 +653,18 @@ class TestAdminEndpoints:
         assert "Admin access required" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
+    async def test_list_all_tokens_narrowed_admin_blocked(self, mock_db, mock_admin_user):
+        """Test narrowed admin (token_teams present) is blocked from listing all tokens."""
+        narrowed_admin = dict(mock_admin_user)
+        narrowed_admin["token_teams"] = ["team-a"]  # Narrowed admin session
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_all_tokens(user_email=None, include_inactive=False, limit=100, offset=0, current_user=narrowed_admin, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert "Token oversight requires un-narrowed admin access" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
     async def test_admin_revoke_token_success(self, mock_db, mock_admin_user):
         """Test admin revoking any token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
@@ -682,6 +694,18 @@ class TestAdminEndpoints:
             await admin_revoke_token(token_id="token-123", request=None, current_user=mock_current_user, db=mock_db)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+
+    @pytest.mark.asyncio
+    async def test_admin_revoke_token_narrowed_admin_blocked(self, mock_db, mock_admin_user):
+        """Test narrowed admin (token_teams present) is blocked from admin revoke."""
+        narrowed_admin = dict(mock_admin_user)
+        narrowed_admin["token_teams"] = ["team-a"]  # Narrowed admin session
+
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_revoke_token(token_id="token-123", request=None, current_user=narrowed_admin, db=mock_db)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert "Token oversight requires un-narrowed admin access" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_admin_revoke_token_not_found(self, mock_db, mock_admin_user):
