@@ -23,11 +23,11 @@ import pytest
 
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.schemas import ToolCreate
 from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayService,
 )
-from mcpgateway.schemas import ToolCreate
 
 
 def _make_execute_result(*, scalar=None, scalars_list=None):
@@ -510,7 +510,9 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service.get_user_token.assert_called_once_with(mock_oauth_auth_code_gateway.id, "test@example.com")
 
             # Verify connection was made with token using the new method
-            gateway_service._connect_to_sse_server_without_validation.assert_called_once_with(mock_oauth_auth_code_gateway.url, {"Authorization": "Bearer oauth_callback_token"})
+            call_args = gateway_service._connect_to_sse_server_without_validation.call_args
+            assert call_args[0][0] == mock_oauth_auth_code_gateway.url
+            assert call_args[0][1] == {"Authorization": "Bearer oauth_callback_token"}
 
             # Verify result structure
             assert "capabilities" in result
@@ -663,10 +665,12 @@ class TestGatewayServiceOAuthComprehensive:
         mock_stream_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
-        mock_client.stream = MagicMock(return_value=AsyncMock(
-            __aenter__=AsyncMock(return_value=mock_stream_response),
-            __aexit__=AsyncMock(return_value=False),
-        ))
+        mock_client.stream = MagicMock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_stream_response),
+                __aexit__=AsyncMock(return_value=False),
+            )
+        )
 
         mock_get_client.return_value = AsyncMock(
             __aenter__=AsyncMock(return_value=mock_client),
@@ -686,3 +690,109 @@ class TestGatewayServiceOAuthComprehensive:
         second_headers = mock_client.stream.call_args_list[1][1].get("headers", {})
         assert first_headers.get("Authorization") == "Bearer token1"
         assert second_headers.get("Authorization") == "Bearer token2"
+
+
+# ---------- Token claim validation integration tests ----------
+
+
+class TestFetchToolsAfterOauthTokenValidation:
+    """Tests that token claim validation is called and warnings flow through."""
+
+    @pytest.mark.asyncio
+    async def test_audience_mismatch_blocks_before_connection(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
+        """Token with audience mismatch is blocked BEFORE the network call is made."""
+        # Third-Party
+        import jwt as pyjwt
+
+        mock_oauth_auth_code_gateway.oauth_config["resource"] = "api://correct-app"
+        token = pyjwt.encode({"aud": "api://wrong-app", "scope": "read write"}, "k", algorithm="HS256")
+
+        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
+            patch.object(gateway_service, "_connect_to_sse_server_without_validation", new_callable=AsyncMock) as mock_connect,
+        ):
+            mock_tss_inst = MockTSS.return_value
+            mock_tss_inst.get_user_token = AsyncMock(return_value=token)
+            mock_connect.return_value = ({}, [], [], [])
+
+            with pytest.raises(GatewayConnectionError, match="audience"):
+                await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
+
+            # Connection must NOT have been attempted — error raised before network call
+            mock_connect.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_opaque_token_no_warnings(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
+        """Opaque (non-JWT) token proceeds without JWT-related validation warnings."""
+        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
+            patch.object(gateway_service, "_connect_to_sse_server_without_validation", new_callable=AsyncMock) as mock_connect,
+        ):
+            mock_tss_inst = MockTSS.return_value
+            mock_tss_inst.get_user_token = AsyncMock(return_value="opaque-token-not-jwt")
+            mock_connect.return_value = ({}, [], [], [])
+
+            await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
+
+            mock_connect.assert_called_once()
+            _, kwargs = mock_connect.call_args
+            # No JWT-related warnings for opaque tokens
+            jwt_warnings = [w for w in kwargs.get("validation_warnings", []) if "audience" in w.lower() or "scope" in w.lower() or "issuer" in w.lower()]
+            assert jwt_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_401_error_includes_diagnostic_info(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
+        """When MCP server returns 401, error message includes validation diagnostics."""
+        # Third-Party
+        import jwt as pyjwt
+
+        mock_oauth_auth_code_gateway.oauth_config["resource"] = "api://correct"
+        token = pyjwt.encode({"aud": "api://wrong"}, "k", algorithm="HS256")
+        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
+            patch.object(
+                gateway_service,
+                "_connect_to_sse_server_without_validation",
+                new_callable=AsyncMock,
+                side_effect=GatewayConnectionError(
+                    "MCP server rejected OAuth token at https://example.com (HTTP Exception). Possible causes: Token audience mismatch: token aud=[api://wrong], expected 'api://correct'. Check oauth_config audience and scopes."
+                ),
+            ),
+        ):
+            mock_tss_inst = MockTSS.return_value
+            mock_tss_inst.get_user_token = AsyncMock(return_value=token)
+
+            with pytest.raises(GatewayConnectionError, match="audience"):
+                await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_sse_connection_401_diagnostic_error(self, gateway_service):
+        """_connect_to_sse_server_without_validation produces diagnostic message on 401-like errors."""
+        validation_warnings = ["Token audience mismatch: token aud=[api://wrong], expected 'api://correct'"]
+
+        with patch("mcpgateway.services.gateway_service.sse_client", side_effect=Exception("HTTP 401 Unauthorized")):
+            with pytest.raises(GatewayConnectionError, match="Possible causes.*audience mismatch"):
+                await gateway_service._connect_to_sse_server_without_validation(
+                    "https://mcp.example.com/sse",
+                    {"Authorization": "Bearer test"},
+                    validation_warnings=validation_warnings,
+                )
+
+    @pytest.mark.asyncio
+    async def test_sse_connection_generic_error_no_diagnostics(self, gateway_service):
+        """_connect_to_sse_server_without_validation uses generic message for non-auth errors."""
+        validation_warnings = ["Token audience mismatch"]
+
+        with patch("mcpgateway.services.gateway_service.sse_client", side_effect=Exception("Connection timeout")):
+            with pytest.raises(GatewayConnectionError, match="Failed to connect to SSE server"):
+                await gateway_service._connect_to_sse_server_without_validation(
+                    "https://mcp.example.com/sse",
+                    {"Authorization": "Bearer test"},
+                    validation_warnings=validation_warnings,
+                )
