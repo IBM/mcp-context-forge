@@ -70,6 +70,11 @@ def _force_safe_test_db_defaults() -> None:
 
 _force_safe_test_db_defaults()
 
+# Enable server-scoped metrics for test coverage
+# This must be set BEFORE mcpgateway modules are imported to ensure
+# metrics.py:82 is executed with the feature enabled
+os.environ["PROMETHEUS_SERVER_SCOPED_METRICS"] = "true"
+
 # First-Party
 import mcpgateway.db as db_mod  # noqa: E402  # must load after test DB env hardening
 from mcpgateway.config import Settings  # noqa: E402  # must load after test DB env hardening
