@@ -1,0 +1,28 @@
+{{- range .Values.builds }}
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Values.registryNamespace }}
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: {{ .name }}:latest
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: {{ .dockerfilePath | default "Dockerfile" }}
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Values.registryNamespace }}
+spec:
+  lookupPolicy:
+    local: false
+{{- end }}
