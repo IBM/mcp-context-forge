@@ -114,7 +114,7 @@ def test_record_token_usage_with_and_without_span(mock_ctid, mock_session_factor
 def test_record_transport_activity_message_count_zero(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "sse", "connect", message_count=0, bytes_sent=123)
+    service.record_transport_activity("sse", "connect", message_count=0, bytes_sent=123)
     service.record_metric.assert_called()
 
 
@@ -346,7 +346,7 @@ def test_trace_a2a_request_no_request_data_skips_sanitization(mock_session_facto
 def test_record_transport_activity_full_branches(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
+    service.record_transport_activity("http", "send",
                                       message_count=1, bytes_sent=100, bytes_received=50, connection_id="conn1")
     assert service.record_metric.call_count >= 3
 
@@ -355,7 +355,7 @@ def test_record_transport_activity_bytes_sent_zero_skips_metric(mock_db):
     """Cover bytes_sent falsy branch in record_transport_activity (observability_service.py:939->955)."""
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "sse", "receive", message_count=1, bytes_sent=0, bytes_received=5)
+    service.record_transport_activity("sse", "receive", message_count=1, bytes_sent=0, bytes_received=5)
 
     # Ensure we didn't emit bytes_sent metric
     metric_names = [call.kwargs["name"] for call in service.record_metric.mock_calls if "name" in call.kwargs]
@@ -603,7 +603,7 @@ def test_query_traces_invalid_limit_and_order(mock_db):
 def test_record_transport_activity_all_metrics(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "ws", "send",
+    service.record_transport_activity("ws", "send",
                                       message_count=3, bytes_sent=100, bytes_received=200, connection_id="c123")
     assert service.record_metric.call_count >= 3
 
@@ -685,7 +685,7 @@ def test_trace_a2a_request_with_response_result(mock_session_factory):
 def test_record_transport_activity_full(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
+    service.record_transport_activity("http", "send",
                                       message_count=1, bytes_sent=50, bytes_received=25,
                                       connection_id="cid")
     assert service.record_metric.call_count >= 3
@@ -944,7 +944,7 @@ def test_trace_a2a_request_successful_path(mock_session_factory):
 def test_record_transport_activity_all_metrics_and_error(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
+    service.record_transport_activity("http", "send",
                                       message_count=2,
                                       bytes_sent=128,
                                       bytes_received=64,
@@ -1166,4 +1166,81 @@ def test_trace_a2a_request_context_manager_session_close_failure(mock_session_fa
             result["response"] = "success"
 
     # Verify close was attempted
+    mock_session.close.assert_called()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_tool_invocation_error_path_end_span_failure(mock_session_factory):
+    """Test that trace_tool_invocation handles end_span failure during error path."""
+    mock_factory, mock_session = mock_session_factory
+
+    service = ObservabilityService()
+
+    # Make end_span raise during error path by making the query fail
+    call_count = [0]
+    original_query = mock_session.query
+
+    def failing_query_on_second_call(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] > 1:
+            raise Exception("end_span query failed")
+        return original_query(*args, **kwargs)
+
+    mock_session.query = failing_query_on_second_call
+
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with pytest.raises(RuntimeError, match="tool error"):
+            with service.trace_tool_invocation("test_tool", {"arg": "value"}) as (span_id, result):
+                raise RuntimeError("tool error")
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_a2a_request_error_path_end_span_failure(mock_session_factory):
+    """Test that trace_a2a_request handles end_span failure during error path."""
+    mock_factory, mock_session = mock_session_factory
+
+    service = ObservabilityService()
+
+    # Make end_span raise during error path by making the query fail
+    call_count = [0]
+    original_query = mock_session.query
+
+    def failing_query_on_second_call(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] > 1:
+            raise Exception("end_span query failed")
+        return original_query(*args, **kwargs)
+
+    mock_session.query = failing_query_on_second_call
+
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with pytest.raises(RuntimeError, match="a2a error"):
+            with service.trace_a2a_request("agent123", "TestAgent", "query") as (span_id, result):
+                raise RuntimeError("a2a error")
+
+
+def test_record_token_usage_session_close_failure(mock_session_factory):
+    """Test that record_token_usage handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    service.record_metric = MagicMock()
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with patch.object(service, "_safe_commit", return_value=True):
+            service.record_token_usage(
+                span_id="span123",
+                model="test-model",
+                input_tokens=10,
+                output_tokens=5,
+            )
+
+    # Verify close was attempted despite failure
     mock_session.close.assert_called()

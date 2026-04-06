@@ -1123,9 +1123,8 @@ class ObservabilityService:
     # Transport Metrics
     # ==============================
 
-    def record_transport_activity(  # pylint: disable=unused-argument
+    def record_transport_activity(
         self,
-        db: Session,
         transport_type: str,
         operation: str,
         message_count: int = 1,
@@ -1136,8 +1135,10 @@ class ObservabilityService:
     ) -> None:
         """Record transport-specific activity metrics.
 
+        Creates independent observability sessions for best-effort recording
+        via record_metric() calls.
+
         Args:
-            db: Database session
             transport_type: Transport type (sse, websocket, stdio, http)
             operation: Operation type (connect, disconnect, send, receive, error)
             message_count: Number of messages processed
@@ -1146,9 +1147,12 @@ class ObservabilityService:
             connection_id: Connection/session identifier
             error: Error message if operation failed
 
+        Note:
+            Uses separate database sessions from main transaction (issue #3883).
+
         Examples:
             >>> service.record_transport_activity(  # doctest: +SKIP
-            ...     db, transport_type="sse",
+            ...     transport_type="sse",
             ...     operation="send",
             ...     message_count=1,
             ...     bytes_sent=1024
