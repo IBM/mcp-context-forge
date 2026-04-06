@@ -646,7 +646,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             # First-Party
             from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
 
-            plugin_manager = get_plugin_manager()
+            plugin_manager = await get_plugin_manager()
             if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):
                 # Get plugin contexts from user_context (stored in request.state by HttpAuthMiddleware)
                 # These enable cross-hook context sharing between HTTP_PRE_REQUEST and HTTP_AUTH_CHECK_PERMISSION

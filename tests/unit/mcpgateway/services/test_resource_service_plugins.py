@@ -12,18 +12,17 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+from fastapi import Request
+from fastapi.responses import HTMLResponse
 import pytest
 from sqlalchemy.orm import Session
-from fastapi.responses import HTMLResponse
-from fastapi import Request
 
 # First-Party
+from mcpgateway.admin import admin_add_resource
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.plugins.framework import ResourceHookType
+from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError, ResourceHookType
 from mcpgateway.plugins.framework.models import PluginResult
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
-from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError
-from mcpgateway.admin import admin_add_resource
 
 
 @pytest.fixture
@@ -117,10 +116,11 @@ class TestResourceServicePluginIntegration:
         mock_manager = MagicMock()
         mock_manager._initialized = False
         mock_manager.initialize = AsyncMock()
+        mock_manager.has_hooks_for = MagicMock(return_value=True)
         mock_manager.invoke_hook = AsyncMock(return_value=(PR(continue_processing=True, modified_payload=None), None))  # contexts
         with patch.dict(os.environ, {"PLUGINS_ENABLED": "false"}):
             service = ResourceService()
-        service._plugin_manager = mock_manager
+        service._get_plugin_manager = AsyncMock(return_value=mock_manager)
         return service
 
     @pytest.mark.asyncio
@@ -148,7 +148,7 @@ class TestResourceServicePluginIntegration:
         """Test read_resource executes pre-fetch hook and passes correct context."""
 
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+        mock_manager = await service._get_plugin_manager(None)
 
         # Mock DB session
         mock_db: Session = MagicMock()
@@ -226,11 +226,12 @@ class TestResourceServicePluginIntegration:
     @pytest.mark.asyncio
     async def test_read_resource_blocked_by_plugin(self, resource_service_with_plugins, mock_db):
         """Test read_resource blocked by pre-fetch hook."""
+        # First-Party
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+        mock_manager = await service._get_plugin_manager(None)
 
         # Setup mock resource
         mock_resource = MagicMock()
@@ -267,7 +268,8 @@ class TestResourceServicePluginIntegration:
         """Test read_resource with plugin modifying URI and a mocked SQLAlchemy Session."""
 
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+
+        mock_manager = await service._get_plugin_manager(None)
 
         # Fake resource content returned from DB
         fake_resource_content = ResourceContent(
@@ -328,14 +330,13 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_content_filtered_by_plugin(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test read_resource with content filtering by post-fetch hook."""
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
         from mcpgateway.plugins.framework import ResourceHookType
-
+        from mcpgateway.plugins.framework.models import PluginResult
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+        mock_manager = await service._get_plugin_manager(None)
 
         mock_ctx = MagicMock()
         mock_ssl.return_value = mock_ctx
@@ -402,11 +403,12 @@ class TestResourceServicePluginIntegration:
     @pytest.mark.asyncio
     async def test_read_resource_plugin_error_handling(self, resource_service_with_plugins, mock_db):
         """Test read_resource handles plugin errors gracefully."""
+        # First-Party
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+        mock_manager = await service._get_plugin_manager(None)
 
         # Setup mock resource
         mock_resource = MagicMock()
@@ -436,14 +438,13 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_post_fetch_blocking(self, resource_service_with_plugins, mock_db):
         """Test read_resource blocked by post-fetch hook."""
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
         from mcpgateway.plugins.framework import ResourceHookType
-
+        from mcpgateway.plugins.framework.models import PluginResult
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+        mock_manager = await service._get_plugin_manager(None)
 
         # Setup mock resource
         mock_resource = MagicMock()
@@ -491,11 +492,12 @@ class TestResourceServicePluginIntegration:
     @patch("mcpgateway.services.resource_service.ssl.create_default_context")
     async def test_read_resource_with_template(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test read_resource with template resource and plugins."""
+        # First-Party
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+        mock_manager = await service._get_plugin_manager(None)
 
         mock_ctx = MagicMock()
         mock_ssl.return_value = mock_ctx
@@ -532,14 +534,13 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_context_propagation(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test context propagation from pre-fetch to post-fetch."""
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
         from mcpgateway.plugins.framework import ResourceHookType
-
+        from mcpgateway.plugins.framework.models import PluginResult
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+        mock_manager = await service._get_plugin_manager(None)
 
         mock_ctx = MagicMock()
         mock_ssl.return_value = mock_ctx
@@ -602,28 +603,31 @@ class TestResourceServicePluginIntegration:
 
     @pytest.mark.asyncio
     async def test_plugin_manager_initialization(self):
-        """Test plugin manager initialization in ResourceService."""
+        """_get_plugin_manager should return the manager from the framework factory."""
         mock_manager = MagicMock()
-        with patch("mcpgateway.services.resource_service.get_plugin_manager", return_value=mock_manager):
-            service = ResourceService()
-            assert service._plugin_manager is mock_manager
+        service = ResourceService()
+        with patch("mcpgateway.services.base_service.get_plugin_manager", AsyncMock(return_value=mock_manager)):
+            result = await service._get_plugin_manager("server-1")
+        assert result is mock_manager
 
     @pytest.mark.asyncio
     async def test_plugin_manager_initialization_failure(self):
-        """Test plugin manager initialization failure handling."""
-        with patch("mcpgateway.services.resource_service.get_plugin_manager", side_effect=ValueError("Invalid config")):
-            service = ResourceService()
-            assert service._plugin_manager is None  # Should fail gracefully
+        """_get_plugin_manager should propagate errors from the framework factory."""
+        service = ResourceService()
+        with patch("mcpgateway.services.base_service.get_plugin_manager", AsyncMock(side_effect=ValueError("Invalid config"))):
+            with pytest.raises(ValueError, match="Invalid config"):
+                await service._get_plugin_manager("server-1")
 
     @pytest.mark.asyncio
     @patch("mcpgateway.services.resource_service.ssl.create_default_context")
     async def test_read_resource_no_request_id(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test read_resource generates request_id if not provided."""
+        # First-Party
         import mcpgateway.services.resource_service as resource_service_mod
 
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
-        mock_manager = service._plugin_manager
+        mock_manager = await service._get_plugin_manager(None)
 
         mock_ctx = MagicMock()
         mock_ssl.return_value = mock_ctx

@@ -103,7 +103,7 @@ async def test_resource_post_fetch_receives_resolved_content(use_rust):
         return MagicMock(modified_payload=None), None
 
     pm.invoke_hook = invoke_hook
-    service._plugin_manager = pm
+    service._get_plugin_manager = AsyncMock(return_value=pm)
 
     # Execute
     result = await service.read_resource(

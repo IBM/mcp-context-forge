@@ -22,7 +22,6 @@ from mcpgateway.services.mcp_session_pool import (
     _get_cleanup_timeout,
     close_mcp_session_pool,
     drain_mcp_session_pool,
-    get_mcp_session_pool,
     init_mcp_session_pool,
     MCPSessionPool,
     PooledSession,
