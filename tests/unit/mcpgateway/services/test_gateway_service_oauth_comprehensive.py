@@ -792,3 +792,53 @@ class TestFetchToolsAfterOauthTokenValidation:
                     {"Authorization": "Bearer test"},
                     validation_warnings=validation_warnings,
                 )
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_401_includes_diagnostic_info(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
+        """StreamableHTTP 401 errors include validation diagnostics just like SSE."""
+        # First-Party
+        from mcpgateway.services.token_validation_service import TokenValidationResult
+
+        mock_oauth_auth_code_gateway.transport = "streamablehttp"
+        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+
+        # Create a validation result with advisory (non-blocking) warnings
+        advisory_result = TokenValidationResult(is_jwt=True, token_type_valid=True)
+        advisory_result.warnings = ["Unexpected token_type 'mac', expected 'Bearer'"]
+
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
+            patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims", return_value=advisory_result),
+            patch.object(
+                gateway_service,
+                "connect_to_streamablehttp_server",
+                new_callable=AsyncMock,
+                side_effect=Exception("HTTP 401 Unauthorized"),
+            ),
+        ):
+            mock_tss_inst = MockTSS.return_value
+            mock_tss_inst.get_user_token = AsyncMock(return_value="opaque-token")
+
+            with pytest.raises(GatewayConnectionError, match="Possible causes.*token_type"):
+                await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_generic_error_no_diagnostics(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
+        """StreamableHTTP non-auth errors do not include validation diagnostics."""
+        mock_oauth_auth_code_gateway.transport = "streamablehttp"
+        test_db.execute.return_value = _make_execute_result(scalar=mock_oauth_auth_code_gateway)
+
+        with (
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
+            patch.object(
+                gateway_service,
+                "connect_to_streamablehttp_server",
+                new_callable=AsyncMock,
+                side_effect=Exception("Connection timeout"),
+            ),
+        ):
+            mock_tss_inst = MockTSS.return_value
+            mock_tss_inst.get_user_token = AsyncMock(return_value="opaque-token")
+
+            with pytest.raises(GatewayConnectionError, match="Failed to fetch tools after OAuth"):
+                await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")

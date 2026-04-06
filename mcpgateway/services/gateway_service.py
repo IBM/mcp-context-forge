@@ -1565,7 +1565,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if gateway.transport.upper() == "SSE":
                 capabilities, tools, resources, prompts = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation.warnings)
             elif gateway.transport.upper() == "STREAMABLEHTTP":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(gateway.url, authentication)
+                try:
+                    capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(gateway.url, authentication)
+                except Exception as streamable_err:
+                    # Surface diagnostic context for likely auth rejections (401/403)
+                    error_str = str(streamable_err).lower()
+                    if token_validation.warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
+                        diagnostics = "; ".join(token_validation.warnings)
+                        sanitized_url = sanitize_url_for_logging(gateway.url)
+                        raise GatewayConnectionError(
+                            f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(streamable_err).__name__}). "
+                            f"Possible causes: {diagnostics}. "
+                            f"Check oauth_config audience and scopes."
+                        )
+                    raise
             else:
                 raise ValueError(f"Unsupported transport type: {gateway.transport}")
 
