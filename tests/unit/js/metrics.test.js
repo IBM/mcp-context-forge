@@ -609,7 +609,7 @@ describe("extractKPIData", () => {
     };
 
     const kpi = extractKPIData(data);
-    expect(kpi.avgResponseTime).toBe(150); // Weighted average
+    expect(kpi.avgResponseTime).toBe(150000); // Weighted average (seconds × 1000 → ms)
   });
 
   test("handles null avgResponseTime", () => {
@@ -825,6 +825,7 @@ describe("createPerformanceCard", () => {
     expect(card).toBeInstanceOf(HTMLElement);
     consoleError.mockRestore();
   });
+
 });
 
 describe("createRecentActivitySection", () => {
@@ -903,6 +904,31 @@ describe("createMetricsCard", () => {
   test("handles missing properties", () => {
     const card = createMetricsCard("Prompts", {});
     expect(card.textContent).toContain("N/A");
+  });
+
+  test("converts avgResponseTime from seconds to milliseconds", () => {
+    const metrics = { avgResponseTime: 1.5 };
+    const card = createMetricsCard("Tools", metrics);
+    expect(card.textContent).toContain("1500.0 ms");
+  });
+
+  test("formats lastExecutionTime as human-readable date", () => {
+    const metrics = { lastExecutionTime: "2026-03-13T06:00:00.000000" };
+    const card = createMetricsCard("Tools", metrics);
+    expect(card.textContent).toContain("2026-03-13 06:00");
+  });
+
+  test("displays N/A for null avgResponseTime", () => {
+    const metrics = { avgResponseTime: null };
+    const card = createMetricsCard("Tools", metrics);
+    // avgResponseTime null → value resolves to "N/A" via ?? chain
+    expect(card.textContent).toContain("N/A");
+  });
+
+  test("preserves zero avgResponseTime", () => {
+    const metrics = { avgResponseTime: 0 };
+    const card = createMetricsCard("Tools", metrics);
+    expect(card.textContent).toContain("0.0 ms");
   });
 });
 

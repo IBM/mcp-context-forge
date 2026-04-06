@@ -44,3 +44,20 @@ def test_build_top_performers_handles_missing_values():
     assert performers[0].avg_response_time is None
     assert performers[0].success_rate is None
     assert performers[0].last_execution is None
+
+
+def test_build_top_performers_preserves_zero_values():
+    """Zero avg_response_time and success_rate must not be coerced to None."""
+    result = SimpleNamespace(
+        id=3,
+        name="zero-tool",
+        execution_count=10,
+        avg_response_time=0.0,
+        success_rate=0.0,
+        last_execution=None,
+    )
+
+    performers = build_top_performers([result])
+
+    assert performers[0].avg_response_time == 0.0
+    assert performers[0].success_rate == 0.0

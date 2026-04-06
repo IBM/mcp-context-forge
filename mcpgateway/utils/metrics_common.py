@@ -57,8 +57,8 @@ def build_top_performers(results: List) -> List[TopPerformer]:
             id=result.id,
             name=result.name,
             execution_count=result.execution_count or 0,
-            avg_response_time=float(result.avg_response_time) if result.avg_response_time else None,
-            success_rate=float(result.success_rate) if result.success_rate else None,
+            avg_response_time=float(result.avg_response_time) if result.avg_response_time is not None else None,
+            success_rate=float(result.success_rate) if result.success_rate is not None else None,
             last_execution=result.last_execution,
         )
         for result in results

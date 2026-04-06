@@ -272,7 +272,7 @@ describe("extractKPIData", () => {
     expect(result.totalExecutions).toBe(100);
     expect(result.successRate).toBe(90);
     expect(result.errorRate).toBe(10);
-    expect(result.avgResponseTime).toBeCloseTo(1.5, 1);
+    expect(result.avgResponseTime).toBeCloseTo(1500, 1);
   });
 
   test("aggregates across multiple categories", () => {
@@ -362,8 +362,8 @@ describe("extractKPIData", () => {
       },
     };
     const result = extractKPIData(data);
-    // Weighted avg = (100*2.0 + 100*4.0) / 200 = 3.0
-    expect(result.avgResponseTime).toBeCloseTo(3.0, 1);
+    // Weighted avg = (100*2.0 + 100*4.0) / 200 = 3.0s = 3000ms
+    expect(result.avgResponseTime).toBeCloseTo(3000, 1);
   });
 
   test("ignores N/A response time values", () => {
