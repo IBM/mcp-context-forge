@@ -142,23 +142,6 @@ def _normalize_scope(scope_str: str) -> set:
     return scopes
 
 
-def _normalize_config_scopes(config_scopes: List[str]) -> List[str]:
-    """Extract both full and short forms of configured scopes for comparison.
-
-    Args:
-        config_scopes: List of scopes from oauth_config.
-
-    Returns:
-        List of short-form scope names for comparison.
-    """
-    short_forms = []
-    for s in config_scopes:
-        short_forms.append(s)
-        if "/" in s:
-            short_forms.append(s.rsplit("/", 1)[-1])
-    return short_forms
-
-
 def _validate_audience(claims: Dict[str, Any], oauth_config: Dict[str, Any], gateway_url: str, gateway_name: str, result: TokenValidationResult) -> None:
     """Check the ``aud`` claim against the expected audience.
 

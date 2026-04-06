@@ -11,7 +11,6 @@ import pytest
 # First-Party
 from mcpgateway.services.token_validation_service import (
     _derive_issuer_from_token_url,
-    _normalize_config_scopes,
     _normalize_scope,
     TokenValidationResult,
     validate_oauth_token_claims,
@@ -142,17 +141,6 @@ class TestNormalizeScope:
         assert _normalize_scope("") == set()
 
 
-# ---------- _normalize_config_scopes ----------
-
-
-class TestNormalizeConfigScopes:
-    def test_full_and_short_forms(self):
-        result = _normalize_config_scopes(["api://app-a/Tools.Read", "openid"])
-        assert "api://app-a/Tools.Read" in result
-        assert "Tools.Read" in result
-        assert "openid" in result
-
-
 # ---------- validate_oauth_token_claims ----------
 
 
@@ -215,6 +203,15 @@ class TestValidateOauthTokenClaims:
         result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
 
         # No aud claim — cannot validate, no warning
+        assert result.audience_match is None
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_no_expected_audience(self):
+        """When neither resource nor gateway_url is set, audience validation is skipped."""
+        token = _make_jwt({"aud": "api://anything"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "", "test-gw")
+
         assert result.audience_match is None
         assert not any("audience" in w.lower() for w in result.warnings)
 

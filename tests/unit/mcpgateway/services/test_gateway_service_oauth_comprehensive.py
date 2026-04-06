@@ -745,8 +745,8 @@ class TestFetchToolsAfterOauthTokenValidation:
             assert jwt_warnings == []
 
     @pytest.mark.asyncio
-    async def test_401_error_includes_diagnostic_info(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
-        """When MCP server returns 401, error message includes validation diagnostics."""
+    async def test_audience_mismatch_raises_before_connection_with_diagnostic(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
+        """Token audience mismatch is blocked before the network call, with diagnostic detail."""
         # Third-Party
         import jwt as pyjwt
 
@@ -756,20 +756,16 @@ class TestFetchToolsAfterOauthTokenValidation:
 
         with (
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as MockTSS,
-            patch.object(
-                gateway_service,
-                "_connect_to_sse_server_without_validation",
-                new_callable=AsyncMock,
-                side_effect=GatewayConnectionError(
-                    "MCP server rejected OAuth token at https://example.com (HTTP Exception). Possible causes: Token audience mismatch: token aud=[api://wrong], expected 'api://correct'. Check oauth_config audience and scopes."
-                ),
-            ),
+            patch.object(gateway_service, "_connect_to_sse_server_without_validation", new_callable=AsyncMock) as mock_connect,
         ):
             mock_tss_inst = MockTSS.return_value
             mock_tss_inst.get_user_token = AsyncMock(return_value=token)
 
             with pytest.raises(GatewayConnectionError, match="audience"):
                 await gateway_service.fetch_tools_after_oauth(test_db, "gw-id", "user@example.com")
+
+            # Connection must NOT have been attempted — blocked before network call
+            mock_connect.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sse_connection_401_diagnostic_error(self, gateway_service):
