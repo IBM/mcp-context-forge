@@ -1465,12 +1465,25 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
-    async def refresh_token(self, refresh_token: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
+    async def refresh_token(
+        self,
+        refresh_token: str,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Refresh an expired access token using a refresh token.
 
         Args:
             refresh_token: The refresh token to use
             credentials: OAuth configuration including client_id, client_secret, token_url
+            ca_certificate: Optional custom CA certificate (PEM format or file path) to use
+                instead of system trust store. When provided, creates an isolated HTTP client
+                instead of using the shared client. This enables OAuth token refresh
+                with self-signed or custom CA upstream OAuth servers.
+            client_cert: Optional client certificate for mTLS (PEM format or file path)
+            client_key: Optional client private key for mTLS (PEM format or file path)
 
         Returns:
             Dict containing new access_token, optional refresh_token, and expires_in
@@ -1521,8 +1534,16 @@ class OAuthManager:
         # Attempt token refresh with retries
         for attempt in range(self.max_retries):
             try:
-                client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                if ca_certificate:
+                    # First-Party
+                    from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+
+                    ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
+                    async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
+                        response = await client.post(token_url, data=token_data)
+                else:
+                    client = await self._get_client()
+                    response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
                 if response.status_code == 200:
                     token_response = self._parse_token_response(response)
 
