@@ -11,8 +11,8 @@ Tests for hook payload policies.
 from unittest.mock import patch
 
 # Third-Party
-import pytest
 from pydantic import BaseModel, Field, ValidationError
+import pytest
 
 # First-Party
 from mcpgateway.plugins.framework.hooks.policies import apply_policy, DefaultHookPolicy, HookPayloadPolicy
@@ -191,6 +191,7 @@ class TestConcreteGatewayPolicies:
     """Tests for the gateway-side HOOK_PAYLOAD_POLICIES."""
 
     def test_all_hook_types_have_policies(self):
+        # First-Party
         from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
 
         expected_hooks = {
@@ -210,6 +211,7 @@ class TestConcreteGatewayPolicies:
         assert set(HOOK_PAYLOAD_POLICIES.keys()) == expected_hooks
 
     def test_tool_pre_invoke_writable_fields(self):
+        # First-Party
         from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
 
         policy = HOOK_PAYLOAD_POLICIES["tool_pre_invoke"]
@@ -218,12 +220,14 @@ class TestConcreteGatewayPolicies:
         assert "headers" in policy.writable_fields
 
     def test_tool_post_invoke_writable_fields(self):
+        # First-Party
         from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
 
         policy = HOOK_PAYLOAD_POLICIES["tool_post_invoke"]
         assert policy.writable_fields == frozenset({"result"})
 
     def test_agent_pre_invoke_includes_agent_id(self):
+        # First-Party
         from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
 
         policy = HOOK_PAYLOAD_POLICIES["agent_pre_invoke"]
@@ -234,6 +238,7 @@ class TestAgentMessageCoercion:
     """Tests for _coerce_messages field validator on agent payloads."""
 
     def test_pre_invoke_dict_messages_coerced(self):
+        # First-Party
         from mcpgateway.plugins.framework.hooks.agents import AgentPreInvokePayload
         from mcpgateway.plugins.framework.utils import StructuredData
 
@@ -246,6 +251,7 @@ class TestAgentMessageCoercion:
         assert payload.messages[0].content.text == "hello"
 
     def test_post_invoke_dict_messages_coerced(self):
+        # First-Party
         from mcpgateway.plugins.framework.hooks.agents import AgentPostInvokePayload
         from mcpgateway.plugins.framework.utils import StructuredData
 
@@ -257,6 +263,7 @@ class TestAgentMessageCoercion:
         assert payload.messages[0].content.text == "world"
 
     def test_real_message_objects_pass_through(self):
+        # First-Party
         from mcpgateway.common.models import Message, Role, TextContent
         from mcpgateway.plugins.framework.hooks.agents import AgentPreInvokePayload
 
@@ -265,6 +272,7 @@ class TestAgentMessageCoercion:
         assert payload.messages[0] is msg
 
     def test_empty_messages_list(self):
+        # First-Party
         from mcpgateway.plugins.framework.hooks.agents import AgentPreInvokePayload
 
         payload = AgentPreInvokePayload(agent_id="agent-1", messages=[])
@@ -275,6 +283,7 @@ class TestProtocolConformance:
     """Verify gateway concrete types satisfy framework protocols."""
 
     def test_message_satisfies_message_like(self):
+        # First-Party
         from mcpgateway.common.models import Message, Role, TextContent
         from mcpgateway.plugins.framework.protocols import MessageLike
 
@@ -282,6 +291,7 @@ class TestProtocolConformance:
         assert isinstance(msg, MessageLike)
 
     def test_prompt_result_satisfies_prompt_result_like(self):
+        # First-Party
         from mcpgateway.common.models import Message, PromptResult, Role, TextContent
         from mcpgateway.plugins.framework.protocols import PromptResultLike
 
@@ -292,8 +302,10 @@ class TestProtocolConformance:
         assert isinstance(result, PromptResultLike)
 
     def test_simple_namespace_satisfies_message_like(self):
+        # Standard
         from types import SimpleNamespace
 
+        # First-Party
         from mcpgateway.plugins.framework.protocols import MessageLike
 
         msg = SimpleNamespace(role="user", content="hello")
@@ -304,6 +316,7 @@ class TestPromptPosthookCoercion:
     """Tests for PromptPosthookPayload._coerce_result field validator."""
 
     def test_dict_result_coerced_to_structured_data(self):
+        # First-Party
         from mcpgateway.plugins.framework.hooks.prompts import PromptPosthookPayload
         from mcpgateway.plugins.framework.utils import StructuredData
 
@@ -315,8 +328,10 @@ class TestPromptPosthookCoercion:
         assert payload.result.messages[0].content.text == "hi"
 
     def test_non_dict_result_passthrough(self):
+        # Standard
         from types import SimpleNamespace
 
+        # First-Party
         from mcpgateway.plugins.framework.hooks.prompts import PromptPosthookPayload
 
         ns = SimpleNamespace(messages=[], description=None)
@@ -324,6 +339,7 @@ class TestPromptPosthookCoercion:
         assert payload.result is ns
 
     def test_pydantic_model_result_passthrough(self):
+        # First-Party
         from mcpgateway.plugins.framework.hooks.prompts import PromptPosthookPayload
 
         class FakeResult(BaseModel):
@@ -340,6 +356,7 @@ class TestExecutorPolicyEnforcement:
 
     @pytest.mark.asyncio
     async def test_explicit_policy_filters_writable_fields(self):
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -372,6 +389,7 @@ class TestExecutorPolicyEnforcement:
 
     @pytest.mark.asyncio
     async def test_default_deny_rejects_modifications(self):
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -405,6 +423,7 @@ class TestExecutorPolicyEnforcement:
 
     @pytest.mark.asyncio
     async def test_explicit_policy_no_effective_change(self):
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -438,6 +457,7 @@ class TestExecutorPolicyEnforcement:
     @pytest.mark.asyncio
     async def test_in_place_nested_mutation_caught_by_policy(self):
         """Plugins that mutate nested dicts in place should not bypass policy filtering."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -483,6 +503,7 @@ class TestExecutorPolicyEnforcement:
         """When an ENFORCE plugin short-circuits after a prior plugin made
         policy-approved modifications, the early return must carry those
         filtered modifications via current_payload — not the raw result."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginMode, PluginResult
@@ -530,6 +551,7 @@ class TestExecutorPolicyEnforcement:
     async def test_enforce_early_return_carries_metadata(self):
         """The early-return path must carry accumulated metadata from earlier
         plugins, consistent with the normal return path."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginMode, PluginResult
@@ -571,6 +593,7 @@ class TestExecutorPolicyEnforcement:
     async def test_enforce_early_return_deny_default_rejects_all(self):
         """When default=deny and an ENFORCE plugin short-circuits with modifications,
         all modifications must be rejected (modified_payload=None)."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginMode, PluginResult
@@ -610,6 +633,7 @@ class TestCrossTypePolicyHandling:
     async def test_cross_type_result_accepted_when_policy_exists(self):
         """When modified_payload is a different PluginPayload subtype from the
         input, the policy's presence authorises the hook and the result is accepted."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginPayload, PluginResult
@@ -640,6 +664,7 @@ class TestCrossTypePolicyHandling:
     @pytest.mark.asyncio
     async def test_cross_type_dict_result_accepted_when_policy_exists(self):
         """dict results (e.g. http_auth_resolve_user) are accepted when a policy exists."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -665,6 +690,7 @@ class TestCrossTypePolicyHandling:
     @pytest.mark.asyncio
     async def test_deny_default_snapshots_payload_for_in_place_isolation(self):
         """When default=deny, in-place nested mutations must not persist on the live payload."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -697,23 +723,27 @@ class TestCrossTypePolicyHandling:
 class TestBorgPolicyBackfill:
     """Tests for PluginManager Borg pattern policy injection."""
 
-    def test_get_plugin_manager_injects_policies(self, monkeypatch, tmp_path):
-        """Verify get_plugin_manager() always injects hook policies."""
+    @pytest.mark.asyncio
+    async def test_get_plugin_manager_injects_policies(self, monkeypatch, tmp_path):
+        """Verify get_plugin_manager() always injects hook policies into the DBPluginManager."""
+        # First-Party
         import mcpgateway.plugins.framework as fw
-        from mcpgateway.plugins.framework.settings import settings as plugin_settings
+        from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
 
         config_file = tmp_path / "plugins.yaml"
         config_file.write_text("plugin_settings:\n  plugin_timeout: 30\nplugin_dirs: []\nplugins: []\n")
 
-        monkeypatch.setenv("PLUGINS_ENABLED", "true")
+        fw.enable_plugins(True)
         monkeypatch.setenv("PLUGINS_CONFIG_FILE", str(config_file))
 
-        # Reset singleton state
-        fw.PluginManager.reset()
-        fw._plugin_manager = None
-        plugin_settings.cache_clear()
+        # Initialize factory with policies
+        fw.init_plugin_manager_factory(
+            yaml_path=str(config_file),
+            timeout=30,
+            hook_policies=HOOK_PAYLOAD_POLICIES,
+        )
 
-        pm = fw.get_plugin_manager()
+        pm = await fw.get_plugin_manager()
         assert pm is not None
         assert pm._executor.hook_policies, "get_plugin_manager() should inject hook policies"
 
@@ -721,27 +751,37 @@ class TestBorgPolicyBackfill:
         assert "tool_pre_invoke" in pm._executor.hook_policies
         assert "prompt_post_fetch" in pm._executor.hook_policies
 
-    def test_service_via_get_plugin_manager_has_policies(self, monkeypatch, tmp_path):
+    async def test_service_via_get_plugin_manager_has_policies(self, monkeypatch, tmp_path):
         """Verify that services using get_plugin_manager() get policies regardless of creation order."""
+        # First-Party
         import mcpgateway.plugins.framework as fw
         from mcpgateway.plugins.framework.settings import settings as plugin_settings
+        from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
 
         config_file = tmp_path / "plugins.yaml"
         config_file.write_text("plugin_settings:\n  plugin_timeout: 30\nplugin_dirs: []\nplugins: []\n")
 
-        monkeypatch.setenv("PLUGINS_ENABLED", "true")
+        fw.enable_plugins(True)
         monkeypatch.setenv("PLUGINS_CONFIG_FILE", str(config_file))
 
         # Reset state
-        fw.PluginManager.reset()
-        fw._plugin_manager = None
+        if fw._plugin_manager_factory is not None:
+            await fw._plugin_manager_factory.shutdown()
+        fw._plugin_manager_factory = None
         plugin_settings.cache_clear()
 
+        # Initialize factory with policies
+        fw.init_plugin_manager_factory(
+            yaml_path=str(config_file),
+            timeout=30,
+            hook_policies=HOOK_PAYLOAD_POLICIES,
+        )
+
         # Simulate service creating manager via get_plugin_manager
-        pm1 = fw.get_plugin_manager()
+        pm1 = await fw.get_plugin_manager()
 
         # Simulate another access (e.g. from another service)
-        pm2 = fw.get_plugin_manager()
+        pm2 = await fw.get_plugin_manager()
 
         # Both should share the same executor with policies
         assert pm1 is pm2
@@ -750,6 +790,7 @@ class TestBorgPolicyBackfill:
     @pytest.mark.asyncio
     async def test_policy_enforcement_through_manager(self, monkeypatch, tmp_path):
         """Integration test: policies enforced through PluginManager.execute flow."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.hooks.policies import HookPayloadPolicy
         from mcpgateway.plugins.framework.manager import PluginExecutor
@@ -791,6 +832,7 @@ class TestFrameworkImportIsolation:
     """Verify the plugin framework has no remaining imports from mcpgateway.common or mcpgateway.utils."""
 
     def test_no_common_or_utils_imports_in_framework(self):
+        # Standard
         import ast
         from pathlib import Path
 
@@ -823,6 +865,7 @@ class TestMultiPluginDictChain:
     async def test_dict_payload_deep_copied_for_next_plugin(self):
         """When plugin 1 returns a dict, the next plugin receives a deep-copied
         dict without crashing on model_copy (which dicts don't have)."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -861,6 +904,7 @@ class TestMultiPluginDictChain:
     async def test_dict_to_dict_accepted_without_apply_policy(self):
         """When effective_payload is a dict and plugin also returns a dict,
         the result is accepted directly (not routed through apply_policy)."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -895,6 +939,7 @@ class TestMultiPluginDictChain:
     async def test_empty_dict_payload_not_dropped_by_truthiness(self):
         """An empty dict returned by a plugin must not be replaced by the
         original payload due to falsy truthiness evaluation."""
+        # First-Party
         from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
         from mcpgateway.plugins.framework.manager import PluginExecutor
         from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
@@ -927,6 +972,7 @@ class TestMultiPluginDictChain:
 @pytest.mark.asyncio
 async def test_http_auth_permission_result_includes_decision_plugin_provenance():
     """Permission hook decisions should carry deciding plugin identity even with empty plugin metadata."""
+    # First-Party
     from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
     from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
     from mcpgateway.plugins.framework.manager import PluginExecutor
@@ -951,6 +997,7 @@ async def test_http_auth_permission_result_includes_decision_plugin_provenance()
 @pytest.mark.asyncio
 async def test_http_auth_permission_provenance_overrides_forged_metadata_from_decider():
     """Manager-owned provenance must overwrite forged plugin metadata keys."""
+    # First-Party
     from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
     from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
     from mcpgateway.plugins.framework.manager import PluginExecutor
@@ -978,6 +1025,7 @@ async def test_http_auth_permission_provenance_overrides_forged_metadata_from_de
 @pytest.mark.asyncio
 async def test_http_auth_permission_provenance_uses_actual_decider_in_multi_plugin_chain():
     """Metadata-only plugins must not control provenance when a later plugin decides."""
+    # First-Party
     from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
     from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
     from mcpgateway.plugins.framework.manager import PluginExecutor
@@ -1019,6 +1067,7 @@ async def test_http_auth_permission_provenance_uses_actual_decider_in_multi_plug
 @pytest.mark.asyncio
 async def test_http_auth_permission_enforce_short_circuit_records_decision_plugin():
     """ENFORCE short-circuit path should still persist authoritative decision provenance."""
+    # First-Party
     from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
     from mcpgateway.plugins.framework.hooks.http import HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResultPayload
     from mcpgateway.plugins.framework.manager import PluginExecutor

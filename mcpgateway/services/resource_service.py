@@ -58,6 +58,7 @@ from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -80,15 +81,6 @@ from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
-
-# Plugin support imports (conditional)
-try:
-    # First-Party
-    from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
-
-    PLUGINS_AVAILABLE = True
-except ImportError:
-    PLUGINS_AVAILABLE = False
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -210,17 +202,6 @@ class ResourceService(BaseService):
         self._event_service = EventService(channel_name="mcpgateway:resource_events")
         self._template_cache: Dict[str, ResourceTemplate] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
-
-        # Initialize plugin manager if plugins are enabled in settings
-        self._plugin_manager = None
-        if PLUGINS_AVAILABLE:
-            try:
-                self._plugin_manager = get_plugin_manager()
-                if self._plugin_manager:
-                    logger.info("Plugin manager initialized for ResourceService with config: %s", settings.plugins.config_file)
-            except Exception as e:
-                logger.warning("Plugin manager initialization failed in ResourceService: %s", e)
-                self._plugin_manager = None
 
         # Initialize mime types
         mimetypes.init()
@@ -2223,17 +2204,12 @@ class ResourceService(BaseService):
                 contexts = None
 
                 # Check if plugin manager is available and eligible for this request
-                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
-
-                # Initialize plugin manager if needed (lazy init must happen before has_hooks_for check)
-                # pylint: disable=protected-access
-                if plugin_eligible and not self._plugin_manager._initialized:
-                    await self._plugin_manager.initialize()
-                # pylint: enable=protected-access
+                plugin_manager = await self._get_plugin_manager(server_id)
+                plugin_eligible = bool(plugin_manager and uri and ("://" in uri))
 
                 # Check if any resource hooks are registered to avoid unnecessary context creation
-                has_pre_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
-                has_post_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
+                has_pre_fetch = plugin_eligible and plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
+                has_post_fetch = plugin_eligible and plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
 
                 # Initialize plugin context variables only if hooks are registered
                 global_context = None
@@ -2268,7 +2244,7 @@ class ResourceService(BaseService):
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
                     # Execute pre-fetch hooks with context from previous hooks
-                    pre_result, contexts = await self._plugin_manager.invoke_hook(
+                    pre_result, contexts = await plugin_manager.invoke_hook(
                         ResourceHookType.RESOURCE_PRE_FETCH,
                         pre_payload,
                         global_context,
@@ -2541,7 +2517,7 @@ class ResourceService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if has_post_fetch:
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-                    post_result, _ = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
+                    post_result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
 

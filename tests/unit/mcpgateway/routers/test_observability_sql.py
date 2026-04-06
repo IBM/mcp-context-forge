@@ -7,7 +7,7 @@ Tests SQL-based and Python-based computation paths for query performance metrics
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -32,8 +32,7 @@ def allow_permission(monkeypatch):
             return True
 
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DummyPermissionService)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
-
+    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
 
 
 class TestQueryPerformancePostgresql:
@@ -164,6 +163,7 @@ class TestQueryPerformanceRouting:
             with patch("mcpgateway.routers.observability._get_query_performance_python") as mock_py:
                 mock_pg.return_value = {"total_traces": 100}
 
+                # First-Party
                 from mcpgateway.routers.observability import get_query_performance
 
                 result = await get_query_performance(
@@ -194,6 +194,7 @@ class TestQueryPerformanceRouting:
             with patch("mcpgateway.routers.observability._get_query_performance_python") as mock_py:
                 mock_py.return_value = {"total_traces": 50}
 
+                # First-Party
                 from mcpgateway.routers.observability import get_query_performance
 
                 result = await get_query_performance(
@@ -213,6 +214,7 @@ class TestObservabilityRouterEndpoints:
 
     def test_get_db_commit_and_close(self, monkeypatch):
         """get_db commits and closes on success."""
+        # First-Party
         from mcpgateway.routers.observability import get_db
 
         mock_db = MagicMock()
@@ -230,6 +232,7 @@ class TestObservabilityRouterEndpoints:
 
     def test_get_db_rollback_invalidate(self, monkeypatch):
         """get_db rolls back and invalidates on error."""
+        # First-Party
         from mcpgateway.routers.observability import get_db
 
         mock_db = MagicMock()
@@ -248,6 +251,7 @@ class TestObservabilityRouterEndpoints:
 
     def test_get_db_rollback_and_invalidate_failure_ignored(self, monkeypatch):
         """get_db suppresses invalidate failures during error cleanup."""
+        # First-Party
         from mcpgateway.routers.observability import get_db
 
         mock_db = MagicMock()
@@ -268,6 +272,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_list_traces_returns_service_results(self, allow_permission):
         """list_traces returns query results."""
+        # First-Party
         from mcpgateway.routers.observability import list_traces
 
         mock_db = MagicMock()
@@ -283,6 +288,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_query_traces_advanced_parses_dates(self, allow_permission):
         """query_traces_advanced parses ISO datetime strings."""
+        # First-Party
         from mcpgateway.routers.observability import query_traces_advanced
 
         mock_db = MagicMock()
@@ -305,6 +311,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_query_traces_advanced_invalid_date(self, allow_permission):
         """query_traces_advanced returns 400 on invalid date."""
+        # First-Party
         from mcpgateway.routers.observability import query_traces_advanced
 
         with pytest.raises(HTTPException) as exc_info:
@@ -315,6 +322,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_get_trace_missing(self, allow_permission):
         """get_trace returns 404 when missing."""
+        # First-Party
         from mcpgateway.routers.observability import get_trace
 
         mock_db = MagicMock()
@@ -329,6 +337,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_get_trace_found(self, allow_permission):
         """get_trace returns trace when found."""
+        # First-Party
         from mcpgateway.routers.observability import get_trace
 
         mock_db = MagicMock()
@@ -343,6 +352,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_list_spans_returns_service_results(self, allow_permission):
         """list_spans returns query results."""
+        # First-Party
         from mcpgateway.routers.observability import list_spans
 
         mock_db = MagicMock()
@@ -358,6 +368,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_cleanup_old_traces(self, allow_permission):
         """cleanup_old_traces returns deleted count."""
+        # First-Party
         from mcpgateway.routers.observability import cleanup_old_traces
 
         mock_db = MagicMock()
@@ -371,6 +382,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_get_stats(self, allow_permission):
         """get_stats returns aggregated counts and slowest endpoints."""
+        # First-Party
         from mcpgateway.routers.observability import get_stats
 
         mock_db = MagicMock()
@@ -399,6 +411,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_export_traces_invalid_format(self, allow_permission):
         """export_traces raises on invalid format."""
+        # First-Party
         from mcpgateway.routers.observability import export_traces
 
         with pytest.raises(HTTPException) as exc_info:
@@ -409,6 +422,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_export_traces_json_csv_ndjson(self, allow_permission):
         """export_traces supports json, csv, and ndjson formats."""
+        # First-Party
         from mcpgateway.routers.observability import export_traces
 
         mock_db = MagicMock()
@@ -443,6 +457,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_export_traces_parses_iso_start_end(self, allow_permission):
         """export_traces parses ISO datetime strings in request body."""
+        # First-Party
         from mcpgateway.routers.observability import export_traces
 
         mock_db = MagicMock()
@@ -463,6 +478,7 @@ class TestObservabilityRouterEndpoints:
     @pytest.mark.asyncio
     async def test_export_traces_wraps_failures_in_http_400(self, allow_permission):
         """export_traces returns HTTP 400 when service query fails."""
+        # First-Party
         from mcpgateway.routers.observability import export_traces
 
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
