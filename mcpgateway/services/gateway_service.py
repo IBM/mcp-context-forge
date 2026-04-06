@@ -1537,15 +1537,48 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
+            # Validate JWT claims (audience, scopes, issuer) before forwarding token
+            # First-Party
+            from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
+
+            token_validation = validate_oauth_token_claims(
+                access_token=access_token,
+                oauth_config=gateway.oauth_config,
+                gateway_url=gateway.url,
+                gateway_name=gateway.name,
+            )
+            for warning in token_validation.warnings:
+                logger.warning("OAuth token validation for gateway %s: %s", gateway.name, warning)
+
+            # Fail fast if any claim is definitively mismatched (present but wrong).
+            # Claims that are simply absent from the token produce None (not False)
+            # and are NOT blocked — this preserves backward compat with legacy IdPs.
+            blocking = token_validation.blocking_errors
+            if blocking:
+                detail = "; ".join(blocking)
+                raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway.name}': " f"{detail}. " f"Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
+
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
 
-            # Use the existing connection logic
-            # Note: For OAuth servers, skip validation since we already validated via OAuth flow
+            # Use the existing connection logic with validation context for diagnostics
             if gateway.transport.upper() == "SSE":
-                capabilities, tools, resources, prompts = await self._connect_to_sse_server_without_validation(gateway.url, authentication)
+                capabilities, tools, resources, prompts = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation.warnings)
             elif gateway.transport.upper() == "STREAMABLEHTTP":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(gateway.url, authentication)
+                try:
+                    capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(gateway.url, authentication)
+                except Exception as streamable_err:
+                    # Surface diagnostic context for likely auth rejections (401/403)
+                    error_str = str(streamable_err).lower()
+                    if token_validation.warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
+                        diagnostics = "; ".join(token_validation.warnings)
+                        sanitized_url = sanitize_url_for_logging(gateway.url)
+                        raise GatewayConnectionError(
+                            f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(streamable_err).__name__}). "
+                            f"Possible causes: {diagnostics}. "
+                            f"Check oauth_config audience and scopes."
+                        )
+                    raise
             else:
                 raise ValueError(f"Unsupported transport type: {gateway.transport}")
 
@@ -5306,22 +5339,27 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return valid_tools, validation_errors
 
-    async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
+    async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None, validation_warnings: Optional[List[str]] = None):
         """Connect to an MCP server running with SSE transport, skipping URL validation.
 
-        This is used for OAuth-protected servers where we've already validated the token works.
+        This is used for OAuth-protected servers. Token claim validation
+        (audience, scopes, issuer) should be performed by the caller before
+        invoking this method; any warnings are passed in for diagnostic
+        error messages if the server rejects the token.
 
         Args:
             server_url: The URL of the SSE MCP server to connect to.
             authentication: Optional dictionary containing authentication headers.
+            validation_warnings: Optional list of token validation warnings for diagnostics.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
         """
         if authentication is None:
             authentication = {}
+        if validation_warnings is None:
+            validation_warnings = []
 
-        # Skip validation for OAuth servers - we already validated via OAuth flow
         # Use async with for both sse_client and ClientSession
         try:
             async with sse_client(url=server_url, headers=authentication) as streams:
@@ -5427,6 +5465,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             sanitized_url = sanitize_url_for_logging(server_url)
             sanitized_error = sanitize_exception_message(str(e))
             logger.error(f"SSE connection error details: {type(e).__name__}: {sanitized_error}", exc_info=True)
+
+            # Surface diagnostic context for likely auth rejections (401/403)
+            error_str = str(e).lower()
+            if validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
+                diagnostics = "; ".join(validation_warnings)
+                raise GatewayConnectionError(
+                    f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(e).__name__}). " f"Possible causes: {diagnostics}. " f"Check oauth_config audience and scopes."
+                )
             raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {sanitized_error}")
 
     async def connect_to_sse_server(
