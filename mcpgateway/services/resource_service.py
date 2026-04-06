@@ -1892,10 +1892,7 @@ class ResourceService(BaseService):
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
                                     access_token: str = await self.oauth_manager.get_access_token(
-                                        gateway_oauth_config,
-                                        ca_certificate=gateway.ca_certificate,
-                                        client_cert=gateway.client_cert,
-                                        client_key=gateway.client_key
+                                        gateway_oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
                                     )
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 except Exception as e:

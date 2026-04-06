@@ -3833,12 +3833,7 @@ class ToolService(BaseService):
                     raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
             else:
                 try:
-                    access_token = await self.oauth_manager.get_access_token(
-                        gateway_oauth_config,
-                        ca_certificate=gateway_ca_cert,
-                        client_cert=gateway_client_cert,
-                        client_key=gateway_client_key
-                    )
+                    access_token = await self.oauth_manager.get_access_token(gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key)
                     headers = {"Authorization": f"Bearer {access_token}"}
                 except Exception as e:
                     logger.error(f"Failed to obtain OAuth access token for gateway {gateway_name}: {e}")
@@ -4677,7 +4672,7 @@ class ToolService(BaseService):
                                 tool_oauth_config,
                                 ca_certificate=gateway.ca_certificate if gateway else None,
                                 client_cert=gateway.client_cert if gateway else None,
-                                client_key=gateway.client_key if gateway else None
+                                client_key=gateway.client_key if gateway else None,
                             )
                             headers["Authorization"] = f"Bearer {access_token}"
                         except Exception as e:
@@ -4943,10 +4938,7 @@ class ToolService(BaseService):
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:
                                 access_token = await self.oauth_manager.get_access_token(
-                                    gateway_oauth_config,
-                                    ca_certificate=gateway_ca_cert,
-                                    client_cert=gateway_client_cert,
-                                    client_key=gateway_client_key
+                                    gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
                                 )
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             except Exception as e:

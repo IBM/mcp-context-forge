@@ -164,13 +164,7 @@ class OAuthManager:
 
         return {"code_verifier": code_verifier, "code_challenge": code_challenge, "code_challenge_method": "S256"}
 
-    async def get_access_token(
-        self, 
-        credentials: Dict[str, Any],
-        ca_certificate: Optional[str] = None,
-        client_cert: Optional[str] = None,
-        client_key: Optional[str] = None
-    ) -> str:
+    async def get_access_token(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
         """Get access token based on grant type.
 
         Args:
@@ -218,19 +212,9 @@ class OAuthManager:
         logger.debug(f"Getting access token for grant type: {grant_type}")
 
         if grant_type == "client_credentials":
-            return await self._client_credentials_flow(
-                credentials,
-                ca_certificate=ca_certificate,
-                client_cert=client_cert,
-                client_key=client_key
-            )
+            return await self._client_credentials_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         if grant_type == "password":
-            return await self._password_flow(
-                credentials,
-                ca_certificate=ca_certificate,
-                client_cert=client_cert,
-                client_key=client_key
-            )
+            return await self._password_flow(credentials, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
         if grant_type == "authorization_code":
             raise OAuthError("Authorization code flow requires user consent via /oauth/authorize and does not support client_credentials fallback")
         raise ValueError(f"Unsupported grant type: {grant_type}")
@@ -397,7 +381,7 @@ class OAuthManager:
         credentials: Dict[str, Any],
         ca_certificate: Optional[str] = None,
         client_cert: Optional[str] = None,
-        client_key: Optional[str] = None
+        client_key: Optional[str] = None,
     ) -> str:
         """Machine-to-machine authentication using client credentials.
 
@@ -435,6 +419,7 @@ class OAuthManager:
                 if ca_certificate:
                     # First-Party
                     from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
                         response = await client.post(token_url, data=token_data)
@@ -461,13 +446,7 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to obtain access token after all retry attempts")
 
-    async def _password_flow(
-        self,
-        credentials: Dict[str, Any],
-        ca_certificate: Optional[str] = None,
-        client_cert: Optional[str] = None,
-        client_key: Optional[str] = None
-    ) -> str:
+    async def _password_flow(self, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None) -> str:
         """Resource Owner Password Credentials flow (RFC 6749 Section 4.3).
 
         This flow is used when the application can directly handle the user's credentials,
@@ -520,6 +499,7 @@ class OAuthManager:
                 if ca_certificate:
                     # First-Party
                     from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
                         response = await client.post(token_url, data=token_data)
@@ -739,14 +719,7 @@ class OAuthManager:
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
     async def complete_authorization_code_flow(
-        self, 
-        gateway_id: str, 
-        code: str, 
-        state: str, 
-        credentials: Dict[str, Any],
-        ca_certificate: Optional[str] = None,
-        client_cert: Optional[str] = None,
-        client_key: Optional[str] = None
+        self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
@@ -792,14 +765,7 @@ class OAuthManager:
             logger.warning("User context (app_user_email) missing from OAuth state; no token_storage configured — proceeding without binding. gateway_id=%s", gateway_id)
 
         # Exchange code for tokens with PKCE code_verifier
-        token_response = await self._exchange_code_for_tokens(
-            credentials, 
-            code, 
-            code_verifier=code_verifier,
-            ca_certificate=ca_certificate,
-            client_cert=client_cert,
-            client_key=client_key
-        )
+        token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier, ca_certificate=ca_certificate, client_cert=client_cert, client_key=client_key)
 
         # Extract user information from token response
         user_id = self._extract_user_id(token_response, credentials)
@@ -1408,13 +1374,7 @@ class OAuthManager:
         return f"{authorization_url}?{query_string}"
 
     async def _exchange_code_for_tokens(
-        self, 
-        credentials: Dict[str, Any], 
-        code: str, 
-        code_verifier: str = None,
-        ca_certificate: Optional[str] = None,
-        client_cert: Optional[str] = None,
-        client_key: Optional[str] = None
+        self, credentials: Dict[str, Any], code: str, code_verifier: str = None, ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """Exchange authorization code for tokens with PKCE support.
 
@@ -1478,6 +1438,7 @@ class OAuthManager:
                 if ca_certificate:
                     # First-Party
                     from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+
                     ssl_context = get_cached_ssl_context(ca_certificate, client_cert=client_cert, client_key=client_key)
                     async with httpx.AsyncClient(verify=ssl_context, timeout=self.request_timeout) as client:
                         response = await client.post(token_url, data=token_data)
