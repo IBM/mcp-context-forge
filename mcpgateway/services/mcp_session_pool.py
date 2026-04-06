@@ -1031,7 +1031,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value, pooled.gateway_id)
         lock = await self._get_or_create_lock(pool_key)
-        pool = await self._get_or_create_pool(pool_key)
+        try:
+            pool = await self._get_or_create_pool(pool_key)
+        except RuntimeError:
+            # max_total_keys limit hit for an evicted key — discard session to avoid leak
+            logger.warning(f"Pool key limit reached during release, discarding session for {sanitize_url_for_logging(pooled.url)}")
+            await self._close_session(pooled)
+            return
 
         async with lock:
             # Update last-used FIRST to prevent eviction race:
@@ -1062,7 +1068,14 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         # Return to pool (pool may have been evicted in edge case, recreate if needed)
         if pool_key not in self._pools:
-            pool = await self._get_or_create_pool(pool_key)
+            try:
+                pool = await self._get_or_create_pool(pool_key)
+            except RuntimeError:
+                logger.warning(f"Pool key limit reached during release, discarding session for {sanitize_url_for_logging(pooled.url)}")
+                await self._close_session(pooled)
+                if pool_key in self._semaphores:
+                    self._semaphores[pool_key].release()
+                return
             self._pool_last_used[pool_key] = time.time()
 
         try:
@@ -2139,8 +2152,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
             "total_active_sessions": total_active,
-            "max_total_keys": self._max_total_keys if self._max_total_keys > 0 else "unlimited",
-            "max_total_sessions": self._max_total_sessions if self._max_total_sessions > 0 else "unlimited",
+            "max_total_keys": self._max_total_keys,
+            "max_total_sessions": self._max_total_sessions,
             # Session affinity metrics
             "session_affinity": {
                 "local_hits": self._session_affinity_local_hits,

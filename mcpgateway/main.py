@@ -1544,7 +1544,10 @@ def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
             return None
 
         # Extract token from "Bearer <token>" format
-        token = auth_header.replace("Bearer ", "").replace("bearer ", "").strip()
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+        else:
+            token = auth_header.strip()
         if not token:
             return None
 

@@ -211,7 +211,7 @@ async def test_require_permission_granted(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_require_permission_public_only_token_denies_admin_permission(monkeypatch):
-    """Token-level narrowing for admin.* is enforced at endpoint level, not in check_permission."""
+    """Public-only token scope must not pass admin.* checks through decorator paths."""
 
     async def dummy_func(user=None):
         return "ok"
@@ -220,21 +220,21 @@ async def test_require_permission_public_only_token_denies_admin_permission(monk
         def __init__(self, _db):
             pass
 
-        async def check_permission(self, user_email, permission, **kwargs):
-            # check_permission only evaluates RBAC (Layer 2)
-            # Token narrowing (Layer 1) is handled at endpoint level
-            return True
+        async def check_permission(self, **kwargs):
+            token_teams = kwargs.get("token_teams")
+            permission = kwargs.get("permission", "")
+            return not (permission.startswith("admin.") and token_teams is not None and len(token_teams) == 0)
 
     monkeypatch.setattr(rbac, "PermissionService", _ScopedPermissionService)
 
     decorated = rbac.require_permission("admin.system_config")(dummy_func)
 
-    # Both calls succeed at RBAC layer - endpoint-level guards handle narrowing
-    result1 = await decorated(user={"email": "admin@example.com", "db": MagicMock(), "token_teams": []})
-    assert result1 == "ok"
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user={"email": "admin@example.com", "db": MagicMock(), "token_teams": []})
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
-    result2 = await decorated(user={"email": "admin@example.com", "db": MagicMock(), "token_teams": None})
-    assert result2 == "ok"
+    allowed = await decorated(user={"email": "admin@example.com", "db": MagicMock(), "token_teams": None})
+    assert allowed == "ok"
 
 
 @pytest.mark.asyncio
@@ -287,7 +287,7 @@ async def test_permission_checker_methods(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_permission_checker_has_permission_passes_token_teams(monkeypatch):
-    """PermissionChecker no longer passes token_teams to check_permission (Layer 2 only)."""
+    """PermissionChecker must forward token_teams to check_permission for Layer 1 enforcement."""
     mock_db = MagicMock()
     mock_user = {"email": "admin@example.com", "db": mock_db, "token_teams": []}
     mock_perm_service = AsyncMock()
@@ -298,8 +298,7 @@ async def test_permission_checker_has_permission_passes_token_teams(monkeypatch)
     result = await checker.has_permission("admin.system_config")
 
     assert result is False
-    # token_teams is no longer passed to check_permission
-    assert "token_teams" not in mock_perm_service.check_permission.call_args.kwargs
+    assert mock_perm_service.check_permission.call_args.kwargs["token_teams"] == []
 
 
 @pytest.mark.asyncio

@@ -3596,6 +3596,77 @@ class TestMaxTotalKeysLimit:
         await pool.close_all()
 
 
+class TestReleaseWithMaxTotalKeys:
+    """Cover release() graceful handling when _get_or_create_pool hits max_total_keys."""
+
+    @pytest.mark.asyncio
+    async def test_release_discards_session_when_pool_key_limit_reached(self):
+        """release() should discard the session instead of crashing when max_total_keys is hit."""
+        pool = MCPSessionPool(max_total_keys=1)
+
+        # Create a fake session that looks like it was checked out
+        mock_session = MagicMock()
+        mock_session.url = "http://test:8080"
+        mock_session.identity_key = "hash1"
+        mock_session.user_identity = "user1"
+        mock_session.transport_type = TransportType.STREAMABLE_HTTP
+        mock_session.gateway_id = ""
+        mock_session.is_closed = False
+        mock_session.age_seconds = 0.0
+
+        # Fill pool key limit with a different key
+        other_key = ("other", "http://other:8080", "hash_other", "streamablehttp", "")
+        await pool._get_or_create_pool(other_key)
+
+        # release() should NOT raise — it should discard the session gracefully
+        await pool.release(mock_session)
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_release_discards_session_when_evicted_pool_key_hits_limit(self):
+        """release() should discard when pool key is evicted mid-release and re-creation fails."""
+        pool = MCPSessionPool(max_total_keys=2, max_sessions_per_key=2)
+
+        session_key = (
+            hashlib.sha256(b"user1").hexdigest(),
+            "http://test:8080",
+            "hash1",
+            "streamablehttp",
+            "",
+        )
+        await pool._get_or_create_pool(session_key)
+
+        mock_session = MagicMock()
+        mock_session.url = "http://test:8080"
+        mock_session.identity_key = "hash1"
+        mock_session.user_identity = "user1"
+        mock_session.transport_type = TransportType.STREAMABLE_HTTP
+        mock_session.gateway_id = ""
+        mock_session.is_closed = False
+        mock_session.age_seconds = 0.0
+
+        # Wrap _get_or_create_pool: first call succeeds then evicts the key from _pools,
+        # second call raises RuntimeError (simulating another key filling the slot).
+        real_method = pool._get_or_create_pool
+        call_count = [0]
+
+        async def evict_then_fail(key):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                result = await real_method(key)
+                # Simulate eviction between the two _get_or_create_pool calls in release()
+                pool._pools.pop(key, None)
+                return result
+            raise RuntimeError("Maximum pool keys (2) reached. Cannot create new session pool.")
+
+        pool._get_or_create_pool = evict_then_fail
+
+        await pool.release(mock_session)
+
+        await pool.close_all()
+
+
 class TestMaxTotalSessionsLimit:
     """Cover max_total_sessions enforcement."""
 
@@ -3706,7 +3777,9 @@ class TestJwtIdentityExtractorNone:
         identity_hash = pool._compute_identity_hash({"Authorization": "Bearer token"})
 
         # Should not be "anonymous" since we have an Authorization header
+        assert identity_hash != "anonymous"
 
+        await pool.close_all()
 
     @pytest.mark.asyncio
     async def test_session_reraises_non_capacity_runtime_error(self):

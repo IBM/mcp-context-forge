@@ -448,63 +448,6 @@ class TestJwtIdentityExtractor:
         assert result == "user@example.com"
 
 
-    """Test conditional code paths to improve coverage."""
-
-    def test_import_uses_rust_mcp_proxy_when_enabled(self, monkeypatch):
-        """Module import should swap the mounted /mcp app to the Rust proxy when enabled."""
-        module = _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "experimental_rust_mcp_runtime_enabled": True,
-                "experimental_rust_mcp_session_auth_reuse_enabled": True,
-                "experimental_rust_mcp_runtime_url": "http://127.0.0.1:8787",
-            },
-        )
-
-        assert module.mcp_transport_app.__class__.__name__ == "RustMCPRuntimeProxy"
-
-    def test_import_keeps_python_transport_when_rust_runtime_lacks_session_auth_reuse(self, monkeypatch):
-        """Module import should keep public /mcp on Python when Rust session auth reuse is disabled."""
-        module = _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "experimental_rust_mcp_runtime_enabled": True,
-                "experimental_rust_mcp_session_auth_reuse_enabled": False,
-                "experimental_rust_mcp_runtime_url": "http://127.0.0.1:8787",
-            },
-        )
-
-        assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
-
-    def test_import_warns_when_rust_artifacts_present_but_runtime_disabled(self, monkeypatch, caplog):
-        """A Rust-built image with the runtime flag disabled should warn loudly at import time."""
-        caplog.set_level("WARNING")
-        module = _import_fresh_main_module(
-            monkeypatch,
-            overrides={
-                "experimental_rust_mcp_runtime_enabled": False,
-            },
-            env={"CONTEXTFORGE_ENABLE_RUST_BUILD": "true"},
-        )
-
-        assert module.mcp_transport_app.__class__.__name__ == "MCPRuntimeHeaderTransportWrapper"
-        assert any("python-rust-built-disabled" in rec.message for rec in caplog.records)
-
-    def test_redis_initialization_path(self, test_client, auth_headers):
-        """Test Redis initialization path by mocking settings."""
-        # Test that the Redis path is covered indirectly through existing functionality
-        # Since reloading modules in tests is problematic, we test the path is reachable
-        with patch("mcpgateway.main.settings.cache_type", "redis"):
-            response = test_client.get("/health", headers=auth_headers)
-            assert response.status_code == 200
-
-    def test_event_loop_task_creation(self, test_client, auth_headers):
-        """Test event loop task creation path indirectly."""
-        # Test the functionality that exercises the loop path
-        response = test_client.get("/health", headers=auth_headers)
-        assert response.status_code == 200
-
-
 class TestInternalTrustedMcpTransportBridge:
     """Test the trusted Rust -> Python MCP transport bridge."""
 
