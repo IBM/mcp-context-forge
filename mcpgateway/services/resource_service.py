@@ -258,7 +258,7 @@ class ResourceService(BaseService):
         from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
 
         results = get_top_performers_combined(
-            db=db,
+            db,
             metric_type="resource",
             entity_model=DbResource,
             limit=effective_limit,
@@ -1150,7 +1150,7 @@ class ResourceService(BaseService):
 
             # Use unified pagination helper - handles both page and cursor pagination
             pag_result = await unified_paginate(
-                db=db,
+                db,
                 query=query,
                 page=page,
                 per_page=per_page,
@@ -1698,7 +1698,6 @@ class ResourceService(BaseService):
                 if trace_id and observability_service:
                     try:
                         db_span_id = observability_service.start_span(
-                            db=db,
                             trace_id=trace_id,
                             name="invoke.resource",
                             attributes={
@@ -2047,13 +2046,11 @@ class ResourceService(BaseService):
                         # before making HTTP calls to prevent connection pool exhaustion
                         if db_span_id and observability_service and not db_span_ended:
                             try:
-                                with fresh_db_session() as fresh_db:
-                                    observability_service.end_span(
-                                        db=fresh_db,
-                                        span_id=db_span_id,
-                                        status="ok" if success else "error",
-                                        status_message=error_message if error_message else None,
-                                    )
+                                observability_service.end_span(
+                                    span_id=db_span_id,
+                                    status="ok" if success else "error",
+                                    status_message=error_message if error_message else None,
+                                )
                                 db_span_ended = True
                                 logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
                             except Exception as e:
@@ -2166,7 +2163,6 @@ class ResourceService(BaseService):
         if trace_id and observability_service:
             try:
                 db_span_id = observability_service.start_span(
-                    db=db,
                     trace_id=trace_id,
                     name="resource.read",
                     attributes={
@@ -2460,7 +2456,7 @@ class ResourceService(BaseService):
                 if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
-                        db=db,
+                        db,
                         resource_id=getattr(content, "id"),
                         resource_uri=getattr(content, "uri") or None,
                         resource_template_uri=getattr(content, "text") or None,
@@ -2477,7 +2473,7 @@ class ResourceService(BaseService):
                     # Metrics are recorded in read_resource finally block for all resources
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
-                            db=db,
+                            db,
                             resource_id=getattr(content, "id"),
                             resource_uri=getattr(content, "uri") or None,
                             resource_template_uri=getattr(content, "blob") or None,
@@ -2491,7 +2487,7 @@ class ResourceService(BaseService):
                             setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
-                            db=db,
+                            db,
                             resource_id=getattr(content, "id"),
                             resource_uri=getattr(content, "uri") or None,
                             resource_template_uri=getattr(content, "text") or None,
@@ -2564,13 +2560,11 @@ class ResourceService(BaseService):
                 # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource
                 if db_span_id and observability_service and not db_span_ended:
                     try:
-                        with fresh_db_session() as fresh_db:
-                            observability_service.end_span(
-                                db=fresh_db,
-                                span_id=db_span_id,
-                                status="ok" if success else "error",
-                                status_message=error_message if error_message else None,
-                            )
+                        observability_service.end_span(
+                            span_id=db_span_id,
+                            status="ok" if success else "error",
+                            status_message=error_message if error_message else None,
+                        )
                         db_span_ended = True
                         logger.debug(f"✓ Ended resource.read span: {db_span_id}")
                     except Exception as e:

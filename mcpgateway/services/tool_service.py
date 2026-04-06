@@ -653,7 +653,7 @@ class ToolService(BaseService):
 
         # Use combined query that includes both raw metrics and rollup data
         results = get_top_performers_combined(
-            db=db,
+            db,
             metric_type="tool",
             entity_model=DbTool,
             limit=effective_limit,
@@ -1505,7 +1505,7 @@ class ToolService(BaseService):
         for chunk_start in range(0, len(tools), chunk_size):
             chunk = tools[chunk_start : chunk_start + chunk_size]
             chunk_stats = self._process_tool_chunk(
-                db=db,
+                db,
                 chunk=chunk,
                 conflict_strategy=conflict_strategy,
                 visibility=visibility,
@@ -2010,7 +2010,7 @@ class ToolService(BaseService):
 
             # Use unified pagination helper - handles both page and cursor pagination
             pag_result = await unified_paginate(
-                db=db,
+                db,
                 query=query,
                 page=page,
                 per_page=per_page,
@@ -3989,28 +3989,24 @@ class ToolService(BaseService):
         # Create database span for observability_spans table
         if trace_id and observability_service:
             try:
-                # Re-open database session for span creation (original was closed at line 2285)
-                # Use commit=False since fresh_db_session() handles commits on exit
-                with fresh_db_session() as span_db:
-                    db_span_id = observability_service.start_span(
-                        db=span_db,
-                        trace_id=trace_id,
-                        name="tool.invoke",
-                        kind="client",
-                        resource_type="tool",
-                        resource_name=name,
-                        resource_id=tool_id,
-                        attributes={
-                            "tool.name": name,
-                            "tool.id": tool_id,
-                            "tool.integration_type": tool_integration_type,
-                            "tool.gateway_id": tool_gateway_id,
-                            "arguments_count": len(arguments) if arguments else 0,
-                            "has_headers": bool(request_headers),
-                        },
-                        commit=False,
-                    )
-                    logger.debug(f"✓ Created tool.invoke span: {db_span_id} for tool: {name}")
+                # start_span creates its own independent session (issue #3883)
+                db_span_id = observability_service.start_span(
+                    trace_id=trace_id,
+                    name="tool.invoke",
+                    kind="client",
+                    resource_type="tool",
+                    resource_name=name,
+                    resource_id=tool_id,
+                    attributes={
+                        "tool.name": name,
+                        "tool.id": tool_id,
+                        "tool.integration_type": tool_integration_type,
+                        "tool.gateway_id": tool_gateway_id,
+                        "arguments_count": len(arguments) if arguments else 0,
+                        "has_headers": bool(request_headers),
+                    },
+                )
+                logger.debug(f"✓ Created tool.invoke span: {db_span_id} for tool: {name}")
             except Exception as e:
                 logger.warning(f"Failed to start observability span for tool invocation: {e}")
                 db_span_id = None
@@ -5055,23 +5051,20 @@ class ToolService(BaseService):
                 duration_ms = (time.monotonic() - start_time) * 1000
 
                 # End database span for observability_spans table
-                # Use commit=False since fresh_db_session() handles commits on exit
+                # end_span creates its own independent session (issue #3883)
                 if db_span_id and observability_service and not db_span_ended:
                     try:
-                        with fresh_db_session() as span_db:
-                            observability_service.end_span(
-                                db=span_db,
-                                span_id=db_span_id,
-                                status="ok" if success else "error",
-                                status_message=error_message if error_message else None,
-                                attributes={
-                                    "success": success,
-                                    "duration_ms": duration_ms,
-                                },
-                                commit=False,
-                            )
-                            db_span_ended = True
-                            logger.debug(f"✓ Ended tool.invoke span: {db_span_id}")
+                        observability_service.end_span(
+                            span_id=db_span_id,
+                            status="ok" if success else "error",
+                            status_message=error_message if error_message else None,
+                            attributes={
+                                "success": success,
+                                "duration_ms": duration_ms,
+                            },
+                        )
+                        db_span_ended = True
+                        logger.debug(f"✓ Ended tool.invoke span: {db_span_id}")
                     except Exception as e:
                         logger.warning(f"Failed to end observability span for tool invocation: {e}")
 
@@ -5912,7 +5905,7 @@ class ToolService(BaseService):
 
         # Update the tool
         return await self.update_tool(
-            db=db,
+            db,
             tool_id=tool.id,
             tool_update=tool_update,
             modified_by=modified_by,
