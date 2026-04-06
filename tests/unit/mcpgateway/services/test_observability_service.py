@@ -960,3 +960,210 @@ def test_query_traces_invalid_limit_and_order_raises(mock_db):
         service.query_traces(mock_db, limit=0)
     with pytest.raises(ValueError):
         service.query_traces(mock_db, order_by="unknown_field")
+
+
+# =============================================================================
+# Coverage tests for exception handling in session close operations
+# =============================================================================
+
+
+@patch("mcpgateway.services.observability_service.ObservabilityTrace", MagicMock())
+def test_start_trace_session_close_failure(mock_session_factory):
+    """Test that start_trace handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    service = ObservabilityService()
+    trace_id = service.start_trace("test_trace")
+
+    # Verify trace was created despite close failure
+    assert trace_id is not None
+    mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilityTrace", MagicMock())
+def test_end_trace_session_close_failure(mock_session_factory):
+    """Test that end_trace handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    trace = MagicMock()
+    trace.start_time = datetime.now(timezone.utc)
+    trace.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = trace
+
+    service = ObservabilityService()
+    service.end_trace("trace123", status="ok")
+
+    # Verify close was attempted
+    mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_start_span_session_close_failure(mock_session_factory):
+    """Test that start_span handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    service = ObservabilityService()
+    span_id = service.start_span(trace_id="trace123", name="test_span")
+
+    # Verify span was created despite close failure
+    assert span_id is not None
+    mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_start_span_with_commit_true(mock_session_factory):
+    """Test start_span with commit=True explicitly calls _safe_commit."""
+    mock_factory, mock_session = mock_session_factory
+
+    service = ObservabilityService()
+    with patch.object(service, "_safe_commit") as mock_safe_commit:
+        span_id = service.start_span(
+            trace_id="trace123",
+            name="test_span",
+            commit=True
+        )
+
+        # Verify _safe_commit was called
+        mock_safe_commit.assert_called_once_with(mock_session, "start_span")
+        assert span_id is not None
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_end_span_session_close_failure(mock_session_factory):
+    """Test that end_span handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    service.end_span("span123", status="ok")
+
+    # Verify close was attempted
+    mock_session.close.assert_called_once()
+
+
+def test_add_event_session_close_failure(mock_session_factory):
+    """Test that add_event handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    # Mock ObservabilityEvent to return an object with id=123 after refresh
+    mock_event = MagicMock()
+    mock_event.id = 123
+    with patch("mcpgateway.services.observability_service.ObservabilityEvent", return_value=mock_event):
+        # Patch _safe_commit to return True
+        service = ObservabilityService()
+        with patch.object(service, '_safe_commit', return_value=True):
+            event_id = service.add_event("span123", "test_event", severity="info")
+
+    # Verify event was created (returns non-zero if successful)
+    assert event_id == 123
+    mock_session.close.assert_called_once()
+
+
+def test_record_metric_session_close_failure(mock_session_factory):
+    """Test that record_metric handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    # Mock ObservabilityMetric to return an object with id=456 after refresh
+    mock_metric = MagicMock()
+    mock_metric.id = 456
+    with patch("mcpgateway.services.observability_service.ObservabilityMetric", return_value=mock_metric):
+        # Patch _safe_commit to return True
+        service = ObservabilityService()
+        with patch.object(service, '_safe_commit', return_value=True):
+            metric_id = service.record_metric(
+                name="test.metric",
+                value=1.0,
+                metric_type="counter"
+            )
+
+    # Verify metric was created
+    assert metric_id == 456
+    mock_session.close.assert_called_once()
+
+
+def test_delete_old_traces_session_close_failure(mock_session_factory):
+    """Test that delete_old_traces handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+    mock_session.query.return_value.filter.return_value.delete.return_value = 5
+
+    service = ObservabilityService()
+    with patch.object(service, "_safe_commit", return_value=True):
+        deleted = service.delete_old_traces(datetime.now(timezone.utc))
+
+        # Verify deletion succeeded
+        assert deleted == 5
+        mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_span_context_manager_session_close_failure(mock_session_factory):
+    """Test that trace_span context manager handles session close failures."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    with service.trace_span("trace123", "test_span") as span_id:
+        assert span_id is not None
+
+    # Verify close was attempted
+    mock_session.close.assert_called()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_tool_invocation_context_manager_session_close_failure(mock_session_factory):
+    """Test that trace_tool_invocation handles session close failures."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with service.trace_tool_invocation("test_tool", {"arg": "value"}) as (span_id, result):
+            assert span_id is not None
+            result["status"] = "success"
+
+    # Verify close was attempted
+    mock_session.close.assert_called()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_a2a_request_context_manager_session_close_failure(mock_session_factory):
+    """Test that trace_a2a_request handles session close failures."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with service.trace_a2a_request("agent123", "TestAgent", "query", {"data": "test"}) as (span_id, result):
+            assert span_id is not None
+            result["response"] = "success"
+
+    # Verify close was attempted
+    mock_session.close.assert_called()
