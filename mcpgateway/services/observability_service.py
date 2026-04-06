@@ -52,7 +52,7 @@ from datetime import datetime, timezone
 import logging
 import re
 import traceback
-from typing import Any, Dict, List, Optional, Pattern, Tuple
+from typing import Any, Dict, Generator, List, Optional, Pattern, Tuple
 import uuid
 
 # Third-Party
@@ -570,7 +570,7 @@ class ObservabilityService:
         resource_type: Optional[str] = None,
         resource_name: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> Generator[str, None, None]:
         """Context manager for automatic span lifecycle management.
 
         Creates an independent observability session for the span lifecycle.
@@ -657,7 +657,7 @@ class ObservabilityService:
         tool_name: str,
         arguments: Dict[str, Any],
         integration_type: Optional[str] = None,
-    ):
+    ) -> Generator[Tuple[Optional[str], Dict[str, Any]], None, None]:
         """Context manager for tracing MCP tool invocations.
 
         This automatically creates a span for tool execution, capturing timing,
@@ -1009,7 +1009,7 @@ class ObservabilityService:
         agent_name: Optional[str] = None,
         operation: Optional[str] = None,
         request_data: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> Generator[Tuple[Optional[str], Dict[str, Any]], None, None]:
         """Context manager for tracing Agent-to-Agent requests.
 
         This automatically creates a span for A2A communication, capturing timing,
