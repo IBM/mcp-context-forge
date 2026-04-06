@@ -596,8 +596,8 @@ class MetricsRollupService:
 
                 # Add server_id for server-scoped metrics (nullable for legacy/admin invocations)
                 if hasattr(raw_model, "server_id"):
-                    select_cols.append(raw_model.server_id.label("server_id"))
-                    group_by_cols.append(raw_model.server_id)
+                    select_cols.append(raw_model.server_id.label("server_id"))  # pragma: no cover - Requires PostgreSQL integration tests
+                    group_by_cols.append(raw_model.server_id)  # pragma: no cover - Requires PostgreSQL integration tests
 
                 if is_a2a:
                     select_cols.append(raw_model.interaction_type.label("interaction_type"))
@@ -647,7 +647,7 @@ class MetricsRollupService:
 
                 # Add server_id for server-scoped metrics (nullable for legacy/admin invocations)
                 if hasattr(raw_model, "server_id"):
-                    group_cols.append(raw_model.server_id)
+                    group_cols.append(raw_model.server_id)  # pragma: no cover - Requires PostgreSQL integration tests
 
                 if is_a2a:
                     group_cols.append(raw_model.interaction_type)
@@ -683,8 +683,8 @@ class MetricsRollupService:
 
                     server_id = None
                     if has_server_id:
-                        server_id = row[col_idx]
-                        col_idx += 1
+                        server_id = row[col_idx]  # pragma: no cover - Requires PostgreSQL integration tests
+                        col_idx += 1  # pragma: no cover - Requires PostgreSQL integration tests
 
                     interaction_type = None
                     if is_a2a:
@@ -733,8 +733,8 @@ class MetricsRollupService:
 
                     server_id = None
                     if has_server_id:
-                        server_id = row[col_idx]
-                        col_idx += 1
+                        server_id = row[col_idx]  # pragma: no cover - Requires PostgreSQL integration tests
+                        col_idx += 1  # pragma: no cover - Requires PostgreSQL integration tests
 
                     interaction_type = None
                     if is_a2a:

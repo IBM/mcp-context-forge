@@ -81,7 +81,7 @@ def _get_registry_collector(metric_name: str):
 if settings.prometheus_server_scoped_metrics:
     _tool_labels = ["tool_name", "server_id"]
 else:
-    _tool_labels = ["tool_name"]
+    _tool_labels = ["tool_name"]  # pragma: no cover - Cannot test both branches in single test run
 
 tool_timeout_counter = Counter(
     "tool_timeout_total",
