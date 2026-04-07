@@ -218,12 +218,14 @@ async def test_factory_tool_without_overrides():
 @pytest.mark.asyncio
 async def test_tenant_plugin_manager_with_config_object():
     """Test TenantPluginManager initialization with Config object instead of path."""
+    # First-Party
     from mcpgateway.plugins.framework.loader.config import ConfigLoader
 
     # Load config from file
     config = ConfigLoader.load_config("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
 
     # Create manager with Config object
+    # First-Party
     from mcpgateway.plugins.framework.manager import TenantPluginManager
 
     manager = TenantPluginManager(config=config)
@@ -239,8 +241,11 @@ async def test_tenant_plugin_manager_with_config_object():
 @pytest.mark.asyncio
 async def test_factory_observability_setter():
     """Test that observability setter updates the provider."""
-    from mcpgateway.plugins.framework.observability import ObservabilityProvider
+    # Standard
     from unittest.mock import Mock
+
+    # First-Party
+    from mcpgateway.plugins.framework.observability import ObservabilityProvider
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
 
@@ -280,6 +285,7 @@ async def test_factory_concurrent_same_context():
 @pytest.mark.asyncio
 async def test_factory_build_manager_cancelled():
     """Test that cancelled build task properly cleans up."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -302,6 +308,7 @@ async def test_factory_build_manager_cancelled():
 @pytest.mark.asyncio
 async def test_factory_build_manager_exception():
     """Test that exception during build properly cleans up."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -337,6 +344,7 @@ async def test_factory_merge_tenant_config_none():
 @pytest.mark.asyncio
 async def test_factory_reload_shutdown_exception():
     """Test that reload handles old manager shutdown exception gracefully."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -361,6 +369,7 @@ async def test_factory_reload_shutdown_exception():
 @pytest.mark.asyncio
 async def test_factory_reload_cancels_inflight():
     """Test that reload cancels any existing inflight build task."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -392,6 +401,7 @@ async def test_factory_reload_cancels_inflight():
 @pytest.mark.asyncio
 async def test_factory_shutdown_with_exceptions():
     """Test that shutdown handles manager shutdown exceptions gracefully."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -414,6 +424,7 @@ async def test_factory_shutdown_with_exceptions():
 @pytest.mark.asyncio
 async def test_factory_shutdown_cancels_inflight():
     """Test that shutdown cancels all inflight build tasks."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -428,6 +439,7 @@ async def test_factory_shutdown_cancels_inflight():
 @pytest.mark.asyncio
 async def test_tenant_plugin_manager_with_string_path():
     """Test TenantPluginManager initialization with string path."""
+    # First-Party
     from mcpgateway.plugins.framework.manager import TenantPluginManager
 
     # Create manager with string path (not Config object)
@@ -471,6 +483,7 @@ async def test_factory_merge_with_overrides():
 @pytest.mark.asyncio
 async def test_factory_build_manager_old_shutdown_fails():
     """Test that _build_manager handles old manager shutdown failure."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -495,6 +508,7 @@ async def test_factory_build_manager_old_shutdown_fails():
 @pytest.mark.asyncio
 async def test_factory_reload_inflight_cleanup():
     """Test that reload properly cleans up inflight tasks."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -542,6 +556,7 @@ async def test_factory_shutdown_empty_inflight():
 @pytest.mark.asyncio
 async def test_factory_shutdown_with_active_inflight():
     """Test shutdown cancels active inflight build tasks."""
+    # Standard
     from unittest.mock import AsyncMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -569,11 +584,12 @@ async def test_factory_shutdown_with_active_inflight():
 @pytest.mark.asyncio
 async def test_factory_merge_with_plugin_config_override():
     """Test _merge_tenant_config properly merges plugin configurations."""
+    # First-Party
     from mcpgateway.plugins.framework.loader.config import ConfigLoader
 
     # Create a base config with a plugin
     base_yaml = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml"
-    base_config = ConfigLoader.load_config(base_yaml)
+    ConfigLoader.load_config(base_yaml)
 
     factory = ToolScopedPluginManagerFactory(yaml_path=base_yaml)
 
@@ -596,7 +612,8 @@ async def test_factory_merge_with_plugin_config_override():
 @pytest.mark.asyncio
 async def test_factory_build_manager_cancelled_with_shutdown_error():
     """Test _build_manager handles CancelledError with shutdown exception."""
-    from unittest.mock import AsyncMock, patch, MagicMock
+    # Standard
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
 
@@ -625,7 +642,8 @@ async def test_factory_build_manager_cancelled_with_shutdown_error():
 @pytest.mark.asyncio
 async def test_factory_build_manager_exception_with_shutdown_error():
     """Test _build_manager handles Exception with shutdown exception."""
-    from unittest.mock import AsyncMock, patch, MagicMock
+    # Standard
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     factory = ToolScopedPluginManagerFactory(yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
 
@@ -654,6 +672,7 @@ async def test_factory_build_manager_exception_with_shutdown_error():
 @pytest.mark.asyncio
 async def test_factory_merge_config_with_mode_and_priority():
     """Test _merge_tenant_config properly handles mode and priority overrides."""
+    # First-Party
     from mcpgateway.plugins.framework.loader.config import ConfigLoader
     from mcpgateway.plugins.framework.models import PluginConfig
 
@@ -701,6 +720,7 @@ async def test_factory_merge_config_with_mode_and_priority():
 @pytest.mark.asyncio
 async def test_factory_merge_config_no_override_for_plugin():
     """Test _merge_tenant_config keeps original plugin when no override exists."""
+    # First-Party
     from mcpgateway.plugins.framework.loader.config import ConfigLoader
     from mcpgateway.plugins.framework.models import PluginConfig
 

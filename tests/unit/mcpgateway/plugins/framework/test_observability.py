@@ -503,6 +503,7 @@ async def test_get_plugin_manager_creates_manager_when_enabled():
 @pytest.mark.asyncio
 async def test_get_plugin_manager_returns_none_when_disabled():
     """get_plugin_manager returns None immediately when _PLUGINS_ENABLED is False (line 119)."""
+    # First-Party
     import mcpgateway.plugins.framework as fw
 
     fw.enable_plugins(False)
@@ -513,6 +514,7 @@ async def test_get_plugin_manager_returns_none_when_disabled():
 @pytest.mark.asyncio
 async def test_get_plugin_manager_returns_none_when_factory_missing():
     """get_plugin_manager returns None when enabled but factory not yet initialised (line 122)."""
+    # First-Party
     import mcpgateway.plugins.framework as fw
 
     fw.enable_plugins(True)
@@ -524,8 +526,11 @@ async def test_get_plugin_manager_returns_none_when_factory_missing():
 
 def test_set_global_observability_updates_factory():
     """set_global_observability propagates to the factory when one exists (lines 129-131)."""
-    import mcpgateway.plugins.framework as fw
+    # Standard
     from unittest.mock import MagicMock
+
+    # First-Party
+    import mcpgateway.plugins.framework as fw
 
     mock_factory = MagicMock()
     fw._plugin_manager_factory = mock_factory
@@ -540,8 +545,11 @@ def test_set_global_observability_updates_factory():
 
 def test_reset_plugin_manager_factory_clears_reference():
     """reset_plugin_manager_factory sets the factory to None (line 155)."""
-    import mcpgateway.plugins.framework as fw
+    # Standard
     from unittest.mock import MagicMock
+
+    # First-Party
+    import mcpgateway.plugins.framework as fw
 
     fw._plugin_manager_factory = MagicMock()
     fw.reset_plugin_manager_factory()
@@ -551,8 +559,11 @@ def test_reset_plugin_manager_factory_clears_reference():
 @pytest.mark.asyncio
 async def test_shutdown_plugin_manager_factory_when_disabled():
     """shutdown_plugin_manager_factory is a no-op when _PLUGINS_ENABLED is False (line 145)."""
-    import mcpgateway.plugins.framework as fw
+    # Standard
     from unittest.mock import AsyncMock, MagicMock
+
+    # First-Party
+    import mcpgateway.plugins.framework as fw
 
     mock_factory = MagicMock()
     mock_factory.shutdown = AsyncMock()
@@ -570,8 +581,11 @@ async def test_shutdown_plugin_manager_factory_when_disabled():
 @pytest.mark.asyncio
 async def test_shutdown_plugin_manager_factory_when_enabled():
     """shutdown_plugin_manager_factory calls factory.shutdown() when plugins enabled (lines 144-149)."""
-    import mcpgateway.plugins.framework as fw
+    # Standard
     from unittest.mock import AsyncMock, MagicMock
+
+    # First-Party
+    import mcpgateway.plugins.framework as fw
 
     mock_factory = MagicMock()
     mock_factory.shutdown = AsyncMock()
