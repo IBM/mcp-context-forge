@@ -664,7 +664,8 @@ def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):
 
     secret = "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"
 
-    def boom(container, cfg):
+    def boom(container, cfg, trace_context):
+        assert trace_context is None
         raise RuntimeError("simulated rust failure")
 
     monkeypatch.setattr(module, "_RUST_AVAILABLE", True)
@@ -680,6 +681,40 @@ def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):
     assert failure_logs
     assert failure_logs[0].exc_info is not None
     assert "simulated rust failure" in caplog.text
+
+
+def test_rust_scan_passes_trace_context(monkeypatch):
+    """Rust secrets scan should receive the propagated trace context payload."""
+    # First-Party
+    from plugins.secrets_detection import secrets_detection as module
+
+    captured = {}
+
+    def fake_scan(container, cfg, trace_context):
+        captured["args"] = (container, cfg, trace_context)
+        return 0, container, []
+
+    monkeypatch.setattr(module, "_RUST_AVAILABLE", True)
+    monkeypatch.setattr(module, "secrets_detection", fake_scan)
+    monkeypatch.setattr(
+        module,
+        "build_rust_plugin_trace_context",
+        lambda context: {"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"},
+    )
+
+    count, redacted, findings = module._scan_container(
+        "safe text",
+        module.SecretsDetectionConfig(),
+        use_rust=True,
+        context=module.PluginContext(global_context=GlobalContext(request_id="req-1")),
+    )
+
+    assert (count, redacted, findings) == (0, "safe text", [])
+    assert captured["args"][2] == {
+        "traceparent": "tp",
+        "trace_id": "tid",
+        "parent_span_id": "sid",
+    }
 
 
 @pytest.mark.parametrize(

@@ -301,15 +301,17 @@ class PIIDetector:
                 return True
         return False
 
-    def detect(self, text: str) -> Dict[PIIType, List[Dict]]:
+    def detect(self, text: str, trace_context: dict[str, Any] | None = None) -> Dict[PIIType, List[Dict]]:
         """Detect PII in text.
 
         Args:
             text: Text to scan for PII
+            trace_context: Optional Rust-only trace context; ignored by Python fallback
 
         Returns:
             Dictionary of detected PII by type
         """
+        del trace_context
         detections = {}
 
         for pii_type, pattern_list in self.patterns.items():
@@ -335,16 +337,18 @@ class PIIDetector:
 
         return detections
 
-    def mask(self, text: str, detections: Dict[PIIType, List[Dict]]) -> str:
+    def mask(self, text: str, detections: Dict[PIIType, List[Dict]], trace_context: dict[str, Any] | None = None) -> str:
         """Mask detected PII in text.
 
         Args:
             text: Original text
             detections: Dictionary of detected PII
+            trace_context: Optional Rust-only trace context; ignored by Python fallback
 
         Returns:
             Text with PII masked
         """
+        del trace_context
         if not detections:
             return text
 

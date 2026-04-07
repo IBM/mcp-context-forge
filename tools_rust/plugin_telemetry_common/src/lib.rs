@@ -18,6 +18,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 const DEFAULT_SERVICE_NAME: &str = "contextforge-rust-plugin";
+const LANGFUSE_OTEL_PATH_FRAGMENT: &str = "/api/public/otel";
 const TRACE_CONTEXT_KEY: &str = "traceparent";
 const SAFE_PLUGIN_ERROR_MESSAGE: &str = "rust plugin operation failed";
 
@@ -176,12 +177,26 @@ impl TelemetryState {
             };
         }
 
+        if !otlp_export_enabled() {
+            return Self {
+                enabled: false,
+                _provider: None,
+            };
+        }
+
         let Some(endpoint) = otlp_endpoint() else {
             return Self {
                 enabled: false,
                 _provider: None,
             };
         };
+
+        if !langfuse_config_valid(&endpoint) {
+            return Self {
+                enabled: false,
+                _provider: None,
+            };
+        }
 
         let provider = match build_provider(&endpoint) {
             Ok(provider) => provider,
@@ -260,6 +275,16 @@ fn env_flag(name: &str) -> bool {
     )
 }
 
+fn otlp_export_enabled() -> bool {
+    match env::var("OTEL_TRACES_EXPORTER") {
+        Ok(value) => {
+            let exporter = value.trim().to_ascii_lowercase();
+            exporter.is_empty() || exporter == "otlp"
+        }
+        Err(_) => true,
+    }
+}
+
 fn otlp_endpoint() -> Option<String> {
     env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
         .ok()
@@ -269,10 +294,15 @@ fn otlp_endpoint() -> Option<String> {
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         })
+        .or_else(|| {
+            env::var("LANGFUSE_OTEL_ENDPOINT")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
 }
 
 fn otlp_headers() -> HashMap<String, String> {
-    env::var("OTEL_EXPORTER_OTLP_HEADERS")
+    let mut headers: HashMap<String, String> = env::var("OTEL_EXPORTER_OTLP_HEADERS")
         .ok()
         .map(|raw| {
             raw.split(',')
@@ -287,7 +317,19 @@ fn otlp_headers() -> HashMap<String, String> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    if is_langfuse_endpoint(otlp_endpoint().as_deref())
+        && !headers
+            .keys()
+            .any(|key: &String| key.eq_ignore_ascii_case("authorization"))
+    {
+        if let Some(auth) = resolve_langfuse_basic_auth() {
+            headers.insert("Authorization".to_string(), format!("Basic {auth}"));
+        }
+    }
+
+    headers
 }
 
 fn service_name() -> String {
@@ -309,14 +351,111 @@ fn normalize_http_endpoint(endpoint: &str) -> String {
     }
 }
 
+fn is_langfuse_endpoint(endpoint: Option<&str>) -> bool {
+    endpoint
+        .map(|value| value.contains(LANGFUSE_OTEL_PATH_FRAGMENT))
+        .unwrap_or(false)
+}
+
+fn resolve_langfuse_basic_auth() -> Option<String> {
+    if let Ok(explicit_auth) = env::var("LANGFUSE_OTEL_AUTH") {
+        let trimmed = explicit_auth.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let public_key = env::var("LANGFUSE_PUBLIC_KEY").ok()?.trim().to_string();
+    let secret_key = env::var("LANGFUSE_SECRET_KEY").ok()?.trim().to_string();
+    if public_key.is_empty() || secret_key.is_empty() {
+        return None;
+    }
+    Some(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        format!("{public_key}:{secret_key}"),
+    ))
+}
+
+fn langfuse_config_valid(endpoint: &str) -> bool {
+    if !is_langfuse_endpoint(Some(endpoint)) {
+        return true;
+    }
+
+    let Some(authorization) = otlp_headers()
+        .into_iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("authorization"))
+        .map(|(_, value)| value)
+    else {
+        return false;
+    };
+
+    let mut parts = authorization.split_whitespace();
+    let scheme = parts.next().unwrap_or_default();
+    let encoded = parts.next().unwrap_or_default();
+    if !scheme.eq_ignore_ascii_case("basic") {
+        return false;
+    }
+
+    let Ok(decoded) =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, encoded.trim())
+    else {
+        return false;
+    };
+    let Ok(decoded) = String::from_utf8(decoded) else {
+        return false;
+    };
+    let Some((public_key, secret_key)) = decoded.split_once(':') else {
+        return false;
+    };
+
+    !public_key.trim().is_empty() && !secret_key.trim().is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pyo3::types::PyDict;
+    use std::sync::{Mutex, OnceLock};
 
     fn with_python<T>(f: impl FnOnce(Python<'_>) -> T) -> T {
         Python::initialize();
         Python::attach(f)
+    }
+
+    fn with_env_lock<T>(f: impl FnOnce() -> T) -> T {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = lock.lock().unwrap();
+        f()
+    }
+
+    fn with_isolated_env<T>(keys: &[&str], f: impl FnOnce() -> T) -> T {
+        with_env_lock(|| {
+            let saved: Vec<(String, Option<String>)> = keys
+                .iter()
+                .map(|key| ((*key).to_string(), std::env::var(key).ok()))
+                .collect();
+            for key in keys {
+                unsafe {
+                    std::env::remove_var(key);
+                }
+            }
+
+            let result = f();
+
+            for (key, value) in saved {
+                match value {
+                    Some(value) => unsafe {
+                        std::env::set_var(&key, value);
+                    },
+                    None => unsafe {
+                        std::env::remove_var(&key);
+                    },
+                }
+            }
+
+            result
+        })
     }
 
     #[test]
@@ -370,5 +509,156 @@ mod tests {
             let context = PluginTraceContext::from_optional_pyany(Some(&none_value)).unwrap();
             assert_eq!(context, PluginTraceContext::default());
         });
+    }
+
+    #[test]
+    fn otlp_export_enabled_defaults_to_true() {
+        with_isolated_env(&["OTEL_TRACES_EXPORTER"], || {
+            assert!(otlp_export_enabled());
+        });
+    }
+
+    #[test]
+    fn otlp_export_enabled_rejects_non_otlp_exporters() {
+        with_isolated_env(&["OTEL_TRACES_EXPORTER"], || {
+            unsafe {
+                std::env::set_var("OTEL_TRACES_EXPORTER", "none");
+            }
+            assert!(!otlp_export_enabled());
+            unsafe {
+                std::env::set_var("OTEL_TRACES_EXPORTER", "console");
+            }
+            assert!(!otlp_export_enabled());
+        });
+    }
+
+    #[test]
+    fn otlp_endpoint_falls_back_to_langfuse_endpoint() {
+        with_isolated_env(
+            &[
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+                "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "LANGFUSE_OTEL_ENDPOINT",
+            ],
+            || {
+                unsafe {
+                    std::env::set_var(
+                        "LANGFUSE_OTEL_ENDPOINT",
+                        "https://cloud.langfuse.com/api/public/otel",
+                    );
+                }
+                assert_eq!(
+                    otlp_endpoint().as_deref(),
+                    Some("https://cloud.langfuse.com/api/public/otel")
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn otlp_headers_adds_langfuse_basic_auth_when_missing() {
+        with_isolated_env(
+            &[
+                "LANGFUSE_OTEL_ENDPOINT",
+                "LANGFUSE_PUBLIC_KEY",
+                "LANGFUSE_SECRET_KEY",
+                "OTEL_EXPORTER_OTLP_HEADERS",
+            ],
+            || {
+                unsafe {
+                    std::env::set_var(
+                        "LANGFUSE_OTEL_ENDPOINT",
+                        "https://cloud.langfuse.com/api/public/otel",
+                    );
+                    std::env::set_var("LANGFUSE_PUBLIC_KEY", "pk-test");
+                    std::env::set_var("LANGFUSE_SECRET_KEY", "sk-test");
+                    std::env::remove_var("OTEL_EXPORTER_OTLP_HEADERS");
+                }
+                let headers = otlp_headers();
+                assert_eq!(
+                    headers.get("Authorization").map(String::as_str),
+                    Some("Basic cGstdGVzdDpzay10ZXN0")
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_langfuse_basic_auth_prefers_explicit_auth() {
+        with_isolated_env(
+            &[
+                "LANGFUSE_OTEL_AUTH",
+                "LANGFUSE_PUBLIC_KEY",
+                "LANGFUSE_SECRET_KEY",
+            ],
+            || {
+                unsafe {
+                    std::env::set_var("LANGFUSE_OTEL_AUTH", "ZXhwbGljaXQ=");
+                    std::env::set_var("LANGFUSE_PUBLIC_KEY", "pk-test");
+                    std::env::set_var("LANGFUSE_SECRET_KEY", "sk-test");
+                }
+                assert_eq!(
+                    resolve_langfuse_basic_auth().as_deref(),
+                    Some("ZXhwbGljaXQ=")
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn langfuse_endpoint_detection_requires_ingestion_path() {
+        assert!(is_langfuse_endpoint(Some(
+            "https://cloud.langfuse.com/api/public/otel"
+        )));
+        assert!(!is_langfuse_endpoint(Some(
+            "https://evil.example/proxy/langfuse"
+        )));
+    }
+
+    #[test]
+    fn langfuse_config_requires_authorization() {
+        with_isolated_env(
+            &[
+                "LANGFUSE_OTEL_ENDPOINT",
+                "OTEL_EXPORTER_OTLP_HEADERS",
+                "LANGFUSE_PUBLIC_KEY",
+                "LANGFUSE_SECRET_KEY",
+                "LANGFUSE_OTEL_AUTH",
+            ],
+            || {
+                unsafe {
+                    std::env::set_var(
+                        "LANGFUSE_OTEL_ENDPOINT",
+                        "https://cloud.langfuse.com/api/public/otel",
+                    );
+                    std::env::remove_var("OTEL_EXPORTER_OTLP_HEADERS");
+                    std::env::remove_var("LANGFUSE_PUBLIC_KEY");
+                    std::env::remove_var("LANGFUSE_SECRET_KEY");
+                    std::env::remove_var("LANGFUSE_OTEL_AUTH");
+                }
+                assert!(!langfuse_config_valid(
+                    "https://cloud.langfuse.com/api/public/otel"
+                ));
+            },
+        );
+    }
+
+    #[test]
+    fn langfuse_config_requires_valid_basic_authorization() {
+        with_isolated_env(
+            &["LANGFUSE_OTEL_ENDPOINT", "OTEL_EXPORTER_OTLP_HEADERS"],
+            || {
+                unsafe {
+                    std::env::set_var(
+                        "LANGFUSE_OTEL_ENDPOINT",
+                        "https://cloud.langfuse.com/api/public/otel",
+                    );
+                    std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer token");
+                }
+                assert!(!langfuse_config_valid(
+                    "https://cloud.langfuse.com/api/public/otel"
+                ));
+            },
+        );
     }
 }

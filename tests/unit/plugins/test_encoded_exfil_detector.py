@@ -1339,3 +1339,37 @@ class TestDocumentedLimitations:
         assert "base64" in encodings_found or "base64url" in encodings_found, "base64 should pass low threshold"
         # hex should NOT be found (threshold=8, max possible score is 7)
         assert "hex" not in encodings_found, "hex should be blocked by impossible threshold"
+
+
+def test_rust_scan_container_passes_trace_context(monkeypatch):
+    """The Rust encoded-exfil scanner should receive the propagated trace context."""
+    # First-Party
+    from plugins.encoded_exfil_detection import encoded_exfil_detector as module
+
+    captured = {}
+
+    def fake_scan(container, cfg, trace_context):
+        captured["args"] = (container, cfg, trace_context)
+        return 0, container, []
+
+    monkeypatch.setattr(module, "_RUST_AVAILABLE", True)
+    monkeypatch.setattr(module, "encoded_exfil_detection", fake_scan)
+    monkeypatch.setattr(
+        module,
+        "build_rust_plugin_trace_context",
+        lambda context: {"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"},
+    )
+
+    count, redacted, findings = module._scan_container(
+        {"data": "safe"},
+        module.EncodedExfilDetectorConfig(),
+        use_rust=True,
+        context=PluginContext(global_context=GlobalContext(request_id="req-1")),
+    )
+
+    assert (count, redacted, findings) == (0, {"data": "safe"}, [])
+    assert captured["args"][2] == {
+        "traceparent": "tp",
+        "trace_id": "tid",
+        "parent_span_id": "sid",
+    }

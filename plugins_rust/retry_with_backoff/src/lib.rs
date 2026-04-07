@@ -212,7 +212,7 @@ impl RetryStateManager {
     //
     // Config (max_retries, base_ms, max_ms, jitter, retry_on_status) lives in
     // self — no per-call allocations or list conversions cross the FFI boundary.
-    // Only the four truly dynamic arguments are passed.
+    // Only the dynamic call arguments plus optional trace context are passed.
     //
     // Returns (should_retry, delay_ms):
     //   (true,  delay)  — failure within budget; caller should schedule retry
@@ -242,10 +242,7 @@ impl RetryStateManager {
             if failed {
                 let state = map.entry(key.clone()).or_insert_with(ToolRetryState::new);
                 state.consecutive_failures += 1;
-                state.last_failure_at = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs_f64();
+                state.last_failure_at = monotonic_secs();
 
                 if state.consecutive_failures <= self.max_retries {
                     // attempt index is 0-based; saturating_sub guards against underflow.
@@ -540,5 +537,29 @@ mod tests {
         assert_eq!(delay, 0);
         // Entry should be gone — subsequent get_failures returns 0.
         assert_eq!(m.get_failures(tool, req), 0);
+    }
+
+    #[test]
+    fn evict_stale_removes_entries_older_than_ttl() {
+        let mut map = HashMap::new();
+        map.insert(
+            "stale".to_string(),
+            ToolRetryState {
+                consecutive_failures: 1,
+                last_failure_at: monotonic_secs() - (STATE_TTL_SECS + 1.0),
+            },
+        );
+        map.insert(
+            "fresh".to_string(),
+            ToolRetryState {
+                consecutive_failures: 1,
+                last_failure_at: monotonic_secs(),
+            },
+        );
+
+        evict_stale(&mut map);
+
+        assert!(!map.contains_key("stale"));
+        assert!(map.contains_key("fresh"));
     }
 }

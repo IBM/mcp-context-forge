@@ -12,6 +12,7 @@ import logging
 import os
 import time
 from typing import Type
+from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
@@ -1124,6 +1125,46 @@ class TestPIIFilterPlugin:
         assert isinstance(plugin.detector, PIIDetector)
         warning_messages = [record.message for record in caplog.records if "legacy Python PII filter detector is deprecated" in record.message]
         assert len(warning_messages) == 1
+
+    @pytest.mark.asyncio
+    async def test_python_fallback_accepts_trace_context_argument(self, plugin_config, monkeypatch):
+        """Python fallback must remain compatible with the Rust trace-context call shape."""
+        monkeypatch.setattr(pii_filter_module, "_RUST_AVAILABLE", False)
+        monkeypatch.setattr(pii_filter_module, "_RustPIIDetector", None)
+
+        plugin = PIIFilterPlugin(plugin_config)
+        context = PluginContext(global_context=GlobalContext(request_id="test-python-fallback"))
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "Email: test@example.com"})
+
+        result = await plugin.prompt_pre_fetch(payload, context)
+
+        assert result.modified_payload is not None
+        assert "test@example.com" not in result.modified_payload.args["input"]
+
+    @pytest.mark.asyncio
+    async def test_rust_detector_receives_trace_context(self, plugin_config, monkeypatch):
+        """Rust-backed detector calls should receive the propagated trace context."""
+        mock_detector = MagicMock()
+        mock_detector.detect.return_value = {}
+
+        monkeypatch.setattr(pii_filter_module, "_RUST_AVAILABLE", True)
+        monkeypatch.setattr(pii_filter_module, "_RustPIIDetector", lambda cfg: mock_detector)
+        monkeypatch.setattr(
+            pii_filter_module,
+            "build_rust_plugin_trace_context",
+            lambda context: {"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"},
+        )
+
+        plugin = PIIFilterPlugin(plugin_config)
+        context = PluginContext(global_context=GlobalContext(request_id="test-rust-trace"))
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "safe text"})
+
+        await plugin.prompt_pre_fetch(payload, context)
+
+        mock_detector.detect.assert_called_once_with(
+            "safe text",
+            {"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"},
+        )
 
 
 if __name__ == "__main__":

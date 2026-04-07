@@ -3,7 +3,7 @@
 //
 // `RateLimiterEngine` — the single PyO3-exposed class (IFACE-02).
 //
-// Python calls `check(user, tenant, tool, now_unix)` once per hook
+// Python calls `check(user, tenant, tool, now_unix, include_retry_after, trace_context)` once per hook
 // invocation (ARCH-01).  The engine builds dimension keys, evaluates,
 // aggregates, and returns pre-built header/meta dicts (ARCH-02).
 // The Python wrapper is policy-only and never does rate math (ARCH-03).

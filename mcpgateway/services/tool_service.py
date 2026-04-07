@@ -59,10 +59,9 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import (
+    build_rust_plugin_trace_context,
     create_child_span,
     create_span,
-    get_active_parent_span_id,
-    get_active_traceparent,
     inject_trace_context_headers,
     set_span_attribute,
     set_span_error,
@@ -3330,9 +3329,7 @@ class ToolService(BaseService):
         if gateway_metadata:
             hook_global_context.metadata[GATEWAY_METADATA] = gateway_metadata
         hook_global_context.metadata["observability"] = {
-            "traceparent": get_active_traceparent(),
-            "trace_id": current_trace_id.get(),
-            "parent_span_id": get_active_parent_span_id(),
+            **build_rust_plugin_trace_context(None),
             "runtime": "python",
         }
         return hook_global_context
