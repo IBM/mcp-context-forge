@@ -20,6 +20,7 @@ from mcpgateway.baggage import (
     BaggageConfig,
     BaggageConfigError,
     BaggageSizeLimitError,
+    filter_incoming_baggage,
     HeaderMapping,
     extract_baggage_from_headers,
     format_w3c_baggage_header,
@@ -397,6 +398,45 @@ class TestW3CBaggageParsing:
         """Test that formatting URL-encodes special characters."""
         result = format_w3c_baggage_header({"key": "value with spaces"})
         assert "value%20with%20spaces" in result
+
+
+class TestFilterIncomingBaggage:
+    """Test inbound baggage filtering for untrusted request input."""
+
+    def test_filters_to_configured_baggage_keys(self):
+        """Only configured baggage keys should be accepted from inbound baggage."""
+        config = BaggageConfig(
+            enabled=True,
+            mappings=[HeaderMapping("X-Tenant-ID", "tenant.id")],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=8192,
+            log_rejected=True,
+            log_sanitization=True,
+        )
+
+        result = filter_incoming_baggage({"tenant.id": "tenant-123", "malicious.key": "boom"}, config)
+
+        assert result == {"tenant.id": "tenant-123"}
+
+    def test_enforces_size_limits_for_inbound_baggage(self):
+        """Inbound baggage should obey the same size limits as mapped headers."""
+        config = BaggageConfig(
+            enabled=True,
+            mappings=[
+                HeaderMapping("X-Tenant-ID", "tenant.id"),
+                HeaderMapping("X-User-ID", "user.id"),
+            ],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=21,
+            log_rejected=True,
+            log_sanitization=True,
+        )
+
+        result = filter_incoming_baggage({"tenant.id": "tenant-123", "user.id": "user-456"}, config)
+
+        assert result == {"tenant.id": "tenant-123"}
 
 
 class TestMergeBaggage:

@@ -22,6 +22,49 @@ from mcpgateway.baggage import BaggageConfig, HeaderMapping
 from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
 
 
+def _current_baggage() -> dict:
+    # First-Party
+    from mcpgateway.middleware.baggage_middleware import otel_baggage
+
+    if otel_baggage is None:
+        return {}
+    return dict(otel_baggage.get_all())
+
+
+class _FakeOtelBaggage:
+    def __init__(self):
+        self._state = {}
+
+    def get_all(self):
+        return dict(self._state)
+
+    def set_baggage(self, key, value, context=None):
+        new_context = dict(self._state if context is None else context)
+        new_context[key] = value
+        return new_context
+
+    def get_current(self):
+        return dict(self._state)
+
+    def attach(self, context):
+        previous = dict(self._state)
+        self._state = dict(context)
+        return previous
+
+    def detach(self, token):
+        self._state = dict(token)
+
+
+@pytest.fixture(autouse=True)
+def fake_otel_baggage(monkeypatch):
+    fake = _FakeOtelBaggage()
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_baggage", fake)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_get_current", fake.get_current)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_attach", fake.attach)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_detach", fake.detach)
+    return fake
+
+
 @pytest.fixture
 def test_config():
     """Create test baggage configuration."""
@@ -49,7 +92,7 @@ def app_with_baggage(test_config):
 
     @app.get("/test")
     async def test_endpoint():
-        return {"status": "ok"}
+        return {"status": "ok", "baggage": _current_baggage()}
 
     return app
 
@@ -61,106 +104,90 @@ class TestBaggageMiddlewareIntegration:
         """Test middleware extracts configured headers."""
         client = TestClient(app_with_baggage)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Tenant-ID": "tenant-123",
-                    "X-User-ID": "user-456",
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Tenant-ID": "tenant-123",
+                "X-User-ID": "user-456",
+            },
+        )
 
-            assert response.status_code == 200
-            # Verify baggage was set in context
-            assert mock_baggage.set_baggage.call_count == 2
-            mock_baggage.set_baggage.assert_any_call("tenant.id", "tenant-123")
-            mock_baggage.set_baggage.assert_any_call("user.id", "user-456")
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {"tenant.id": "tenant-123", "user.id": "user-456"}
 
     def test_middleware_skips_undefined_headers(self, app_with_baggage):
         """Test middleware skips headers not in configuration."""
         client = TestClient(app_with_baggage)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Tenant-ID": "tenant-123",
-                    "X-Unknown": "value",
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Tenant-ID": "tenant-123",
+                "X-Unknown": "value",
+            },
+        )
 
-            assert response.status_code == 200
-            # Only configured header should be set
-            assert mock_baggage.set_baggage.call_count == 1
-            mock_baggage.set_baggage.assert_called_once_with("tenant.id", "tenant-123")
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {"tenant.id": "tenant-123"}
 
     def test_middleware_case_insensitive_headers(self, app_with_baggage):
         """Test middleware handles case-insensitive header matching."""
         client = TestClient(app_with_baggage)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "x-tenant-id": "tenant-123",  # lowercase
-                    "X-USER-ID": "user-456",  # uppercase
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "x-tenant-id": "tenant-123",
+                "X-USER-ID": "user-456",
+            },
+        )
 
-            assert response.status_code == 200
-            assert mock_baggage.set_baggage.call_count == 2
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {"tenant.id": "tenant-123", "user.id": "user-456"}
 
     def test_middleware_sanitizes_values(self, app_with_baggage):
         """Test middleware sanitizes header values."""
         client = TestClient(app_with_baggage)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Tenant-ID": "tenant\x00\x01\x02",  # Control characters
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Tenant-ID": "tenant\x00\x01\x02",
+            },
+        )
 
-            assert response.status_code == 200
-            # Verify sanitized value was set
-            mock_baggage.set_baggage.assert_called_once_with("tenant.id", "tenant")
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {"tenant.id": "tenant"}
 
     def test_middleware_merges_with_upstream_baggage(self, app_with_baggage):
         """Test middleware merges header baggage with upstream baggage."""
         client = TestClient(app_with_baggage)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Tenant-ID": "tenant-123",
-                    "baggage": "upstream.key=upstream-value",
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Tenant-ID": "tenant-123",
+                "baggage": "user.id=user-456",
+            },
+        )
 
-            assert response.status_code == 200
-            # Both header and upstream baggage should be set
-            assert mock_baggage.set_baggage.call_count == 2
-            mock_baggage.set_baggage.assert_any_call("tenant.id", "tenant-123")
-            mock_baggage.set_baggage.assert_any_call("upstream.key", "upstream-value")
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {"tenant.id": "tenant-123", "user.id": "user-456"}
 
     def test_middleware_header_overrides_upstream(self, app_with_baggage):
         """Test header baggage overrides upstream baggage for same key."""
         client = TestClient(app_with_baggage)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Tenant-ID": "new-tenant",
-                    "baggage": "tenant.id=old-tenant",
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Tenant-ID": "new-tenant",
+                "baggage": "tenant.id=old-tenant",
+            },
+        )
 
-            assert response.status_code == 200
-            # Header value should override upstream
-            mock_baggage.set_baggage.assert_called_once_with("tenant.id", "new-tenant")
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {"tenant.id": "new-tenant"}
 
     def test_middleware_disabled_config(self):
         """Test middleware with disabled configuration."""
@@ -178,19 +205,17 @@ class TestBaggageMiddlewareIntegration:
 
         @app.get("/test")
         async def test_endpoint():
-            return {"status": "ok"}
+            return {"status": "ok", "baggage": _current_baggage()}
 
         client = TestClient(app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={"X-Tenant-ID": "tenant-123"},
-            )
+        response = client.get(
+            "/test",
+            headers={"X-Tenant-ID": "tenant-123"},
+        )
 
-            assert response.status_code == 200
-            # No baggage should be set
-            mock_baggage.set_baggage.assert_not_called()
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {}
 
     def test_middleware_handles_missing_otel(self):
         """Test middleware gracefully handles missing OpenTelemetry."""
@@ -208,11 +233,11 @@ class TestBaggageMiddlewareIntegration:
 
         @app.get("/test")
         async def test_endpoint():
-            return {"status": "ok"}
+            return {"status": "ok", "baggage": _current_baggage()}
 
         client = TestClient(app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.OTEL_BAGGAGE_AVAILABLE", False):
+        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage", None):
             response = client.get(
                 "/test",
                 headers={"X-Tenant-ID": "tenant-123"},
@@ -250,7 +275,7 @@ class TestBaggageMiddlewareIntegration:
 
         @app.get("/test")
         async def test_endpoint():
-            return {"status": "ok"}
+            return {"status": "ok", "baggage": _current_baggage()}
 
         client = TestClient(app)
 
@@ -296,23 +321,21 @@ class TestBaggageMiddlewareSecurityControls:
 
         @app.get("/test")
         async def test_endpoint():
-            return {"status": "ok"}
+            return {"status": "ok", "baggage": _current_baggage()}
 
         client = TestClient(app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Header-1": "value1",
-                    "X-Header-2": "value2",
-                    "X-Header-3": "value3",
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Header-1": "value1",
+                "X-Header-2": "value2",
+                "X-Header-3": "value3",
+            },
+        )
 
-            assert response.status_code == 200
-            # Only 2 items should be set
-            assert mock_baggage.set_baggage.call_count == 2
+        assert response.status_code == 200
+        assert len(response.json()["baggage"]) == 2
 
     def test_max_size_limit_enforced(self):
         """Test max size limit is enforced."""
@@ -333,19 +356,47 @@ class TestBaggageMiddlewareSecurityControls:
 
         @app.get("/test")
         async def test_endpoint():
-            return {"status": "ok"}
+            return {"status": "ok", "baggage": _current_baggage()}
 
         client = TestClient(app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Header-1": "a" * 30,
-                    "X-Header-2": "b" * 30,
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Header-1": "a" * 30,
+                "X-Header-2": "b" * 30,
+            },
+        )
 
-            assert response.status_code == 200
-            # Only first header should fit within size limit
-            assert mock_baggage.set_baggage.call_count == 1
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {"key1": "a" * 30}
+
+    def test_outer_middleware_sees_baggage_before_inner_app(self, test_config):
+        """Baggage middleware should execute before inner request observers."""
+        captured = []
+
+        class CaptureMiddleware:
+            def __init__(self, app):
+                self.app = app
+
+            async def __call__(self, scope, receive, send):
+                if scope.get("type") == "http":
+                    # First-Party
+                    from mcpgateway.middleware.baggage_middleware import otel_baggage
+
+                    captured.append(dict(otel_baggage.get_all()))
+                await self.app(scope, receive, send)
+
+        app = FastAPI()
+        app.add_middleware(CaptureMiddleware)
+        app.add_middleware(BaggageMiddleware, config=test_config)
+
+        @app.get("/test")
+        async def test_endpoint():
+            return {"status": "ok"}
+
+        client = TestClient(app)
+        response = client.get("/test", headers={"X-Tenant-ID": "tenant-123"})
+
+        assert response.status_code == 200
+        assert captured == [{"tenant.id": "tenant-123"}]

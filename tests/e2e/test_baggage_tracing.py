@@ -21,6 +21,42 @@ from mcpgateway.baggage import BaggageConfig, HeaderMapping
 from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
 
 
+class _FakeOtelBaggage:
+    def __init__(self):
+        self._state = {}
+
+    def get_all(self):
+        return dict(self._state)
+
+    def set_baggage(self, key, value, context=None):
+        new_context = dict(self._state if context is None else context)
+        new_context[key] = value
+        return new_context
+
+    def get_current(self):
+        return dict(self._state)
+
+    def attach(self, context):
+        previous = dict(self._state)
+        self._state = dict(context)
+        return previous
+
+    def detach(self, token):
+        self._state = dict(token)
+
+
+@pytest.fixture(autouse=True)
+def fake_otel_baggage(monkeypatch):
+    fake = _FakeOtelBaggage()
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_baggage", fake)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_get_current", fake.get_current)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_attach", fake.attach)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_detach", fake.detach)
+    monkeypatch.setattr("mcpgateway.observability.otel_baggage", fake)
+    monkeypatch.setattr("mcpgateway.observability.OTEL_AVAILABLE", True)
+    return fake
+
+
 @pytest.fixture
 def tracing_app():
     """Create FastAPI app with baggage and tracing middleware."""
@@ -44,7 +80,10 @@ def tracing_app():
 
     @app.get("/test")
     async def test_endpoint():
-        return {"status": "ok"}
+        # First-Party
+        from mcpgateway.middleware.baggage_middleware import otel_baggage
+
+        return {"status": "ok", "baggage": dict(otel_baggage.get_all())}
 
     @app.get("/downstream")
     async def downstream_endpoint():
@@ -65,146 +104,108 @@ class TestBaggageTracingE2E:
         """Test baggage is extracted from headers and set in OpenTelemetry context."""
         client = TestClient(tracing_app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Tenant-ID": "tenant-123",
-                    "X-User-ID": "user-456",
-                    "X-Request-ID": "req-789",
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Tenant-ID": "tenant-123",
+                "X-User-ID": "user-456",
+                "X-Request-ID": "req-789",
+            },
+        )
 
-            assert response.status_code == 200
-            # Verify all configured headers were extracted and set
-            assert mock_baggage.set_baggage.call_count == 3
-            mock_baggage.set_baggage.assert_any_call("tenant.id", "tenant-123")
-            mock_baggage.set_baggage.assert_any_call("user.id", "user-456")
-            mock_baggage.set_baggage.assert_any_call("request.id", "req-789")
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {
+            "tenant.id": "tenant-123",
+            "user.id": "user-456",
+            "request.id": "req-789",
+        }
 
     def test_baggage_propagated_to_downstream(self, tracing_app):
         """Test baggage is propagated to downstream service calls."""
         client = TestClient(tracing_app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            with patch("mcpgateway.observability.otel_baggage") as mock_obs_baggage:
-                with patch("mcpgateway.config.get_settings") as mock_get_settings:
-                    # Configure settings for propagation
-                    mock_settings = MagicMock()
-                    mock_settings.otel_baggage_enabled = True
-                    mock_settings.otel_baggage_propagate_to_external = True
-                    mock_get_settings.return_value = mock_settings
+        with patch("mcpgateway.config.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.otel_baggage_enabled = True
+            mock_settings.otel_baggage_propagate_to_external = True
+            mock_get_settings.return_value = mock_settings
 
-                    # Mock baggage retrieval
-                    mock_obs_baggage.get_all.return_value = {
-                        "tenant.id": "tenant-123",
-                        "user.id": "user-456",
-                    }
+            with patch("mcpgateway.observability.otel_context_active", return_value=True):
+                with patch("mcpgateway.observability.otel_inject"):
+                    response = client.get(
+                        "/downstream",
+                        headers={
+                            "X-Tenant-ID": "tenant-123",
+                            "X-User-ID": "user-456",
+                        },
+                    )
 
-                    with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
-                        with patch("mcpgateway.observability.otel_context_active", return_value=True):
-                            with patch("mcpgateway.observability.otel_inject"):
-                                response = client.get(
-                                    "/downstream",
-                                    headers={
-                                        "X-Tenant-ID": "tenant-123",
-                                        "X-User-ID": "user-456",
-                                    },
-                                )
-
-                                assert response.status_code == 200
-                                headers = response.json()["headers"]
-
-                                # Verify baggage header was added
-                                assert "baggage" in headers
-                                # Verify baggage format (order may vary)
-                                assert "tenant.id=tenant-123" in headers["baggage"]
-                                assert "user.id=user-456" in headers["baggage"]
+                    assert response.status_code == 200
+                    headers = response.json()["headers"]
+                    assert "baggage" in headers
+                    assert "tenant.id=tenant-123" in headers["baggage"]
+                    assert "user.id=user-456" in headers["baggage"]
 
     def test_baggage_not_propagated_when_disabled(self, tracing_app):
         """Test baggage is not propagated when propagate_to_external is false."""
         client = TestClient(tracing_app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage"):
-            with patch("mcpgateway.observability.otel_baggage") as mock_obs_baggage:
-                with patch("mcpgateway.config.get_settings") as mock_get_settings:
-                    # Disable propagation
-                    mock_settings = MagicMock()
-                    mock_settings.otel_baggage_enabled = True
-                    mock_settings.otel_baggage_propagate_to_external = False
-                    mock_get_settings.return_value = mock_settings
+        with patch("mcpgateway.config.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.otel_baggage_enabled = True
+            mock_settings.otel_baggage_propagate_to_external = False
+            mock_get_settings.return_value = mock_settings
 
-                    mock_obs_baggage.get_all.return_value = {
-                        "tenant.id": "tenant-123",
-                    }
+            with patch("mcpgateway.observability.otel_context_active", return_value=True):
+                with patch("mcpgateway.observability.otel_inject"):
+                    response = client.get(
+                        "/downstream",
+                        headers={"X-Tenant-ID": "tenant-123"},
+                    )
 
-                    with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
-                        with patch("mcpgateway.observability.otel_context_active", return_value=True):
-                            with patch("mcpgateway.observability.otel_inject"):
-                                response = client.get(
-                                    "/downstream",
-                                    headers={"X-Tenant-ID": "tenant-123"},
-                                )
-
-                                assert response.status_code == 200
-                                headers = response.json()["headers"]
-
-                                # Verify baggage header was NOT added
-                                assert "baggage" not in headers
+                    assert response.status_code == 200
+                    headers = response.json()["headers"]
+                    assert "baggage" not in headers
 
     def test_baggage_merged_with_upstream(self, tracing_app):
         """Test header baggage is merged with upstream baggage."""
         client = TestClient(tracing_app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage") as mock_baggage:
-            response = client.get(
-                "/test",
-                headers={
-                    "X-Tenant-ID": "tenant-123",
-                    "baggage": "upstream.key=upstream-value,another.key=another-value",
-                },
-            )
+        response = client.get(
+            "/test",
+            headers={
+                "X-Tenant-ID": "tenant-123",
+                "baggage": "user.id=user-456,request.id=req-789",
+            },
+        )
 
-            assert response.status_code == 200
-            # Verify both header and upstream baggage were set
-            assert mock_baggage.set_baggage.call_count == 3
-            mock_baggage.set_baggage.assert_any_call("tenant.id", "tenant-123")
-            mock_baggage.set_baggage.assert_any_call("upstream.key", "upstream-value")
-            mock_baggage.set_baggage.assert_any_call("another.key", "another-value")
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {
+            "tenant.id": "tenant-123",
+            "user.id": "user-456",
+            "request.id": "req-789",
+        }
 
     def test_baggage_sanitized_before_propagation(self, tracing_app):
         """Test baggage values are sanitized before propagation."""
         client = TestClient(tracing_app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage"):
-            with patch("mcpgateway.observability.otel_baggage") as mock_obs_baggage:
-                with patch("mcpgateway.config.get_settings") as mock_get_settings:
-                    mock_settings = MagicMock()
-                    mock_settings.otel_baggage_enabled = True
-                    mock_settings.otel_baggage_propagate_to_external = True
-                    mock_get_settings.return_value = mock_settings
+        with patch("mcpgateway.config.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.otel_baggage_enabled = True
+            mock_settings.otel_baggage_propagate_to_external = True
+            mock_get_settings.return_value = mock_settings
 
-                    # Mock baggage with control characters
-                    mock_obs_baggage.get_all.return_value = {
-                        "tenant.id": "tenant\x00\x01\x02",
-                    }
+            with patch("mcpgateway.observability.otel_context_active", return_value=True):
+                with patch("mcpgateway.observability.otel_inject"):
+                    response = client.get(
+                        "/downstream",
+                        headers={"X-Tenant-ID": "tenant\x00\x01\x02"},
+                    )
 
-                    with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
-                        with patch("mcpgateway.observability.otel_context_active", return_value=True):
-                            with patch("mcpgateway.observability.otel_inject"):
-                                response = client.get(
-                                    "/downstream",
-                                    headers={"X-Tenant-ID": "tenant\x00\x01\x02"},
-                                )
-
-                                assert response.status_code == 200
-                                headers = response.json()["headers"]
-
-                                # Verify sanitized value in baggage header
-                                if "baggage" in headers:
-                                    assert "\x00" not in headers["baggage"]
-                                    assert "\x01" not in headers["baggage"]
-                                    assert "\x02" not in headers["baggage"]
+                    assert response.status_code == 200
+                    headers = response.json()["headers"]
+                    assert headers["baggage"] == "tenant.id=tenant"
 
     def test_span_attributes_include_baggage(self):
         """Test that spans automatically include baggage as attributes."""

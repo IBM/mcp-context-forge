@@ -3137,11 +3137,14 @@ if settings.observability_enabled:
 else:
     logger.info("🔍 Observability middleware disabled")
 
-# Add OTEL request-root tracing middleware when external tracing is enabled.
-# Registered last so it wraps the full request path, including mounted /mcp ASGI handling.
-# Add OpenTelemetry Baggage middleware when enabled
-# IMPORTANT: Must be registered BEFORE OpenTelemetryRequestMiddleware (ASGI executes in reverse order)
-# This ensures baggage is set in context BEFORE the request span is created
+if otel_tracing_enabled():
+    app.add_middleware(OpenTelemetryRequestMiddleware)
+    logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
+else:
+    logger.info("🧵 OTEL request tracing middleware disabled")
+
+# Add OTEL baggage middleware after request tracing middleware so it executes first
+# and attaches baggage before the request-root span is created.
 if settings.otel_baggage_enabled and otel_tracing_enabled():
     # First-Party
     from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
@@ -3152,12 +3155,6 @@ elif settings.otel_baggage_enabled and not otel_tracing_enabled():
     logger.warning("🧳 OTEL baggage enabled but tracing disabled - baggage will not be captured in spans")
 else:
     logger.debug("🧳 OTEL baggage middleware disabled")
-
-if otel_tracing_enabled():
-    app.add_middleware(OpenTelemetryRequestMiddleware)
-    logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
-else:
-    logger.info("🧵 OTEL request tracing middleware disabled")
 
 
 # Database query logging middleware (for N+1 detection)

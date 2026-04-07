@@ -24,6 +24,7 @@ from typing import Any, Awaitable, Callable, Dict, Mapping, Optional
 from mcpgateway.baggage import (
     BaggageConfig,
     extract_baggage_from_headers,
+    filter_incoming_baggage,
     merge_baggage,
     parse_w3c_baggage_header,
 )
@@ -34,10 +35,16 @@ logger = logging.getLogger(__name__)
 try:
     # Third-Party
     from opentelemetry import baggage as otel_baggage
+    from opentelemetry.context import attach as otel_attach
+    from opentelemetry.context import detach as otel_detach
+    from opentelemetry.context import get_current as otel_get_current
 
     OTEL_BAGGAGE_AVAILABLE = True
 except ImportError:
     otel_baggage = None
+    otel_attach = None
+    otel_detach = None
+    otel_get_current = None
     OTEL_BAGGAGE_AVAILABLE = False
     logger.debug("OpenTelemetry baggage API not available")
 
@@ -58,8 +65,8 @@ class BaggageMiddleware:
     - Size limits (max items, max bytes)
     - Audit logging for rejected headers
 
-    The middleware must be placed AFTER OpenTelemetryRequestMiddleware to ensure
-    span context exists before setting baggage.
+    The middleware must wrap OpenTelemetryRequestMiddleware so baggage is attached
+    before the request-root span is created.
     """
 
     def __init__(
@@ -128,7 +135,7 @@ class BaggageMiddleware:
 
         return headers
 
-    def _extract_existing_baggage(self, headers: Dict[str, str]) -> Dict[str, str]:
+    def _extract_existing_baggage(self, headers: Dict[str, str], config: BaggageConfig) -> Dict[str, str]:
         """Extract existing W3C baggage from upstream request headers.
 
         Args:
@@ -142,31 +149,36 @@ class BaggageMiddleware:
             return {}
 
         try:
-            return parse_w3c_baggage_header(baggage_header)
+            return filter_incoming_baggage(parse_w3c_baggage_header(baggage_header), config)
         except Exception as e:
             logger.debug(f"Failed to parse upstream baggage header: {e}")
             return {}
 
-    def _set_baggage_in_context(self, baggage: Dict[str, str]) -> None:
+    def _set_baggage_in_context(self, baggage: Dict[str, str]) -> Optional[object]:
         """Set baggage in OpenTelemetry context.
 
         Args:
             baggage: Dictionary of baggage key -> value to set
+
+        Returns:
+            Context token if baggage was attached, otherwise None.
         """
-        if otel_baggage is None:
+        if otel_baggage is None or otel_attach is None or otel_get_current is None:
             logger.debug("OpenTelemetry baggage API not available, skipping context update")
-            return
+            return None
 
         if not baggage:
-            return
+            return None
 
         try:
-            # Set each baggage entry in the current context
+            current_context = otel_get_current()
             for key, value in baggage.items():
-                otel_baggage.set_baggage(key, value)
+                current_context = otel_baggage.set_baggage(key, value, context=current_context)
                 logger.debug(f"Set baggage in context: {key}={value}")
+            return otel_attach(current_context)
         except Exception as e:
             logger.warning(f"Failed to set baggage in OpenTelemetry context: {e}")
+            return None
 
     async def __call__(
         self,
@@ -194,12 +206,13 @@ class BaggageMiddleware:
             await self.app(scope, receive, send)
             return
 
+        baggage_token = None
         try:
             # Extract headers from ASGI scope
             headers = self._extract_headers_from_scope(scope)
 
             # Extract existing upstream baggage
-            existing_baggage = self._extract_existing_baggage(headers)
+            existing_baggage = self._extract_existing_baggage(headers, config)
 
             # Extract baggage from configured headers
             header_baggage = extract_baggage_from_headers(headers, config)
@@ -209,12 +222,15 @@ class BaggageMiddleware:
 
             # Set baggage in OpenTelemetry context
             if merged_baggage:
-                self._set_baggage_in_context(merged_baggage)
+                baggage_token = self._set_baggage_in_context(merged_baggage)
                 logger.debug(f"Set {len(merged_baggage)} baggage entries in context " f"({len(header_baggage)} from headers, {len(existing_baggage)} from upstream)")
 
         except Exception as e:
             # Log error but don't fail the request
             logger.error(f"Baggage middleware error: {e}", exc_info=True)
 
-        # Continue processing request
-        await self.app(scope, receive, send)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if baggage_token is not None and otel_detach is not None:
+                otel_detach(baggage_token)

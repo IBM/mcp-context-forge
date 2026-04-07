@@ -28,6 +28,40 @@ from mcpgateway.baggage import (
 from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
 
 
+class _FakeOtelBaggage:
+    def __init__(self):
+        self._state = {}
+
+    def get_all(self):
+        return dict(self._state)
+
+    def set_baggage(self, key, value, context=None):
+        new_context = dict(self._state if context is None else context)
+        new_context[key] = value
+        return new_context
+
+    def get_current(self):
+        return dict(self._state)
+
+    def attach(self, context):
+        previous = dict(self._state)
+        self._state = dict(context)
+        return previous
+
+    def detach(self, token):
+        self._state = dict(token)
+
+
+@pytest.fixture(autouse=True)
+def fake_otel_baggage(monkeypatch):
+    fake = _FakeOtelBaggage()
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_baggage", fake)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_get_current", fake.get_current)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_attach", fake.attach)
+    monkeypatch.setattr("mcpgateway.middleware.baggage_middleware.otel_detach", fake.detach)
+    return fake
+
+
 class TestBaggageSecurityDenyPaths:
     """Test security deny-path scenarios."""
 
@@ -322,6 +356,33 @@ class TestBaggageMiddlewareSecurity:
             # No baggage should be set
             mock_baggage.set_baggage.assert_not_called()
 
+    def test_inbound_baggage_allowlist_blocks_unconfigured_keys(self):
+        """Inbound baggage should not bypass the configured baggage-key allowlist."""
+        app = FastAPI()
+        config = BaggageConfig(
+            enabled=True,
+            mappings=[HeaderMapping("X-Tenant-ID", "tenant.id")],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=8192,
+            log_rejected=True,
+            log_sanitization=True,
+        )
+        app.add_middleware(BaggageMiddleware, config=config)
+
+        @app.get("/test")
+        async def test_endpoint():
+            # First-Party
+            from mcpgateway.middleware.baggage_middleware import otel_baggage
+
+            return {"baggage": dict(otel_baggage.get_all())}
+
+        client = TestClient(app)
+        response = client.get("/test", headers={"baggage": "malicious.key=boom,tenant.id=tenant-123"})
+
+        assert response.status_code == 200
+        assert response.json()["baggage"] == {"tenant.id": "tenant-123"}
+
     def test_propagation_disabled_by_default(self):
         """Test that propagation is disabled by default."""
         config = BaggageConfig(
@@ -382,7 +443,7 @@ class TestBaggageFailClosed:
 
         client = TestClient(app)
 
-        with patch("mcpgateway.middleware.baggage_middleware.OTEL_BAGGAGE_AVAILABLE", False):
+        with patch("mcpgateway.middleware.baggage_middleware.otel_baggage", None):
             response = client.get("/test", headers={"X-Tenant-ID": "tenant-123"})
 
             # Should not fail

@@ -391,6 +391,58 @@ def parse_w3c_baggage_header(baggage_header: str) -> Dict[str, str]:
     return baggage
 
 
+def filter_incoming_baggage(
+    baggage: Dict[str, str],
+    config: BaggageConfig,
+) -> Dict[str, str]:
+    """Filter untrusted inbound baggage using the configured baggage-key allowlist.
+
+    Incoming HTTP baggage is external input. Apply the same fail-closed posture used
+    for mapped headers: only configured baggage keys are accepted and values remain
+    subject to sanitization and size limits.
+    """
+    if not config.enabled or not baggage:
+        return {}
+
+    allowed_keys = {mapping.baggage_key for mapping in config.mappings}
+    filtered: Dict[str, str] = {}
+    total_size = 0
+
+    for key, value in baggage.items():
+        if key not in allowed_keys:
+            if config.log_rejected:
+                logger.debug(f"Rejected inbound baggage key '{key}' (not in allowlist)")
+            continue
+
+        if len(filtered) >= config.max_items:
+            if config.log_rejected:
+                logger.warning(f"Inbound baggage item limit reached ({config.max_items}), dropping key '{key}'")
+            break
+
+        try:
+            sanitized_value = sanitize_header_value(value, max_length=MAX_HEADER_VALUE_LENGTH)
+            if not sanitized_value:
+                if config.log_sanitization:
+                    logger.warning(f"Inbound baggage key '{key}' value became empty after sanitization, skipping")
+                continue
+
+            if config.log_sanitization and sanitized_value != value:
+                logger.info(f"Sanitized inbound baggage key '{key}' value (length: {len(value)} -> {len(sanitized_value)})")
+
+            entry_size = len(key) + len(sanitized_value) + 2
+            if total_size + entry_size > config.max_size_bytes:
+                if config.log_rejected:
+                    logger.warning(f"Inbound baggage size limit reached ({config.max_size_bytes} bytes), dropping key '{key}'")
+                break
+
+            filtered[key] = sanitized_value
+            total_size += entry_size
+        except Exception as e:
+            logger.warning(f"Failed to process inbound baggage key '{key}': {e}")
+
+    return filtered
+
+
 def format_w3c_baggage_header(baggage: Dict[str, str]) -> str:
     """Format baggage dictionary as W3C baggage header value.
 
@@ -424,9 +476,9 @@ def merge_baggage(
 ) -> Dict[str, str]:
     """Merge header-derived baggage with existing upstream baggage.
 
-    Implements dual processing model:
-    - Header-derived baggage: Already validated and size-limited
-    - Existing baggage: Trusted context, no size limits, sanitization only
+    Implements the request merge model:
+    - Header-derived baggage: validated and size-limited
+    - Existing baggage: already filtered before merge
 
     Header-derived baggage takes precedence over existing baggage.
 
@@ -455,8 +507,7 @@ def merge_baggage(
 def sanitize_baggage_for_propagation(baggage: Dict[str, str]) -> Dict[str, str]:
     """Sanitize baggage values before propagation to downstream services.
 
-    Applies sanitization to all values (both header-derived and existing).
-    Does NOT enforce size limits on existing baggage (trusted context).
+    Applies sanitization to all values before propagation.
 
     Args:
         baggage: Baggage dictionary to sanitize
