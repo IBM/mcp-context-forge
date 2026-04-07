@@ -70,6 +70,10 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         self.allowed_roots = [Path(root).resolve() for root in settings.allowed_roots]
         self.dangerous_pattern_strings = list(settings.dangerous_patterns)
         self.dangerous_patterns = [re.compile(pattern) for pattern in settings.dangerous_patterns]
+        self._rust_validator = None
+
+        if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
+            self._rust_validator = self._build_rust_validator()
 
     async def dispatch(self, request: Request, call_next):
         """Process request with validation and response sanitization.
@@ -190,10 +194,23 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_rust")
         return _RUST_VALIDATION_MODULE
 
+    def _build_rust_validator(self):
+        """Build the compiled Rust validator once per middleware instance."""
+        try:
+            return self._load_rust_validation_module().Validator(settings.max_param_length, self.dangerous_pattern_strings)
+        except Exception as exc:
+            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
+            return None
+
     def _validate_json_data_with_rust(self, data: Any) -> tuple[str, str] | None:
         """Validate JSON data with the Rust extension, falling back to Python on extension failures."""
         try:
-            return self._load_rust_validation_module().validate_json_data(data, settings.max_param_length, self.dangerous_pattern_strings)
+            if self._rust_validator is None:
+                self._rust_validator = self._build_rust_validator()
+                if self._rust_validator is None:
+                    return self._validate_json_data_with_python(data)
+
+            return self._rust_validator.validate_json_data(data)
         except ValueError as exc:
             if "maximum supported nesting depth" in str(exc):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc

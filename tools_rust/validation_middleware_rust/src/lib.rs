@@ -1,21 +1,13 @@
-use once_cell::sync::Lazy;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use regex::Regex;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 const MAX_JSON_DEPTH: usize = 1024;
 
+#[pyclass(name = "Validator")]
 struct CompiledValidator {
     max_param_length: usize,
     dangerous_pattern: Option<Regex>,
-}
-
-#[derive(Clone, Eq, Hash, PartialEq)]
-struct CacheKey {
-    max_param_length: usize,
-    dangerous_patterns: Vec<String>,
 }
 
 enum ValidationFailure {
@@ -23,29 +15,15 @@ enum ValidationFailure {
     DangerousPattern,
 }
 
-static VALIDATOR_CACHE: Lazy<Mutex<HashMap<CacheKey, Arc<CompiledValidator>>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
-fn get_validator(
+fn compile_validator(
     max_param_length: usize,
     dangerous_patterns: Vec<String>,
-) -> PyResult<Arc<CompiledValidator>> {
-    let cache_key = CacheKey {
-        max_param_length,
-        dangerous_patterns,
-    };
-
-    let mut cache = VALIDATOR_CACHE.lock().unwrap();
-    if let Some(existing) = cache.get(&cache_key).cloned() {
-        return Ok(existing);
-    }
-
+) -> PyResult<CompiledValidator> {
     let combined_pattern =
-        if cache_key.dangerous_patterns.is_empty() {
+        if dangerous_patterns.is_empty() {
             None
         } else {
-            let joined = cache_key
-                .dangerous_patterns
+            let joined = dangerous_patterns
                 .iter()
                 .map(|pattern| format!("(?:{pattern})"))
                 .collect::<Vec<_>>()
@@ -55,13 +33,10 @@ fn get_validator(
             })?)
         };
 
-    let validator = Arc::new(CompiledValidator {
+    Ok(CompiledValidator {
         max_param_length,
         dangerous_pattern: combined_pattern,
-    });
-
-    cache.insert(cache_key, validator.clone());
-    Ok(validator)
+    })
 }
 
 fn validate_string(value: &str, validator: &CompiledValidator) -> Option<ValidationFailure> {
@@ -134,18 +109,31 @@ fn walk_json_like(
     Ok(None)
 }
 
+#[pymethods]
+impl CompiledValidator {
+    #[new]
+    fn new(max_param_length: usize, dangerous_patterns: Vec<String>) -> PyResult<Self> {
+        compile_validator(max_param_length, dangerous_patterns)
+    }
+
+    fn validate_json_data(&self, data: &Bound<'_, PyAny>) -> PyResult<Option<(String, String)>> {
+        walk_json_like(data.py(), data, self)
+    }
+}
+
 #[pyfunction]
 fn validate_json_data(
     data: &Bound<'_, PyAny>,
     max_param_length: usize,
     dangerous_patterns: Vec<String>,
 ) -> PyResult<Option<(String, String)>> {
-    let validator = get_validator(max_param_length, dangerous_patterns)?;
-    walk_json_like(data.py(), data, validator.as_ref())
+    let validator = compile_validator(max_param_length, dangerous_patterns)?;
+    walk_json_like(data.py(), data, &validator)
 }
 
 #[pymodule]
 fn validation_middleware_rust(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    module.add_class::<CompiledValidator>()?;
     module.add_function(wrap_pyfunction!(validate_json_data, module)?)?;
     Ok(())
 }
@@ -194,7 +182,10 @@ mod tests {
             failing_payload.set_item("items", values).unwrap();
 
             let result = walk_json_like(py, failing_payload.as_any(), &validator).unwrap();
-            assert_eq!(result, Some(("name".to_owned(), "dangerous_pattern".to_owned())));
+            assert_eq!(
+                result,
+                Some(("name".to_owned(), "dangerous_pattern".to_owned()))
+            );
         });
     }
 
@@ -211,7 +202,10 @@ mod tests {
             payload.append("<script>").unwrap();
 
             let result = walk_json_like(py, payload.as_any(), &validator).unwrap();
-            assert_eq!(result, Some(("list_item".to_owned(), "dangerous_pattern".to_owned())));
+            assert_eq!(
+                result,
+                Some(("list_item".to_owned(), "dangerous_pattern".to_owned()))
+            );
         });
     }
 }

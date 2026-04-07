@@ -379,14 +379,47 @@ class TestValidationMiddleware:
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
 
-            middleware = ValidationMiddleware(app=None)
             rust_module = MagicMock()
-            rust_module.validate_json_data.return_value = None
+            rust_validator = MagicMock()
+            rust_validator.validate_json_data.return_value = None
+            rust_module.Validator.return_value = rust_validator
 
-            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
-                middleware._validate_json_data({"name": "safe"})
+            with patch("mcpgateway.middleware.validation_middleware._RUST_VALIDATION_MODULE", None):
+                with patch("mcpgateway.middleware.validation_middleware.importlib.import_module", return_value=rust_module):
+                    middleware = ValidationMiddleware(app=None)
 
-            rust_module.validate_json_data.assert_called_once_with({"name": "safe"}, 1000, [r"<script"])
+            middleware._validate_json_data({"name": "safe"})
+
+            rust_module.Validator.assert_called_once_with(1000, [r"<script"])
+            rust_validator.validate_json_data.assert_called_once_with({"name": "safe"})
+
+    def test_validate_json_data_reuses_compiled_rust_validator(self):
+        """Test Rust mode creates one compiled validator and reuses it across calls."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            rust_module = MagicMock()
+            rust_validator = MagicMock()
+            rust_validator.validate_json_data.return_value = None
+            rust_module.Validator.return_value = rust_validator
+
+            with patch("mcpgateway.middleware.validation_middleware._RUST_VALIDATION_MODULE", None):
+                with patch("mcpgateway.middleware.validation_middleware.importlib.import_module", return_value=rust_module):
+                    middleware = ValidationMiddleware(app=None)
+
+            middleware._validate_json_data({"name": "safe"})
+            middleware._validate_json_data({"name": "still-safe"})
+
+            rust_module.Validator.assert_called_once_with(1000, [r"<script"])
+            assert middleware._rust_validator is rust_validator
+            assert rust_validator.validate_json_data.call_count == 2
 
     def test_validate_json_data_rust_extension_falls_back_to_python_validation(self):
         """Test Rust mode falls back to Python validation when the extension cannot be loaded."""
@@ -401,8 +434,9 @@ class TestValidationMiddleware:
             mock_settings.environment = "production"
 
             middleware = ValidationMiddleware(app=None)
+            middleware._rust_validator = None
 
-            with patch.object(middleware, "_load_rust_validation_module", side_effect=ModuleNotFoundError("missing extension")):
+            with patch.object(middleware, "_build_rust_validator", return_value=None):
                 with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
                     middleware._validate_json_data({"name": "<script>"})
             assert exc_info.value.status_code == 422
@@ -420,11 +454,11 @@ class TestValidationMiddleware:
             mock_settings.environment = "development"
 
             middleware = ValidationMiddleware(app=None)
-            rust_module = MagicMock()
-            rust_module.validate_json_data.return_value = ("name", "dangerous_pattern")
+            rust_validator = MagicMock()
+            rust_validator.validate_json_data.return_value = ("name", "dangerous_pattern")
+            middleware._rust_validator = rust_validator
 
-            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
-                middleware._validate_json_data({"name": "<script>"})
+            middleware._validate_json_data({"name": "<script>"})
 
     def test_validate_json_data_rust_extension_maps_max_length_errors(self):
         """Test Rust mode maps max-length failures to HTTP 422 responses."""
@@ -439,12 +473,12 @@ class TestValidationMiddleware:
             mock_settings.environment = "production"
 
             middleware = ValidationMiddleware(app=None)
-            rust_module = MagicMock()
-            rust_module.validate_json_data.return_value = ("name", "max_length")
+            rust_validator = MagicMock()
+            rust_validator.validate_json_data.return_value = ("name", "max_length")
+            middleware._rust_validator = rust_validator
 
-            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
-                with pytest.raises(HTTPException, match="exceeds maximum length") as exc_info:
-                    middleware._validate_json_data({"name": "toolong"})
+            with pytest.raises(HTTPException, match="exceeds maximum length") as exc_info:
+                middleware._validate_json_data({"name": "toolong"})
 
             assert exc_info.value.status_code == 422
 
@@ -461,12 +495,12 @@ class TestValidationMiddleware:
             mock_settings.environment = "production"
 
             middleware = ValidationMiddleware(app=None)
-            rust_module = MagicMock()
-            rust_module.validate_json_data.side_effect = ValueError("JSON payload exceeds maximum supported nesting depth")
+            rust_validator = MagicMock()
+            rust_validator.validate_json_data.side_effect = ValueError("JSON payload exceeds maximum supported nesting depth")
+            middleware._rust_validator = rust_validator
 
-            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
-                with pytest.raises(HTTPException, match="exceeds maximum supported nesting depth") as exc_info:
-                    middleware._validate_json_data({"name": "safe"})
+            with pytest.raises(HTTPException, match="exceeds maximum supported nesting depth") as exc_info:
+                middleware._validate_json_data({"name": "safe"})
 
             assert exc_info.value.status_code == 422
 

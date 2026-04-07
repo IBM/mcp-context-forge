@@ -97,6 +97,30 @@ def _measure_pair(
     return python_median, rust_median
 
 
+def _measure_cold_pair(
+    max_param_length: int,
+    dangerous_patterns: list[str],
+    payload: Any,
+) -> tuple[float, float]:
+    started = time.perf_counter_ns()
+    python_fn = _build_python_validator(max_param_length, dangerous_patterns)
+    try:
+        python_fn(payload)
+    except HTTPException:
+        pass
+    python_ms = (time.perf_counter_ns() - started) / 1_000_000
+
+    started = time.perf_counter_ns()
+    rust_fn = _build_rust_validator(max_param_length, dangerous_patterns)
+    try:
+        rust_fn(payload)
+    except HTTPException:
+        pass
+    rust_ms = (time.perf_counter_ns() - started) / 1_000_000
+
+    return python_ms, rust_ms
+
+
 def _assert_parity(python_fn: Callable[[Any], None], rust_fn: Callable[[Any], None], payloads: list[Any]) -> None:
     for payload in payloads:
         python_error = None
@@ -134,6 +158,21 @@ def main() -> None:
 
     scenarios = [
         (
+            "small_safe",
+            {"tool": {"name": "safe-tool", "description": "ok"}},
+            1000,
+        ),
+        (
+            "first_field_reject",
+            {"tool": {"name": "<script>alert(1)</script>", "description": "ok"}},
+            1000,
+        ),
+        (
+            "unicode_safe_long",
+            {"tool": {"name": "safe-tool", "description": "é" * 1024}},
+            500,
+        ),
+        (
             "nested_safe",
             {
                 "tool": {
@@ -155,6 +194,12 @@ def main() -> None:
             250,
         ),
     ]
+
+    cold_payload = {"tool": {"name": "safe-tool", "description": "ok"}}
+    python_cold_ms, rust_cold_ms = _measure_cold_pair(max_param_length, dangerous_patterns, cold_payload)
+    print("\ncold_first_call (1 iteration)")
+    print(f"python={python_cold_ms:.3f}ms rust={rust_cold_ms:.3f}ms")
+    print(f"speedup={python_cold_ms / rust_cold_ms:.2f}x")
 
     for name, payload, iterations in scenarios:
         print(f"\n{name} ({iterations} iterations)")
