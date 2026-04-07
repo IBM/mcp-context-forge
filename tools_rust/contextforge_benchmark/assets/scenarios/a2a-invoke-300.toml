@@ -1,6 +1,6 @@
 [suite]
 name = "benchmark-gunicorn-a2a-invoke-compare"
-description = "Exercises the A2A invoke hot path through nginx and the gateway, then compares two Rust A2A branch images to show whether adding the gateway_rs artifacts changes A2A throughput or latency. This suite is intentionally not a Python-vs-Rust runtime comparison because A2A remains embedded in Python today."
+description = "Exercises the A2A invoke hot path through nginx and the gateway, then compares two images built from the same checkout to show whether adding optional Rust plugin artifacts to the benchmark image changes A2A throughput or latency. This suite is intentionally not a Python-vs-Rust runtime comparison because A2A remains embedded in Python today."
 output_root = "reports/benchmarks"
 continue_on_failure = false
 save_intermediate_artifacts = true
@@ -89,7 +89,7 @@ reuse_stack = true
 
 [[scenario]]
 name = "gunicorn-a2a-invoke-rust-baseline"
-description = "Rust A2A invoke baseline on the Rust A2A branch without the gateway_rs artifacts in the benchmark image"
+description = "A2A invoke baseline on the benchmark image without optional Rust plugin artifacts"
 scenario_type = "a2a_invoke_baseline"
 
 [scenario.setup]
@@ -101,7 +101,7 @@ image_tag = "benchmark-suite-a2a-rust-baseline"
 
 [[scenario]]
 name = "gunicorn-a2a-invoke-rust-compare"
-description = "Rust A2A invoke comparison on the same branch with the gateway_rs artifacts installed in the benchmark image"
+description = "A2A invoke comparison on the same checkout with optional Rust plugin artifacts installed in the benchmark image"
 scenario_type = "a2a_invoke_compare"
 
 [scenario.setup]

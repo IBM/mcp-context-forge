@@ -1090,7 +1090,7 @@ pub fn benchmark_catalog(root: &Path) -> Result<Vec<RequestDefinition>> {
             request: RequestSpec {
                 kind: "mcp".into(),
                 path: None,
-                payload: Some(load_payload(root, "prompts", "get_customer_greeting.json")?),
+                payload: Some(load_payload(root, "prompts", "get_schedule_meeting.json")?),
                 auth: true,
                 server_id: Some(default_server.clone()),
                 expect_result_key: Some("messages".into()),

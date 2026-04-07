@@ -1,7 +1,8 @@
 # Benchmark Suite
 
 Use the benchmark suite when you want repeatable, scenario-driven benchmark runs
-against the Docker/Compose stack from a fully Rust-owned toolchain.
+against the Docker/Compose stack from a Rust-native runner, console, and load
+driver.
 
 The suite now distinguishes three lanes:
 
@@ -153,12 +154,13 @@ families:
 - health checks
 - admin plugin UI
 - REST discovery (`/servers`, `/resources`, `/prompts`)
-- JSON-RPC discovery (`tools/list`, `resources/list`, `prompts/list`)
-- JSON-RPC prompt/resource/tool calls from payload fixtures in
+- MCP JSON-RPC discovery (`tools/list`, `resources/list`, `prompts/list`)
+- MCP JSON-RPC prompt/resource/tool calls from payload fixtures in
   `tools_rust/contextforge_benchmark/assets/payloads/`
 
-This means plugin-heavy profiles now hit real prompt/resource/tool code paths,
-not just health or admin endpoints.
+This means the committed scenario mixes now hit real prompt/resource/tool and
+REST discovery code paths over the transports named in the scenario files, not
+just health or admin endpoints.
 
 ## Reporting
 
