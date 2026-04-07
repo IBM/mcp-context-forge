@@ -18,27 +18,6 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware, is_path_traversal
-from mcpgateway.services.validation_sidecar_client import (
-    ValidationSidecarProtocolError,
-    ValidationSidecarTimeoutError,
-    ValidationSidecarTransportError,
-    ValidationSidecarValidationError,
-)
-
-
-class _JSONBodyRequest:
-    """Minimal request stub for exercising JSON body validation branches."""
-
-    def __init__(self, body: bytes, *, content_type: str = "application/json") -> None:
-        """Store body bytes and expose the small interface the middleware expects."""
-        self._body = body
-        self.path_params = {}
-        self.query_params = {}
-        self.headers = {"content-type": content_type}
-
-    async def body(self) -> bytes:
-        """Return the configured body bytes."""
-        return self._body
 
 
 class TestIsPathTraversal:
@@ -388,137 +367,92 @@ class TestValidationMiddleware:
 
             assert exc_info.value.status_code == 422
 
-    @pytest.mark.asyncio
-    async def test_validate_request_uses_sidecar_only_when_both_gates_are_enabled(self, mock_request):
-        """Test the sidecar path only activates when both middleware gates are enabled."""
+    def test_validate_json_data_uses_rust_sidecar_when_enabled(self):
+        """Test JSON validation uses the Rust sidecar when explicitly enabled."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
+            mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
 
             middleware = ValidationMiddleware(app=None)
-            sidecar_validate = AsyncMock(return_value=None)
-            parsed_validate = AsyncMock(return_value=None)
+            rust_module = MagicMock()
+            rust_module.validate_json_data.return_value = None
 
-            middleware._validate_json_body_with_sidecar = sidecar_validate  # type: ignore[method-assign]
-            middleware._validate_json_data_async = parsed_validate  # type: ignore[method-assign]
+            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
+                middleware._validate_json_data({"name": "safe"})
 
-            request = _JSONBodyRequest(b'{"name":"safe"}')
-            await middleware._validate_request(request)
+            rust_module.validate_json_data.assert_called_once_with({"name": "safe"}, 1000, [r"<script"])
 
-            sidecar_validate.assert_awaited_once_with(b'{"name":"safe"}')
-            parsed_validate.assert_not_awaited()
-
+    def test_validate_json_data_rust_sidecar_falls_back_to_python_validation(self):
+        """Test Rust mode falls back to Python validation when the sidecar cannot be loaded."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = False
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
+            mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
 
             middleware = ValidationMiddleware(app=None)
-            sidecar_validate = AsyncMock(return_value=None)
-            parsed_validate = AsyncMock(return_value=None)
 
-            middleware._validate_json_body_with_sidecar = sidecar_validate  # type: ignore[method-assign]
-            middleware._validate_json_data_async = parsed_validate  # type: ignore[method-assign]
+            with patch.object(middleware, "_load_rust_validation_module", side_effect=ModuleNotFoundError("missing sidecar")):
+                with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
+                    middleware._validate_json_data({"name": "<script>"})
+            assert exc_info.value.status_code == 422
 
-            request = _JSONBodyRequest(b'{"name":"safe"}')
-            await middleware._validate_request(request)
-
-            sidecar_validate.assert_not_awaited()
-            parsed_validate.assert_awaited_once_with({"name": "safe"})
-
-    @pytest.mark.asyncio
-    async def test_sidecar_validation_failures_are_warn_only_in_development(self):
-        """Test warn-only mode still swallows ordinary sidecar validation failures in development."""
+    def test_validate_json_data_rust_sidecar_respects_warn_only_mode(self):
+        """Test Rust mode preserves warn-only behavior outside production."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
             mock_settings.validation_strict = False
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
+            mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
             mock_settings.environment = "development"
 
             middleware = ValidationMiddleware(app=None)
-            middleware._validate_json_body_with_sidecar = AsyncMock(side_effect=HTTPException(status_code=422, detail="Parameter name exceeds maximum length"))  # type: ignore[method-assign]
+            rust_module = MagicMock()
+            rust_module.validate_json_data.return_value = ("name", "dangerous_pattern")
 
-            async def call_next(req):
-                return Response("ok")
+            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
+                middleware._validate_json_data({"name": "<script>"})
 
-            response = await middleware.dispatch(_JSONBodyRequest(b'{"name":"toolong"}'), call_next)
-            assert response.body == b"ok"
-
-    @pytest.mark.asyncio
-    async def test_sidecar_validation_failures_still_raise_in_strict_development(self):
-        """Test ordinary sidecar validation failures still raise when strict mode stays enabled."""
+    def test_validate_json_data_rust_sidecar_maps_max_length_errors(self):
+        """Test Rust mode maps max-length failures to HTTP 422 responses."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "development"
+            mock_settings.max_param_length = 5
+            mock_settings.environment = "production"
 
             middleware = ValidationMiddleware(app=None)
-            middleware._validate_json_body_with_sidecar = AsyncMock(side_effect=HTTPException(status_code=422, detail="Parameter name exceeds maximum length"))  # type: ignore[method-assign]
+            rust_module = MagicMock()
+            rust_module.validate_json_data.return_value = ("name", "max_length")
 
-            async def call_next(req):
-                return Response("ok")
-
-            with pytest.raises(HTTPException) as exc_info:
-                await middleware.dispatch(_JSONBodyRequest(b'{"name":"toolong"}'), call_next)
+            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
+                with pytest.raises(HTTPException, match="exceeds maximum length") as exc_info:
+                    middleware._validate_json_data({"name": "toolong"})
 
             assert exc_info.value.status_code == 422
 
-    @pytest.mark.asyncio
-    async def test_sidecar_transport_failures_return_503(self):
-        """Test sidecar transport failures stay fatal even in warn-only mode."""
+    def test_validate_json_data_rust_sidecar_maps_depth_errors(self):
+        """Test Rust mode maps sidecar depth errors to HTTP 422 responses."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
-            mock_settings.validation_strict = False
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "development"
-
-            middleware = ValidationMiddleware(app=None)
-            middleware._validate_json_body_with_sidecar = AsyncMock(side_effect=HTTPException(status_code=503, detail="Validation sidecar is not configured"))  # type: ignore[method-assign]
-
-            async def call_next(req):
-                return Response("ok")
-
-            with pytest.raises(HTTPException) as exc_info:
-                await middleware.dispatch(_JSONBodyRequest(b'{"name":"safe"}'), call_next)
-
-            assert exc_info.value.status_code == 503
-
-    @pytest.mark.asyncio
-    async def test_sidecar_invalid_json_verdict_is_ignored_for_python_parity(self):
-        """Test sidecar invalid-json verdicts are ignored to preserve Python-path parity."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
@@ -527,179 +461,14 @@ class TestValidationMiddleware:
             mock_settings.environment = "production"
 
             middleware = ValidationMiddleware(app=None)
-            fake_client = MagicMock()
-            fake_client.validate_json_body = AsyncMock(
-                side_effect=ValidationSidecarValidationError(
-                    "Request body contains invalid JSON",
-                    key="payload",
-                    error_type="invalid_json",
-                    detail="Request body contains invalid JSON",
-                )
-            )
-            middleware._validation_sidecar_client = fake_client
+            rust_module = MagicMock()
+            rust_module.validate_json_data.side_effect = ValueError("JSON payload exceeds maximum supported nesting depth")
 
-            await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
-
-    @pytest.mark.asyncio
-    async def test_sidecar_max_depth_verdict_preserves_specific_error_detail(self):
-        """Test sidecar max-depth verdicts map to the existing explicit depth error detail."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-            fake_client = MagicMock()
-            fake_client.validate_json_body = AsyncMock(
-                side_effect=ValidationSidecarValidationError(
-                    "JSON payload exceeds maximum supported nesting depth",
-                    key="payload",
-                    error_type="max_depth",
-                    detail="JSON payload exceeds maximum supported nesting depth",
-                )
-            )
-            middleware._validation_sidecar_client = fake_client
-
-            with pytest.raises(HTTPException) as exc_info:
-                await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
+            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
+                with pytest.raises(HTTPException, match="exceeds maximum supported nesting depth") as exc_info:
+                    middleware._validate_json_data({"name": "safe"})
 
             assert exc_info.value.status_code == 422
-            assert exc_info.value.detail == "JSON payload exceeds maximum supported nesting depth"
-
-    @pytest.mark.asyncio
-    async def test_sidecar_malformed_response_maps_to_503(self):
-        """Test malformed sidecar protocol responses fail closed with HTTP 503."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-            fake_client = MagicMock()
-            fake_client.validate_json_body = AsyncMock(side_effect=ValidationSidecarProtocolError("Malformed sidecar response: invalid JSON"))
-            middleware._validation_sidecar_client = fake_client
-
-            with pytest.raises(HTTPException) as exc_info:
-                await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
-
-            assert exc_info.value.status_code == 503
-            assert "Malformed sidecar response" in exc_info.value.detail
-
-    @pytest.mark.asyncio
-    async def test_sidecar_malformed_response_is_not_warn_only_in_development(self):
-        """Test malformed sidecar responses stay fatal even when warn-only mode is active."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
-            mock_settings.validation_strict = False
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "development"
-
-            middleware = ValidationMiddleware(app=None)
-            middleware._validate_json_body_with_sidecar = AsyncMock(side_effect=HTTPException(status_code=503, detail="Malformed sidecar response: invalid JSON"))  # type: ignore[method-assign]
-
-            async def call_next(req):
-                return Response("ok")
-
-            with pytest.raises(HTTPException) as exc_info:
-                await middleware.dispatch(_JSONBodyRequest(b'{"name":"safe"}'), call_next)
-
-            assert exc_info.value.status_code == 503
-
-    @pytest.mark.parametrize(
-        "sidecar_error",
-        [ValidationSidecarTransportError("connect failed"), ValidationSidecarTimeoutError("timed out waiting for sidecar")],
-    )
-    @pytest.mark.asyncio
-    async def test_sidecar_transport_and_readiness_failures_map_to_503(self, sidecar_error):
-        """Test sidecar transport and readiness errors map to HTTP 503 responses."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-            fake_client = MagicMock()
-            fake_client.validate_json_body = AsyncMock(side_effect=sidecar_error)
-            middleware._validation_sidecar_client = fake_client
-
-            with pytest.raises(HTTPException) as exc_info:
-                await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
-
-            assert exc_info.value.status_code == 503
-
-    def test_sidecar_rejects_invalid_sidecar_regex_configuration_during_initialization(self):
-        """Test sidecar mode rejects regex configuration using the sidecar's own validation path."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_uds = "/tmp/contextforge-validation-sidecar.sock"
-            mock_settings.experimental_rust_validation_sidecar_timeout_seconds = 30.0
-            mock_settings.experimental_rust_validation_sidecar_pool_size = 8
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = [r"(?#sidecar-only-invalid)pattern"]
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            with patch(
-                "mcpgateway.middleware.validation_middleware.ValidationSidecarClient.validate_configuration_sync",
-                side_effect=ValidationSidecarValidationError(
-                    "dangerous pattern regex is not supported by Rust regex: unsupported",
-                    key="dangerous_patterns",
-                    error_type="invalid_pattern",
-                    detail="dangerous pattern regex is not supported by Rust regex: unsupported",
-                ),
-            ):
-                with pytest.raises(ValueError, match="Rust-compatible regex"):
-                    ValidationMiddleware(app=None)
-
-    def test_sidecar_requires_reachable_sidecar_during_initialization(self):
-        """Test sidecar mode fails initialization when the sidecar is unavailable."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_uds = "/tmp/contextforge-validation-sidecar.sock"
-            mock_settings.experimental_rust_validation_sidecar_timeout_seconds = 30.0
-            mock_settings.experimental_rust_validation_sidecar_pool_size = 8
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            with patch(
-                "mcpgateway.middleware.validation_middleware.ValidationSidecarClient.validate_configuration_sync",
-                side_effect=ValidationSidecarTransportError("Failed to connect to validation sidecar"),
-            ):
-                with pytest.raises(ValidationSidecarTransportError, match="Failed to connect"):
-                    ValidationMiddleware(app=None)
 
     def test_validate_resource_path_traversal(self):
         """Test resource path validation for traversal."""

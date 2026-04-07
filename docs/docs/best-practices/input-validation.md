@@ -18,16 +18,8 @@ ContextForge provides comprehensive input validation and output sanitization to 
 # Enable experimental validation (default: false)
 EXPERIMENTAL_VALIDATE_IO=true
 
-# Optional: enable the UDS validation sidecar after `make validation-sidecar-build`
-# and start it with `make validation-sidecar-run`
-# Use a private directory for the socket path in production. The sidecar
-# creates the socket with mode 0600, but the parent directory should also be
-# service-owned instead of a shared world-writable path. The sidecar must
-# already be running before the gateway starts with the feature flag enabled.
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED=false
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=~/.local/state/contextforge/validation-sidecar.sock
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS=30.0
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE=8
+# Optional: enable the Rust JSON validation sidecar after `make rust-sidecar-install`
+EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=false
 
 # Enable validation middleware (default: false)
 VALIDATION_MIDDLEWARE_ENABLED=true
@@ -60,19 +52,13 @@ The validation feature supports a phased roll-out approach:
 EXPERIMENTAL_VALIDATE_IO=false  # Disabled in production
 ```
 
-#### Optional UDS Validation Sidecar
+#### Optional Rust Sidecar
 ```bash
-make validation-sidecar-build
-make validation-sidecar-run
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED=true
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=~/.local/state/contextforge/validation-sidecar.sock
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS=30.0
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE=8
+make rust-sidecar-install
+EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=true
 ```
 
-This mode routes JSON body validation to the external Rust sidecar over a Unix domain socket. When enabled, the sidecar is authoritative and the gateway performs a startup validation check against the configured socket. If the sidecar is unavailable or the configured regex patterns are not supported by Rust regex, startup fails instead of deferring the error to live requests. Use a private directory for the socket path in production; the sidecar creates the socket with mode `0600`, but the parent directory should also be service-owned.
-
-The current sidecar runtime also enforces a built-in idle connection timeout of 5 seconds and a maximum of 256 concurrent active sidecar connections. These limits are fixed in the current implementation.
+Enable this only after the sidecar is installed into the active virtual environment. If the sidecar is unavailable, the middleware falls back to the Python validator for standard validation failures.
 
 #### Phase 1: Log-Only Mode (Dev/Staging)
 ```bash

@@ -116,30 +116,6 @@ def _normalize_env_list_vars() -> None:
 _normalize_env_list_vars()
 
 
-def _validate_optional_uds_path(value: Optional[str], field_name: str) -> Optional[str]:
-    """Normalize and validate an optional Unix domain socket path.
-
-    Args:
-        value: Raw UDS path value from settings.
-        field_name: Settings field name for error messages.
-
-    Returns:
-        The normalized absolute UDS path, or `None` when unset.
-
-    Raises:
-        ValueError: If the path is not absolute or its parent directory does not exist.
-    """
-    if value in (None, ""):
-        return None
-
-    uds_path = Path(value).expanduser()
-    if not uds_path.is_absolute():
-        raise ValueError(f"{field_name} must be an absolute path")
-    if not uds_path.parent.exists():
-        raise ValueError(f"{field_name} parent directory does not exist: {uds_path.parent}")
-    return str(uds_path)
-
-
 # Default content type for outgoing requests to Forge
 FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
 
@@ -422,23 +398,9 @@ class Settings(BaseSettings):
         default=False,
         description="Enable experimental Rust native extension for request logging sensitive-data masking",
     )
-    experimental_rust_validation_sidecar_enabled: bool = Field(
+    experimental_rust_validation_middleware_enabled: bool = Field(
         default=False,
-        description="Enable the experimental Rust validation sidecar over a Unix domain socket.",
-    )
-    experimental_rust_validation_sidecar_uds: Optional[str] = Field(
-        default=None,
-        description="Unix domain socket path for the experimental Rust validation sidecar.",
-    )
-    experimental_rust_validation_sidecar_timeout_seconds: float = Field(
-        default=30.0,
-        gt=0,
-        description="Timeout in seconds for Python-to-validation-sidecar requests.",
-    )
-    experimental_rust_validation_sidecar_pool_size: int = Field(
-        default=8,
-        gt=0,
-        description="Maximum number of pooled Unix domain socket connections used for validation-sidecar requests.",
+        description="Enable experimental Rust sidecar for recursive validation middleware JSON checks",
     )
     validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
@@ -2226,20 +2188,12 @@ Disallow: /
         if value in (None, ""):
             return None
 
-        return _validate_optional_uds_path(value, "experimental_rust_mcp_runtime_uds")
-
-    @field_validator("experimental_rust_validation_sidecar_uds", mode="after")
-    @classmethod
-    def _validate_experimental_rust_validation_sidecar_uds(cls, value: Optional[str]) -> Optional[str]:
-        """Validate the optional UDS path used for the Rust validation sidecar.
-
-        Args:
-            value: Candidate UDS path from settings input.
-
-        Returns:
-            The normalized UDS path, or `None` when unset.
-        """
-        return _validate_optional_uds_path(value, "experimental_rust_validation_sidecar_uds")
+        uds_path = Path(value).expanduser()
+        if not uds_path.is_absolute():
+            raise ValueError("experimental_rust_mcp_runtime_uds must be an absolute path")
+        if not uds_path.parent.exists():
+            raise ValueError(f"experimental_rust_mcp_runtime_uds parent directory does not exist: {uds_path.parent}")
+        return str(uds_path)
 
     # -------------------------------
     # Flexible list parsing for envs
@@ -2704,20 +2658,6 @@ Disallow: /
                 logger.warning("Failed to derive public key for private_key")
                 # You can choose to raise an error here if a failure should halt model creation
 
-        return self
-
-    @model_validator(mode="after")
-    def validate_rust_validation_sidecar_settings(self) -> "Settings":
-        """Validate cross-field settings for the experimental validation sidecar.
-
-        Returns:
-            The validated settings instance.
-
-        Raises:
-            ValueError: If sidecar mode is enabled without a configured UDS path.
-        """
-        if self.experimental_rust_validation_sidecar_enabled and not self.experimental_rust_validation_sidecar_uds:
-            raise ValueError("experimental_rust_validation_sidecar_uds must be set when experimental_rust_validation_sidecar_enabled is true")
         return self
 
     def __init__(self, **kwargs: Any) -> None:

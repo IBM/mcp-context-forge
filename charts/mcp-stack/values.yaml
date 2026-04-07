@@ -670,10 +670,7 @@ mcpContextForge:
     # ─ Additional Settings (defaults from config.py) ─
     # Validation & sanitization
     EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
-    EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED: "false" # enable the experimental Rust validation sidecar over UDS
-    EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS: "/var/run/contextforge/validation-sidecar.sock" # UDS path for the experimental Rust validation sidecar; the sidecar must be provisioned and running separately before enabling the flag
-    EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS: "30.0" # timeout for Python-to-validation-sidecar requests
-    EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE: "8" # number of pooled Python-to-sidecar UDS connections
+    EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED: "false" # enable the experimental Rust JSON validation sidecar (requires sidecar install)
     VALIDATION_MIDDLEWARE_ENABLED: "false" # enable validation middleware for all requests
     VALIDATION_STRICT: "true" # reject requests with validation failures
     JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas

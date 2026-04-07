@@ -1,0 +1,14 @@
+[package]
+name = "validation_middleware_sidecar"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[lib]
+name = "validation_middleware_sidecar"
+crate-type = ["cdylib"]
+
+[dependencies]
+once_cell = "1.21.3"
+pyo3 = { version = "0.27.1", features = ["abi3-py311"] }
+regex = "1.12.2"
