@@ -11949,6 +11949,10 @@ class TestRemainingCoverageGaps:
         # First-Party
         import mcpgateway.plugins.framework as plugin_framework
 
+        # Reset plugin state before test
+        plugin_framework.enable_plugins(False)
+        plugin_framework.reset_plugin_manager_factory()
+
         _import_fresh_main_module(
             monkeypatch,
             env={

@@ -2971,9 +2971,6 @@ class ToolService(BaseService):
             ToolNotFoundError: If the requested tool is not visible or invocable.
             ToolInvocationError: If gateway auth preparation fails or the tool name is ambiguous.
         """
-        plugin_manager = await self._get_plugin_manager(server_id)
-        has_pre_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
-        has_post_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)
 
         gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
         is_direct_proxy = False
@@ -3117,6 +3114,16 @@ class ToolService(BaseService):
         tool_gateway_id = tool_payload.get("gateway_id")
         tool_timeout_ms = tool_payload.get("timeout_ms")
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
+
+        # Resolve per-tool context_id for plugin manager (same pattern as invoke_tool)
+        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
+
+        _tool_team_id = tool_payload.get("team_id")
+        _binding_tool_name = tool_payload.get("original_name") or name
+        plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
+        plugin_manager = await self._get_plugin_manager(plugin_context_id)
+        has_pre_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
+        has_post_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)
 
         has_gateway = gateway_payload is not None
         gateway_url = gateway_payload.get("url") if has_gateway else None
@@ -3448,9 +3455,6 @@ class ToolService(BaseService):
         if context_table:
             for ctx in context_table.values():
                 ctx.set_state("cb_timeout_failure", True)
-
-        if plugin_manager is None:
-            plugin_manager = await self._get_plugin_manager(global_context.server_id if global_context else None)
 
         if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
             timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
@@ -3875,6 +3879,7 @@ class ToolService(BaseService):
         gateway_metadata: Optional[PydanticGateway] = None
         # Resolve per-tool context_id so DB plugin bindings (ToolPluginBinding) are applied.
         # Lazy import avoids circular: gateway_plugin_manager → services.__init__ → tool_service.
+        # First-Party
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")

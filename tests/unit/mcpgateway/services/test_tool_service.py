@@ -4176,8 +4176,7 @@ class TestToolService:
         mock_pm.has_hooks_for.return_value = True
         mock_pm.invoke_hook = AsyncMock(return_value=(PluginResult(retry_delay_ms=0), None))
 
-        with patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)):
-            await tool_service._run_timeout_post_invoke("test_tool", 30.0, None, None)
+        await tool_service._run_timeout_post_invoke("test_tool", 30.0, None, None, mock_pm)
 
         mock_pm.invoke_hook.assert_awaited_once()
         call_kwargs = mock_pm.invoke_hook.call_args
@@ -4191,9 +4190,8 @@ class TestToolService:
         mock_pm.has_hooks_for.return_value = True
         mock_pm.invoke_hook = AsyncMock(return_value=(PluginResult(retry_delay_ms=250), None))
 
-        with patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)):
-            with pytest.raises(ToolTimeoutError) as exc_info:
-                await tool_service._run_timeout_post_invoke("test_tool", 30.0, None, None)
+        with pytest.raises(ToolTimeoutError) as exc_info:
+            await tool_service._run_timeout_post_invoke("test_tool", 30.0, None, None, mock_pm)
 
         assert exc_info.value.retry_delay_ms == 250
 
