@@ -7,13 +7,15 @@ Authors: Mihai Criveti
 Unit tests for cancellation router endpoints.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+# Standard
+from unittest.mock import AsyncMock, MagicMock
 
+# Third-Party
+from fastapi import HTTPException
 import pytest
 
-from fastapi import HTTPException
-
-from mcpgateway.services.cancellation_service import CancellationService, cancellation_service
+# First-Party
+from mcpgateway.services.cancellation_service import CancellationService
 
 
 @pytest.fixture
@@ -31,7 +33,11 @@ def allow_permission(monkeypatch):
             return True
 
     monkeypatch.setattr(rbac_module, "PermissionService", DummyPermissionService)
-    monkeypatch.setattr(plugins_framework, "get_plugin_manager", lambda: None)
+
+    async def _no_plugin_manager():
+        return None
+
+    monkeypatch.setattr(plugins_framework, "get_plugin_manager", _no_plugin_manager)
 
 
 @pytest.mark.asyncio
@@ -159,7 +165,7 @@ async def test_cancel_callback_exception_is_handled():
 async def test_cancel_run_broadcasts_notifications(allow_permission, monkeypatch):
     """Ensure cancel_run broadcasts notifications to active sessions."""
     # First-Party
-    from mcpgateway.routers.cancellation_router import CancelRequest, cancel_run
+    from mcpgateway.routers.cancellation_router import cancel_run, CancelRequest
 
     mock_registry = MagicMock()
     mock_registry.get_all_session_ids = AsyncMock(return_value=["s1", "s2"])
@@ -179,7 +185,7 @@ async def test_cancel_run_broadcasts_notifications(allow_permission, monkeypatch
 async def test_cancel_run_handles_session_errors(allow_permission, monkeypatch):
     """Ensure cancel_run returns even when session registry fails."""
     # First-Party
-    from mcpgateway.routers.cancellation_router import CancelRequest, cancel_run
+    from mcpgateway.routers.cancellation_router import cancel_run, CancelRequest
 
     mock_registry = MagicMock()
     mock_registry.get_all_session_ids = AsyncMock(side_effect=Exception("boom"))
@@ -197,7 +203,7 @@ async def test_cancel_run_handles_session_errors(allow_permission, monkeypatch):
 async def test_cancel_run_handles_per_session_broadcast_errors(allow_permission, monkeypatch):
     """Ensure per-session broadcast failures are logged and ignored."""
     # First-Party
-    from mcpgateway.routers.cancellation_router import CancelRequest, cancel_run
+    from mcpgateway.routers.cancellation_router import cancel_run, CancelRequest
 
     mock_registry = MagicMock()
     mock_registry.get_all_session_ids = AsyncMock(return_value=["s1", "s2"])

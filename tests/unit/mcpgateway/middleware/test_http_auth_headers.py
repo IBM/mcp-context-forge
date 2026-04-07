@@ -13,7 +13,7 @@ These tests verify the low-level header modification works correctly:
 """
 
 # Standard
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import Depends, FastAPI, Request
@@ -39,7 +39,7 @@ class TestRequestScopeHeaderModification:
         app = FastAPI()
 
         # Create mock plugin manager that transforms X-API-Key → Authorization
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
@@ -51,9 +51,9 @@ class TestRequestScopeHeaderModification:
             return PluginResult(continue_processing=True), {}
 
         mock_plugin_manager.invoke_hook = mock_invoke_hook
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
 
-        # Add middleware
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        app.add_middleware(HttpAuthMiddleware)
 
         # Add bearer scheme
         bearer_scheme = HTTPBearer(auto_error=False)
@@ -70,7 +70,8 @@ class TestRequestScopeHeaderModification:
                 }
             return {"credentials": None, "headers_transformed": False}
 
-        return app
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            yield app
 
     def test_x_api_key_transformed_to_authorization_bearer(self, simple_app_with_header_transform):
         """Test that X-API-Key header is transformed and visible to HTTPBearer."""
@@ -83,6 +84,7 @@ class TestRequestScopeHeaderModification:
         )
 
         # Should succeed
+
         assert response.status_code == 200
 
         # The endpoint should have received credentials from the transformed Authorization header
@@ -133,7 +135,7 @@ class TestRequestScopeInspection:
         app = FastAPI()
 
         # Mock plugin manager
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
@@ -144,7 +146,9 @@ class TestRequestScopeInspection:
             return PluginResult(continue_processing=True), {}
 
         mock_plugin_manager.invoke_hook = mock_invoke_hook
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/inspect-scope")
         async def inspect_scope(request: Request):
@@ -155,7 +159,8 @@ class TestRequestScopeInspection:
                 headers_dict[name.decode()] = value.decode()
             return {"scope_headers": headers_dict, "request_headers": dict(request.headers)}
 
-        return app
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            yield app
 
     def test_scope_headers_contain_transformed_header(self, app_with_scope_inspection):
         """Test that request.scope['headers'] contains the transformed header."""
@@ -205,7 +210,7 @@ class TestRequestStateRequestId:
         # Mock plugin manager that records request IDs
         request_ids_seen = []
 
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             # Record the request_id from global_context
@@ -213,7 +218,9 @@ class TestRequestStateRequestId:
             return PluginResult(continue_processing=True), {}
 
         mock_plugin_manager.invoke_hook = mock_invoke_hook
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test-request-id")
         async def test_endpoint(request: Request):
@@ -227,7 +234,8 @@ class TestRequestStateRequestId:
         # Store request_ids_seen so we can access it
         app.state.request_ids_seen = request_ids_seen
 
-        return app
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            yield app
 
     def test_request_id_consistent_across_hooks(self, app_with_request_id_tracking):
         """Test that same request_id is used in all hooks for a single request."""
@@ -280,7 +288,7 @@ class TestHeaderMergingBehavior:
         app = FastAPI()
 
         # Mock plugin manager that modifies and adds headers
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
@@ -292,14 +300,17 @@ class TestHeaderMergingBehavior:
             return PluginResult(continue_processing=True), {}
 
         mock_plugin_manager.invoke_hook = mock_invoke_hook
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test-merge")
         async def test_endpoint(request: Request):
             """Return the headers seen by the endpoint."""
             return {"headers": dict(request.headers)}
 
-        return app
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            yield app
 
     def test_modified_headers_take_precedence(self, app_with_header_merging):
         """Test that plugin-modified headers override original headers in middleware."""
@@ -342,7 +353,7 @@ class TestHeaderMergingBehavior:
         """Test that middleware properly converts headers to ASGI format (lowercase bytes) in request.scope."""
         app = FastAPI()
 
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
@@ -353,7 +364,9 @@ class TestHeaderMergingBehavior:
             return PluginResult(continue_processing=True), {}
 
         mock_plugin_manager.invoke_hook = mock_invoke_hook
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test-asgi-format")
         async def test_endpoint(request: Request):
@@ -363,8 +376,9 @@ class TestHeaderMergingBehavior:
             headers_dict = {name.decode(): value.decode() for name, value in scope_headers}
             return {"scope_headers_lowercase": all(name == name.lower() for name, _ in scope_headers), "headers": headers_dict}
 
-        client = TestClient(app)
-        response = client.get("/test-asgi-format")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            client = TestClient(app)
+            response = client.get("/test-asgi-format")
 
         assert response.status_code == 200
         data = response.json()
@@ -390,7 +404,7 @@ class TestHasHooksForOptimization:
         # Track which hooks are actually invoked
         hooks_invoked = []
 
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             hooks_invoked.append(hook_type)
@@ -401,7 +415,7 @@ class TestHasHooksForOptimization:
         # Default: both hooks registered
         mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
 
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
@@ -409,7 +423,9 @@ class TestHasHooksForOptimization:
 
         app.state.hooks_invoked = hooks_invoked
         app.state.mock_plugin_manager = mock_plugin_manager
-        return app
+
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            yield app
 
     def test_no_hooks_invoked_when_neither_registered(self, app_with_hook_tracking):
         """Test that no hooks are invoked when neither PRE nor POST is registered."""
@@ -535,7 +551,7 @@ class TestHasHooksForPerformance:
 
         invoke_calls = []
 
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
@@ -549,15 +565,16 @@ class TestHasHooksForPerformance:
 
         mock_plugin_manager.has_hooks_for = MagicMock(side_effect=has_hooks_side_effect)
 
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
             return {"status": "ok"}
 
-        client = TestClient(app)
-        invoke_calls.clear()
-        response = client.get("/test")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            client = TestClient(app)
+            invoke_calls.clear()
+            response = client.get("/test")
 
         assert response.status_code == 200
         # Only POST hook should have been invoked
@@ -571,7 +588,7 @@ class TestHasHooksForPerformance:
 
         invoke_calls = []
 
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
@@ -585,15 +602,16 @@ class TestHasHooksForPerformance:
 
         mock_plugin_manager.has_hooks_for = MagicMock(side_effect=has_hooks_side_effect)
 
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
             return {"status": "ok"}
 
-        client = TestClient(app)
-        invoke_calls.clear()
-        response = client.get("/test")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            client = TestClient(app)
+            invoke_calls.clear()
+            response = client.get("/test")
 
         assert response.status_code == 200
         # Only PRE hook should have been invoked
@@ -607,7 +625,7 @@ class TestHasHooksForPerformance:
 
         invoke_calls = []
 
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             invoke_calls.append({"hook_type": hook_type, "payload_type": type(payload).__name__})
@@ -618,15 +636,16 @@ class TestHasHooksForPerformance:
         # No hooks registered
         mock_plugin_manager.has_hooks_for = MagicMock(return_value=False)
 
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
             return {"status": "ok"}
 
-        client = TestClient(app)
-        invoke_calls.clear()
-        response = client.get("/test")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            client = TestClient(app)
+            invoke_calls.clear()
+            response = client.get("/test")
 
         assert response.status_code == 200
         # No hooks should have been invoked
@@ -644,7 +663,7 @@ class TestNoPluginManager:
     def test_dispatch_without_plugin_manager(self):
         """Middleware returns immediately when plugin_manager is None."""
         app = FastAPI()
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=None)
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
@@ -665,22 +684,24 @@ class TestCorrelationIdExists:
         from unittest.mock import patch as _patch
 
         app = FastAPI()
-        mock_pm = MagicMock()
+        mock_pm = AsyncMock()
         mock_pm.has_hooks_for = MagicMock(return_value=True)
 
         async def mock_invoke(*args, **kwargs):
             return PluginResult(continue_processing=True), {}
 
         mock_pm.invoke_hook = mock_invoke
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_pm)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint(request: Request):
             return {"request_id": getattr(request.state, "request_id", None)}
 
         client = TestClient(app)
-        with _patch("mcpgateway.middleware.http_auth_middleware.get_correlation_id", return_value="existing-id"):
-            response = client.get("/test")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_pm):
+            with _patch("mcpgateway.middleware.http_auth_middleware.get_correlation_id", return_value="existing-id"):
+                response = client.get("/test")
 
         assert response.status_code == 200
         assert response.json()["request_id"] == "existing-id"
@@ -696,7 +717,7 @@ class TestNoRequestClient:
 
         app = FastAPI()
         captured_payloads = []
-        mock_pm = MagicMock()
+        mock_pm = AsyncMock()
         mock_pm.has_hooks_for = MagicMock(return_value=True)
 
         async def mock_invoke(hook_type, payload, **kwargs):
@@ -705,7 +726,8 @@ class TestNoRequestClient:
             return PluginResult(continue_processing=True), {}
 
         mock_pm.invoke_hook = mock_invoke
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_pm)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
@@ -713,8 +735,9 @@ class TestNoRequestClient:
 
         client = TestClient(app)
         # TestClient always sets client, so we patch the request to have no client
-        with _patch("mcpgateway.middleware.http_auth_middleware.get_correlation_id", return_value="id"):
-            response = client.get("/test")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_pm):
+            with _patch("mcpgateway.middleware.http_auth_middleware.get_correlation_id", return_value="id"):
+                response = client.get("/test")
 
         # The test client always has a client, but we can verify behavior works.
         # For a stricter test, we'd need to override the ASGI scope.
@@ -727,7 +750,7 @@ class TestPreHookException:
     def test_pre_hook_exception_does_not_block_request(self):
         """Pre-request hook failure is logged but request proceeds."""
         app = FastAPI()
-        mock_pm = MagicMock()
+        mock_pm = AsyncMock()
 
         def has_hooks_side_effect(hook_type):
             return hook_type == HttpHookType.HTTP_PRE_REQUEST
@@ -738,14 +761,16 @@ class TestPreHookException:
             raise RuntimeError("plugin crash")
 
         mock_pm.invoke_hook = mock_invoke
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_pm)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
             return {"ok": True}
 
-        client = TestClient(app)
-        response = client.get("/test")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_pm):
+            client = TestClient(app)
+            response = client.get("/test")
         assert response.status_code == 200
         assert response.json() == {"ok": True}
 
@@ -756,7 +781,7 @@ class TestPostHookResponseHeaders:
     def test_post_hook_modifies_response_headers(self):
         """Post-request hook can add/modify response headers."""
         app = FastAPI()
-        mock_pm = MagicMock()
+        mock_pm = AsyncMock()
 
         def has_hooks_side_effect(hook_type):
             return hook_type == HttpHookType.HTTP_POST_REQUEST
@@ -770,21 +795,23 @@ class TestPostHookResponseHeaders:
             return PluginResult(continue_processing=True), {}
 
         mock_pm.invoke_hook = mock_invoke
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_pm)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
             return {"ok": True}
 
-        client = TestClient(app)
-        response = client.get("/test")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_pm):
+            client = TestClient(app)
+            response = client.get("/test")
         assert response.status_code == 200
         assert response.headers.get("x-custom-response") == "added-by-plugin"
 
     def test_post_hook_exception_does_not_block_response(self):
         """Post-request hook failure is logged but response is returned."""
         app = FastAPI()
-        mock_pm = MagicMock()
+        mock_pm = AsyncMock()
 
         def has_hooks_side_effect(hook_type):
             return hook_type == HttpHookType.HTTP_POST_REQUEST
@@ -795,14 +822,16 @@ class TestPostHookResponseHeaders:
             raise RuntimeError("post-hook crash")
 
         mock_pm.invoke_hook = mock_invoke
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_pm)
+
+        app.add_middleware(HttpAuthMiddleware)
 
         @app.get("/test")
         async def test_endpoint():
             return {"ok": True}
 
-        client = TestClient(app)
-        response = client.get("/test")
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_pm):
+            client = TestClient(app)
+            response = client.get("/test")
         assert response.status_code == 200
         assert response.json() == {"ok": True}
 
@@ -817,6 +846,7 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_returns_original_headers_when_no_hooks_registered(self):
         """No hooks registered => original headers returned unchanged."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 
         pm = MagicMock()
@@ -832,6 +862,7 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_returns_modified_headers_from_plugin(self):
         """Plugin that adds a header should produce merged output."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 
         pm = MagicMock()
@@ -855,6 +886,7 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_no_modification_when_plugin_returns_no_payload(self):
         """Plugin that returns no modified_payload should leave headers unchanged."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 
         pm = MagicMock()
@@ -873,16 +905,20 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_auth_header_override_stripped_by_default(self):
         """Default config prevents plugins from overriding existing auth headers."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
-            return PluginResult(
-                modified_payload=HttpHeaderPayload({"authorization": "Bearer HIJACKED", "x-new": "allowed"}),
-                continue_processing=True,
-            ), {}
+            return (
+                PluginResult(
+                    modified_payload=HttpHeaderPayload({"authorization": "Bearer HIJACKED", "x-new": "allowed"}),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         pm.invoke_hook = mock_invoke_hook
 
@@ -899,16 +935,20 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_auth_header_override_stripped_mixed_case(self):
         """Mixed-case auth header keys from plugins are also stripped (deny-path)."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
-            return PluginResult(
-                modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),
-                continue_processing=True,
-            ), {}
+            return (
+                PluginResult(
+                    modified_payload=HttpHeaderPayload({"Authorization": "Bearer HIJACKED", "X-Api-Key": "stolen", "x-new": "ok"}),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         pm.invoke_hook = mock_invoke_hook
 
@@ -926,16 +966,20 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_auth_header_override_allowed_when_enabled(self):
         """plugins_can_override_auth_headers=True allows plugins to rewrite auth headers."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
-            return PluginResult(
-                modified_payload=HttpHeaderPayload({"authorization": "Bearer EXCHANGED"}),
-                continue_processing=True,
-            ), {}
+            return (
+                PluginResult(
+                    modified_payload=HttpHeaderPayload({"authorization": "Bearer EXCHANGED"}),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         pm.invoke_hook = mock_invoke_hook
 
@@ -949,6 +993,7 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_exception_returns_original_headers(self):
         """Hook failure should return original headers, not crash."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 
         pm = MagicMock()
@@ -968,16 +1013,20 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_headers_normalized_to_lowercase(self):
         """Merged headers should have lowercase keys to prevent duplicates."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
 
         pm = MagicMock()
         pm.has_hooks_for.return_value = True
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
-            return PluginResult(
-                modified_payload=HttpHeaderPayload({"X-Plugin-Header": "value"}),
-                continue_processing=True,
-            ), {}
+            return (
+                PluginResult(
+                    modified_payload=HttpHeaderPayload({"X-Plugin-Header": "value"}),
+                    continue_processing=True,
+                ),
+                {},
+            )
 
         pm.invoke_hook = mock_invoke_hook
 
@@ -994,6 +1043,7 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_creates_global_context_when_not_provided(self):
         """When no global_context is passed, the function should create one."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
         from mcpgateway.plugins.framework import GlobalContext
 
@@ -1012,6 +1062,7 @@ class TestRunPreRequestHooks:
     @pytest.mark.asyncio
     async def test_reuses_provided_global_context(self):
         """When a global_context is passed, the function should reuse it."""
+        # First-Party
         from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
         from mcpgateway.plugins.framework import GlobalContext
 
@@ -1036,7 +1087,7 @@ class TestPluginsCanOverrideAuthHeaders:
         """Create app where plugin attempts to override the Authorization header."""
         app = FastAPI()
 
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
@@ -1049,7 +1100,7 @@ class TestPluginsCanOverrideAuthHeaders:
         mock_plugin_manager.invoke_hook = mock_invoke_hook
         mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
 
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        app.add_middleware(HttpAuthMiddleware)
 
         bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -1060,7 +1111,8 @@ class TestPluginsCanOverrideAuthHeaders:
                 return {"scheme": credentials.scheme, "credentials": credentials.credentials}
             return {"credentials": None}
 
-        return app
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            yield app
 
     def test_auth_header_override_blocked_by_default(self, app_with_auth_override_plugin):
         """Deny-path: plugin override of existing Authorization header is stripped when setting is False (default)."""
@@ -1085,7 +1137,7 @@ class TestPluginsCanOverrideAuthHeaders:
         """Deny-path: plugin cannot bypass protection by returning a differently-cased header key."""
         app = FastAPI()
 
-        mock_plugin_manager = MagicMock()
+        mock_plugin_manager = AsyncMock()
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             if hook_type == HttpHookType.HTTP_PRE_REQUEST:
@@ -1098,7 +1150,8 @@ class TestPluginsCanOverrideAuthHeaders:
         mock_plugin_manager.invoke_hook = mock_invoke_hook
         mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
 
-        app.add_middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager)
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", return_value=mock_plugin_manager):
+            app.add_middleware(HttpAuthMiddleware)
 
         bearer_scheme = HTTPBearer(auto_error=False)
 

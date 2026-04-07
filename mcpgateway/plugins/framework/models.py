@@ -1187,6 +1187,38 @@ class PluginConfig(BaseModel):
         return self
 
 
+class PluginConfigOverride(BaseModel):
+    """Plugin configuration override for tenant/server-specific customization.
+
+    This model represents the subset of PluginConfig fields that can be overridden
+    on a per-tenant or per-server basis. It's used to customize plugin behavior
+    without modifying the base configuration.
+
+    Attributes:
+        name (str): The name of the plugin to override (must match base plugin name).
+        config (Optional[dict[str, Any]]): Plugin-specific configuration overrides.
+        mode (Optional[PluginMode]): Override for plugin execution mode.
+        priority (Optional[int]): Override for plugin execution priority.
+
+    Examples:
+        >>> override = PluginConfigOverride(
+        ...     name="pii_filter",
+        ...     config={"sensitivity": "high"},
+        ...     mode=PluginMode.ENFORCE,
+        ...     priority=50
+        ... )
+        >>> override.name
+        'pii_filter'
+        >>> override.mode
+        <PluginMode.ENFORCE: 'enforce'>
+    """
+
+    name: str
+    config: Optional[dict[str, Any]] = None
+    mode: Optional[PluginMode] = None
+    priority: Optional[int] = None
+
+
 class PluginManifest(BaseModel):
     """Plugin manifest.
 

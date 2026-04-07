@@ -14,6 +14,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.plugins.framework import get_plugin_manager
 from mcpgateway.services.team_management_service import TeamManagementService
 
 
@@ -149,3 +150,14 @@ class BaseService(ABC):
             access_conditions.append(and_(model_cls.team_id.in_(token_teams), model_cls.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
+
+    async def _get_plugin_manager(self, server_id: str | None) -> Any:
+        """Return the context-scoped plugin manager from the global factory.
+
+        Args:
+            server_id: Context identifier used to resolve a specific plugin manager.
+
+        Returns:
+            Plugin manager instance when plugins are enabled, otherwise ``None``.
+        """
+        return await get_plugin_manager(server_id)

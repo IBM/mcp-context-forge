@@ -1968,14 +1968,15 @@ class TestUtilityMethods:
         result = resource_service.convert_resource_to_read(mock_resource, include_metrics=False)
         assert result.tags == ["plain", "dict-label", "dict-name", "obj-label", "obj-name"]
 
-    def test_init_skips_plugin_manager_when_plugins_unavailable(self):
-        """Cover the PLUGINS_AVAILABLE=False init branch."""
+    def test_init_creates_service_with_expected_attributes(self):
+        """Cover ResourceService.__init__ — verify core attributes are set."""
         # First-Party
         from mcpgateway.services import resource_service as rs_mod
 
-        with patch.object(rs_mod, "PLUGINS_AVAILABLE", False):
-            svc = rs_mod.ResourceService()
-        assert svc._plugin_manager is None
+        svc = rs_mod.ResourceService()
+        assert hasattr(svc, "_event_service")
+        assert hasattr(svc, "_template_cache")
+        assert hasattr(svc, "oauth_manager")
 
 
 # --------------------------------------------------------------------------- #
@@ -2393,7 +2394,6 @@ class TestResourceUpdateMimeTypeDetection:
     async def test_update_resource_with_empty_mime_type_detects_from_uri(self, resource_service, mock_db):
         """Test that empty MIME type triggers detection from URI."""
         # Standard
-        from datetime import datetime, timezone
 
         # First-Party
         from mcpgateway.schemas import ResourceUpdate
@@ -5862,11 +5862,11 @@ class TestReadResourceCoverageEdges:
         )
         db.get.return_value = resource_db
 
-        plugin_manager = MagicMock()
+        plugin_manager = AsyncMock()
         plugin_manager._initialized = True
         plugin_manager.has_hooks_for.side_effect = lambda hook: hook == ResourceHookType.RESOURCE_PRE_FETCH
         plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), None))
-        svc._plugin_manager = plugin_manager
+        svc._get_plugin_manager = AsyncMock(return_value=plugin_manager)
 
         global_ctx = SimpleNamespace(user=None, server_id=None)
 
@@ -5905,11 +5905,11 @@ class TestReadResourceCoverageEdges:
         )
         db.get.return_value = resource_db
 
-        plugin_manager = MagicMock()
+        plugin_manager = AsyncMock()
         plugin_manager._initialized = True
         plugin_manager.has_hooks_for.side_effect = lambda hook: hook == ResourceHookType.RESOURCE_PRE_FETCH
         plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None), None))
-        svc._plugin_manager = plugin_manager
+        svc._get_plugin_manager = AsyncMock(return_value=plugin_manager)
 
         global_ctx = SimpleNamespace(user=None, server_id=None)
 

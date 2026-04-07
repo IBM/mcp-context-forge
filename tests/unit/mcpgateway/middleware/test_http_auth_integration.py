@@ -14,13 +14,14 @@ Tests the complete flow:
 
 # Standard
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework import (
     HttpHeaderPayload,
     HttpHookType,
@@ -28,7 +29,6 @@ from mcpgateway.plugins.framework import (
     PluginViolation,
     PluginViolationError,
 )
-from mcpgateway.config import settings
 
 
 @pytest.mark.skipif(not settings.plugins.enabled, reason="Plugins must be enabled for HTTP auth integration tests")
@@ -108,33 +108,11 @@ class TestHttpAuthMiddlewareIntegration:
         mock_plugin_manager.invoke_hook = mock_invoke_hook
         mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)  # Enable hook invocation
 
-        # Patch where get_plugin_manager is USED (in auth.py)
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_plugin_manager):
-            # Ensure HttpAuthMiddleware is in the middleware list with our mock
-            from starlette.middleware import Middleware
-            from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
-
-            found = False
-            for middleware in app.user_middleware:
-                if hasattr(middleware, "cls") and middleware.cls.__name__ == "HttpAuthMiddleware":
-                    middleware.kwargs["plugin_manager"] = mock_plugin_manager
-                    found = True
-
-            if not found:
-                app.user_middleware.insert(0, Middleware(HttpAuthMiddleware, plugin_manager=mock_plugin_manager))
-
-            # Force Starlette to rebuild the middleware stack so our changes take effect.
-            # The cached middleware_stack holds already-instantiated middleware objects,
-            # so modifying user_middleware alone has no effect without this reset.
-            saved_stack = app.middleware_stack
-            app.middleware_stack = None
-
-            try:
+        # Patch get_plugin_manager wherever it is used during request dispatch
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
+            with patch("mcpgateway.auth.get_plugin_manager", new_callable=AsyncMock, return_value=mock_plugin_manager):
                 client = TestClient(app)
                 yield client
-            finally:
-                # Restore original middleware stack to avoid affecting other tests
-                app.middleware_stack = saved_stack
 
     def test_x_api_key_transformation_and_authentication(self, test_client_with_http_auth):
         """Test that X-API-Key is transformed to Authorization and user is authenticated."""
@@ -242,7 +220,7 @@ class TestHttpAuthMiddlewareWithoutPlugins:
         # This should fall back to standard JWT/API token validation
 
         # Patch _get_plugin_manager to return None (no plugins)
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=None):
             client = TestClient(app)
 
             # Request without authentication should fail (use POST for initialize)
@@ -253,7 +231,7 @@ class TestHttpAuthMiddlewareWithoutPlugins:
 
     def test_health_endpoint_accessible_without_auth(self, app):
         """Test that health endpoint is accessible without authentication."""
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.http_auth_middleware.get_plugin_manager", new_callable=AsyncMock, return_value=None):
             client = TestClient(app)
 
             response = client.get("/health")
@@ -313,6 +291,7 @@ class TestCustomAuthExamplePlugin:
     @pytest.fixture
     def plugin_config(self):
         """Plugin configuration for testing."""
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig
 
         return PluginConfig(
@@ -342,6 +321,7 @@ class TestCustomAuthExamplePlugin:
     @pytest.fixture
     def plugin(self, plugin_config):
         """Create plugin instance."""
+        # First-Party
         from plugins.examples.custom_auth_example.custom_auth import CustomAuthPlugin
 
         return CustomAuthPlugin(plugin_config)
@@ -349,6 +329,7 @@ class TestCustomAuthExamplePlugin:
     @pytest.fixture
     def strict_mode_plugin(self):
         """Create plugin instance with strict_mode enabled."""
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig
         from plugins.examples.custom_auth_example.custom_auth import CustomAuthPlugin
 
@@ -374,6 +355,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_pre_request_transforms_x_api_key(self, plugin):
         """Test that X-API-Key header is transformed to Authorization: Bearer."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
@@ -396,14 +378,13 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_pre_request_does_not_override_existing_authorization(self, plugin):
         """Test that existing Authorization header is not overridden by X-API-Key."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
             path="/protocol/initialize",
             method="POST",
-            headers=HttpHeaderPayload(
-                {"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}
-            ),
+            headers=HttpHeaderPayload({"x-api-key": "valid-key-12345", "authorization": "Bearer existing-token", "content-type": "application/json"}),
             client_host="192.168.1.100",
             client_port=54321,
         )
@@ -417,6 +398,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_pre_request_no_transformation_without_x_api_key(self, plugin):
         """Test that no transformation occurs without X-API-Key header."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPreRequestPayload, PluginContext
 
         payload = HttpPreRequestPayload(
@@ -437,6 +419,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_valid_api_key(self, plugin):
         """Test successful user authentication with valid API key."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
@@ -460,6 +443,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_admin_api_key(self, plugin):
         """Test admin user authentication with admin API key."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
@@ -481,6 +465,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_blocked_api_key(self, plugin):
         """Test that blocked API key raises PluginViolationError."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext, PluginViolationError
 
         payload = HttpAuthResolveUserPayload(
@@ -500,6 +485,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_invalid_api_key_fallback(self, plugin):
         """Test that invalid API key falls back to standard authentication (non-strict mode)."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
@@ -519,6 +505,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_invalid_api_key_strict_mode(self, strict_mode_plugin):
         """Test that invalid API key raises error in strict mode."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext, PluginViolationError
 
         payload = HttpAuthResolveUserPayload(
@@ -539,6 +526,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_auth_resolve_user_no_credentials_fallback(self, plugin):
         """Test that missing credentials falls back to standard authentication."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, PluginContext
 
         payload = HttpAuthResolveUserPayload(
@@ -557,6 +545,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_post_request_adds_correlation_id(self, plugin):
         """Test that correlation ID is propagated from request to response."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
@@ -578,6 +567,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_post_request_adds_auth_status_success(self, plugin):
         """Test that x-auth-status header is set to 'authenticated' on successful requests."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
@@ -599,6 +589,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_post_request_adds_auth_status_failure(self, plugin):
         """Test that x-auth-status header is set to 'failed' on failed requests."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
@@ -620,6 +611,7 @@ class TestCustomAuthExamplePlugin:
 
     async def test_http_post_request_adds_auth_method_from_context(self, plugin):
         """Test that auth method from local context is added to response headers."""
+        # First-Party
         from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpPostRequestPayload, PluginContext
 
         payload = HttpPostRequestPayload(
@@ -649,6 +641,7 @@ class TestCustomAuthExamplePlugin:
         2. HTTP_AUTH_RESOLVE_USER: Validate API key and return user
         3. HTTP_POST_REQUEST: Add response headers
         """
+        # First-Party
         from mcpgateway.plugins.framework import (
             GlobalContext,
             HttpAuthResolveUserPayload,

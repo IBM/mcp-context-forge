@@ -478,24 +478,122 @@ def test_protocol_method_bodies():
     assert result2 is None
 
 
-def test_get_plugin_manager_creates_manager_when_enabled():
-    """Test that get_plugin_manager creates a PluginManager when plugins_enabled is True."""
+@pytest.mark.asyncio
+async def test_get_plugin_manager_creates_manager_when_enabled():
+    """Test that get_plugin_manager creates a TenantPluginManager when plugins_enabled is True."""
     # First-Party
     import mcpgateway.plugins.framework as fw
+    from mcpgateway.plugins.framework.manager import TenantPluginManager
 
     recorder = RecordingObservability()
 
-    # Reset the module-level singleton
-    original = fw._plugin_manager
-    fw._plugin_manager = None
-    try:
-        with patch("mcpgateway.plugins.framework.settings.settings") as mock_settings:
-            mock_settings.enabled = True
-            mock_settings.config_file = "./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml"
-            pm = fw.get_plugin_manager(observability=recorder)
+    fw.enable_plugins(True)
+    fw.init_plugin_manager_factory(
+        yaml_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml",
+        timeout=30,
+        hook_policies={},
+        observability=recorder,
+    )
+    pm = await fw.get_plugin_manager()
 
-        assert pm is not None
-        assert isinstance(pm, PluginManager)
-    finally:
-        fw._plugin_manager = original
-        PluginManager.reset()
+    assert pm is not None
+    assert isinstance(pm, TenantPluginManager)
+
+
+@pytest.mark.asyncio
+async def test_get_plugin_manager_returns_none_when_disabled():
+    """get_plugin_manager returns None immediately when _PLUGINS_ENABLED is False (line 119)."""
+    # First-Party
+    import mcpgateway.plugins.framework as fw
+
+    fw.enable_plugins(False)
+    result = await fw.get_plugin_manager("any-server")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_plugin_manager_returns_none_when_factory_missing():
+    """get_plugin_manager returns None when enabled but factory not yet initialised (line 122)."""
+    # First-Party
+    import mcpgateway.plugins.framework as fw
+
+    fw.enable_plugins(True)
+    fw.reset_plugin_manager_factory()  # ensures factory is None
+    result = await fw.get_plugin_manager("any-server")
+    assert result is None
+    fw.enable_plugins(False)  # restore default
+
+
+def test_set_global_observability_updates_factory():
+    """set_global_observability propagates to the factory when one exists (lines 129-131)."""
+    # Standard
+    from unittest.mock import MagicMock
+
+    # First-Party
+    import mcpgateway.plugins.framework as fw
+
+    mock_factory = MagicMock()
+    fw._plugin_manager_factory = mock_factory
+    mock_obs = MagicMock()
+
+    fw.set_global_observability(mock_obs)
+
+    assert fw._observability_service is mock_obs
+    assert mock_factory.observability == mock_obs
+    fw.reset_plugin_manager_factory()
+
+
+def test_reset_plugin_manager_factory_clears_reference():
+    """reset_plugin_manager_factory sets the factory to None (line 155)."""
+    # Standard
+    from unittest.mock import MagicMock
+
+    # First-Party
+    import mcpgateway.plugins.framework as fw
+
+    fw._plugin_manager_factory = MagicMock()
+    fw.reset_plugin_manager_factory()
+    assert fw._plugin_manager_factory is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_plugin_manager_factory_when_disabled():
+    """shutdown_plugin_manager_factory is a no-op when _PLUGINS_ENABLED is False (line 145)."""
+    # Standard
+    from unittest.mock import AsyncMock, MagicMock
+
+    # First-Party
+    import mcpgateway.plugins.framework as fw
+
+    mock_factory = MagicMock()
+    mock_factory.shutdown = AsyncMock()
+    fw._plugin_manager_factory = mock_factory
+    fw.enable_plugins(False)
+
+    await fw.shutdown_plugin_manager_factory()
+
+    mock_factory.shutdown.assert_not_awaited()
+    # factory reference unchanged since we returned early
+    assert fw._plugin_manager_factory is mock_factory
+    fw.reset_plugin_manager_factory()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_plugin_manager_factory_when_enabled():
+    """shutdown_plugin_manager_factory calls factory.shutdown() when plugins enabled (lines 144-149)."""
+    # Standard
+    from unittest.mock import AsyncMock, MagicMock
+
+    # First-Party
+    import mcpgateway.plugins.framework as fw
+
+    mock_factory = MagicMock()
+    mock_factory.shutdown = AsyncMock()
+    fw._plugin_manager_factory = mock_factory
+    fw.enable_plugins(True)
+
+    await fw.shutdown_plugin_manager_factory()
+
+    mock_factory.shutdown.assert_awaited_once()
+    assert fw._plugin_manager_factory is None
+    fw.enable_plugins(False)  # restore default

@@ -11,14 +11,13 @@ Tests for error handling paths in admin.py to improve coverage.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from pydantic import ValidationError
 from pydantic_core import ValidationError as CoreValidationError
+import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-import pytest
 
 # First-Party
-from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError
+from mcpgateway.services.server_service import ServerError, ServerNameConflictError
 
 
 class FakeForm(dict):
@@ -77,7 +76,7 @@ def allow_permission(monkeypatch):
     mock_perm_service = MagicMock()
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
-    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
+    monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", AsyncMock(return_value=None))
     return mock_perm_service
 
 

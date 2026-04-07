@@ -208,11 +208,18 @@ def prompt_service():
 
 
 class TestPromptServiceInit:
-    def test_plugins_enabled_env_flag_false_disables_plugin_manager(self, monkeypatch):
-        """Cover env-override parsing in PromptService.__init__ (PLUGINS_ENABLED)."""
+    @pytest.mark.asyncio
+    async def test_plugins_enabled_env_flag_false_disables_plugin_manager(self, monkeypatch):
+        """Cover env-override parsing in PromptService._get_plugin_manager (PLUGINS_ENABLED)."""
+        from mcpgateway.plugins.framework import enable_plugins, reset_plugin_manager_factory
+
         monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        enable_plugins(False)
+        reset_plugin_manager_factory()
+
         svc = PromptService()
-        assert svc._plugin_manager is None
+        result = await svc._get_plugin_manager(None)
+        assert not result
 
 
 class TestPromptService:
@@ -413,11 +420,7 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(
-            content_type="Prompt template",
-            actual_size=15000,
-            max_size=10240
-        )
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)
@@ -904,8 +907,6 @@ class TestPromptService:
 
         plugin_mgr.invoke_hook = AsyncMock(side_effect=[(pre_result, {"ctx": 1}), (post_result, {"ctx": 1})])
 
-        prompt_service._plugin_manager = plugin_mgr
-
         @contextmanager
         def _no_span(*_a, **_kw):
             yield None
@@ -915,6 +916,7 @@ class TestPromptService:
         with (
             patch("mcpgateway.services.prompt_service.create_span", _no_span),
             patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
+            patch.object(prompt_service, "_get_plugin_manager", AsyncMock(return_value=plugin_mgr)),
         ):
             mock_get_buf.record_prompt_metric = Mock()
             result = await prompt_service.get_prompt(
@@ -953,8 +955,6 @@ class TestPromptService:
         pre_result = SimpleNamespace(modified_payload=pre_payload)
         plugin_mgr.invoke_hook = AsyncMock(return_value=(pre_result, {"ctx": 1}))
 
-        prompt_service._plugin_manager = plugin_mgr
-
         @contextmanager
         def _no_span(*_a, **_kw):
             yield None
@@ -962,6 +962,7 @@ class TestPromptService:
         with (
             patch("mcpgateway.services.prompt_service.create_span", _no_span),
             patch("mcpgateway.services.prompt_service.metrics_buffer") as mock_get_buf,
+            patch.object(prompt_service, "_get_plugin_manager", AsyncMock(return_value=plugin_mgr)),
         ):
             mock_get_buf.record_prompt_metric = Mock()
             result = await prompt_service.get_prompt(test_db, "1", {"name": "Bob"}, user="user@test.com")
@@ -1157,11 +1158,7 @@ class TestPromptService:
 
         # Mock get_content_security_service to return a mock that raises ContentSizeError
         mock_security_service = Mock()
-        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(
-            content_type="Prompt template",
-            actual_size=15000,
-            max_size=10240
-        )
+        mock_security_service.validate_prompt_size.side_effect = ContentSizeError(content_type="Prompt template", actual_size=15000, max_size=10240)
 
         with patch("mcpgateway.services.prompt_service.get_content_security_service", return_value=mock_security_service):
             # Use 15KB template - passes Pydantic (65KB limit) but fails ContentSizeError (10KB limit)

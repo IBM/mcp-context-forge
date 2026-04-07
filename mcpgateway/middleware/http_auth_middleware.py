@@ -17,14 +17,14 @@ from starlette.types import ASGIApp
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
+from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
 
 logger = logging.getLogger(__name__)
 
 
 async def run_pre_request_hooks(
-    plugin_manager: PluginManager,
+    plugin_manager: PluginManager,  # Base class type annotation is intentional - accepts both PluginManager and TenantPluginManager
     headers: dict[str, str],
     path: str,
     method: str,
@@ -121,15 +121,13 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
     - Log response status and headers
     """
 
-    def __init__(self, app: ASGIApp, plugin_manager: PluginManager | None = None):
+    def __init__(self, app: ASGIApp):
         """Initialize the HTTP auth middleware.
 
         Args:
             app: The ASGI application
-            plugin_manager: Optional plugin manager for hook invocation
         """
         super().__init__(app)
-        self.plugin_manager = plugin_manager
 
     async def dispatch(self, request: Request, call_next):
         """Process request through plugin hooks.
@@ -141,14 +139,19 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             The response from the application
         """
-        # Skip hook invocation if no plugin manager
-        if not self.plugin_manager:
+        # Note: HTTP hooks always use global config (__global__ context) because
+        # this middleware runs before virtual server routing. Per-tenant HTTP hooks
+        # would require extracting server_id from the request path, which is not
+        # currently implemented. This is acceptable for auth-layer middleware.
+        plugin_manager = await get_plugin_manager()
+        if not plugin_manager:
             logger.debug("HttpAuthMiddleware: no plugin_manager, skipping hooks")
             return await call_next(request)
+        logger.debug("HTTP authentication hooks enabled for plugins")
 
         # Skip payload creation if no HTTP hooks registered
-        has_pre = self.plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST)
-        has_post = self.plugin_manager.has_hooks_for(HttpHookType.HTTP_POST_REQUEST)
+        has_pre = plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST)
+        has_post = plugin_manager.has_hooks_for(HttpHookType.HTTP_POST_REQUEST)
 
         if not has_pre and not has_post:
             logger.debug("HttpAuthMiddleware: has_pre=%s has_post=%s, skipping hooks", has_pre, has_post)
@@ -179,7 +182,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         # PRE-REQUEST HOOK: Allow plugins to transform headers before authentication
         if has_pre:
             merged_headers, global_context, context_table = await run_pre_request_hooks(
-                plugin_manager=self.plugin_manager,
+                plugin_manager=plugin_manager,
                 headers=dict(request.headers),
                 path=str(request.url.path),
                 method=request.method,
@@ -204,7 +207,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
             try:
                 response_headers = HttpHeaderPayload(root=dict(response.headers))
 
-                post_result, _ = await self.plugin_manager.invoke_hook(
+                post_result, _ = await plugin_manager.invoke_hook(
                     HttpHookType.HTTP_POST_REQUEST,
                     payload=HttpPostRequestPayload(
                         path=str(request.url.path),

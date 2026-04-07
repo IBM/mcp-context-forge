@@ -97,13 +97,13 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "disabled"  # enforce | enforce_ignore_error | permissive | disabled
+    mode: "enforce"  # enforce | enforce_ignore_error | permissive | disabled
     priority: 150
-    conditions:
-      # Apply to specific tools/servers
-      - prompts: ["test_prompt"]
-        server_ids: []  # Apply to all servers
-        tenant_ids: []  # Apply to all tenants
+    # conditions:
+    #   # Apply to specific tools/servers
+    #   - prompts: ["test_prompt"]
+    #     server_ids: []  # Apply to all servers
+    #     tenant_ids: []  # Apply to all tenants
     config:
       words:
         - search: crap

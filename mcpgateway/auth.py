@@ -1150,7 +1150,7 @@ async def get_current_user(
     # This hook is invoked BEFORE standard JWT/API token validation
     try:
         # Get plugin manager singleton
-        plugin_manager = get_plugin_manager()
+        plugin_manager = await get_plugin_manager()
 
         if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_RESOLVE_USER):
             # Extract client information
@@ -1248,7 +1248,7 @@ async def get_current_user(
                 if request and global_context:
                     request.state.plugin_global_context = global_context
 
-                if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, user)
                 _propagate_tenant_id(request)
 
@@ -1378,7 +1378,7 @@ async def get_current_user(
                                     headers={"WWW-Authenticate": "Bearer"},
                                 )
 
-                        if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                        if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings.include_user_info:
                             _inject_userinfo_instate(request, _user_from_cached_dict(cached_ctx.user))
                         _propagate_tenant_id(request)
 
@@ -1517,7 +1517,7 @@ async def get_current_user(
                             headers={"WWW-Authenticate": "Bearer"},
                         )
 
-                if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings.include_user_info:
                     _inject_userinfo_instate(request, _batched_user)
                 _propagate_tenant_id(request)
 
@@ -1699,7 +1699,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+    if plugin_manager and plugin_manager.config and plugin_manager.config.plugin_settings.include_user_info:
         _inject_userinfo_instate(request, user)
     _propagate_tenant_id(request)
 

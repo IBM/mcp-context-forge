@@ -223,6 +223,7 @@ class TestToolServiceMetricsException:
             patch("mcpgateway.services.http_client_service.get_http_client") as mock_http_client,
             patch("mcpgateway.services.tool_service.PydanticTool.model_validate", return_value=valid_tool),
             patch("mcpgateway.services.tool_service.PydanticGateway.model_validate", return_value=MagicMock()),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
 
             mock_client = AsyncMock()

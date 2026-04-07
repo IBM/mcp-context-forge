@@ -22,7 +22,6 @@ from mcpgateway.services.mcp_session_pool import (
     _get_cleanup_timeout,
     close_mcp_session_pool,
     drain_mcp_session_pool,
-    get_mcp_session_pool,
     init_mcp_session_pool,
     MCPSessionPool,
     PooledSession,
@@ -3580,7 +3579,9 @@ class TestMaxTotalKeysLimit:
 
         # Create 8 pool keys to reach 80% threshold (warning at 8/10)
         # Patch the logger at the module level where it's imported
+        # First-Party
         import mcpgateway.services.mcp_session_pool as pool_module
+
         with patch.object(pool_module, "logger") as mock_logger:
             # Warning fires when len(self._pools) BEFORE adding the new key >= threshold (8).
             # Creating 9 keys means the 9th call sees len=8 >= 8 and emits the warning.
@@ -3589,8 +3590,7 @@ class TestMaxTotalKeysLimit:
                 await pool._get_or_create_pool(key)
 
             # Check that warning was logged when the pool count reached 80% of 10
-            warning_calls = [call for call in mock_logger.warning.call_args_list
-                           if "approaching limit" in str(call).lower()]
+            warning_calls = [call for call in mock_logger.warning.call_args_list if "approaching limit" in str(call).lower()]
             assert len(warning_calls) > 0, f"Expected warning about approaching limit. Got calls: {mock_logger.warning.call_args_list}"
 
         await pool.close_all()
@@ -3677,6 +3677,7 @@ class TestMaxTotalSessionsLimit:
 
         # Mock _create_session to return fake sessions quickly
         call_count = [0]
+
         async def mock_create(url, *args, **kwargs):
             call_count[0] += 1
             mock_session = MagicMock()
@@ -3709,6 +3710,7 @@ class TestMaxTotalSessionsLimit:
 
         # Mock _create_session to return fake sessions quickly
         call_count = [0]
+
         async def mock_create(url, *args, **kwargs):
             call_count[0] += 1
             mock_session = MagicMock()
@@ -3752,6 +3754,7 @@ class TestJwtIdentityExtractorNone:
     @pytest.mark.asyncio
     async def test_jwt_identity_extractor_returns_none_on_invalid_token(self):
         """When jwt_identity_extractor returns None, should fall back to header hash."""
+
         def extractor_returns_none(headers: dict) -> Optional[str]:
             return None
 
@@ -3768,6 +3771,7 @@ class TestJwtIdentityExtractorNone:
     @pytest.mark.asyncio
     async def test_jwt_identity_extractor_exception_falls_back(self):
         """When jwt_identity_extractor raises, should fall back to header hash."""
+
         def extractor_raises(headers: dict) -> Optional[str]:
             raise ValueError("Invalid JWT")
 
@@ -3804,7 +3808,7 @@ class TestJwtIdentityExtractorNone:
     @pytest.mark.asyncio
     async def test_jwt_identity_extractor_with_real_jwt_decode_failure(self):
         """Test the actual jwt_identity_extractor implementation with invalid JWT."""
-        # Standard
+        # Third-Party
         import jwt
 
         def jwt_identity_extractor(headers: dict) -> Optional[str]:
@@ -3818,11 +3822,7 @@ class TestJwtIdentityExtractorNone:
                 return None
 
             try:
-                claims = jwt.decode(
-                    token,
-                    options={"verify_signature": False},
-                    algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"]
-                )
+                claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
                 return claims.get("sub") or claims.get("email") or claims.get("user_id")
             except Exception:
                 return None
