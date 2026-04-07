@@ -1444,6 +1444,96 @@ a.card-path:hover, a.gh-link:hover {
 }
 
 /* ============================================================
+   ARCHITECTURE DIAGRAMS VIEW
+   ============================================================ */
+.diagram-nav {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 0.75rem;
+}
+
+.diagram-nav-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  transition: var(--transition);
+  font-family: var(--font-sans);
+  border-bottom: 2px solid transparent;
+}
+
+.diagram-nav-btn:hover { color: var(--text-primary); }
+.diagram-nav-btn.active { color: var(--accent-blue); border-bottom-color: var(--accent-blue); }
+
+.diagram-panel { display: none; animation: fadeIn 0.3s ease; }
+.diagram-panel.active { display: block; }
+
+.diagram-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 2rem;
+  margin-bottom: 1.5rem;
+  overflow-x: auto;
+}
+
+.diagram-container svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}
+
+.diagram-caption {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-top: 1rem;
+  font-style: italic;
+}
+
+.diagram-legend {
+  display: flex;
+  gap: 1.25rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: rgba(0,0,0,0.2);
+  border-radius: var(--radius-sm);
+}
+
+.diagram-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.diagram-legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.diagram-desc {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.7;
+  margin-bottom: 1.5rem;
+  max-width: 800px;
+}
+
+/* ============================================================
    NAV OVERFLOW (allow horizontal scroll on small screens)
    ============================================================ */
 .nav-links {
@@ -1799,6 +1889,7 @@ a.card-path:hover, a.gh-link:hover {
   <div class="nav-brand">ContextForge</div>
   <ul class="nav-links">
     <li><a data-view="overview" class="active">Overview</a></li>
+    <li><a data-view="diagrams">Architecture</a></li>
     <li><a data-view="components">Components</a></li>
     <li><a data-view="flow">Request Flow</a></li>
     <li><a data-view="graph">Service Graph</a></li>
@@ -2013,6 +2104,17 @@ a.card-path:hover, a.gh-link:hover {
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ============================================================
+       ARCHITECTURE DIAGRAMS VIEW
+       ============================================================ -->
+  <div id="diagrams" class="view">
+    <h2 class="section-title">Architecture Diagrams</h2>
+    <p class="section-subtitle">Visual representations of the ContextForge system from different perspectives.</p>
+
+    <div class="diagram-nav" id="diagram-nav"></div>
+    <div id="diagram-panels"></div>
   </div>
 
   <!-- ============================================================
@@ -4812,6 +4914,377 @@ renderConfig();
       el('p', { textContent:t.desc }),
       el('div', { className:'quality-threshold', textContent:t.threshold })
     ]));
+  });
+})();
+
+/* ================================================================
+   RENDER: Architecture Diagrams (programmatic SVG)
+   ================================================================ */
+(function renderDiagrams() {
+  var diagNav = document.getElementById('diagram-nav');
+  var diagPanels = document.getElementById('diagram-panels');
+
+  // Color palette
+  var C = {
+    blue:'#38bdf8', purple:'#a78bfa', green:'#34d399', orange:'#fb923c',
+    pink:'#f472b6', cyan:'#22d3ee', yellow:'#fbbf24', red:'#f87171',
+    bg:'#1a1f35', bgDark:'#111827', border:'#2a3050', text:'#e2e8f0', muted:'#64748b'
+  };
+
+  function svgEl(tag, attrs) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var e = document.createElementNS(ns, tag);
+    if (attrs) Object.keys(attrs).forEach(function(k) { e.setAttribute(k, attrs[k]); });
+    return e;
+  }
+
+  function svgText(x, y, text, opts) {
+    opts = opts || {};
+    var t = svgEl('text', {
+      x:x, y:y, fill:opts.fill||C.text, 'font-size':opts.size||'12',
+      'font-family':'Inter,system-ui,sans-serif', 'text-anchor':opts.anchor||'middle',
+      'font-weight':opts.weight||'400'
+    });
+    t.textContent = text;
+    return t;
+  }
+
+  function svgRect(x, y, w, h, opts) {
+    opts = opts || {};
+    return svgEl('rect', {
+      x:x, y:y, width:w, height:h, rx:opts.rx||8, ry:opts.ry||8,
+      fill:opts.fill||C.bg, stroke:opts.stroke||C.border, 'stroke-width':opts.sw||1
+    });
+  }
+
+  function svgLine(x1, y1, x2, y2, opts) {
+    opts = opts || {};
+    return svgEl('line', {
+      x1:x1, y1:y1, x2:x2, y2:y2, stroke:opts.stroke||C.border,
+      'stroke-width':opts.sw||1.5, 'stroke-dasharray':opts.dash||'none',
+      'marker-end':opts.arrow ? 'url(#arrowhead)' : ''
+    });
+  }
+
+  function svgArrowDef() {
+    var defs = svgEl('defs');
+    var marker = svgEl('marker', {
+      id:'arrowhead', markerWidth:'10', markerHeight:'7', refX:'9', refY:'3.5', orient:'auto'
+    });
+    var poly = svgEl('polygon', { points:'0 0, 10 3.5, 0 7', fill:C.muted });
+    marker.appendChild(poly);
+    defs.appendChild(marker);
+    return defs;
+  }
+
+  function labeledBox(x, y, w, h, label, color, items) {
+    var g = svgEl('g');
+    g.appendChild(svgRect(x, y, w, h, { fill:C.bgDark, stroke:color, sw:1.5 }));
+    // Top bar
+    var bar = svgEl('rect', { x:x, y:y, width:w, height:24, rx:8, ry:8, fill:color+'22' });
+    g.appendChild(bar);
+    var clip = svgEl('rect', { x:x, y:y+12, width:w, height:12, fill:color+'22' });
+    g.appendChild(clip);
+    g.appendChild(svgText(x+w/2, y+16, label, { size:'11', weight:'700', fill:color }));
+    if (items) {
+      items.forEach(function(item, i) {
+        g.appendChild(svgText(x+w/2, y+38+i*16, item, { size:'10', fill:C.muted }));
+      });
+    }
+    return g;
+  }
+
+  // ---- DIAGRAM DEFINITIONS ----
+  var diagrams = [
+    { id:'system-context', title:'System Context', desc:'ContextForge in its environment -- external actors, protocols, and integration points.',
+      render: function(svg) {
+        svg.setAttribute('viewBox','0 0 900 520');
+        svg.appendChild(svgArrowDef());
+        // Central box
+        svg.appendChild(svgRect(310,190,280,140,{fill:'#1e293b',stroke:C.blue,sw:2}));
+        svg.appendChild(svgText(450,240,'ContextForge',{size:'16',weight:'800',fill:C.blue}));
+        svg.appendChild(svgText(450,260,'MCP Gateway & Registry',{size:'11',fill:C.muted}));
+        svg.appendChild(svgText(450,278,'FastAPI + SQLAlchemy + Redis',{size:'9',fill:C.muted}));
+        svg.appendChild(svgText(450,294,'Python 3.11+ / Optional Rust Sidecar',{size:'9',fill:C.muted}));
+        // Clients (top)
+        var clients = [
+          {x:60,label:'MCP Clients',sub:'Claude, VS Code, CLI',color:C.cyan},
+          {x:260,label:'Web Browsers',sub:'Admin UI (HTMX)',color:C.cyan},
+          {x:460,label:'A2A Agents',sub:'OpenAI, Anthropic',color:C.orange},
+          {x:660,label:'REST / gRPC',sub:'API Consumers',color:C.green}
+        ];
+        clients.forEach(function(c) {
+          svg.appendChild(labeledBox(c.x,20,160,60,c.label,c.color,[c.sub]));
+          svg.appendChild(svgLine(c.x+80,80,450,190,{stroke:c.color+'88',arrow:true,dash:'4'}));
+        });
+        // Backends (bottom)
+        var backends = [
+          {x:30,label:'MCP Servers',sub:'stdio / SSE / HTTP',color:C.blue},
+          {x:230,label:'PostgreSQL',sub:'Primary Database',color:C.green},
+          {x:430,label:'Redis',sub:'Cache & Pub/Sub',color:C.red},
+          {x:630,label:'Peer Gateways',sub:'Federation',color:C.purple}
+        ];
+        backends.forEach(function(b) {
+          svg.appendChild(labeledBox(b.x,400,160,60,b.label,b.color,[b.sub]));
+          svg.appendChild(svgLine(450,330,b.x+80,400,{stroke:b.color+'88',arrow:true,dash:'4'}));
+        });
+        // Side: IdPs
+        svg.appendChild(labeledBox(0,215,130,70,'Identity Providers',C.purple,['SSO / OIDC / OAuth']));
+        svg.appendChild(svgLine(130,250,310,250,{stroke:C.purple+'88',arrow:true}));
+        // Side: Observability
+        svg.appendChild(labeledBox(770,215,125,70,'Observability',C.yellow,['OTLP / Prometheus']));
+        svg.appendChild(svgLine(770,250,590,250,{stroke:C.yellow+'88',arrow:false}));
+      }
+    },
+    { id:'component-model', title:'Component Model', desc:'Internal layered architecture showing how requests flow through transport, middleware, routing, service, and data layers.',
+      render: function(svg) {
+        svg.setAttribute('viewBox','0 0 860 500');
+        svg.appendChild(svgArrowDef());
+        var layers = [
+          {y:10,h:55,label:'Transport Layer',color:C.cyan,items:['Streamable HTTP','SSE','WebSocket','STDIO','gRPC','Rust Sidecar']},
+          {y:80,h:55,label:'Middleware Pipeline',color:C.purple,items:['Auth','Token Scoping','RBAC','Logging','Observability','Security Headers','Compression']},
+          {y:150,h:55,label:'Router Layer (19 routers)',color:C.green,items:['Auth','Teams','OAuth','LLM','Observability','Tools','Federation','Well-Known']},
+          {y:220,h:80,label:'Service Layer (56 services)',color:C.orange,items:['Tool Svc','Resource Svc','Prompt Svc','Server Svc','Gateway Svc','Session Pool','A2A Svc','...']},
+          {y:315,h:55,label:'Cache Layer (9 caches)',color:C.pink,items:['Auth Cache','Registry Cache','Tool Lookup','Session Registry','Admin Stats','Metrics Cache']},
+          {y:385,h:55,label:'Data Layer',color:C.blue,items:['SQLAlchemy ORM (55 models)','Alembic Migrations','PostgreSQL / SQLite']}
+        ];
+        layers.forEach(function(l) {
+          svg.appendChild(svgRect(10,l.y,680,l.h,{fill:C.bgDark,stroke:l.color,sw:1.5}));
+          svg.appendChild(svgText(60,l.y+20,l.label,{size:'12',weight:'700',fill:l.color,anchor:'start'}));
+          l.items.forEach(function(item, i) {
+            var ix = 60 + i * 92;
+            if (ix + 80 > 680) return;
+            svg.appendChild(svgRect(ix,l.y+28,84,20,{fill:l.color+'15',stroke:l.color+'44',rx:4,ry:4}));
+            svg.appendChild(svgText(ix+42,l.y+42,item,{size:'8',fill:C.muted}));
+          });
+        });
+        // Arrows between layers
+        [55,125,195,290,365].forEach(function(y) {
+          svg.appendChild(svgLine(350,y+5,350,y+18,{stroke:C.muted,arrow:true}));
+        });
+        // Plugin framework (side)
+        svg.appendChild(svgRect(710,10,140,430,{fill:C.bgDark,stroke:C.yellow,sw:1.5}));
+        svg.appendChild(svgText(780,35,'Plugin Framework',{size:'11',weight:'700',fill:C.yellow}));
+        var hooks = ['tool_pre/post','resource_pre/post','prompt_pre/post','http_pre/post','agent_pre/post','policy hooks'];
+        hooks.forEach(function(h, i) {
+          svg.appendChild(svgText(780,60+i*22,h,{size:'9',fill:C.muted}));
+        });
+        [80,150,220].forEach(function(y) {
+          svg.appendChild(svgLine(690,y+25,710,y+25,{stroke:C.yellow+'66',dash:'3'}));
+        });
+        // Redis (bottom right)
+        svg.appendChild(labeledBox(710,455,140,40,'Redis',C.red,[]));
+        svg.appendChild(svgLine(690,420,750,455,{stroke:C.red+'66',dash:'4'}));
+      }
+    },
+    { id:'deployment', title:'Deployment Architecture', desc:'Production Kubernetes deployment topology with nginx reverse proxy, PostgreSQL, Redis, and optional Rust sidecar.',
+      render: function(svg) {
+        svg.setAttribute('viewBox','0 0 860 440');
+        svg.appendChild(svgArrowDef());
+        // K8s cluster box
+        svg.appendChild(svgRect(10,10,840,420,{fill:'transparent',stroke:C.blue+'44',sw:2}));
+        svg.appendChild(svgText(430,35,'Kubernetes Cluster',{size:'14',weight:'700',fill:C.blue}));
+        // Ingress
+        svg.appendChild(labeledBox(330,50,200,50,'Ingress / LoadBalancer',C.cyan,['External traffic']));
+        // Nginx
+        svg.appendChild(labeledBox(330,130,200,60,'nginx Reverse Proxy',C.green,['TLS termination','Route /mcp, /admin, /api']));
+        svg.appendChild(svgLine(430,100,430,130,{stroke:C.cyan+'88',arrow:true}));
+        // Gateway pods
+        svg.appendChild(labeledBox(60,230,240,100,'ContextForge Pod (x N)',C.orange,['FastAPI + Gunicorn','uvicorn workers','Alembic migrations job']));
+        svg.appendChild(svgLine(370,190,180,230,{stroke:C.green+'88',arrow:true}));
+        // Rust sidecar
+        svg.appendChild(labeledBox(60,350,240,50,'Rust MCP Runtime (optional)',C.pink,['Streamable HTTP sidecar']));
+        svg.appendChild(svgLine(180,330,180,350,{stroke:C.pink+'66',dash:'4'}));
+        svg.appendChild(svgLine(490,190,560,230,{stroke:C.green+'88',arrow:true}));
+        // PostgreSQL
+        svg.appendChild(labeledBox(440,230,170,70,'PostgreSQL',C.blue,['Primary DB','PgBouncer pool']));
+        svg.appendChild(svgLine(300,280,440,280,{stroke:C.blue+'66',arrow:true,dash:'4'}));
+        // Redis
+        svg.appendChild(labeledBox(650,230,170,70,'Redis',C.red,['Cache + pub/sub','Session state','Leader election']));
+        svg.appendChild(svgLine(300,290,650,290,{stroke:C.red+'66',arrow:true,dash:'4'}));
+        // MinIO
+        svg.appendChild(labeledBox(440,330,170,50,'MinIO (optional)',C.yellow,['Object storage']));
+        // Monitoring
+        svg.appendChild(labeledBox(650,330,170,50,'Prometheus + Grafana',C.purple,['Metrics scraping']));
+        svg.appendChild(svgLine(300,300,650,360,{stroke:C.purple+'44',dash:'6'}));
+      }
+    },
+    { id:'security-model', title:'Security Model', desc:'Two-layer security: Layer 1 (Token Scoping) controls visibility, Layer 2 (RBAC) controls actions. Evaluated independently on every request.',
+      render: function(svg) {
+        svg.setAttribute('viewBox','0 0 800 420');
+        svg.appendChild(svgArrowDef());
+        // Request
+        svg.appendChild(labeledBox(10,170,120,60,'Incoming Request',C.cyan,['Bearer JWT']));
+        svg.appendChild(svgLine(130,200,180,200,{stroke:C.cyan+'88',arrow:true}));
+        // Layer 1
+        svg.appendChild(svgRect(180,30,250,360,{fill:C.bgDark,stroke:C.purple,sw:2}));
+        svg.appendChild(svgText(305,55,'Layer 1: Token Scoping',{size:'12',weight:'700',fill:C.purple}));
+        svg.appendChild(svgText(305,75,'What can you SEE?',{size:'10',fill:C.muted}));
+        var l1Items = [
+          {y:100,t:'API Token Path',sub:'JWT teams claim is sole authority'},
+          {y:140,t:'Session Token Path',sub:'DB is authority; JWT only narrows'},
+          {y:180,t:'Missing teams key',sub:'= public-only (fail-closed)'},
+          {y:220,t:'Admin bypass',sub:'requires teams:null + is_admin:true'},
+          {y:260,t:'normalize_token_teams()',sub:'API/legacy tokens'},
+          {y:300,t:'resolve_session_teams()',sub:'Session tokens'},
+          {y:340,t:'Result',sub:'Visible team set or admin bypass'}
+        ];
+        l1Items.forEach(function(item) {
+          svg.appendChild(svgText(210,item.y,item.t,{size:'10',weight:'600',fill:C.text,anchor:'start'}));
+          svg.appendChild(svgText(210,item.y+13,item.sub,{size:'8',fill:C.muted,anchor:'start'}));
+        });
+        svg.appendChild(svgLine(430,200,470,200,{stroke:C.muted,arrow:true}));
+        // Layer 2
+        svg.appendChild(svgRect(470,60,270,300,{fill:C.bgDark,stroke:C.green,sw:2}));
+        svg.appendChild(svgText(605,85,'Layer 2: RBAC',{size:'12',weight:'700',fill:C.green}));
+        svg.appendChild(svgText(605,105,'What can you DO?',{size:'10',fill:C.muted}));
+        var roles = [
+          {y:130,r:'platform_admin',p:'* (all)',c:C.red},
+          {y:170,r:'team_admin',p:'teams.*, tools.rw, resources.r',c:C.orange},
+          {y:210,r:'developer',p:'tools.rx, resources.r',c:C.blue},
+          {y:250,r:'viewer',p:'tools.r, resources.r (read-only)',c:C.green}
+        ];
+        roles.forEach(function(role) {
+          svg.appendChild(svgRect(490,role.y,230,30,{fill:role.c+'11',stroke:role.c+'44',rx:4,ry:4}));
+          svg.appendChild(svgText(510,role.y+14,role.r,{size:'10',weight:'700',fill:role.c,anchor:'start'}));
+          svg.appendChild(svgText(510,role.y+25,role.p,{size:'8',fill:C.muted,anchor:'start'}));
+        });
+        svg.appendChild(svgText(605,310,'Permission audit log',{size:'9',fill:C.muted}));
+        svg.appendChild(svgText(605,325,'on every check',{size:'8',fill:C.muted}));
+        // Result
+        svg.appendChild(svgLine(740,200,780,200,{stroke:C.muted,arrow:true}));
+        svg.appendChild(svgText(790,195,'Allow',{size:'11',weight:'700',fill:C.green,anchor:'start'}));
+        svg.appendChild(svgText(790,210,'or Deny',{size:'11',weight:'700',fill:C.red,anchor:'start'}));
+      }
+    },
+    { id:'federation', title:'Federation Topology', desc:'Multi-gateway federation with peer discovery, cross-gateway tool resolution, and registry cache synchronization.',
+      render: function(svg) {
+        svg.setAttribute('viewBox','0 0 800 380');
+        svg.appendChild(svgArrowDef());
+        // Gateway A (primary)
+        svg.appendChild(svgRect(250,100,300,180,{fill:C.bgDark,stroke:C.blue,sw:2}));
+        svg.appendChild(svgText(400,125,'Gateway A (Primary)',{size:'13',weight:'700',fill:C.blue}));
+        svg.appendChild(svgText(400,145,'tools/list aggregates local + federated',{size:'9',fill:C.muted}));
+        var localTools = ['search_docs','create_ticket','run_query','analyze_data'];
+        localTools.forEach(function(t,i) {
+          svg.appendChild(svgRect(270,160+i*28,120,22,{fill:C.blue+'15',stroke:C.blue+'44',rx:4,ry:4}));
+          svg.appendChild(svgText(330,175+i*28,t,{size:'8',fill:C.text}));
+        });
+        svg.appendChild(svgText(470,180,'Registry Cache',{size:'9',weight:'600',fill:C.pink}));
+        svg.appendChild(svgText(470,200,'Federated Tools',{size:'9',weight:'600',fill:C.pink}));
+        svg.appendChild(svgRect(420,210,120,22,{fill:C.pink+'15',stroke:C.pink+'44',rx:4,ry:4}));
+        svg.appendChild(svgText(480,225,'peer/translate_text',{size:'8',fill:C.text}));
+        svg.appendChild(svgRect(420,236,120,22,{fill:C.pink+'15',stroke:C.pink+'44',rx:4,ry:4}));
+        svg.appendChild(svgText(480,251,'peer/summarize',{size:'8',fill:C.text}));
+        // Gateway B
+        svg.appendChild(labeledBox(620,140,160,80,'Gateway B',C.purple,['translate_text','summarize']));
+        svg.appendChild(svgLine(550,210,620,180,{stroke:C.purple+'88',arrow:true}));
+        svg.appendChild(svgLine(620,200,550,230,{stroke:C.blue+'88',arrow:true,dash:'4'}));
+        svg.appendChild(svgText(590,168,'discover',{size:'8',fill:C.muted}));
+        svg.appendChild(svgText(590,248,'proxy call',{size:'8',fill:C.muted}));
+        // Gateway C
+        svg.appendChild(labeledBox(620,260,160,60,'Gateway C',C.green,['generate_image']));
+        svg.appendChild(svgLine(550,260,620,280,{stroke:C.green+'88',arrow:true}));
+        // Client
+        svg.appendChild(labeledBox(280,10,240,60,'MCP Client',C.cyan,['sees ALL tools merged']));
+        svg.appendChild(svgLine(400,70,400,100,{stroke:C.cyan+'88',arrow:true}));
+        // Redis
+        svg.appendChild(labeledBox(20,160,160,60,'Redis',C.red,['Cache + pub/sub']));
+        svg.appendChild(svgLine(180,190,250,190,{stroke:C.red+'66',dash:'4'}));
+      }
+    },
+    { id:'data-architecture', title:'Data Architecture', desc:'Data stores, caching tiers, and how state flows between in-memory caches, Redis, and the database.',
+      render: function(svg) {
+        svg.setAttribute('viewBox','0 0 800 400');
+        svg.appendChild(svgArrowDef());
+        // L1: Application
+        svg.appendChild(svgRect(10,10,780,90,{fill:'transparent',stroke:C.cyan+'44',sw:1}));
+        svg.appendChild(svgText(400,30,'Application Layer',{size:'11',weight:'700',fill:C.cyan}));
+        var appCaches = [
+          {x:30,label:'Tool Lookup\nCache',color:C.blue},
+          {x:150,label:'Auth\nCache (L1)',color:C.purple},
+          {x:270,label:'Registry\nCache',color:C.green},
+          {x:390,label:'Global Config\nCache',color:C.orange},
+          {x:510,label:'Admin Stats\nCache',color:C.pink},
+          {x:630,label:'Metrics\nBuffer',color:C.yellow}
+        ];
+        appCaches.forEach(function(c) {
+          svg.appendChild(svgRect(c.x,42,110,46,{fill:c.color+'15',stroke:c.color+'44',rx:6,ry:6}));
+          c.label.split('\n').forEach(function(line,i) {
+            svg.appendChild(svgText(c.x+55,56+i*13,line,{size:'9',fill:C.text}));
+          });
+        });
+        // Arrow down
+        svg.appendChild(svgLine(400,100,400,120,{stroke:C.muted,arrow:true}));
+        svg.appendChild(svgText(430,114,'miss / invalidate',{size:'8',fill:C.muted,anchor:'start'}));
+        // L2: Redis
+        svg.appendChild(svgRect(10,125,780,90,{fill:'transparent',stroke:C.red+'44',sw:1}));
+        svg.appendChild(svgText(400,145,'Redis Layer (optional)',{size:'11',weight:'700',fill:C.red}));
+        var redisCaches = [
+          {x:40,label:'Auth Cache (L2)',w:130},
+          {x:190,label:'Session Registry',w:130},
+          {x:340,label:'Event Store',w:110},
+          {x:470,label:'Leader Election',w:130},
+          {x:620,label:'Pub/Sub Events',w:130}
+        ];
+        redisCaches.forEach(function(c) {
+          svg.appendChild(svgRect(c.x,158,c.w,42,{fill:C.red+'15',stroke:C.red+'44',rx:6,ry:6}));
+          svg.appendChild(svgText(c.x+c.w/2,183,c.label,{size:'9',fill:C.text}));
+        });
+        // Arrow down
+        svg.appendChild(svgLine(400,215,400,240,{stroke:C.muted,arrow:true}));
+        svg.appendChild(svgText(430,232,'persistent storage',{size:'8',fill:C.muted,anchor:'start'}));
+        // L3: Database
+        svg.appendChild(svgRect(10,245,780,145,{fill:'transparent',stroke:C.blue+'44',sw:1}));
+        svg.appendChild(svgText(400,265,'Database Layer (PostgreSQL / SQLite)',{size:'11',weight:'700',fill:C.blue}));
+        var dbGroups = [
+          {x:20,label:'Users & Auth',count:'12 tables',color:C.purple},
+          {x:160,label:'MCP Entities',count:'8 tables',color:C.blue},
+          {x:300,label:'Metrics',count:'10 tables',color:C.green},
+          {x:440,label:'Observability',count:'5 tables',color:C.orange},
+          {x:580,label:'Config &\nSessions',count:'6 tables',color:C.cyan},
+          {x:700,label:'Audit &\nSecurity',count:'3 tables',color:C.red}
+        ];
+        dbGroups.forEach(function(g) {
+          svg.appendChild(svgRect(g.x,280,120,55,{fill:g.color+'11',stroke:g.color+'33',rx:6,ry:6}));
+          g.label.split('\n').forEach(function(line,i) {
+            svg.appendChild(svgText(g.x+60,296+i*13,line,{size:'9',weight:'600',fill:g.color}));
+          });
+          svg.appendChild(svgText(g.x+60,322,g.count,{size:'8',fill:C.muted}));
+        });
+        // Alembic
+        svg.appendChild(svgText(400,370,'Alembic Migrations (50+ versions)',{size:'9',fill:C.muted}));
+      }
+    }
+  ];
+
+  // Render navigation and panels
+  diagrams.forEach(function(d, i) {
+    // Nav button
+    var btn = el('button', {
+      className:'diagram-nav-btn' + (i === 0 ? ' active' : ''),
+      textContent:d.title,
+      dataset:{panel:d.id}
+    });
+    btn.addEventListener('click', function() {
+      diagNav.querySelectorAll('.diagram-nav-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      diagPanels.querySelectorAll('.diagram-panel').forEach(function(p) { p.classList.remove('active'); });
+      document.getElementById('dp-'+d.id).classList.add('active');
+    });
+    diagNav.appendChild(btn);
+
+    // Panel
+    var panel = el('div', { className:'diagram-panel' + (i === 0 ? ' active' : ''), id:'dp-'+d.id });
+    panel.appendChild(el('p', { className:'diagram-desc', textContent:d.desc }));
+
+    var container = el('div', { className:'diagram-container' });
+    var svg = svgEl('svg', { xmlns:'http://www.w3.org/2000/svg' });
+    d.render(svg);
+    container.appendChild(svg);
+    panel.appendChild(container);
+
+    diagPanels.appendChild(panel);
   });
 })();
 
