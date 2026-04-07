@@ -27,9 +27,12 @@ from sqlalchemy.pool import StaticPool
 # First-Party
 from mcpgateway.db import Base, ToolPluginBinding
 from mcpgateway.schemas import (
+    OutputLengthGuardConfig,
     PluginBindingMode,
     PluginId,
     PluginPolicyItem,
+    RateLimiterConfig,
+    SecretsDetectionConfig,
     TeamPolicies,
     ToolPluginBindingRequest,
     ToolPluginBindingResponse,
@@ -267,10 +270,24 @@ class TestUpsertBindings:
         results = service.upsert_bindings(db_session, request, caller_email="admin@example.com")
 
         assert len(results) == 2
-        assert {r.tool_name for r in results} == {"tool_a", "tool_b"}
-        for r in results:
-            assert r.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
         assert db_session.query(ToolPluginBinding).count() == 2
+
+        by_tool = {r.tool_name: r for r in results}
+        assert set(by_tool.keys()) == {"tool_a", "tool_b"}
+
+        tool_a = by_tool["tool_a"]
+        assert tool_a.team_id == "team-a"
+        assert tool_a.plugin_id == "RATE_LIMITER"
+        assert tool_a.mode == "permissive"
+        assert tool_a.priority == 20
+        assert tool_a.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
+
+        tool_b = by_tool["tool_b"]
+        assert tool_b.team_id == "team-a"
+        assert tool_b.plugin_id == "RATE_LIMITER"
+        assert tool_b.mode == "permissive"
+        assert tool_b.priority == 20
+        assert tool_b.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
 
     def test_multiple_teams(self, service, db_session):
         """A request spanning two teams produces one binding per team."""
@@ -287,8 +304,20 @@ class TestUpsertBindings:
         results = service.upsert_bindings(db_session, request, caller_email="admin@example.com")
 
         assert len(results) == 2
-        assert {r.team_id for r in results} == {"team-a", "team-b"}
         assert db_session.query(ToolPluginBinding).count() == 2
+
+        by_team = {r.team_id: r for r in results}
+        assert set(by_team.keys()) == {"team-a", "team-b"}
+
+        team_a = by_team["team-a"]
+        assert team_a.tool_name == "tool_x"
+        assert team_a.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert team_a.config == {"min_chars": 0, "max_chars": 500, "strategy": "block", "ellipsis": "..."}
+
+        team_b = by_team["team-b"]
+        assert team_b.tool_name == "tool_y"
+        assert team_b.plugin_id == "SECRETS_DETECTION"
+        assert team_b.config == {"enabled": {}, "redact": True, "redaction_text": "[REDACTED]", "block_on_detection": False, "min_findings_to_block": 1}
 
     def test_caller_email_stored_in_audit_fields(self, service, db_session, simple_request):
         """caller_email is written to both created_by and updated_by on insert."""
@@ -394,8 +423,6 @@ class TestOutputLengthGuardConfig:
 
     def test_valid_defaults(self):
         """Default construction succeeds — schema defaults remain available for internal/plugin-manager use."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
         cfg = OutputLengthGuardConfig()
         assert cfg.min_chars == 0
         assert cfg.max_chars == 2000
@@ -404,60 +431,44 @@ class TestOutputLengthGuardConfig:
 
     def test_valid_explicit(self):
         """Explicit valid values are accepted."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
         cfg = OutputLengthGuardConfig(min_chars=100, max_chars=500, strategy="block", ellipsis="[cut]")
         assert cfg.min_chars == 100
         assert cfg.max_chars == 500
         assert cfg.strategy == "block"
         assert cfg.ellipsis == "[cut]"
 
-    def test_min_must_be_less_than_max(self):
-        """min_chars >= max_chars is rejected by the cross-validator."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
+    def test_min_equal_to_max_rejected(self):
+        """min_chars == max_chars is rejected by the cross-validator."""
         with pytest.raises(ValidationError, match="min_chars must be less than max_chars"):
             OutputLengthGuardConfig(min_chars=500, max_chars=500, strategy="truncate", ellipsis="...")
 
-    def test_min_greater_than_max_also_rejected(self):
-        """min_chars > max_chars is also rejected."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
+    def test_min_greater_than_max_rejected(self):
+        """min_chars > max_chars is rejected by the cross-validator."""
         with pytest.raises(ValidationError, match="min_chars must be less than max_chars"):
             OutputLengthGuardConfig(min_chars=1000, max_chars=100, strategy="truncate", ellipsis="...")
 
     def test_max_chars_must_be_greater_than_one(self):
         """max_chars=1 is rejected (must be > 1)."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
         with pytest.raises(ValidationError, match=r"(?s)max_chars.*greater than 1"):
             OutputLengthGuardConfig(min_chars=0, max_chars=1, strategy="truncate", ellipsis="...")
 
     def test_min_chars_must_be_non_negative(self):
         """min_chars=-1 is rejected (must be >= 0)."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
         with pytest.raises(ValidationError, match=r"(?s)min_chars.*greater than or equal to 0"):
             OutputLengthGuardConfig(min_chars=-1, max_chars=100, strategy="truncate", ellipsis="...")
 
     def test_invalid_strategy(self):
         """Strategy values other than 'truncate' or 'block' are rejected."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
         with pytest.raises(ValidationError, match=r"(?s)strategy.*'truncate' or 'block'"):
             OutputLengthGuardConfig(min_chars=0, max_chars=2000, strategy="drop", ellipsis="...")
 
     def test_ellipsis_too_long(self):
         """ellipsis longer than 20 characters is rejected."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
         with pytest.raises(ValidationError, match=r"(?s)ellipsis.*at most 20 characters"):
             OutputLengthGuardConfig(min_chars=0, max_chars=2000, strategy="truncate", ellipsis="x" * 21)
 
     def test_extra_fields_forbidden(self):
         """Unknown fields are rejected (extra='forbid')."""
-        from mcpgateway.schemas import OutputLengthGuardConfig
-
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             OutputLengthGuardConfig(min_chars=0, max_chars=2000, strategy="truncate", ellipsis="...", unknown_field="bad")
 
@@ -472,8 +483,6 @@ class TestRateLimiterConfig:
 
     def test_all_none_is_valid(self):
         """All-None construction is valid (no limits configured)."""
-        from mcpgateway.schemas import RateLimiterConfig
-
         cfg = RateLimiterConfig()
         assert cfg.by_user is None
         assert cfg.by_tenant is None
@@ -481,51 +490,37 @@ class TestRateLimiterConfig:
 
     def test_valid_per_minute(self):
         """Rate strings ending in /m are accepted."""
-        from mcpgateway.schemas import RateLimiterConfig
-
         cfg = RateLimiterConfig(by_user="60/m", by_tenant="600/m", by_tool="10/m")
         assert cfg.by_user == "60/m"
         assert cfg.by_tenant == "600/m"
 
     def test_valid_per_second(self):
         """Rate strings ending in /s are accepted."""
-        from mcpgateway.schemas import RateLimiterConfig
-
         cfg = RateLimiterConfig(by_user="10/s")
         assert cfg.by_user == "10/s"
 
     def test_invalid_period_h(self):
         """Period /h is not accepted."""
-        from mcpgateway.schemas import RateLimiterConfig
-
         with pytest.raises(ValidationError, match=r"Rate string '60/h' is invalid"):
             RateLimiterConfig(by_user="60/h")
 
     def test_invalid_no_slash(self):
         """Rate strings without a slash are rejected."""
-        from mcpgateway.schemas import RateLimiterConfig
-
         with pytest.raises(ValidationError, match=r"Rate string '100' is invalid"):
             RateLimiterConfig(by_tool="100")
 
     def test_invalid_missing_count(self):
         """Rate strings missing the numeric count are rejected."""
-        from mcpgateway.schemas import RateLimiterConfig
-
         with pytest.raises(ValidationError, match=r"Rate string '/m' is invalid"):
             RateLimiterConfig(by_tenant="/m")
 
     def test_invalid_non_numeric_count(self):
         """Non-numeric count is rejected."""
-        from mcpgateway.schemas import RateLimiterConfig
-
         with pytest.raises(ValidationError, match=r"Rate string 'fast/m' is invalid"):
             RateLimiterConfig(by_user="fast/m")
 
     def test_extra_fields_forbidden(self):
         """Unknown fields are rejected (extra='forbid')."""
-        from mcpgateway.schemas import RateLimiterConfig
-
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             RateLimiterConfig(by_ip="10/m")
 
@@ -540,8 +535,6 @@ class TestSecretsDetectionConfig:
 
     def test_valid_defaults(self):
         """Default construction succeeds — schema defaults remain available for internal/plugin-manager use."""
-        from mcpgateway.schemas import SecretsDetectionConfig
-
         cfg = SecretsDetectionConfig()
         assert cfg.redact is True
         assert cfg.redaction_text == "[REDACTED]"
@@ -551,8 +544,6 @@ class TestSecretsDetectionConfig:
 
     def test_valid_explicit(self):
         """Explicit valid values are accepted."""
-        from mcpgateway.schemas import SecretsDetectionConfig
-
         cfg = SecretsDetectionConfig(
             enabled={"aws_key": True, "github_token": False},
             redact=True,
@@ -565,22 +556,16 @@ class TestSecretsDetectionConfig:
 
     def test_min_findings_must_be_at_least_one(self):
         """min_findings_to_block=0 is rejected (must be >= 1)."""
-        from mcpgateway.schemas import SecretsDetectionConfig
-
         with pytest.raises(ValidationError, match=r"(?s)min_findings_to_block.*greater than or equal to 1"):
             SecretsDetectionConfig(enabled={}, redact=True, redaction_text="[REDACTED]", block_on_detection=False, min_findings_to_block=0)
 
     def test_redaction_text_too_long(self):
         """redaction_text longer than 50 characters is rejected."""
-        from mcpgateway.schemas import SecretsDetectionConfig
-
         with pytest.raises(ValidationError, match=r"(?s)redaction_text.*at most 50 characters"):
             SecretsDetectionConfig(enabled={}, redact=True, redaction_text="x" * 51, block_on_detection=False, min_findings_to_block=1)
 
     def test_extra_fields_forbidden(self):
         """Unknown fields are rejected (extra='forbid')."""
-        from mcpgateway.schemas import SecretsDetectionConfig
-
         with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
             SecretsDetectionConfig(enabled={}, redact=True, redaction_text="[REDACTED]", block_on_detection=False, min_findings_to_block=1, scan_mode="deep")
 
@@ -790,13 +775,15 @@ class TestTopLevelSchemas:
                 }
             )
         errors = exc_info.value.errors()
-        # Both items must be present — two separate value_error entries
         assert len(errors) == 2, f"Expected 2 errors, got {len(errors)}: {errors}"
-        # Locations include the list index so callers can pinpoint which binding was broken
-        locs = [e["loc"] for e in errors]
-        assert any(0 in loc for loc in locs), "Expected error location for policies[0]"
-        assert any(1 in loc for loc in locs), "Expected error location for policies[1]"
-        # Error text must name the offending plugin for easy diagnosis
-        all_msgs = " ".join(e["msg"] for e in errors)
-        assert "OUTPUT_LENGTH_GUARD" in all_msgs
-        assert "RATE_LIMITER" in all_msgs
+
+        # Sort by the integer index in the loc tuple so assertions are deterministic regardless of collection order
+        errors_by_index = sorted(errors, key=lambda e: next(x for x in e["loc"] if isinstance(x, int)))
+
+        # item 0: OLG — strategy field rejected
+        assert errors_by_index[0]["loc"] == ("teams", "team-a", "policies", 0)
+        assert errors_by_index[0]["msg"] == "Value error, Invalid OUTPUT_LENGTH_GUARD config: [strategy: Input should be 'truncate' or 'block']"
+
+        # item 1: RATE_LIMITER — missing all three fields (sorted alphabetically in the error)
+        assert errors_by_index[1]["loc"] == ("teams", "team-a", "policies", 1)
+        assert errors_by_index[1]["msg"] == "Value error, Missing config fields for RATE_LIMITER: ['by_tenant', 'by_tool', 'by_user']"
