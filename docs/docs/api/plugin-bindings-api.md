@@ -115,7 +115,7 @@ List all bindings for a specific team.
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
-  http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings/a5ee3aac6c004f3a9a4beaa53bc383ec | jq
+  http://<GATEWAY_HOST>:<GATEWAY_PORT>/v1/tools/plugin_bindings/<YOUR_TEAM_ID> | jq
 ```
 
 ---
@@ -141,7 +141,7 @@ All write operations (`POST`, `DELETE`) and read operations (`GET`) return the s
 ```json
 {
   "id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
-  "team_id": "a5ee3aac6c004f3a9a4beaa53bc383ec",
+  "team_id": "<YOUR_TEAM_ID>",
   "tool_name": "echo_text",
   "plugin_id": "OUTPUT_LENGTH_GUARD",
   "mode": "enforce",
@@ -208,7 +208,7 @@ curl -s -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "teams": {
-      "a5ee3aac6c004f3a9a4beaa53bc383ec": {
+      "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["echo_text"],
           "plugin_id": "OUTPUT_LENGTH_GUARD",
@@ -272,7 +272,7 @@ curl -s -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "teams": {
-      "a5ee3aac6c004f3a9a4beaa53bc383ec": {
+      "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["*"],
           "plugin_id": "RATE_LIMITER",
@@ -348,7 +348,7 @@ curl -s -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "teams": {
-      "a5ee3aac6c004f3a9a4beaa53bc383ec": {
+      "<YOUR_TEAM_ID>": {
         "policies": [{
           "tool_names": ["fetch_data", "query_db"],
           "plugin_id": "SECRETS_DETECTION",
@@ -389,7 +389,7 @@ curl -s -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "teams": {
-      "team_alpha": {
+      "team_id": {
         "policies": [
           {
             "tool_names": ["*"],
