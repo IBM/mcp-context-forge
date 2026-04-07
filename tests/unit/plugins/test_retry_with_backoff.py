@@ -574,7 +574,7 @@ class TestRustFallback:
             result = await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
 
         assert result.retry_delay_ms == 300
-        assert mock_rust.check_and_update.call_args_list[1][0] == ("t", "r1", True, None)
+        assert mock_rust.check_and_update.call_args_list[1][0] == ("t", ctx.global_context.request_id, True, None)
 
     @pytest.mark.asyncio
     async def test_rust_path_bypassed_for_check_text_content(self):

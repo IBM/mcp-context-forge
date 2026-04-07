@@ -658,8 +658,6 @@ def call_rust_with_trace_context_compat(
 ) -> Any:
     """Call a Rust-backed entrypoint with trace-context fallback for older installed wheels."""
 
-    if trace_context is None:
-        return func(*args)
     try:
         return func(*args, trace_context)
     except TypeError as exc:

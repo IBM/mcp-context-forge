@@ -665,7 +665,7 @@ def test_rust_scan_fallback_logs_full_exception(monkeypatch, caplog):
     secret = "AWS_ACCESS_KEY_ID=AKIAFAKE12345EXAMPLE"
 
     def boom(container, cfg, trace_context):
-        assert trace_context is None
+        assert trace_context == {"traceparent": None, "trace_id": None, "parent_span_id": None}
         raise RuntimeError("simulated rust failure")
 
     monkeypatch.setattr(module, "_RUST_AVAILABLE", True)

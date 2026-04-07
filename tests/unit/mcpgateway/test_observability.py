@@ -198,6 +198,24 @@ class TestObservability:
         assert result == "ok"
         assert calls == [("payload", {"traceparent": "tp"}), ("payload",)]
 
+    def test_call_rust_with_trace_context_compat_passes_explicit_none_for_new_wheels(self):
+        """New Rust wheels still expect the positional trace-context slot when it's empty."""
+        calls = []
+
+        def new_func(*args):
+            calls.append(args)
+            return "ok"
+
+        result = observability.call_rust_with_trace_context_compat(
+            new_func,
+            "payload",
+            trace_context=None,
+            legacy_key="test-none",
+        )
+
+        assert result == "ok"
+        assert calls == [("payload", None)]
+
     def test_call_rust_with_trace_context_compat_re_raises_real_type_errors(self):
         """Only legacy signature mismatches should trigger compatibility fallback."""
 

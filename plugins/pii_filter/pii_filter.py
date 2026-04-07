@@ -907,6 +907,12 @@ class PIIFilterPlugin(Plugin):
         logger.info(f"PII Filter plugin ({self.implementation}) shutting down. Total masked: {self.masked_count} items")
 
 
-# Export Rust implementation for tests
-RUST_AVAILABLE = _RUST_AVAILABLE
-RustPIIDetector = _RustPIIDetector
+# Export the Python compatibility wrapper for tests and direct callers.
+try:
+    from .pii_filter_rust import RUST_AVAILABLE as _WRAPPED_RUST_AVAILABLE, RustPIIDetector as _WrappedRustPIIDetector
+except ImportError:
+    _WRAPPED_RUST_AVAILABLE = False
+    _WrappedRustPIIDetector = None
+
+RUST_AVAILABLE = _WRAPPED_RUST_AVAILABLE
+RustPIIDetector = _WrappedRustPIIDetector
