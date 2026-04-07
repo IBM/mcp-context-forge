@@ -1115,6 +1115,7 @@ dependencies = [
 name = "plugin_telemetry_common"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",

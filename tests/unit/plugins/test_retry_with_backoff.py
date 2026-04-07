@@ -557,6 +557,26 @@ class TestRustFallback:
                 await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
 
     @pytest.mark.asyncio
+    async def test_rust_path_falls_back_to_legacy_signature(self):
+        plugin = make_plugin()
+        ctx = make_context()
+
+        mock_rust = MagicMock()
+        mock_rust.check_and_update.side_effect = [
+            TypeError("check_and_update() takes 4 positional arguments but 5 were given"),
+            (True, 300),
+        ]
+
+        with (
+            patch.object(plugin, "_rust", mock_rust),
+            patch("plugins.retry_with_backoff.retry_with_backoff.build_rust_plugin_trace_context", return_value={"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"}),
+        ):
+            result = await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
+
+        assert result.retry_delay_ms == 300
+        assert mock_rust.check_and_update.call_args_list[1][0] == ("t", "r1", True, None)
+
+    @pytest.mark.asyncio
     async def test_rust_path_bypassed_for_check_text_content(self):
         """When check_text_content=True the plugin must use the Python path
         even if _RUST is present, because signal 3 isn't implemented in Rust."""

@@ -23,7 +23,7 @@ from typing import Any, Dict, Tuple
 from pydantic import BaseModel, Field, field_validator
 
 # First-Party
-from mcpgateway.observability import build_rust_plugin_trace_context
+from mcpgateway.observability import build_rust_plugin_trace_context, call_rust_with_trace_context_compat
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -172,7 +172,13 @@ def _scan_container(
         try:
             logger.debug("Using Rust implementation")
             # Pass Pydantic model directly - Rust extracts attributes
-            return secrets_detection(container, cfg, build_rust_plugin_trace_context(context))
+            return call_rust_with_trace_context_compat(
+                secrets_detection,
+                container,
+                cfg,
+                trace_context=build_rust_plugin_trace_context(context),
+                legacy_key="secrets_detection.py_scan_container",
+            )
         except Exception as e:
             logger.warning("Rust scan failed, falling back to Python: %s", e, exc_info=True)
             # Fall through to Python implementation

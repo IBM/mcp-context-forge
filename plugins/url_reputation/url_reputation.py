@@ -20,7 +20,7 @@ import logging
 from pydantic import BaseModel, Field, field_validator
 
 # First-Party
-from mcpgateway.observability import build_rust_plugin_trace_context
+from mcpgateway.observability import build_rust_plugin_trace_context, call_rust_with_trace_context_compat
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -95,7 +95,12 @@ class URLReputationPlugin(Plugin):
 
         if _RUST_AVAILABLE:
             try:
-                result_dict = self.rust_plugin.validate_url_py(payload.uri, build_rust_plugin_trace_context(context))
+                result_dict = call_rust_with_trace_context_compat(
+                    self.rust_plugin.validate_url_py,
+                    payload.uri,
+                    trace_context=build_rust_plugin_trace_context(context),
+                    legacy_key="url_reputation.validate_url_py",
+                )
                 return ResourcePreFetchResult(**result_dict)
             except Exception as e:
                 logger.warning(

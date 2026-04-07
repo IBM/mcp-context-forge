@@ -513,6 +513,40 @@ async def test_rust_path_passes_trace_context():
 
 
 @pytest.mark.asyncio
+async def test_rust_path_falls_back_to_legacy_signature():
+    """Older installed Rust wheels should still work without trace-context support."""
+    config = PluginConfig(
+        name="urlrep",
+        kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
+        config={
+            "whitelist_domains": [],
+            "allowed_patterns": [],
+            "blocked_domains": [],
+            "blocked_patterns": [],
+            "use_heuristic_check": False,
+            "entropy_threshold": 3.5,
+            "block_non_secure_http": False,
+        },
+    )
+    mock_rust = MagicMock()
+    mock_rust.validate_url_py.side_effect = [
+        TypeError("validate_url_py() takes 1 positional argument but 2 were given"),
+        {"continue_processing": True},
+    ]
+    context = MagicMock()
+    with (
+        patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", True),
+        patch(f"{_PLUGIN_MODULE}.URLReputationPluginRust", return_value=mock_rust, create=True),
+        patch(f"{_PLUGIN_MODULE}.build_rust_plugin_trace_context", return_value={"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"}),
+    ):
+        plugin = URLReputationPlugin(config)
+        res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://example.com"), context)
+    assert res.continue_processing
+    assert mock_rust.validate_url_py.call_args_list[1][0] == ("https://example.com",)
+
+
+@pytest.mark.asyncio
 async def test_config_normalize_domains_empty():
     """URLReputationConfig normalizes empty domain sets correctly."""
     cfg = URLReputationConfig(

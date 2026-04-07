@@ -12,6 +12,9 @@ Thin Python wrapper around the Rust pii_filter implementation for seamless integ
 import logging
 from typing import Any, Dict, List, TYPE_CHECKING
 
+# First-Party
+from mcpgateway.observability import call_rust_with_trace_context_compat
+
 # Use TYPE_CHECKING to avoid circular import at runtime
 if TYPE_CHECKING:
     # Local
@@ -105,7 +108,7 @@ class RustPIIDetector:
             {'ssn': [{'value': '123-45-6789', 'start': 5, 'end': 16, 'mask_strategy': 'partial'}]}
         """
         try:
-            return self._rust_detector.detect(text, trace_context)
+            return call_rust_with_trace_context_compat(self._rust_detector.detect, text, trace_context=trace_context, legacy_key="pii_filter.detect")
         except Exception as e:
             logger.error(f"Rust detection failed: {e}")
             raise RuntimeError(f"PII detection failed: {e}") from e
@@ -130,7 +133,7 @@ class RustPIIDetector:
             'SSN: ***-**-6789'
         """
         try:
-            return self._rust_detector.mask(text, detections, trace_context)
+            return call_rust_with_trace_context_compat(self._rust_detector.mask, text, detections, trace_context=trace_context, legacy_key="pii_filter.mask")
         except Exception as e:
             logger.error(f"Rust masking failed: {e}")
             raise RuntimeError(f"PII masking failed: {e}") from e
@@ -161,7 +164,13 @@ class RustPIIDetector:
             {'user': {'ssn': '***-**-6789', 'name': 'John'}}
         """
         try:
-            return self._rust_detector.process_nested(data, path, trace_context)
+            return call_rust_with_trace_context_compat(
+                self._rust_detector.process_nested,
+                data,
+                path,
+                trace_context=trace_context,
+                legacy_key="pii_filter.process_nested",
+            )
         except Exception as e:
             logger.error(f"Rust nested processing failed: {e}")
             raise RuntimeError(f"Nested PII processing failed: {e}") from e

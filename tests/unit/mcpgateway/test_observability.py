@@ -178,6 +178,40 @@ class TestObservability:
             "parent_span_id": None,
         }
 
+    def test_call_rust_with_trace_context_compat_falls_back_for_legacy_wheels(self):
+        """Legacy Rust wheels without the new trace argument should still be callable."""
+        calls = []
+
+        def legacy_func(*args):
+            calls.append(args)
+            if len(args) == 2:
+                raise TypeError("legacy_func() takes 1 positional argument but 2 were given")
+            return "ok"
+
+        result = observability.call_rust_with_trace_context_compat(
+            legacy_func,
+            "payload",
+            trace_context={"traceparent": "tp"},
+            legacy_key="test-legacy",
+        )
+
+        assert result == "ok"
+        assert calls == [("payload", {"traceparent": "tp"}), ("payload",)]
+
+    def test_call_rust_with_trace_context_compat_re_raises_real_type_errors(self):
+        """Only legacy signature mismatches should trigger compatibility fallback."""
+
+        def failing_func(*_args):
+            raise TypeError("trace_context must be a dict")
+
+        with pytest.raises(TypeError, match="trace_context must be a dict"):
+            observability.call_rust_with_trace_context_compat(
+                failing_func,
+                "payload",
+                trace_context={"traceparent": "tp"},
+                legacy_key="test-real-error",
+            )
+
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.OTLP_SPAN_EXPORTER")
     @patch("mcpgateway.observability.TracerProvider")

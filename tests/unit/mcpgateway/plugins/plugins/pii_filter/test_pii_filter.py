@@ -1166,6 +1166,34 @@ class TestPIIFilterPlugin:
             {"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"},
         )
 
+    @pytest.mark.asyncio
+    async def test_rust_detector_mask_receives_trace_context(self, plugin_config, monkeypatch):
+        """Rust-backed masking should forward trace context on the modified path too."""
+        mock_detector = MagicMock()
+        mock_detector.detect.return_value = {"email": [{"value": "test@example.com", "start": 7, "end": 23, "mask_strategy": "partial"}]}
+        mock_detector.mask.return_value = "Email: t***@example.com"
+
+        monkeypatch.setattr(pii_filter_module, "_RUST_AVAILABLE", True)
+        monkeypatch.setattr(pii_filter_module, "_RustPIIDetector", lambda cfg: mock_detector)
+        monkeypatch.setattr(
+            pii_filter_module,
+            "build_rust_plugin_trace_context",
+            lambda context: {"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"},
+        )
+
+        plugin = PIIFilterPlugin(plugin_config)
+        context = PluginContext(global_context=GlobalContext(request_id="test-rust-mask-trace"))
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "Email: test@example.com"})
+
+        result = await plugin.prompt_pre_fetch(payload, context)
+
+        assert result.modified_payload is not None
+        mock_detector.mask.assert_called_once_with(
+            "Email: test@example.com",
+            {"email": [{"value": "test@example.com", "start": 7, "end": 23, "mask_strategy": "partial"}]},
+            {"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"},
+        )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

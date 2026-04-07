@@ -42,7 +42,7 @@ import uuid
 from pydantic import BaseModel, Field
 
 # First-Party
-from mcpgateway.observability import build_rust_plugin_trace_context
+from mcpgateway.observability import build_rust_plugin_trace_context, call_rust_with_trace_context_compat
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -104,7 +104,13 @@ class RustRateLimiterEngine:
         Returns:
             An ``EvalResult`` with the most restrictive outcome across all dimensions.
         """
-        return self._engine.evaluate_many(checks, now_unix, trace_context)
+        return call_rust_with_trace_context_compat(
+            self._engine.evaluate_many,
+            checks,
+            now_unix,
+            trace_context=trace_context,
+            legacy_key="rate_limiter.evaluate_many",
+        )
 
     async def evaluate_many_async(self, checks: List[Tuple[str, int, int]], now_unix: int, trace_context: dict | None = None) -> Any:
         """Delegate to the PyO3 async engine for Redis-backed calls.
@@ -116,7 +122,13 @@ class RustRateLimiterEngine:
         Returns:
             An ``EvalResult`` with the most restrictive outcome across all dimensions.
         """
-        return await self._engine.evaluate_many_async(checks, now_unix, trace_context)
+        return await call_rust_with_trace_context_compat(
+            self._engine.evaluate_many_async,
+            checks,
+            now_unix,
+            trace_context=trace_context,
+            legacy_key="rate_limiter.evaluate_many_async",
+        )
 
     def check(
         self,
@@ -142,7 +154,16 @@ class RustRateLimiterEngine:
         Returns:
             Tuple of ``(allowed, headers_dict, meta_dict)``.
         """
-        return self._engine.check(user, tenant, tool, now_unix, include_retry_after, trace_context)
+        return call_rust_with_trace_context_compat(
+            self._engine.check,
+            user,
+            tenant,
+            tool,
+            now_unix,
+            include_retry_after,
+            trace_context=trace_context,
+            legacy_key="rate_limiter.check",
+        )
 
     async def check_async(
         self,
@@ -165,7 +186,16 @@ class RustRateLimiterEngine:
         Returns:
             Tuple of ``(allowed, headers_dict, meta_dict)``.
         """
-        return await self._engine.check_async(user, tenant, tool, now_unix, include_retry_after, trace_context)
+        return await call_rust_with_trace_context_compat(
+            self._engine.check_async,
+            user,
+            tenant,
+            tool,
+            now_unix,
+            include_retry_after,
+            trace_context=trace_context,
+            legacy_key="rate_limiter.check_async",
+        )
 
 
 # ---------------------------------------------------------------------------

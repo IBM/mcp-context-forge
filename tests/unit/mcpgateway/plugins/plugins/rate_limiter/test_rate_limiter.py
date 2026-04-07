@@ -12,7 +12,7 @@ import asyncio
 import os
 import time
 from typing import Any, Dict
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
@@ -3069,10 +3069,19 @@ async def test_arch01_redis_rust_path_uses_async_entrypoint():
 
     sync_mock = patch.object(plugin._rust_engine, "check", wraps=plugin._rust_engine.check)
     async_mock = patch.object(plugin._rust_engine, "check_async", AsyncMock(wraps=plugin._rust_engine.check_async))
-    with sync_mock as mock_sync, async_mock as mock_async:
+    with (
+        patch("plugins.rate_limiter.rate_limiter.build_rust_plugin_trace_context", return_value={"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"}),
+        sync_mock as mock_sync,
+        async_mock as mock_async,
+    ):
         await plugin.tool_pre_invoke(payload, ctx)
         assert mock_async.await_count == 1
         assert mock_sync.call_count == 0
+        assert mock_async.call_args[0][5] == {
+            "traceparent": "tp",
+            "trace_id": "tid",
+            "parent_span_id": "sid",
+        }
 
 
 @_skip_no_rust
@@ -3140,6 +3149,30 @@ async def test_arch01_single_call_covers_all_active_dimensions():
             "trace_id": "tid",
             "parent_span_id": "sid",
         }
+
+
+@pytest.mark.asyncio
+async def test_rust_fast_path_falls_back_to_legacy_signature():
+    """Older installed Rust wheels should still work without trace-context support."""
+    plugin = _mk_rust("10/s")
+    if plugin._rust_engine is None:
+        pytest.skip("Rust engine not active")
+
+    mock_engine = MagicMock()
+    mock_engine.check.side_effect = [
+        TypeError("check() takes 5 positional arguments but 6 were given"),
+        (True, {}, {"limited": False}),
+    ]
+    plugin._rust_engine = mock_engine
+
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
+    payload = ToolPreInvokePayload(name="search", arguments={})
+
+    with patch("plugins.rate_limiter.rate_limiter.build_rust_plugin_trace_context", return_value={"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"}):
+        result = await plugin.tool_pre_invoke(payload, ctx)
+
+    assert result.violation is None
+    assert len(mock_engine.check.call_args_list[1][0]) == 5
 
 
 @_skip_no_rust

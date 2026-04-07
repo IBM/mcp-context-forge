@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.config import get_settings
-from mcpgateway.observability import build_rust_plugin_trace_context
+from mcpgateway.observability import build_rust_plugin_trace_context, call_rust_with_trace_context_compat
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -420,12 +420,14 @@ class RetryWithBackoffPlugin(Plugin):
                         status_code = sc
 
             rust_inst = self._rust_overrides.get(tool, self._rust)
-            should_retry, delay_ms = rust_inst.check_and_update(
+            should_retry, delay_ms = call_rust_with_trace_context_compat(
+                rust_inst.check_and_update,
                 tool,
                 request_id,
                 is_error,
                 status_code,
-                build_rust_plugin_trace_context(context),
+                trace_context=build_rust_plugin_trace_context(context),
+                legacy_key="retry_with_backoff.check_and_update",
             )
             if should_retry:
                 log.debug(

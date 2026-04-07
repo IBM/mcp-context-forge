@@ -28,7 +28,7 @@ from urllib.parse import unquote_to_bytes
 from pydantic import BaseModel, Field, field_validator
 
 # First-Party
-from mcpgateway.observability import build_rust_plugin_trace_context
+from mcpgateway.observability import build_rust_plugin_trace_context, call_rust_with_trace_context_compat
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -422,7 +422,13 @@ def _scan_container(
 
     if use_rust and _RUST_AVAILABLE and encoded_exfil_detection is not None:  # pragma: no cover - Rust path
         try:
-            count, redacted, findings = encoded_exfil_detection(container, cfg, build_rust_plugin_trace_context(context))
+            count, redacted, findings = call_rust_with_trace_context_compat(
+                encoded_exfil_detection,
+                container,
+                cfg,
+                trace_context=build_rust_plugin_trace_context(context),
+                legacy_key="encoded_exfil_detection.py_scan_container",
+            )
             normalized_findings = []
             for finding in findings:
                 if isinstance(finding, dict):
@@ -517,7 +523,12 @@ class EncodedExfilDetectorPlugin(Plugin):
         """Run the scanner with plugin-level configuration."""
         if self._rust_engine is not None:  # pragma: no cover - Rust path
             try:
-                count, redacted, findings = self._rust_engine.scan(container, build_rust_plugin_trace_context(context))
+                count, redacted, findings = call_rust_with_trace_context_compat(
+                    self._rust_engine.scan,
+                    container,
+                    trace_context=build_rust_plugin_trace_context(context),
+                    legacy_key="encoded_exfil_detection.scan",
+                )
                 normalized = []
                 for f in findings:
                     if isinstance(f, dict):

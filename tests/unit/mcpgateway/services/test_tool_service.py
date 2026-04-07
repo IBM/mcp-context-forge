@@ -7045,9 +7045,14 @@ class TestRustMcpExecutionPlan:
     def test_build_rust_tool_hook_global_context_includes_observability_parent_context(self, tool_service):
         """Rust hook context should include the active parent OTEL context for plugin spans."""
         with (
-            patch("mcpgateway.services.tool_service.get_active_traceparent", return_value="00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"),
-            patch("mcpgateway.services.tool_service.get_active_parent_span_id", return_value="bbbbbbbbbbbbbbbb"),
-            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-1"))),
+            patch(
+                "mcpgateway.services.tool_service.build_rust_plugin_trace_context",
+                return_value={
+                    "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+                    "trace_id": "trace-1",
+                    "parent_span_id": "bbbbbbbbbbbbbbbb",
+                },
+            ),
         ):
             context = tool_service._build_rust_tool_hook_global_context(
                 app_user_email="alice@example.com",
@@ -8195,6 +8200,7 @@ class TestRustMcpExecutionPlan:
 
         async def mock_invoke_hook(hook_type, payload, global_context, local_contexts=None, violations_as_exceptions=False):  # noqa: ARG001
             received_context["request_id"] = global_context.request_id
+            received_context["server_id"] = global_context.server_id
             received_context["user"] = global_context.user
             received_context["state"] = dict(global_context.state) if hasattr(global_context, "state") else {}
             received_context["metadata_keys"] = list(global_context.metadata.keys()) if hasattr(global_context, "metadata") else []
@@ -8228,6 +8234,7 @@ class TestRustMcpExecutionPlan:
 
         # Hook should have received the middleware context, not a fresh one
         assert received_context["request_id"] == "corr-123"
+        assert received_context["server_id"] == "srv-1"
         assert received_context["user"] == "jwt-user@example.com"
         assert received_context["state"]["jwt_claims"]["sub"] == "jwt-user@example.com"
         # Prior context table should be passed through

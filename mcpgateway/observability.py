@@ -145,6 +145,7 @@ except Exception:
     HTTP_EXPORTER = None
 
 logger = logging.getLogger(__name__)
+_LEGACY_RUST_TRACE_CONTEXT_WARNED: set[str] = set()
 
 _LANGFUSE_OTEL_PATH_FRAGMENT = "/api/public/otel"
 _MAX_SPAN_EXCEPTION_MESSAGE_LENGTH = 1024
@@ -638,6 +639,36 @@ def build_rust_plugin_trace_context(context: Optional[Any] = None) -> Dict[str, 
         "trace_id": str(trace_id) if trace_id else None,
         "parent_span_id": str(parent_span_id) if parent_span_id else None,
     }
+
+
+def _looks_like_legacy_rust_trace_context_signature_error(exc: TypeError) -> bool:
+    """Return True when a TypeError likely means the installed Rust wheel is older."""
+
+    message = str(exc)
+    if "unexpected keyword argument 'trace_context'" in message or "takes no keyword arguments" in message:
+        return True
+    return "takes" in message and "positional argument" in message and "given" in message
+
+
+def call_rust_with_trace_context_compat(
+    func: Callable[..., Any],
+    *args: Any,
+    trace_context: Optional[Dict[str, Optional[str]]] = None,
+    legacy_key: Optional[str] = None,
+) -> Any:
+    """Call a Rust-backed entrypoint with trace-context fallback for older installed wheels."""
+
+    if trace_context is None:
+        return func(*args)
+    try:
+        return func(*args, trace_context)
+    except TypeError as exc:
+        if not _looks_like_legacy_rust_trace_context_signature_error(exc):
+            raise
+        if legacy_key and legacy_key not in _LEGACY_RUST_TRACE_CONTEXT_WARNED:
+            _LEGACY_RUST_TRACE_CONTEXT_WARNED.add(legacy_key)
+            logger.warning("Rust extension '%s' does not support trace_context yet; falling back to legacy call signature", legacy_key)
+        return func(*args)
 
 
 def _scope_headers_to_carrier(scope_headers: list[tuple[bytes, bytes]]) -> Dict[str, str]:
