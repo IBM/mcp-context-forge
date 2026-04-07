@@ -122,7 +122,7 @@ Our security toolchain includes **40+ different security and quality tools**, ea
 - **AI Content Integrity**: Pre-commit hooks preventing AI-generated artifacts (hallucinated citations, stock phrases, placeholder references, malformed code fences)
 - **Unicode & Trojan-Source Prevention**: texthooks for fixing smart quotes and ligatures, forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)
 - **Documentation Security**: Spellcheck and markdown validation and gitleaks to prevent information disclosure
-- **Security Testing**: Playwright browser-driven security end-to-end tests, diff-cover enforcing 95% coverage on changed lines in PRs
+- **Security Testing**: Playwright browser-driven security end-to-end tests, diff-cover enforcing appropriate coverage on changed lines in PRs
 
 ### Developer Experience & Security
 

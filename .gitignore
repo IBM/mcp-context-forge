@@ -197,6 +197,7 @@ packages.json
 .aider*
 aider*
 .ai*
+.bob
 .claude/*
 !.claude/skills/
 CLAUDE.local.md

@@ -103,7 +103,7 @@ jobs:
         run: make rust-clean-stubs && make rust-install && make rust-verify-stubs
 
       # -----------------------------------------------------------
-      # 3️⃣  Run the tests with coverage (fail under 95% coverage)
+      # 3️⃣  Run the tests with coverage (fail under 95 %total  coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
@@ -121,14 +121,22 @@ jobs:
           REQUIRE_RUST: "1"
 
       # -----------------------------------------------------------
-      # 3.5  Diff-cover: enforce 95% coverage on changed lines (PRs only)
+      # 3.5  Diff-cover: enforce 93% coverage on changed lines (PRs only)
+      #
+      # Why 93%?  Based on experience, this is currently the
+      # best balance between the value of additional tests
+      # and effort required to write them.  A 95% threshold required
+      # too much effort for tests that essentially mocked everything
+      # before a given line just to show demonstrate it executed.
+      #
+      # The threshold will likely continue to evolve.
       # -----------------------------------------------------------
       - name: 📈  Diff-cover (changed lines)
         if: github.event_name == 'pull_request'
         run: |
           uv run diff-cover coverage.xml \
             --compare-branch=origin/${{ github.base_ref }} \
-            --fail-under=95
+            --fail-under=93
 
       # -----------------------------------------------------------
       # 4️⃣  Run doctests (fail under 30% coverage)
