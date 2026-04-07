@@ -1997,6 +1997,12 @@ class Settings(BaseSettings):
     redis_retry_on_timeout: bool = Field(default=True, description="Retry commands on timeout")
     redis_health_check_interval: int = Field(default=30, description="Seconds between connection health checks (0=disabled)")
 
+    redis_operation_timeout: float = Field(
+        default=0.5,
+        description="Timeout for individual Redis operations in seconds (get/set/delete). "
+        "Should be lower than redis_socket_timeout for faster fallback to in-memory cache."
+    )
+
     # Redis Leader Election - Multi-Node Deployments
     redis_leader_ttl: int = Field(default=15, description="Leader election TTL in seconds")
     redis_leader_key: str = Field(default="gateway_service_leader", description="Leader key name")

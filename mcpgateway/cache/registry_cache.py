@@ -174,6 +174,13 @@ class RegistryCache:
         self._redis_hit_count = 0
         self._redis_miss_count = 0
 
+        # Circuit breaker for Redis operations
+        self._redis_failure_count = 0
+        self._redis_failure_threshold = 3  # Failures before opening circuit
+        self._redis_circuit_open_duration = 30.0  # Seconds to wait before retry
+        self._redis_last_failure_time = 0.0
+        self._redis_circuit_open = False
+
         logger.info(
             f"RegistryCache initialized: enabled={self._enabled}, "
             f"tools_ttl={self._tools_ttl}s, prompts_ttl={self._prompts_ttl}s, "
@@ -220,22 +227,136 @@ class RegistryCache:
         filter_str = str(sorted_items)
         return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324
 
+
+    async def _redis_operation_with_timeout(
+        self,
+        operation: Callable,
+        *args,
+        operation_name: str = "redis_op",
+        **kwargs
+    ) -> Optional[Any]:
+        """Execute Redis operation with timeout and circuit breaker.
+
+        Args:
+            operation: Async callable to execute
+            *args: Positional arguments for operation
+            operation_name: Name for logging
+            **kwargs: Keyword arguments for operation
+
+        Returns:
+            Operation result or None on timeout/error
+
+        Examples:
+            >>> import asyncio
+            >>> cache = RegistryCache()
+            >>> async def mock_op():
+            ...     return "result"
+            >>> result = asyncio.run(cache._redis_operation_with_timeout(mock_op, operation_name="test"))
+        """
+        # Check circuit breaker
+        if self._redis_circuit_open:
+            if time.time() - self._redis_last_failure_time < self._redis_circuit_open_duration:
+                logger.debug(f"Redis circuit open, skipping {operation_name}")
+                return None
+            else:
+                # Half-open: try one operation
+                logger.info("Redis circuit half-open, attempting recovery")
+                self._redis_circuit_open = False
+
+        try:
+            # Get timeout from config
+            # First-Party
+            from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+            timeout = settings.redis_operation_timeout
+
+            # Execute with timeout
+            result = await asyncio.wait_for(operation(*args, **kwargs), timeout=timeout)
+
+            # Success: reset failure count
+            if self._redis_failure_count > 0:
+                logger.info(f"Redis recovered after {self._redis_failure_count} failures")
+                self._redis_failure_count = 0
+
+            return result
+
+        except asyncio.TimeoutError:
+            self._redis_failure_count += 1
+            self._redis_last_failure_time = time.time()
+            logger.warning(
+                f"Redis {operation_name} timeout after {timeout}s "
+                f"(failure {self._redis_failure_count}/{self._redis_failure_threshold})"
+            )
+
+            # Open circuit if threshold reached
+            if self._redis_failure_count >= self._redis_failure_threshold:
+                self._redis_circuit_open = True
+                logger.error(
+                    f"Redis circuit opened after {self._redis_failure_count} failures. "
+                    f"Will retry in {self._redis_circuit_open_duration}s"
+                )
+
+            return None
+
+        except Exception as e:
+            self._redis_failure_count += 1
+            self._redis_last_failure_time = time.time()
+            logger.warning(f"Redis {operation_name} failed: {e}")
+
+            if self._redis_failure_count >= self._redis_failure_threshold:
+                self._redis_circuit_open = True
+
+            return None
+
+
     async def _get_redis_client(self):
-        """Get Redis client if available.
+        """Get Redis client if available, with periodic reconnection attempts.
 
         Returns:
             Redis client or None if unavailable.
         """
+        # If circuit is open, don't attempt connection
+        if self._redis_circuit_open:
+            current_time = time.time()
+            if current_time - self._redis_last_failure_time < self._redis_circuit_open_duration:
+                return None
+            # Circuit timeout expired, allow retry
+            logger.info("Redis circuit timeout expired, attempting reconnection")
+            self._redis_circuit_open = False
+
         try:
             # First-Party
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
             client = await get_redis_client()
-            if client and not self._redis_checked:
-                self._redis_checked = True
-                self._redis_available = True
-                logger.debug("RegistryCache: Redis client available")
-            return client
+            if client:
+                # Test connection with ping
+                try:
+                    await asyncio.wait_for(client.ping(), timeout=1.0)
+
+                    # Success: update state
+                    if not self._redis_available:
+                        logger.info("Redis connection restored")
+                        self._redis_available = True
+                        self._redis_failure_count = 0
+
+                    if not self._redis_checked:
+                        self._redis_checked = True
+                        logger.debug("RegistryCache: Redis client available")
+
+                    return client
+
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.debug(f"Redis ping failed: {e}")
+                    self._redis_available = False
+                    return None
+            else:
+                if not self._redis_checked:
+                    self._redis_checked = True
+                    self._redis_available = False
+                    logger.debug("RegistryCache: Redis unavailable, using in-memory cache")
+                return None
+
         except Exception as e:
             if not self._redis_checked:
                 self._redis_checked = True
@@ -269,7 +390,11 @@ class RegistryCache:
         redis = await self._get_redis_client()
         if redis:
             try:
-                data = await redis.get(cache_key)
+                data = await self._redis_operation_with_timeout(
+                    redis.get,
+                    cache_key,
+                    operation_name="get"
+                )
                 if data:
                     # Third-Party
                     import orjson  # pylint: disable=import-outside-toplevel
@@ -330,7 +455,13 @@ class RegistryCache:
                 # Third-Party
                 import orjson  # pylint: disable=import-outside-toplevel
 
-                await redis.setex(cache_key, ttl, orjson.dumps(data))
+                await self._redis_operation_with_timeout(
+                    redis.setex,
+                    cache_key,
+                    ttl,
+                    orjson.dumps(data),
+                    operation_name="setex"
+                )
             except Exception as e:
                 logger.warning(f"RegistryCache Redis set failed: {e}")
 
@@ -363,11 +494,35 @@ class RegistryCache:
         if redis:
             try:
                 pattern = f"{prefix}*"
-                async for key in redis.scan_iter(match=pattern):
-                    await redis.delete(key)
+                
+                # Wrap scan_iter with timeout
+                keys_to_delete = []
+                async def scan_keys():
+                    keys = []
+                    async for key in redis.scan_iter(match=pattern):
+                        keys.append(key)
+                    return keys
+                
+                keys_to_delete = await self._redis_operation_with_timeout(
+                    scan_keys,
+                    operation_name="scan_iter"
+                ) or []
+
+                # Delete keys with timeout
+                for key in keys_to_delete:
+                    await self._redis_operation_with_timeout(
+                        redis.delete,
+                        key,
+                        operation_name="delete"
+                    )
 
                 # Publish invalidation for other workers
-                await redis.publish("mcpgw:cache:invalidate", f"registry:{cache_type}")
+                await self._redis_operation_with_timeout(
+                    redis.publish,
+                    "mcpgw:cache:invalidate",
+                    f"registry:{cache_type}",
+                    operation_name="publish"
+                )
             except Exception as e:
                 logger.warning(f"RegistryCache Redis invalidate failed: {e}")
 
@@ -476,6 +631,8 @@ class RegistryCache:
             "redis_miss_count": self._redis_miss_count,
             "redis_hit_rate": self._redis_hit_count / redis_total if redis_total > 0 else 0.0,
             "redis_available": self._redis_available,
+            "redis_circuit_open": self._redis_circuit_open,
+            "redis_failure_count": self._redis_failure_count,
             "cache_size": len(self._cache),
             "ttls": {
                 "tools": self._tools_ttl,
