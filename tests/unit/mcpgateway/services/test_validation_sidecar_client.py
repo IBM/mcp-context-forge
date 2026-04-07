@@ -122,6 +122,7 @@ def test_sidecar_settings_defaults_and_path_validation(tmp_path: Path) -> None:
     assert settings.experimental_rust_validation_sidecar_enabled is False
     assert settings.experimental_rust_validation_sidecar_uds is None
     assert settings.experimental_rust_validation_sidecar_timeout_seconds == 30
+    assert settings.experimental_rust_validation_sidecar_pool_size == 8
 
     uds_path = tmp_path / "validation.sock"
     settings = Settings(experimental_rust_validation_sidecar_uds=str(uds_path), _env_file=None)
@@ -151,6 +152,12 @@ def test_sidecar_timeout_accepts_fractional_seconds() -> None:
     """The sidecar timeout should allow positive fractional seconds."""
     settings = Settings(experimental_rust_validation_sidecar_timeout_seconds=0.5, _env_file=None)
     assert settings.experimental_rust_validation_sidecar_timeout_seconds == 0.5
+
+
+def test_sidecar_pool_size_must_be_positive() -> None:
+    """The sidecar pool size must reject zero or negative values."""
+    with pytest.raises(ValidationError):
+        Settings(experimental_rust_validation_sidecar_pool_size=0, _env_file=None)
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="Unix domain sockets are not supported on Windows.")

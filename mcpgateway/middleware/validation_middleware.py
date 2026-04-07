@@ -104,6 +104,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 self._validation_sidecar_client = ValidationSidecarClient(
                     uds_path=uds_path,
                     timeout_seconds=float(getattr(settings, "experimental_rust_validation_sidecar_timeout_seconds", 30.0)),
+                    pool_size=int(getattr(settings, "experimental_rust_validation_sidecar_pool_size", 8)),
                 )
 
     async def dispatch(self, request: Request, call_next):

@@ -439,6 +439,11 @@ class Settings(BaseSettings):
         gt=0,
         description="Timeout in seconds for Python-to-validation-sidecar requests.",
     )
+    experimental_rust_validation_sidecar_pool_size: int = Field(
+        default=8,
+        gt=0,
+        description="Maximum number of pooled Unix domain socket connections used for validation-sidecar requests.",
+    )
     validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
     sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
