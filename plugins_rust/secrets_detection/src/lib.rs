@@ -35,7 +35,7 @@ fn py_scan_container<'py>(
         container_kind
     );
 
-    let result = (|| {
+    let result: PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> = (|| {
         let cfg = SecretsDetectionConfig::try_from(&config)?;
 
         let (count, redacted, findings) = if container.is_instance_of::<PyString>() {

@@ -235,6 +235,7 @@ impl RateLimiterEngine {
     /// `evaluate_many()` + `_rust_to_plugin_meta()` + `_rust_to_plugin_headers()`.
     ///
     /// Returns `(allowed, headers_dict, meta_dict)`.
+    #[allow(clippy::too_many_arguments)]
     pub fn check<'py>(
         &self,
         py: Python<'py>,
@@ -279,6 +280,7 @@ impl RateLimiterEngine {
     /// Async variant of `check()` for Redis-backed deployments.
     ///
     /// Returns an awaitable that resolves to `(allowed, headers_dict, meta_dict)`.
+    #[allow(clippy::too_many_arguments)]
     pub fn check_async<'py>(
         &self,
         py: Python<'py>,
