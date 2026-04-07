@@ -455,14 +455,7 @@ fn has_uri_scheme(path: &str) -> bool {
     chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
 }
 
-fn normalize_path(path: &str) -> Result<PathBuf, std::io::Error> {
-    let candidate = Path::new(path);
-    let absolute = if candidate.is_absolute() {
-        candidate.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(candidate)
-    };
-
+fn normalize_absolute_path(absolute: PathBuf) -> PathBuf {
     let mut normalized = PathBuf::new();
     for component in absolute.components() {
         match component {
@@ -476,12 +469,77 @@ fn normalize_path(path: &str) -> Result<PathBuf, std::io::Error> {
         }
     }
 
-    Ok(normalized)
+    normalized
+}
+
+fn normalize_path(path: &str) -> Result<PathBuf, std::io::Error> {
+    let candidate = Path::new(path);
+    let absolute = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(candidate)
+    };
+
+    Ok(normalize_absolute_path(absolute))
+}
+
+fn resolve_absolute_path(path: PathBuf, symlink_depth: usize) -> Result<PathBuf, std::io::Error> {
+    if symlink_depth > 40 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "too many symlink expansions",
+        ));
+    }
+
+    let normalized = normalize_absolute_path(path);
+    let mut resolved = PathBuf::new();
+
+    for component in normalized.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(Path::new("/")),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(part) => {
+                let candidate = resolved.join(part);
+                match std::fs::symlink_metadata(&candidate) {
+                    Ok(metadata) if metadata.file_type().is_symlink() => {
+                        let target = std::fs::read_link(&candidate)?;
+                        let target_path = if target.is_absolute() {
+                            target
+                        } else {
+                            resolved.join(target)
+                        };
+                        resolved = resolve_absolute_path(target_path, symlink_depth + 1)?;
+                    }
+                    Ok(_) => resolved.push(part),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        resolved.push(part);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+    }
+
+    Ok(normalize_absolute_path(resolved))
+}
+
+fn resolve_path(path: &str) -> Result<PathBuf, std::io::Error> {
+    resolve_absolute_path(normalize_path(path)?, 0)
 }
 
 fn validate_resource_path_impl(path: &str, validator: &CompiledValidator) -> PyResult<String> {
     if has_uri_scheme(path) {
         return Ok(path.to_owned());
+    }
+
+    if path.contains('\0') {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "invalid_path: Invalid path",
+        ));
     }
 
     if path.contains("..") || path.contains("//") {
@@ -490,7 +548,7 @@ fn validate_resource_path_impl(path: &str, validator: &CompiledValidator) -> PyR
         ));
     }
 
-    let resolved_path = normalize_path(path).map_err(|_| {
+    let resolved_path = resolve_path(path).map_err(|_| {
         PyErr::new::<pyo3::exceptions::PyValueError, _>("invalid_path: Invalid path")
     })?;
 
@@ -557,23 +615,6 @@ impl CompiledValidator {
                     return self.validate_json_bytes(body);
                 }
             }
-        }
-
-        Ok(None)
-    }
-
-    #[pyo3(signature = (parameters, raw_body=None))]
-    fn validate_request_parts(
-        &self,
-        parameters: Vec<(String, String)>,
-        raw_body: Option<&[u8]>,
-    ) -> PyResult<Option<(String, String)>> {
-        if let Some(result) = self.validate_parameters(parameters) {
-            return Ok(Some(result));
-        }
-
-        if let Some(body) = raw_body {
-            return self.validate_json_bytes(body);
         }
 
         Ok(None)
@@ -795,6 +836,118 @@ mod tests {
         assert!(result.starts_with(tempdir.path().to_str().unwrap()));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn validate_resource_path_rejects_symlink_escape_from_allowed_root() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let link_path = tempdir.path().join("escape");
+
+        std::os::unix::fs::symlink(outside.path(), &link_path).unwrap();
+
+        let validator = CompiledValidator {
+            max_param_length: 32,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
+            allowed_roots: vec![tempdir.path().to_path_buf()],
+            max_path_depth: 1024,
+        };
+
+        let err = validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator).unwrap_err();
+        Python::initialize();
+        Python::attach(|py| {
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(err.to_string().contains("Path outside allowed roots"));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_resource_path_rejects_broken_symlink_escape_from_allowed_root() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let missing_target = outside.path().join("missing-target");
+        let link_path = tempdir.path().join("escape");
+
+        std::os::unix::fs::symlink(&missing_target, &link_path).unwrap();
+
+        let validator = CompiledValidator {
+            max_param_length: 32,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
+            allowed_roots: vec![tempdir.path().to_path_buf()],
+            max_path_depth: 1024,
+        };
+
+        let err = validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator).unwrap_err();
+        Python::initialize();
+        Python::attach(|py| {
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(err.to_string().contains("Path outside allowed roots"));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_resource_path_rejects_chained_symlink_escape_from_allowed_root() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let alias_path = tempdir.path().join("alias");
+        let link_path = tempdir.path().join("escape");
+
+        std::os::unix::fs::symlink(outside.path(), &alias_path).unwrap();
+        std::os::unix::fs::symlink(&alias_path, &link_path).unwrap();
+
+        let validator = CompiledValidator {
+            max_param_length: 32,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
+            allowed_roots: vec![tempdir.path().to_path_buf()],
+            max_path_depth: 1024,
+        };
+
+        let err = validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator).unwrap_err();
+        Python::initialize();
+        Python::attach(|py| {
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(err.to_string().contains("Path outside allowed roots"));
+        });
+    }
+
+    #[test]
+    fn validate_resource_path_rejects_embedded_nul() {
+        let validator = CompiledValidator {
+            max_param_length: 32,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
+            allowed_roots: Vec::new(),
+            max_path_depth: 1024,
+        };
+
+        let err = validate_resource_path_impl("bad\0path", &validator).unwrap_err();
+        Python::initialize();
+        Python::attach(|py| {
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(err.to_string().contains("Invalid path"));
+        });
+    }
+
     #[test]
     fn sanitize_response_body_removes_control_characters() {
         let sanitized = sanitize_response_body_bytes(b"Hello\x00World\x1f");
@@ -822,8 +975,9 @@ mod tests {
         };
 
         let result = validator
-            .validate_request_parts(
+            .validate_http_request(
                 vec![("query".to_owned(), "<script>".to_owned())],
+                "application/json",
                 Some(br#"{"name":"safe"}"#),
             )
             .unwrap();
@@ -851,7 +1005,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_request_parts_checks_parameters_and_body() {
+    fn validate_http_request_checks_parameters_and_body() {
         let validator = compile_validator(
             32,
             vec![
@@ -865,8 +1019,9 @@ mod tests {
         .unwrap();
 
         let result = validator
-            .validate_request_parts(
+            .validate_http_request(
                 vec![("query".to_owned(), "safe".to_owned())],
+                "application/json",
                 Some(br#"{"name":"<script>"}"#),
             )
             .unwrap();

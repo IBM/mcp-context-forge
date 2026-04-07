@@ -142,13 +142,18 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             parameters_to_validate.append((key, value))
 
         content_type = request.headers.get("content-type", "")
+        is_json_body = content_type.startswith("application/json")
+
+        if parameters_to_validate:
+            self._validate_parameters(parameters_to_validate)
+
         body = b""
-        if content_type.startswith("application/json"):
+        if is_json_body:
             body = await request.body()
 
-        if self._rust_validate_http_request is not None:
+        if self._rust_validate_http_request is not None and is_json_body:
             try:
-                result = self._validate_request_with_rust(parameters_to_validate, content_type, body)
+                result = self._validate_request_with_rust([], content_type, body)
                 if result is not None:
                     key, error_type = result
                     self._raise_validation_failure(key, error_type)
@@ -160,13 +165,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             except Exception as exc:
                 logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
 
-        if parameters_to_validate:
-            result = self._validate_parameters_with_python(parameters_to_validate)
-            if result is not None:
-                key, error_type = result
-                self._raise_validation_failure(key, error_type)
-
-        if content_type.startswith("application/json"):
+        if is_json_body:
             try:
                 if body:
                     data = orjson.loads(body)
@@ -299,7 +298,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             if "maximum supported nesting depth" in str(exc):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             if "Request body contains invalid JSON:" in str(exc):
-                raise orjson.JSONDecodeError("invalid json", b"", 0) from exc
+                raise orjson.JSONDecodeError("invalid json", "", 0) from exc
             raise
         except Exception:
             raise
@@ -323,39 +322,6 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_json_data_with_python(data)
-
-    def _validate_json_body_with_rust(self, body: bytes):
-        """Validate raw JSON bytes with the Rust extension, falling back to Python on extension failures."""
-        try:
-            if self._rust_validator is None:
-                self._rust_validator = self._build_rust_validator()
-                if self._rust_validator is None:
-                    data = orjson.loads(body)
-                    self._validate_json_data(data)
-                    return
-
-            result = self._rust_validator.validate_json_bytes(body)
-            if result is not None:
-                key, error_type = result
-                self._raise_validation_failure(key, error_type)
-        except ValueError as exc:
-            if "maximum supported nesting depth" in str(exc):
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
-            data = orjson.loads(body)
-            result = self._validate_json_data_with_python(data)
-            if result is not None:
-                key, error_type = result
-                self._raise_validation_failure(key, error_type)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
-            data = orjson.loads(body)
-            result = self._validate_json_data_with_python(data)
-            if result is not None:
-                key, error_type = result
-                self._raise_validation_failure(key, error_type)
 
     def _validate_json_data_with_python(self, data: Any, depth: int = 0) -> tuple[str, str] | None:
         """Validate JSON data with the Python implementation."""

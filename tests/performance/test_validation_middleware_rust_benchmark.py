@@ -1,17 +1,20 @@
 # -*- coding: utf-8 -*-
 """Benchmark the validation middleware Rust extension against the Python path.
 
-This benchmark exercises the request-validation path for JSON bodies so the measurements match the
-historical UDS sidecar benchmark shape from PR discussion.
+This benchmark exercises the Rust-backed validation middleware surfaces and verifies Python/Rust
+parity before reporting speedups for each timed scenario.
 """
 
 # Standard
 from __future__ import annotations
 
 import importlib
+import os
 import re
 import statistics
 import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -37,10 +40,10 @@ UDS_TARGET_MEDIANS_MS = {
 class _JSONBodyRequest:
     """Minimal request stub for benchmarking the middleware request path."""
 
-    def __init__(self, body: bytes) -> None:
+    def __init__(self, body: bytes, path_params: dict[str, str] | None = None, query_params: dict[str, str] | None = None) -> None:
         self._body = body
-        self.path_params = {}
-        self.query_params = {}
+        self.path_params = path_params or {}
+        self.query_params = query_params or {}
         self.headers = {"content-type": "application/json"}
 
     async def body(self) -> bytes:
@@ -57,11 +60,24 @@ class _QueryRequest:
 
 
 def _ensure_rust_extension_installed() -> Any:
-    subprocess.run(["uv", "run", "maturin", "develop", "--release", "--manifest-path", str(RUST_VALIDATION_MANIFEST)], check=True, cwd=REPO_ROOT)
+    env = os.environ.copy()
+    virtual_env = sys.prefix
+    env["VIRTUAL_ENV"] = virtual_env
+    env["PATH"] = f"{Path(virtual_env) / 'bin'}:{env['PATH']}"
+    subprocess.run(["maturin", "develop", "--release", "--manifest-path", str(RUST_VALIDATION_MANIFEST)], check=True, cwd=REPO_ROOT, env=env)
     return importlib.import_module("validation_middleware_rust")
 
 
 def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:
+    return _build_python_request_validator(max_param_length, dangerous_patterns, {}, {})
+
+
+def _build_python_request_validator(
+    max_param_length: int,
+    dangerous_patterns: list[str],
+    path_params: dict[str, str],
+    query_params: dict[str, str],
+) -> Callable[[bytes], Awaitable[None]]:
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
     settings.experimental_rust_validation_middleware_enabled = False
@@ -70,12 +86,21 @@ def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]
     middleware.dangerous_patterns = [re.compile(pattern) for pattern in dangerous_patterns]
 
     async def _run(body: bytes) -> None:
-        await middleware._validate_request(_JSONBodyRequest(body))
+        await middleware._validate_request(_JSONBodyRequest(body, path_params, query_params))
 
     return _run
 
 
 def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:
+    return _build_rust_request_validator(max_param_length, dangerous_patterns, {}, {})
+
+
+def _build_rust_request_validator(
+    max_param_length: int,
+    dangerous_patterns: list[str],
+    path_params: dict[str, str],
+    query_params: dict[str, str],
+) -> Callable[[bytes], Awaitable[None]]:
     _ensure_rust_extension_installed()
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
@@ -84,7 +109,7 @@ def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) 
     middleware = ValidationMiddleware(app=None)
 
     async def _run(body: bytes) -> None:
-        await middleware._validate_request(_JSONBodyRequest(body))
+        await middleware._validate_request(_JSONBodyRequest(body, path_params, query_params))
 
     return _run
 
@@ -119,13 +144,19 @@ def _build_rust_parameter_runner(max_param_length: int, dangerous_patterns: list
     return _run
 
 
-def _build_python_resource_runner(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[str], None]:
+def _build_python_resource_runner(
+    max_param_length: int,
+    dangerous_patterns: list[str],
+    *,
+    allowed_roots: list[str] | None = None,
+    max_path_depth: int = 32,
+) -> Callable[[str], None]:
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
     settings.experimental_rust_validation_middleware_enabled = False
     settings.environment = "production"
-    settings.max_path_depth = 32
-    settings.allowed_roots = []
+    settings.max_path_depth = max_path_depth
+    settings.allowed_roots = allowed_roots or []
     middleware = ValidationMiddleware(app=None)
 
     def _run(path: str) -> None:
@@ -134,14 +165,20 @@ def _build_python_resource_runner(max_param_length: int, dangerous_patterns: lis
     return _run
 
 
-def _build_rust_resource_runner(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[str], None]:
+def _build_rust_resource_runner(
+    max_param_length: int,
+    dangerous_patterns: list[str],
+    *,
+    allowed_roots: list[str] | None = None,
+    max_path_depth: int = 32,
+) -> Callable[[str], None]:
     _ensure_rust_extension_installed()
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
     settings.experimental_rust_validation_middleware_enabled = True
     settings.environment = "production"
-    settings.max_path_depth = 32
-    settings.allowed_roots = []
+    settings.max_path_depth = max_path_depth
+    settings.allowed_roots = allowed_roots or []
     middleware = ValidationMiddleware(app=None)
 
     def _run(path: str) -> None:
@@ -158,8 +195,9 @@ def _build_python_sanitizer(max_param_length: int, dangerous_patterns: list[str]
     settings.sanitize_output = True
     middleware = ValidationMiddleware(app=None)
 
-    async def _run(body: bytes) -> None:
-        await middleware._sanitize_response(Response(content=body))
+    async def _run(body: bytes) -> bytes:
+        response = await middleware._sanitize_response(Response(content=body))
+        return response.body
 
     return _run
 
@@ -173,8 +211,9 @@ def _build_rust_sanitizer(max_param_length: int, dangerous_patterns: list[str]) 
     settings.sanitize_output = True
     middleware = ValidationMiddleware(app=None)
 
-    async def _run(body: bytes) -> None:
-        await middleware._sanitize_response(Response(content=body))
+    async def _run(body: bytes) -> bytes:
+        response = await middleware._sanitize_response(Response(content=body))
+        return response.body
 
     return _run
 
@@ -253,7 +292,45 @@ def _measure_sync_pair(
     return python_median, rust_median
 
 
-async def _measure_cold_pair(
+def _capture_sync_result(fn: Callable[[Any], Any], payload: Any) -> tuple[str, Any]:
+    try:
+        return "ok", fn(payload)
+    except HTTPException as exc:
+        return "http_error", (exc.status_code, exc.detail)
+
+
+async def _capture_async_result(fn: Callable[[bytes], Awaitable[Any]], payload: bytes) -> tuple[str, Any]:
+    try:
+        return "ok", await fn(payload)
+    except HTTPException as exc:
+        return "http_error", (exc.status_code, exc.detail)
+
+
+def _assert_sync_parity(
+    python_fn: Callable[[Any], Any],
+    rust_fn: Callable[[Any], Any],
+    payloads: list[Any],
+) -> None:
+    for payload in payloads:
+        python_result = _capture_sync_result(python_fn, payload)
+        rust_result = _capture_sync_result(rust_fn, payload)
+        if python_result != rust_result:
+            raise AssertionError(f"Parity mismatch for payload {payload!r}: python={python_result!r} rust={rust_result!r}")
+
+
+async def _assert_async_bytes_parity(
+    python_fn: Callable[[bytes], Awaitable[Any]],
+    rust_fn: Callable[[bytes], Awaitable[Any]],
+    payloads: list[bytes],
+) -> None:
+    for payload in payloads:
+        python_result = await _capture_async_result(python_fn, payload)
+        rust_result = await _capture_async_result(rust_fn, payload)
+        if python_result != rust_result:
+            raise AssertionError(f"Parity mismatch for payload {payload!r}: python={python_result!r} rust={rust_result!r}")
+
+
+async def _measure_extension_setup_pair(
     max_param_length: int,
     dangerous_patterns: list[str],
     payload: bytes,
@@ -304,12 +381,19 @@ async def main() -> None:
     max_param_length = 1024
     dangerous_patterns = [r"[;&|`$(){}\[\]<>]", r"\.\.[\\/]", r"[\x00-\x1f\x7f-\x9f]"]
 
+    cold_payload = orjson.dumps({"tool": {"name": "safe-tool", "description": "ok"}})
+    python_cold_ms, rust_cold_ms = await _measure_extension_setup_pair(max_param_length, dangerous_patterns, cold_payload)
+    print("\nextension_setup_and_first_call (1 iteration)")
+    print("note=this includes Rust extension build/install overhead and is not a steady-state middleware timing")
+    print(f"python={python_cold_ms:.3f}ms rust={rust_cold_ms:.3f}ms")
+    print(f"rust_setup_overhead_delta={rust_cold_ms - python_cold_ms:.3f}ms")
+
     python_fn = _build_python_validator(max_param_length, dangerous_patterns)
     rust_fn = _build_rust_validator(max_param_length, dangerous_patterns)
+    python_mixed_fn = _build_python_request_validator(max_param_length, dangerous_patterns, {"id": "123"}, {"q": "safe"})
+    rust_mixed_fn = _build_rust_request_validator(max_param_length, dangerous_patterns, {"id": "123"}, {"q": "safe"})
     python_param_fn = _build_python_parameter_runner(max_param_length, dangerous_patterns)
     rust_param_fn = _build_rust_parameter_runner(max_param_length, dangerous_patterns)
-    python_resource_fn = _build_python_resource_runner(max_param_length, dangerous_patterns)
-    rust_resource_fn = _build_rust_resource_runner(max_param_length, dangerous_patterns)
     python_sanitize_fn = _build_python_sanitizer(max_param_length, dangerous_patterns)
     rust_sanitize_fn = _build_rust_sanitizer(max_param_length, dangerous_patterns)
 
@@ -319,8 +403,56 @@ async def main() -> None:
         orjson.dumps({"outer": {"inner": "a" * 2048}}),
         orjson.dumps(["<script>alert(1)</script>"]),
         orjson.dumps({"emoji": "é" * 1025}),
+        b"{",
     ]
     await _assert_parity(python_fn, rust_fn, parity_payloads)
+    await _assert_parity(python_mixed_fn, rust_mixed_fn, parity_payloads)
+    _assert_sync_parity(
+        python_param_fn,
+        rust_param_fn,
+        [
+            {"q": "safe"},
+            {"q": "<script>alert(1)</script>"},
+            {"q": "value", "extra": "x" * 32},
+        ],
+    )
+    with tempfile.TemporaryDirectory() as allowed_root, tempfile.TemporaryDirectory() as outside_root:
+        symlink_path = Path(allowed_root) / "escape"
+        broken_symlink_path = Path(allowed_root) / "broken"
+        os.symlink(outside_root, symlink_path)
+        os.symlink(str(Path(outside_root) / "missing-target"), broken_symlink_path)
+
+        python_resource_fn = _build_python_resource_runner(max_param_length, dangerous_patterns, allowed_roots=[allowed_root])
+        rust_resource_fn = _build_rust_resource_runner(max_param_length, dangerous_patterns, allowed_roots=[allowed_root])
+        _assert_sync_parity(
+            python_resource_fn,
+            rust_resource_fn,
+            [
+                str(Path(allowed_root) / "safe" / "file.txt"),
+                "../unsafe/path",
+                "http://example.com/resource",
+                str(symlink_path / "file.txt"),
+                str(broken_symlink_path / "file.txt"),
+                "bad\0path",
+            ],
+        )
+        print("\nresource_path (2000 iterations)")
+        python_resource_median, rust_resource_median = _measure_sync_pair(
+            python_resource_fn,
+            rust_resource_fn,
+            str(Path(allowed_root) / "safe" / "subdir" / "file.txt"),
+            2000,
+        )
+        print(f"python_avg_median={python_resource_median:.3f}ms rust_avg_median={rust_resource_median:.3f}ms")
+        print(f"speedup={python_resource_median / rust_resource_median:.2f}x")
+    await _assert_async_bytes_parity(
+        python_sanitize_fn,
+        rust_sanitize_fn,
+        [
+            b"prefix\x00middle\x1fsuffix",
+            b"plain-ascii-response-body",
+        ],
+    )
 
     scenarios = [
         (
@@ -361,12 +493,6 @@ async def main() -> None:
         ),
     ]
 
-    cold_payload = orjson.dumps({"tool": {"name": "safe-tool", "description": "ok"}})
-    python_cold_ms, rust_cold_ms = await _measure_cold_pair(max_param_length, dangerous_patterns, cold_payload)
-    print("\ncold_first_call (1 iteration)")
-    print(f"python={python_cold_ms:.3f}ms rust={rust_cold_ms:.3f}ms")
-    print(f"speedup={python_cold_ms / rust_cold_ms:.2f}x")
-
     print("\nparameter_batch (2000 iterations)")
     python_param_median, rust_param_median = _measure_sync_pair(
         python_param_fn,
@@ -376,16 +502,6 @@ async def main() -> None:
     )
     print(f"python_avg_median={python_param_median:.3f}ms rust_avg_median={rust_param_median:.3f}ms")
     print(f"speedup={python_param_median / rust_param_median:.2f}x")
-
-    print("\nresource_path (2000 iterations)")
-    python_resource_median, rust_resource_median = _measure_sync_pair(
-        python_resource_fn,
-        rust_resource_fn,
-        "safe/subdir/file.txt",
-        2000,
-    )
-    print(f"python_avg_median={python_resource_median:.3f}ms rust_avg_median={rust_resource_median:.3f}ms")
-    print(f"speedup={python_resource_median / rust_resource_median:.2f}x")
 
     print("\nresponse_sanitization (1000 iterations)")
     python_sanitize_median, rust_sanitize_median = await _measure_pair(
@@ -416,6 +532,17 @@ async def main() -> None:
         uds_target = UDS_TARGET_MEDIANS_MS.get(name)
         if uds_target is not None:
             print(f"uds_target_median={uds_target:.3f}ms beat_target={rust_median < uds_target}")
+
+    mixed_payload = orjson.dumps({"tool": {"name": "safe-tool", "description": "ok"}})
+    print("\nmixed_params_json (1000 iterations)")
+    python_mixed_median, rust_mixed_median = await _measure_pair(
+        python_mixed_fn,
+        rust_mixed_fn,
+        mixed_payload,
+        1000,
+    )
+    print(f"python_avg_median={python_mixed_median:.3f}ms rust_avg_median={rust_mixed_median:.3f}ms")
+    print(f"speedup={python_mixed_median / rust_mixed_median:.2f}x")
 
 
 if __name__ == "__main__":
