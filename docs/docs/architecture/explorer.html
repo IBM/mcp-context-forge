@@ -1052,6 +1052,361 @@ main {
 }
 
 /* ============================================================
+   TECH RIBBON (Overview enhancement)
+   ============================================================ */
+.tech-ribbon {
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 2rem;
+  padding: 1rem 1.5rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.tech-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.tech-item strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+/* ============================================================
+   PROTOCOL VIEW
+   ============================================================ */
+.protocol-section {
+  margin-bottom: 2.5rem;
+}
+
+.protocol-section h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.protocol-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.protocol-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  transition: var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+
+.protocol-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 3px;
+}
+
+.protocol-card:hover {
+  border-color: var(--border-accent);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.3);
+}
+
+.protocol-card h4 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+  font-family: var(--font-mono);
+}
+
+.protocol-card p {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+}
+
+.protocol-card .proto-meta {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.proto-badge {
+  font-size: 0.6rem;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mcp-method-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 0.5rem;
+}
+
+.mcp-method {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+
+.mcp-method:hover {
+  border-color: var(--border-accent);
+}
+
+.mcp-method .method-name {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-blue);
+  min-width: 170px;
+}
+
+.mcp-method .method-desc {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   ADR TIMELINE VIEW
+   ============================================================ */
+.adr-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.adr-search {
+  flex: 1;
+  min-width: 200px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  padding: 0.5rem 0.8rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  outline: none;
+  transition: var(--transition);
+  font-family: var(--font-sans);
+}
+
+.adr-search:focus { border-color: var(--accent-blue); }
+
+.adr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 0.75rem;
+}
+
+.adr-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+}
+
+.adr-card:hover {
+  border-color: var(--border-accent);
+}
+
+.adr-num {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent-blue);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.adr-body { flex: 1; min-width: 0; }
+
+.adr-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  line-height: 1.3;
+}
+
+.adr-status {
+  font-size: 0.6rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.adr-status--accepted { background: rgba(52, 211, 153, 0.15); color: var(--accent-green); }
+.adr-status--implemented { background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); }
+.adr-status--proposed { background: rgba(251, 191, 36, 0.15); color: var(--accent-yellow); }
+.adr-status--deprecated { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
+.adr-status--superseded { background: rgba(244, 114, 182, 0.15); color: var(--accent-pink); }
+.adr-status--draft { background: rgba(100, 116, 139, 0.15); color: var(--text-muted); }
+
+/* ============================================================
+   API SURFACE VIEW
+   ============================================================ */
+.api-section {
+  margin-bottom: 2rem;
+}
+
+.api-section h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.api-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.api-table th {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-card);
+  border-bottom: 2px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+}
+
+.api-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.api-table tr:hover td {
+  background: rgba(56, 189, 248, 0.04);
+}
+
+.method-badge {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  padding: 0.15rem 0.35rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+  display: inline-block;
+  min-width: 38px;
+  text-align: center;
+}
+
+.method-badge--get { background: rgba(52, 211, 153, 0.15); color: var(--accent-green); }
+.method-badge--post { background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); }
+.method-badge--put { background: rgba(251, 191, 36, 0.15); color: var(--accent-yellow); }
+.method-badge--delete { background: rgba(248, 113, 113, 0.15); color: var(--accent-red); }
+.method-badge--patch { background: rgba(167, 139, 250, 0.15); color: var(--accent-purple); }
+.method-badge--ws { background: rgba(244, 114, 182, 0.15); color: var(--accent-pink); }
+.method-badge--rpc { background: rgba(34, 211, 238, 0.15); color: var(--accent-cyan); }
+
+.api-path {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   TECH STACK VIEW
+   ============================================================ */
+.stack-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.25rem;
+}
+
+.stack-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  transition: var(--transition);
+}
+
+.stack-card:hover { border-color: var(--border-accent); }
+
+.stack-card h3 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.dep-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.dep-name {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.dep-ver {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.dep-note {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-top: 0.5rem;
+}
+
+/* ============================================================
+   NAV OVERFLOW (allow horizontal scroll on small screens)
+   ============================================================ */
+.nav-links {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.nav-links::-webkit-scrollbar { display: none; }
+
+/* ============================================================
    PRINT STYLES
    ============================================================ */
 @media print {
@@ -1073,9 +1428,13 @@ main {
     <li><a data-view="components">Components</a></li>
     <li><a data-view="flow">Request Flow</a></li>
     <li><a data-view="graph">Service Graph</a></li>
+    <li><a data-view="protocols">Protocols</a></li>
     <li><a data-view="security">Security</a></li>
     <li><a data-view="data">Data Layer</a></li>
     <li><a data-view="plugins">Plugins</a></li>
+    <li><a data-view="adrs">ADRs</a></li>
+    <li><a data-view="api">API Surface</a></li>
+    <li><a data-view="stack">Tech Stack</a></li>
   </ul>
   <div class="nav-search">
     <input type="text" id="global-search" placeholder="Search components... (Ctrl+K)" autocomplete="off">
@@ -1097,6 +1456,18 @@ main {
         <div class="stat"><div class="stat-value">6</div><div class="stat-label">Transports</div></div>
         <div class="stat"><div class="stat-value">55</div><div class="stat-label">DB Models</div></div>
         <div class="stat"><div class="stat-value">50</div><div class="stat-label">ADRs</div></div>
+      </div>
+
+      <div class="tech-ribbon">
+        <span class="tech-item"><strong>FastAPI</strong> ASGI Framework</span>
+        <span class="tech-item"><strong>SQLAlchemy</strong> ORM</span>
+        <span class="tech-item"><strong>Pydantic</strong> Validation</span>
+        <span class="tech-item"><strong>PostgreSQL</strong> / SQLite</span>
+        <span class="tech-item"><strong>Redis</strong> Cache &amp; Pub/Sub</span>
+        <span class="tech-item"><strong>orjson</strong> Serialization</span>
+        <span class="tech-item"><strong>OpenTelemetry</strong> Tracing</span>
+        <span class="tech-item"><strong>Prometheus</strong> Metrics</span>
+        <span class="tech-item"><strong>Helm</strong> / K8s / OCI</span>
       </div>
     </div>
 
@@ -1507,6 +1878,99 @@ main {
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ============================================================
+       PROTOCOLS VIEW
+       ============================================================ -->
+  <div id="protocols" class="view">
+    <h2 class="section-title">Protocol Architecture</h2>
+    <p class="section-subtitle">ContextForge supports 6 transport protocols, the MCP JSON-RPC specification, A2A agent protocol, and OAuth 2.0.</p>
+
+    <div class="protocol-section">
+      <h3>Transport Protocols</h3>
+      <div class="protocol-grid" id="transport-protocols"></div>
+    </div>
+
+    <div class="protocol-section">
+      <h3>MCP JSON-RPC Methods (21 methods)</h3>
+      <p class="section-subtitle" style="margin-bottom:1rem">All methods follow the JSON-RPC 2.0 specification over any supported transport.</p>
+      <div class="mcp-method-grid" id="mcp-methods"></div>
+    </div>
+
+    <div class="protocol-section">
+      <h3>Higher-Level Protocols</h3>
+      <div class="protocol-grid" id="higher-protocols"></div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       ADR TIMELINE VIEW
+       ============================================================ -->
+  <div id="adrs" class="view">
+    <h2 class="section-title">Architecture Decision Records</h2>
+    <p class="section-subtitle">50 ADRs documenting key architectural choices, technology selections, and design trade-offs.</p>
+
+    <div class="adr-controls">
+      <input type="text" class="adr-search" id="adr-search" placeholder="Search ADRs...">
+      <button class="filter-btn active" data-adr-filter="all">All <span class="count-badge" id="adr-count-all"></span></button>
+      <button class="filter-btn" data-adr-filter="accepted">Accepted</button>
+      <button class="filter-btn" data-adr-filter="implemented">Implemented</button>
+      <button class="filter-btn" data-adr-filter="proposed">Proposed</button>
+      <button class="filter-btn" data-adr-filter="deprecated">Deprecated</button>
+    </div>
+
+    <div class="adr-grid" id="adr-grid"></div>
+  </div>
+
+  <!-- ============================================================
+       API SURFACE VIEW
+       ============================================================ -->
+  <div id="api" class="view">
+    <h2 class="section-title">API Surface</h2>
+    <p class="section-subtitle">REST endpoints organized by router, plus MCP JSON-RPC protocol methods.</p>
+
+    <div class="api-section">
+      <h3>REST API Endpoints by Router</h3>
+      <div style="overflow-x:auto">
+        <table class="api-table" id="api-table">
+          <thead>
+            <tr><th>Router</th><th>File</th><th>GET</th><th>POST</th><th>PUT</th><th>DELETE</th><th>Total</th></tr>
+          </thead>
+          <tbody id="api-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="api-section">
+      <h3>Core Application Routes (main.py)</h3>
+      <div style="overflow-x:auto">
+        <table class="api-table">
+          <thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody id="core-routes-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="api-section">
+      <h3>MCP Protocol Endpoints</h3>
+      <div style="overflow-x:auto">
+        <table class="api-table">
+          <thead><tr><th>Transport</th><th>Path</th><th>Description</th></tr></thead>
+          <tbody id="mcp-endpoints-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       TECH STACK VIEW
+       ============================================================ -->
+  <div id="stack" class="view">
+    <h2 class="section-title">Technology Stack</h2>
+    <p class="section-subtitle">Core dependencies powering ContextForge, organized by domain.</p>
+
+    <div class="stack-grid" id="stack-grid"></div>
   </div>
 </main>
 
@@ -2797,6 +3261,400 @@ document.querySelectorAll('.layer[data-layer]').forEach(function(layer) {
     }
   });
 });
+
+/* ================================================================
+   DATA: Transport protocols
+   ================================================================ */
+var TRANSPORT_PROTOCOLS = [
+  { name:"Streamable HTTP", color:"var(--accent-blue)", file:"streamablehttp_transport.py",
+    desc:"Stateful/stateless HTTP transport for JSON-RPC 2.0 over HTTP with session management and event streaming. The primary production transport.",
+    tags:["HTTP/1.1","HTTP/2","JSON-RPC","Sessions","Stateful"] },
+  { name:"Server-Sent Events", color:"var(--accent-cyan)", file:"sse_transport.py",
+    desc:"Unidirectional event streaming with automatic keepalive, reconnection, and long-lived session support.",
+    tags:["SSE","Streaming","Keepalive","Legacy MCP"] },
+  { name:"WebSocket", color:"var(--accent-purple)", file:"websocket_transport.py",
+    desc:"Full-duplex bidirectional communication with ping/pong keepalive and message framing.",
+    tags:["Bidirectional","Real-time","Ping/Pong"] },
+  { name:"STDIO", color:"var(--accent-green)", file:"stdio_transport.py",
+    desc:"Standard input/output for CLI integration, local server processes, and process-based plugins.",
+    tags:["CLI","Local","Process","Pipes"] },
+  { name:"gRPC", color:"var(--accent-orange)", file:"grpc_service.py",
+    desc:"Protocol Buffers over HTTP/2 with service discovery, reflection, and TLS. Optional transport.",
+    tags:["Protobuf","HTTP/2","TLS","Reflection"] },
+  { name:"Rust MCP Runtime", color:"var(--accent-pink)", file:"rust_mcp_runtime_proxy.py",
+    desc:"High-performance Rust sidecar with shadow/edge/full rollout modes for Streamable HTTP acceleration.",
+    tags:["Rust","Sidecar","Shadow","Performance"] }
+];
+
+var MCP_METHODS = [
+  { method:"initialize", desc:"Initialize MCP session with capabilities negotiation", group:"Protocol" },
+  { method:"ping", desc:"Heartbeat to verify connection liveness", group:"Protocol" },
+  { method:"notifications/initialized", desc:"Client signals initialization complete", group:"Protocol" },
+  { method:"notifications/cancelled", desc:"Operation cancellation notification", group:"Protocol" },
+  { method:"notifications/message", desc:"Generic message notification", group:"Protocol" },
+  { method:"tools/list", desc:"List available tools with schemas", group:"Tools" },
+  { method:"tools/call", desc:"Invoke a tool with arguments", group:"Tools" },
+  { method:"resources/list", desc:"List available resources", group:"Resources" },
+  { method:"resources/read", desc:"Read resource content by URI", group:"Resources" },
+  { method:"resources/subscribe", desc:"Subscribe to resource update notifications", group:"Resources" },
+  { method:"resources/unsubscribe", desc:"Unsubscribe from resource updates", group:"Resources" },
+  { method:"resources/templates/list", desc:"List URI template definitions", group:"Resources" },
+  { method:"prompts/list", desc:"List available prompt templates", group:"Prompts" },
+  { method:"prompts/get", desc:"Get a prompt with argument substitution", group:"Prompts" },
+  { method:"roots/list", desc:"List available root URIs", group:"Roots" },
+  { method:"list_gateways", desc:"List federated gateway servers", group:"Federation" },
+  { method:"completion/complete", desc:"Request argument completion suggestions", group:"Completion" },
+  { method:"sampling/createMessage", desc:"Create an LLM sampling message", group:"Sampling" },
+  { method:"elicitation/create", desc:"Create user elicitation (MCP 2025-06-18)", group:"Elicitation" },
+  { method:"logging/setLevel", desc:"Set server-side log level", group:"Logging" },
+  { method:"list_roots", desc:"Legacy roots listing (backward compat)", group:"Legacy" }
+];
+
+var HIGHER_PROTOCOLS = [
+  { name:"MCP (Model Context Protocol)", color:"var(--accent-blue)",
+    desc:"JSON-RPC 2.0 protocol for tool discovery, invocation, resource access, and prompt management. Supports protocol version negotiation and capability advertisement.",
+    tags:["JSON-RPC 2.0","v2025-11-25","21 Methods","Capabilities"] },
+  { name:"A2A (Agent-to-Agent)", color:"var(--accent-orange)",
+    desc:"Google's Agent-to-Agent protocol for inter-agent communication, task delegation, and agent discovery with OAuth 2.0 authentication.",
+    tags:["Agent Cards","Tasks","OAuth 2.0","Discovery"] },
+  { name:"OAuth 2.0 / OIDC", color:"var(--accent-purple)",
+    desc:"Authorization Code flow with PKCE, Client Credentials, Dynamic Client Registration (RFC 7591), and Protected Resource Metadata (RFC 9728).",
+    tags:["Auth Code","PKCE","DCR","RFC 9728","8 SSO Providers"] },
+  { name:"REST / OpenAPI", color:"var(--accent-green)",
+    desc:"RESTful admin API with OpenAPI 3.1 documentation, JWT/Basic authentication, RBAC, and team-scoped access.",
+    tags:["OpenAPI 3.1","JSON","RBAC","Pagination"] }
+];
+
+/* ================================================================
+   DATA: Architecture Decision Records
+   ================================================================ */
+var ADRS = [
+  { num:"001", title:"Adopt FastAPI + Pydantic", status:"accepted" },
+  { num:"002", title:"Use Async SQLAlchemy ORM", status:"accepted" },
+  { num:"003", title:"Expose Multi-Transport Endpoints", status:"accepted" },
+  { num:"004", title:"Combine JWT & Basic Auth", status:"accepted" },
+  { num:"005", title:"Structured JSON Logging", status:"implemented" },
+  { num:"006", title:"Gateway & Tool-Level Rate Limiting", status:"accepted" },
+  { num:"007", title:"Pluggable Cache Backend", status:"accepted" },
+  { num:"008", title:"Federation & Auto-Discovery via DNS-SD", status:"deprecated" },
+  { num:"009", title:"Built-in Health Checks & Self-Monitoring", status:"accepted" },
+  { num:"010", title:"Observability via Prometheus", status:"accepted" },
+  { num:"011", title:"Tool Federation", status:"implemented" },
+  { num:"012", title:"Dropdown UI Tool Selection", status:"draft" },
+  { num:"013", title:"APIs for Server Connection Strings", status:"draft" },
+  { num:"014", title:"Security Headers and CORS Middleware", status:"accepted" },
+  { num:"015", title:"Configurable Well-Known URI Handler", status:"accepted" },
+  { num:"016", title:"Plugin Framework and AI Middleware", status:"implemented" },
+  { num:"017", title:"Adopt orjson for JSON Serialization", status:"accepted" },
+  { num:"018", title:"Built-in Response Compression", status:"accepted" },
+  { num:"019", title:"Modular Architecture Split (14 Modules)", status:"accepted" },
+  { num:"020", title:"Multi-Format Packaging Strategy", status:"accepted" },
+  { num:"021", title:"Built-in Proxy vs Service Mesh", status:"accepted" },
+  { num:"022", title:"Elicitation Passthrough Implementation", status:"accepted" },
+  { num:"023", title:"One-Time Authentication Servers", status:"accepted" },
+  { num:"024", title:"Adopt uvicorn[standard]", status:"accepted" },
+  { num:"025", title:"Add Granian as Alternative HTTP Server", status:"accepted" },
+  { num:"026", title:"Add Hiredis as Default Redis Parser", status:"accepted" },
+  { num:"027", title:"Migrate from Psycopg2 to Psycopg3", status:"accepted" },
+  { num:"028", title:"Authentication Data Caching", status:"accepted" },
+  { num:"029", title:"Registry and Admin Stats Caching", status:"accepted" },
+  { num:"030", title:"Metrics Cleanup and Rollup", status:"accepted" },
+  { num:"031", title:"Parallel Session Cleanup with asyncio.gather()", status:"accepted" },
+  { num:"032", title:"MCP Session Pool for Connection Reuse", status:"accepted" },
+  { num:"033", title:"Tool Lookup Cache for invoke_tool", status:"accepted" },
+  { num:"034a", title:"Centralized Notification Service", status:"accepted" },
+  { num:"034b", title:"SSO Admin Synchronization & Config Precedence", status:"accepted" },
+  { num:"035", title:"Query Parameter Authentication for Peers", status:"accepted" },
+  { num:"036", title:"Bootstrap Custom Roles", status:"accepted" },
+  { num:"037", title:"External Plugin STDIO Launch", status:"accepted" },
+  { num:"038a", title:"Experimental Rust Transport Backend", status:"superseded" },
+  { num:"038b", title:"Multi-Worker Session Affinity", status:"accepted" },
+  { num:"039", title:"Fully Independent Plugin Crates", status:"proposed" },
+  { num:"040", title:"Flexible Admin UI Sections", status:"accepted" },
+  { num:"041", title:"Top-Level Rust Workspace", status:"accepted" },
+  { num:"042", title:"Enforce Rust in Build Process", status:"proposed" },
+  { num:"043", title:"Rust MCP Runtime Sidecar Mode Model", status:"accepted" },
+  { num:"044", title:"Module Communication Protocol", status:"proposed" },
+  { num:"045", title:"Authentication Remains in Core", status:"proposed" },
+  { num:"046", title:"Shared-Nothing Between Modules", status:"proposed" },
+  { num:"047", title:"Incremental Migration Over Rewrite", status:"proposed" },
+  { num:"048", title:"RFC 9728 OAuth Protected Resource Metadata", status:"implemented" }
+];
+
+/* ================================================================
+   DATA: API surface
+   ================================================================ */
+var API_ROUTERS = [
+  { name:"Auth", file:"auth.py", get:2, post:1, put:0, del:0 },
+  { name:"Email Auth", file:"email_auth.py", get:3, post:5, put:1, del:0 },
+  { name:"OAuth", file:"oauth_router.py", get:5, post:3, put:0, del:1 },
+  { name:"SSO", file:"sso.py", get:3, post:2, put:1, del:1 },
+  { name:"Tokens", file:"tokens.py", get:4, post:2, put:1, del:2 },
+  { name:"RBAC", file:"rbac.py", get:6, post:3, put:1, del:2 },
+  { name:"Teams", file:"teams.py", get:6, post:4, put:2, del:2 },
+  { name:"LLM Chat", file:"llmchat_router.py", get:2, post:3, put:0, del:0 },
+  { name:"LLM Admin", file:"llm_admin_router.py", get:3, post:2, put:1, del:1 },
+  { name:"LLM Config", file:"llm_config_router.py", get:2, post:1, put:1, del:1 },
+  { name:"LLM Proxy", file:"llm_proxy_router.py", get:0, post:1, put:0, del:0 },
+  { name:"Observability", file:"observability.py", get:4, post:2, put:0, del:1 },
+  { name:"Log Search", file:"log_search.py", get:3, post:1, put:0, del:0 },
+  { name:"Metrics Maint.", file:"metrics_maintenance.py", get:2, post:2, put:0, del:0 },
+  { name:"Cancellation", file:"cancellation_router.py", get:1, post:1, put:0, del:0 },
+  { name:"Well-Known", file:"well_known.py", get:3, post:0, put:0, del:0 },
+  { name:"Server Well-Known", file:"server_well_known.py", get:2, post:0, put:0, del:0 },
+  { name:"Reverse Proxy", file:"reverse_proxy.py", get:2, post:1, put:0, del:1 },
+  { name:"ToolOps", file:"toolops_router.py", get:1, post:1, put:0, del:0 }
+];
+
+var CORE_ROUTES = [
+  { method:"GET", path:"/", desc:"Root - MCP server info and capabilities" },
+  { method:"GET", path:"/health", desc:"Health check (liveness probe)" },
+  { method:"GET", path:"/ready", desc:"Readiness check (DB + cache)" },
+  { method:"GET", path:"/health/security", desc:"Security health status" },
+  { method:"GET", path:"/favicon.ico", desc:"Favicon redirect" },
+  { method:"GET", path:"/admin", desc:"Admin UI dashboard" },
+  { method:"GET", path:"/metrics/prometheus", desc:"Prometheus metrics scrape endpoint" },
+  { method:"POST", path:"/mcp", desc:"MCP JSON-RPC endpoint (Streamable HTTP)" },
+  { method:"GET", path:"/sse", desc:"MCP SSE transport endpoint" },
+  { method:"WS", path:"/ws", desc:"MCP WebSocket transport endpoint" }
+];
+
+var MCP_ENDPOINTS = [
+  { transport:"Streamable HTTP", path:"POST /mcp", desc:"Stateful JSON-RPC with session headers" },
+  { transport:"SSE", path:"GET /sse", desc:"Server-Sent Events with POST message channel" },
+  { transport:"WebSocket", path:"WS /ws", desc:"Full-duplex JSON-RPC over WebSocket" },
+  { transport:"STDIO", path:"stdin/stdout", desc:"JSON-RPC over standard I/O pipes" },
+  { transport:"Virtual Server", path:"POST /servers/{id}/mcp", desc:"Per-server Streamable HTTP endpoint" },
+  { transport:"Virtual Server", path:"GET /servers/{id}/sse", desc:"Per-server SSE endpoint" }
+];
+
+/* ================================================================
+   DATA: Technology stack
+   ================================================================ */
+var TECH_STACK = [
+  { category:"Web Framework", icon:"\u26A1", color:"var(--accent-blue)", deps:[
+    { name:"FastAPI", ver:">= 0.135.1", note:"ASGI web framework" },
+    { name:"Starlette", ver:">= 0.52.1", note:"ASGI toolkit" },
+    { name:"uvicorn[standard]", ver:">= 0.42.0", note:"Primary HTTP server" },
+    { name:"Granian", ver:">= 2.7.2", note:"Alternative HTTP server (ADR-025)" },
+    { name:"gunicorn", ver:">= 25.1.0", note:"Process manager" }
+  ]},
+  { category:"Data & ORM", icon:"\uD83D\uDDC4\uFE0F", color:"var(--accent-green)", deps:[
+    { name:"SQLAlchemy", ver:">= 2.0.48", note:"ORM with 55 models" },
+    { name:"Psycopg[c]", ver:">= 3.3.3", note:"PostgreSQL with C accel (ADR-027)" },
+    { name:"Alembic", ver:">= 1.18.4", note:"DB migrations" },
+    { name:"Redis[hiredis]", ver:">= 7.3.0", note:"Cache with C parser (ADR-026)" }
+  ]},
+  { category:"Validation & Config", icon:"\u2705", color:"var(--accent-purple)", deps:[
+    { name:"Pydantic", ver:">= 2.12.5", note:"Schema validation" },
+    { name:"pydantic-settings", ver:">= 2.13.1", note:"Environment config (463 fields)" },
+    { name:"jsonschema", ver:">= 4.26.0", note:"JSON Schema validation" }
+  ]},
+  { category:"Serialization", icon:"\uD83D\uDCE6", color:"var(--accent-cyan)", deps:[
+    { name:"orjson", ver:">= 3.11.7", note:"5-6x faster JSON (ADR-017)" },
+    { name:"sse-starlette", ver:">= 3.3.3", note:"SSE transport" },
+    { name:"starlette-compress", ver:">= 1.7.0", note:"Brotli/Zstd/GZip (ADR-018)" },
+    { name:"PyYAML", ver:">= 6.0.3", note:"YAML config files" }
+  ]},
+  { category:"Security", icon:"\uD83D\uDD12", color:"var(--accent-orange)", deps:[
+    { name:"PyJWT", ver:">= 2.12.1", note:"JWT tokens (HS256, RS256)" },
+    { name:"argon2-cffi", ver:">= 25.1.0", note:"Password hashing" },
+    { name:"cryptography", ver:">= 46.0.5", note:"AES encryption, TLS" },
+    { name:"requests-oauthlib", ver:">= 2.0.0", note:"OAuth client flows" }
+  ]},
+  { category:"Observability", icon:"\uD83D\uDD2D", color:"var(--accent-pink)", deps:[
+    { name:"prometheus-fastapi-instrumentator", ver:">= 7.1.0", note:"HTTP metrics" },
+    { name:"prometheus_client", ver:">= 0.24.1", note:"Custom metrics" },
+    { name:"python-json-logger", ver:">= 4.0.0", note:"Structured logging" }
+  ]},
+  { category:"HTTP Client", icon:"\uD83C\uDF10", color:"var(--accent-yellow)", deps:[
+    { name:"httpx[http2]", ver:">= 0.28.1", note:"Async HTTP with HTTP/2" },
+    { name:"mcp", ver:">= 1.26.0", note:"MCP protocol SDK" }
+  ]},
+  { category:"Templating & CLI", icon:"\uD83D\uDEE0\uFE0F", color:"var(--text-muted)", deps:[
+    { name:"Jinja2", ver:">= 3.1.6", note:"Prompt templating (sandboxed)" },
+    { name:"typer", ver:">= 0.24.1", note:"CLI framework" },
+    { name:"HTMX + Alpine.js", ver:"CDN", note:"Admin UI (no build step)" }
+  ]}
+];
+
+/* ================================================================
+   RENDER: Protocols view
+   ================================================================ */
+(function renderProtocols() {
+  var tpContainer = document.getElementById('transport-protocols');
+  TRANSPORT_PROTOCOLS.forEach(function(p) {
+    var card = el('div', { className:'protocol-card' }, [
+      el('h4', { textContent:p.name, style:{color:p.color} }),
+      el('p', { textContent:p.desc }),
+      el('div', { className:'proto-meta' },
+        p.tags.map(function(t) {
+          return el('span', { className:'proto-badge', textContent:t,
+            style:{background:p.color+'22', color:p.color} });
+        })
+      )
+    ]);
+    card.querySelector('h4').insertAdjacentElement('afterend',
+      el('div', { className:'card-path', textContent:'mcpgateway/transports/'+p.file,
+        style:{marginBottom:'0.5rem', display:'inline-block'} }));
+    tpContainer.appendChild(card);
+  });
+
+  var mcpContainer = document.getElementById('mcp-methods');
+  var groupColors = { Protocol:"var(--accent-cyan)", Tools:"var(--accent-blue)", Resources:"var(--accent-green)",
+    Prompts:"var(--accent-purple)", Roots:"var(--accent-orange)", Federation:"var(--accent-pink)",
+    Completion:"var(--accent-yellow)", Sampling:"var(--accent-red)", Elicitation:"var(--accent-cyan)",
+    Logging:"var(--text-muted)", Legacy:"var(--text-muted)" };
+  MCP_METHODS.forEach(function(m) {
+    var c = groupColors[m.group] || 'var(--accent-blue)';
+    mcpContainer.appendChild(el('div', { className:'mcp-method' }, [
+      el('span', { className:'proto-badge', textContent:m.group,
+        style:{background:c+'22', color:c, flexShrink:'0'} }),
+      el('span', { className:'method-name', textContent:m.method }),
+      el('span', { className:'method-desc', textContent:m.desc })
+    ]));
+  });
+
+  var hpContainer = document.getElementById('higher-protocols');
+  HIGHER_PROTOCOLS.forEach(function(p) {
+    hpContainer.appendChild(el('div', { className:'protocol-card' }, [
+      el('h4', { textContent:p.name, style:{color:p.color} }),
+      el('p', { textContent:p.desc }),
+      el('div', { className:'proto-meta' },
+        p.tags.map(function(t) {
+          return el('span', { className:'proto-badge', textContent:t,
+            style:{background:p.color+'22', color:p.color} });
+        })
+      )
+    ]));
+  });
+})();
+
+/* ================================================================
+   RENDER: ADR timeline
+   ================================================================ */
+var adrGrid = document.getElementById('adr-grid');
+var adrSearch = document.getElementById('adr-search');
+var adrFilterBtns = document.querySelectorAll('[data-adr-filter]');
+var currentAdrFilter = 'all';
+
+function renderAdrs() {
+  var query = adrSearch.value.toLowerCase();
+  var filtered = ADRS.filter(function(a) {
+    if (currentAdrFilter !== 'all' && a.status !== currentAdrFilter) return false;
+    if (query) return (a.num + ' ' + a.title).toLowerCase().indexOf(query) !== -1;
+    return true;
+  });
+
+  clearChildren(adrGrid);
+  var countEl = document.getElementById('adr-count-all');
+  if (countEl) countEl.textContent = ADRS.length;
+
+  filtered.forEach(function(a) {
+    adrGrid.appendChild(el('div', { className:'adr-card' }, [
+      el('span', { className:'adr-num', textContent:'ADR-'+a.num }),
+      el('div', { className:'adr-body' }, [
+        el('div', { className:'adr-title', textContent:a.title }),
+        el('span', { className:'adr-status adr-status--'+a.status, textContent:a.status })
+      ])
+    ]));
+  });
+
+  if (filtered.length === 0) {
+    adrGrid.appendChild(el('div', { className:'empty-state', style:{gridColumn:'1/-1'} }, [
+      el('p', { textContent:'No ADRs match your search.' })
+    ]));
+  }
+}
+
+adrFilterBtns.forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    adrFilterBtns.forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    currentAdrFilter = btn.dataset.adrFilter;
+    renderAdrs();
+  });
+});
+adrSearch.addEventListener('input', renderAdrs);
+renderAdrs();
+
+/* ================================================================
+   RENDER: API Surface
+   ================================================================ */
+(function renderApi() {
+  var tbody = document.getElementById('api-table-body');
+  var totalGet=0, totalPost=0, totalPut=0, totalDel=0;
+  API_ROUTERS.forEach(function(r) {
+    var total = r.get + r.post + r.put + r.del;
+    totalGet += r.get; totalPost += r.post; totalPut += r.put; totalDel += r.del;
+    tbody.appendChild(el('tr', {}, [
+      el('td', { textContent:r.name, style:{fontWeight:'600', color:'var(--text-primary)'} }),
+      el('td', {}, [el('code', { textContent:'routers/'+r.file, style:{fontSize:'0.7rem'} })]),
+      el('td', { textContent:r.get || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.get ? 'var(--accent-green)' : 'var(--text-muted)'} }),
+      el('td', { textContent:r.post || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.post ? 'var(--accent-blue)' : 'var(--text-muted)'} }),
+      el('td', { textContent:r.put || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.put ? 'var(--accent-yellow)' : 'var(--text-muted)'} }),
+      el('td', { textContent:r.del || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.del ? 'var(--accent-red)' : 'var(--text-muted)'} }),
+      el('td', { textContent:total, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)'} })
+    ]));
+  });
+  var grandTotal = totalGet + totalPost + totalPut + totalDel;
+  tbody.appendChild(el('tr', { style:{borderTop:'2px solid var(--border-subtle)'} }, [
+    el('td', { textContent:'TOTAL', style:{fontWeight:'800', color:'var(--text-primary)'} }),
+    el('td', { textContent:'19 routers' }),
+    el('td', { textContent:totalGet, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)', color:'var(--accent-green)'} }),
+    el('td', { textContent:totalPost, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)', color:'var(--accent-blue)'} }),
+    el('td', { textContent:totalPut, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)', color:'var(--accent-yellow)'} }),
+    el('td', { textContent:totalDel, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)', color:'var(--accent-red)'} }),
+    el('td', { textContent:grandTotal, style:{textAlign:'center', fontWeight:'800', fontFamily:'var(--font-mono)'} })
+  ]));
+
+  // Core routes
+  var coreBody = document.getElementById('core-routes-body');
+  CORE_ROUTES.forEach(function(r) {
+    var cls = 'method-badge method-badge--' + r.method.toLowerCase();
+    coreBody.appendChild(el('tr', {}, [
+      el('td', {}, [el('span', { className:cls, textContent:r.method })]),
+      el('td', { className:'api-path', textContent:r.path }),
+      el('td', { textContent:r.desc })
+    ]));
+  });
+
+  // MCP endpoints
+  var mcpBody = document.getElementById('mcp-endpoints-body');
+  MCP_ENDPOINTS.forEach(function(e) {
+    mcpBody.appendChild(el('tr', {}, [
+      el('td', { textContent:e.transport, style:{fontWeight:'600'} }),
+      el('td', { className:'api-path', textContent:e.path }),
+      el('td', { textContent:e.desc })
+    ]));
+  });
+})();
+
+/* ================================================================
+   RENDER: Tech Stack
+   ================================================================ */
+(function renderStack() {
+  var container = document.getElementById('stack-grid');
+  TECH_STACK.forEach(function(cat) {
+    var card = el('div', { className:'stack-card' }, [
+      el('h3', {}, [
+        el('span', { textContent:cat.icon }),
+        el('span', { textContent:cat.category, style:{color:cat.color} })
+      ])
+    ].concat(
+      cat.deps.map(function(d) {
+        return el('div', { className:'dep-item' }, [
+          el('span', { className:'dep-name', textContent:d.name }),
+          el('span', { className:'dep-ver', textContent:d.ver })
+        ]);
+      }),
+      cat.deps.length > 0 ? [el('div', { className:'dep-note', textContent:
+        cat.deps.map(function(d) { return d.note; }).join(' \u2022 ')
+      })] : []
+    ));
+    container.appendChild(card);
+  });
+})();
 
 /* ================================================================
    INIT
