@@ -62,7 +62,11 @@ fn state_map() -> &'static Mutex<HashMap<String, ToolRetryState>> {
 /// Remove entries whose `last_failure_at` is older than `STATE_TTL_SECS`.
 /// Called under an already-held lock by `check_and_update`.
 fn evict_stale(map: &mut HashMap<String, ToolRetryState>) {
-    let cutoff = monotonic_secs() - STATE_TTL_SECS;
+    evict_stale_before(map, monotonic_secs());
+}
+
+fn evict_stale_before(map: &mut HashMap<String, ToolRetryState>, now_secs: f64) {
+    let cutoff = now_secs - STATE_TTL_SECS;
     map.retain(|_, v| v.last_failure_at <= 0.0 || v.last_failure_at >= cutoff);
 }
 
@@ -542,22 +546,23 @@ mod tests {
     #[test]
     fn evict_stale_removes_entries_older_than_ttl() {
         let mut map = HashMap::new();
+        let now_secs = STATE_TTL_SECS + 10.0;
         map.insert(
             "stale".to_string(),
             ToolRetryState {
                 consecutive_failures: 1,
-                last_failure_at: monotonic_secs() - (STATE_TTL_SECS + 1.0),
+                last_failure_at: now_secs - (STATE_TTL_SECS + 1.0),
             },
         );
         map.insert(
             "fresh".to_string(),
             ToolRetryState {
                 consecutive_failures: 1,
-                last_failure_at: monotonic_secs(),
+                last_failure_at: now_secs,
             },
         );
 
-        evict_stale(&mut map);
+        evict_stale_before(&mut map, now_secs);
 
         assert!(!map.contains_key("stale"));
         assert!(map.contains_key("fresh"));
