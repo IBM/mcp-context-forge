@@ -1,6 +1,6 @@
 ########################################################################
 # OCP Deployment Values (PGO) — CrunchyData Postgres Operator
-# Cluster: contextforge-p02-rocp01.cp.fyre.ibm.com
+# Cluster: <your-ocp-cluster>
 #
 # Override values for deploying ContextForge on OpenShift with
 # an externally managed PostgreSQL operator (CrunchyData PGO).
