@@ -18,13 +18,50 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import ToolPluginBinding, utc_now
-from mcpgateway.schemas import ToolPluginBindingRequest, ToolPluginBindingResponse
+from mcpgateway.schemas import PLUGIN_ID_TO_NAME, ToolPluginBindingRequest, ToolPluginBindingResponse
 
 logger = logging.getLogger(__name__)
 
 
 class ToolPluginBindingNotFoundError(Exception):
     """Raised when a binding with the given ID does not exist."""
+
+
+def get_bindings_for_tool(
+    db: Session,
+    team_id: str,
+    tool_name: str,
+) -> List[ToolPluginBinding]:
+    """Return deduplicated plugin bindings for a (team_id, tool_name) pair.
+
+    Includes wildcard ``"*"`` bindings alongside exact-match bindings.
+    For duplicate plugin_ids, the most recently updated binding wins
+    (last-write-wins) so a specific tool_name entry overrides a ``"*"`` entry
+    when both exist for the same plugin.
+
+    Args:
+        db: SQLAlchemy session.
+        team_id: Team whose bindings to query.
+        tool_name: Exact tool name, or ``"*"`` to fetch only wildcard rows.
+
+    Returns:
+        List of ORM ``ToolPluginBinding`` instances, one per unique plugin_id.
+    """
+    rows = (
+        db.query(ToolPluginBinding)
+        .filter(
+            ToolPluginBinding.team_id == team_id,
+            ToolPluginBinding.tool_name.in_([tool_name, "*"]),
+        )
+        .order_by(ToolPluginBinding.updated_at.asc())
+        .all()
+    )
+    # Last-write-wins: iterate ascending updated_at so exact matches (later)
+    # overwrite wildcard matches (earlier) for the same plugin_id.
+    seen: dict[str, ToolPluginBinding] = {}
+    for binding in rows:
+        seen[binding.plugin_id] = binding
+    return list(seen.values())
 
 
 class ToolPluginBindingService:

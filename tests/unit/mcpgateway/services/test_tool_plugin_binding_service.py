@@ -40,6 +40,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.tool_plugin_binding_service import (
     ToolPluginBindingNotFoundError,
     ToolPluginBindingService,
+    get_bindings_for_tool,
 )
 
 
@@ -787,3 +788,122 @@ class TestTopLevelSchemas:
         # item 1: RATE_LIMITER — missing all three fields (sorted alphabetically in the error)
         assert errors_by_index[1]["loc"] == ("teams", "team-a", "policies", 1)
         assert errors_by_index[1]["msg"] == "Value error, Missing config fields for RATE_LIMITER: ['by_tenant', 'by_tool', 'by_user']"
+
+
+# ---------------------------------------------------------------------------
+# get_bindings_for_tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetBindingsForTool:
+    """Tests for the module-level get_bindings_for_tool() query function."""
+
+    @pytest.fixture(autouse=True)
+    def _seed(self, service, db_session):
+        """Insert a known set of bindings used across tests."""
+        self._service = service
+        self._db = db_session
+
+        # Exact binding for (team-a, tool_x) — OUTPUT_LENGTH_GUARD
+        olg_req = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            mode=PluginBindingMode.ENFORCE,
+                            priority=50,
+                            config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, olg_req, caller_email="admin@example.com")
+
+        # Wildcard binding for (team-a, *) — RATE_LIMITER
+        rl_req = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["*"],
+                            plugin_id=PluginId.RATE_LIMITER,
+                            mode=PluginBindingMode.PERMISSIVE,
+                            priority=10,
+                            config={"by_user": "100/m", "by_tenant": "1000/m", "by_tool": None},
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, rl_req, caller_email="admin@example.com")
+
+    def test_returns_exact_and_wildcard_bindings(self):
+        """get_bindings_for_tool returns both the exact tool_name match and the '*' wildcard."""
+        results = get_bindings_for_tool(self._db, "team-a", "tool_x")
+        plugin_ids = {b.plugin_id for b in results}
+        assert plugin_ids == {"OUTPUT_LENGTH_GUARD", "RATE_LIMITER"}
+
+    def test_returns_only_wildcard_for_unknown_tool(self):
+        """A tool with no exact binding still gets the wildcard binding."""
+        results = get_bindings_for_tool(self._db, "team-a", "other_tool")
+        assert len(results) == 1
+        assert results[0].plugin_id == "RATE_LIMITER"
+
+    def test_returns_empty_for_unknown_team(self):
+        """An unknown team has no bindings."""
+        results = get_bindings_for_tool(self._db, "unknown-team", "tool_x")
+        assert results == []
+
+    def test_exact_overrides_wildcard_for_same_plugin(self, service, db_session):
+        """When both an exact and a wildcard binding exist for the same plugin_id,
+        the more recently updated one wins (exact was inserted after wildcard here)."""
+        # Insert a wildcard OUTPUT_LENGTH_GUARD first
+        wc_req = ToolPluginBindingRequest(
+            teams={
+                "team-b": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["*"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            mode=PluginBindingMode.PERMISSIVE,
+                            priority=1,
+                            config={"min_chars": 0, "max_chars": 100, "strategy": "truncate", "ellipsis": "..."},
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, wc_req, caller_email="admin@example.com")
+
+        # Now insert an exact OUTPUT_LENGTH_GUARD for team-b/tool_z
+        exact_req = ToolPluginBindingRequest(
+            teams={
+                "team-b": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_z"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            mode=PluginBindingMode.ENFORCE,
+                            priority=99,
+                            config={"min_chars": 0, "max_chars": 9999, "strategy": "truncate", "ellipsis": "..."},
+                        )
+                    ]
+                )
+            }
+        )
+        service.upsert_bindings(db_session, exact_req, caller_email="admin@example.com")
+
+        results = get_bindings_for_tool(db_session, "team-b", "tool_z")
+        # Only one entry per plugin_id — the one with the higher updated_at wins
+        olg_results = [b for b in results if b.plugin_id == "OUTPUT_LENGTH_GUARD"]
+        assert len(olg_results) == 1
+        # The exact binding has priority=99 (inserted last → higher updated_at)
+        assert olg_results[0].priority == 99
+
+    def test_does_not_cross_team_boundaries(self):
+        """Bindings for a different team are not returned."""
+        results = get_bindings_for_tool(self._db, "team-b", "tool_x")
+        assert results == []

@@ -24,6 +24,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.plugins.framework import reload_plugin_context
+from mcpgateway.plugins.gateway_plugin_manager import make_context_id
 from mcpgateway.schemas import ToolPluginBindingListResponse, ToolPluginBindingRequest, ToolPluginBindingResponse
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_plugin_binding_service import ToolPluginBindingNotFoundError, ToolPluginBindingService
@@ -87,6 +89,11 @@ async def upsert_tool_plugin_bindings(
                 )
 
         bindings = _service.upsert_bindings(db, request, caller_email=caller_email)
+        # Commit before invalidating cache so the new session opened by reload
+        # reads committed data. The get_db() cleanup commit is then a safe no-op.
+        db.commit()
+        for ctx_id in {make_context_id(b.team_id, b.tool_name) for b in bindings}:
+            await reload_plugin_context(ctx_id)
         return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
     except ValueError as exc:
         logger.error("Failed to upsert tool plugin bindings: %s", exc)
@@ -187,6 +194,9 @@ async def delete_tool_plugin_binding(
         True
     """
     try:
-        return _service.delete_binding(db, binding_id)
+        deleted = _service.delete_binding(db, binding_id)
+        db.commit()
+        await reload_plugin_context(make_context_id(deleted.team_id, deleted.tool_name))
+        return deleted
     except ToolPluginBindingNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

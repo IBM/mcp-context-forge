@@ -1733,6 +1733,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 timeout=settings.plugins.plugin_timeout,
                 hook_policies=HOOK_PAYLOAD_POLICIES,
                 observability=None,  # Will be set later if needed
+                db_factory=SessionLocal,
             )
             logger.info("Plugin manager factory initialized")
 
@@ -1746,6 +1747,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
                 plugin_service = get_plugin_service()
                 plugin_service.set_plugin_manager(plugin_manager)
+                # Expose on app.state so the admin UI can show the correct enabled status
+                app.state.plugin_manager = plugin_manager
         except Exception as diag_exc:
             logger.error(f"Plugin manager initialization failed: {diag_exc}", exc_info=True)
             raise

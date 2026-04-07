@@ -7865,6 +7865,15 @@ class PluginId(str, Enum):
     SECRETS_DETECTION = "SECRETS_DETECTION"
 
 
+# Maps PluginId enum values (stored in DB) to plugin class names used by the
+# plugin framework's PluginConfigOverride.name field.
+PLUGIN_ID_TO_NAME: dict[str, str] = {
+    PluginId.OUTPUT_LENGTH_GUARD: "OutputLengthGuardPlugin",
+    PluginId.RATE_LIMITER: "RateLimiterPlugin",
+    PluginId.SECRETS_DETECTION: "SecretsDetection",
+}
+
+
 class PluginBindingMode(str, Enum):
     """Plugin execution mode for tool plugin bindings."""
 

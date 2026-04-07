@@ -448,3 +448,71 @@ class TestToolPluginBindingsRouter:
         assert asyncio.iscoroutinefunction(list_tool_plugin_bindings)
         assert asyncio.iscoroutinefunction(list_tool_plugin_bindings_for_team)
         assert asyncio.iscoroutinefunction(delete_tool_plugin_binding)
+
+    # ------------------------------------------------------------------
+    # Cache invalidation — reload_plugin_context called after mutations
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_upsert_calls_reload_plugin_context(self, user_ctx, db_session):
+        """After a successful upsert the router calls reload_plugin_context with
+        the canonical context_id (team_id::tool_name) for every affected binding.
+        """
+        from unittest.mock import AsyncMock
+
+        with patch(
+            "mcpgateway.routers.tool_plugin_bindings.reload_plugin_context",
+            new_callable=AsyncMock,
+        ) as mock_reload:
+            await upsert_tool_plugin_bindings(
+                request=_simple_request(),
+                current_user_ctx=user_ctx,
+                db=db_session,
+            )
+
+        mock_reload.assert_awaited_once_with("team-a::tool_x")
+
+    @pytest.mark.asyncio
+    async def test_upsert_two_teams_calls_reload_for_each_context(self, user_ctx, db_session):
+        """Upsert with two teams calls reload_plugin_context once per unique context_id."""
+        from unittest.mock import AsyncMock
+
+        with patch(
+            "mcpgateway.routers.tool_plugin_bindings.reload_plugin_context",
+            new_callable=AsyncMock,
+        ) as mock_reload:
+            await upsert_tool_plugin_bindings(
+                request=_two_team_request(),
+                current_user_ctx=user_ctx,
+                db=db_session,
+            )
+
+        called_ids = {call.args[0] for call in mock_reload.await_args_list}
+        assert called_ids == {"team-a::tool_x", "team-b::tool_y"}
+
+    @pytest.mark.asyncio
+    async def test_delete_calls_reload_plugin_context(self, user_ctx, db_session):
+        """After a successful delete the router calls reload_plugin_context with
+        the canonical context_id for the deleted binding.
+        """
+        from unittest.mock import AsyncMock
+
+        # Seed a binding first (with real reload so it doesn't interfere)
+        upsert_result = await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+        binding_id = upsert_result.bindings[0].id
+
+        with patch(
+            "mcpgateway.routers.tool_plugin_bindings.reload_plugin_context",
+            new_callable=AsyncMock,
+        ) as mock_reload:
+            await delete_tool_plugin_binding(
+                binding_id=binding_id,
+                current_user_ctx=user_ctx,
+                db=db_session,
+            )
+
+        mock_reload.assert_awaited_once_with("team-a::tool_x")

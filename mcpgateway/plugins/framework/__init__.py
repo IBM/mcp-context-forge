@@ -14,7 +14,7 @@ Exposes core ContextForge plugin components:
 """
 
 # Standard
-from typing import Optional
+from typing import Callable, Optional
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
@@ -85,6 +85,7 @@ def init_plugin_manager_factory(
     timeout: float,
     hook_policies: dict,
     observability: Optional[ObservabilityProvider] = None,
+    db_factory: Optional[Callable] = None,
 ) -> None:
     """Explicitly initialise the global plugin manager factory.
 
@@ -98,16 +99,35 @@ def init_plugin_manager_factory(
         timeout: Per-plugin call timeout in seconds.
         hook_policies: Hook payload policy map from ``mcpgateway.plugins.policy``.
         observability: Optional observability provider to attach to the factory.
+        db_factory: Zero-argument callable returning a SQLAlchemy Session
+            (e.g. ``SessionLocal``).  When provided the factory uses
+            :class:`~mcpgateway.plugins.gateway_plugin_manager.GatewayTenantPluginManagerFactory`
+            so per-tool plugin bindings stored in the DB are applied.
+            When ``None`` the base :class:`TenantPluginManagerFactory` is used
+            (no DB overrides).
     """
     global _plugin_manager_factory
     global _observability_service
     _observability_service = observability
-    _plugin_manager_factory = TenantPluginManagerFactory(
-        yaml_path=yaml_path,
-        timeout=timeout,
-        hook_policies=hook_policies,
-        observability=observability,
-    )
+    if db_factory is not None:
+        # Lazy import to avoid circular dependency:
+        # framework/__init__ → gateway_plugin_manager → services → base_service → framework/__init__
+        from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory  # pylint: disable=import-outside-toplevel
+
+        _plugin_manager_factory = GatewayTenantPluginManagerFactory(
+            yaml_path=yaml_path,
+            timeout=timeout,
+            hook_policies=hook_policies,
+            observability=observability,
+            db_factory=db_factory,
+        )
+    else:
+        _plugin_manager_factory = TenantPluginManagerFactory(
+            yaml_path=yaml_path,
+            timeout=timeout,
+            hook_policies=hook_policies,
+            observability=observability,
+        )
 
 
 async def get_plugin_manager(server_id: str = DEFAULT_SERVER_ID) -> Optional[TenantPluginManager]:
@@ -165,6 +185,21 @@ def reset_plugin_manager_factory() -> None:
     _plugin_manager_factory = None
 
 
+async def reload_plugin_context(context_id: str) -> None:
+    """Invalidate and rebuild the cached plugin manager for *context_id*.
+
+    No-op when plugins are disabled or the factory is not initialised.
+    Call this after persisting a ToolPluginBinding change so the next tool
+    invocation picks up the updated DB overrides.
+
+    Args:
+        context_id: Context key to evict and rebuild (e.g. ``"<team_id>::<tool_name>"``).
+    """
+    if not _PLUGINS_ENABLED or _plugin_manager_factory is None:
+        return
+    await _plugin_manager_factory.reload_tenant(context_id)
+
+
 __all__ = [
     "AgentHookType",
     "AgentPostInvokePayload",
@@ -181,6 +216,7 @@ __all__ = [
     "get_plugin_manager",
     "shutdown_plugin_manager_factory",
     "reset_plugin_manager_factory",
+    "reload_plugin_context",
     "GlobalContext",
     "HookRegistry",
     "HttpAuthCheckPermissionPayload",

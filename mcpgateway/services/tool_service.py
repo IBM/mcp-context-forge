@@ -3873,7 +3873,18 @@ class ToolService(BaseService):
         # This prevents lazy loading during HTTP calls
         tool_metadata: Optional[PydanticTool] = None
         gateway_metadata: Optional[PydanticGateway] = None
-        plugin_manager = await self._get_plugin_manager(server_id)
+        # Resolve per-tool context_id so DB plugin bindings (ToolPluginBinding) are applied.
+        # Lazy import avoids circular: gateway_plugin_manager → services.__init__ → tool_service.
+        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
+
+        _tool_team_id = tool_payload.get("team_id")
+        # Use original_name (the MCP server's tool name, e.g. "echo_text") as the binding key,
+        # not the gateway-prefixed display name (e.g. "plugin-tools-echo_text").
+        # Users create bindings against the original name they see in the MCP server.
+        _binding_tool_name = tool_payload.get("original_name") or name
+        plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
+        plugin_manager = await self._get_plugin_manager(plugin_context_id)
+        logger.debug("invoke_tool: plugin_context_id=%r plugin_manager=%r", plugin_context_id, plugin_manager)
         if plugin_manager:
             if tool is not None:
                 tool_metadata = PydanticTool.model_validate(tool)
@@ -4721,7 +4732,7 @@ class ToolService(BaseService):
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
 
-                    plugin_manager = await self._get_plugin_manager(global_context.server_id)
+                    plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         # Use pre-created Pydantic models from Phase 2 (no ORM access)
                         if tool_metadata:
@@ -4774,7 +4785,7 @@ class ToolService(BaseService):
                     headers = {"Content-Type": "application/json"}
 
                     # Plugin hook: tool pre-invoke for A2A
-                    plugin_manager = await self._get_plugin_manager(global_context.server_id)
+                    plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) and not skip_pre_invoke:
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
@@ -4894,7 +4905,7 @@ class ToolService(BaseService):
                 with create_child_span("tool.post_process", {"tool.name": name, "tool.id": tool_id}):
                     post_result = None
                     # Plugin hook: tool post-invoke
-                    plugin_manager = await self._get_plugin_manager(global_context.server_id)
+                    plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
                         post_result, _ = await plugin_manager.invoke_hook(
                             ToolHookType.TOOL_POST_INVOKE,
@@ -4989,7 +5000,7 @@ class ToolService(BaseService):
                 # include it in structuredContent so the retry plugin can honour retry_on_status
                 # instead of blindly retrying every exception.
                 exc_post_result = None
-                plugin_manager = await self._get_plugin_manager(global_context.server_id)
+                plugin_manager = await self._get_plugin_manager(plugin_context_id)
                 if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
                     try:
                         exc_structured: Optional[Dict[str, Any]] = None
