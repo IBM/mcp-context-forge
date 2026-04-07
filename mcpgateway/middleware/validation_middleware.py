@@ -183,24 +183,24 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             self._raise_validation_failure(key, error_type)
 
     def _load_rust_validation_module(self):
-        """Load the experimental Rust validation sidecar on demand."""
+        """Load the experimental Rust validation extension on demand."""
         global _RUST_VALIDATION_MODULE
 
         if _RUST_VALIDATION_MODULE is None:
-            _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_sidecar")
+            _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_rust")
         return _RUST_VALIDATION_MODULE
 
     def _validate_json_data_with_rust(self, data: Any) -> tuple[str, str] | None:
-        """Validate JSON data with the Rust sidecar, falling back to Python on sidecar failures."""
+        """Validate JSON data with the Rust extension, falling back to Python on extension failures."""
         try:
             return self._load_rust_validation_module().validate_json_data(data, settings.max_param_length, self.dangerous_pattern_strings)
         except ValueError as exc:
             if "maximum supported nesting depth" in str(exc):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
-            logger.warning("Rust validation sidecar unavailable or failed; falling back to Python validation: %s", exc)
+            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_json_data_with_python(data)
         except Exception as exc:
-            logger.warning("Rust validation sidecar unavailable or failed; falling back to Python validation: %s", exc)
+            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_json_data_with_python(data)
 
     def _validate_json_data_with_python(self, data: Any, depth: int = 0) -> tuple[str, str] | None:

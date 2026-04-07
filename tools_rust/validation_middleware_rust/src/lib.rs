@@ -145,7 +145,7 @@ fn validate_json_data(
 }
 
 #[pymodule]
-fn validation_middleware_sidecar(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn validation_middleware_rust(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_json_data, module)?)?;
     Ok(())
 }

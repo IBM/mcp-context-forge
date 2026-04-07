@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Benchmark the validation middleware Rust sidecar against the Python path.
+"""Benchmark the validation middleware Rust extension against the Python path.
 
 This benchmark exercises `ValidationMiddleware._validate_json_data()` for both paths so the
 measurements include the Python wrapper work around the extension call.
@@ -24,12 +24,12 @@ from mcpgateway.config import settings
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SIDECAR_MANIFEST = REPO_ROOT / "tools_rust" / "validation_middleware_sidecar" / "Cargo.toml"
+RUST_VALIDATION_MANIFEST = REPO_ROOT / "tools_rust" / "validation_middleware_rust" / "Cargo.toml"
 
 
-def _ensure_sidecar_installed() -> Any:
-    subprocess.run(["uv", "run", "maturin", "develop", "--release", "--manifest-path", str(SIDECAR_MANIFEST)], check=True, cwd=REPO_ROOT)
-    return importlib.import_module("validation_middleware_sidecar")
+def _ensure_rust_extension_installed() -> Any:
+    subprocess.run(["uv", "run", "maturin", "develop", "--release", "--manifest-path", str(RUST_VALIDATION_MANIFEST)], check=True, cwd=REPO_ROOT)
+    return importlib.import_module("validation_middleware_rust")
 
 
 def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[Any], None]:
@@ -47,7 +47,7 @@ def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]
 
 
 def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[Any], None]:
-    _ensure_sidecar_installed()
+    _ensure_rust_extension_installed()
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
     settings.experimental_rust_validation_middleware_enabled = True

@@ -367,8 +367,8 @@ class TestValidationMiddleware:
 
             assert exc_info.value.status_code == 422
 
-    def test_validate_json_data_uses_rust_sidecar_when_enabled(self):
-        """Test JSON validation uses the Rust sidecar when explicitly enabled."""
+    def test_validate_json_data_uses_rust_extension_when_enabled(self):
+        """Test JSON validation uses the Rust extension when explicitly enabled."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.experimental_rust_validation_middleware_enabled = True
@@ -388,8 +388,8 @@ class TestValidationMiddleware:
 
             rust_module.validate_json_data.assert_called_once_with({"name": "safe"}, 1000, [r"<script"])
 
-    def test_validate_json_data_rust_sidecar_falls_back_to_python_validation(self):
-        """Test Rust mode falls back to Python validation when the sidecar cannot be loaded."""
+    def test_validate_json_data_rust_extension_falls_back_to_python_validation(self):
+        """Test Rust mode falls back to Python validation when the extension cannot be loaded."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.experimental_rust_validation_middleware_enabled = True
@@ -402,12 +402,12 @@ class TestValidationMiddleware:
 
             middleware = ValidationMiddleware(app=None)
 
-            with patch.object(middleware, "_load_rust_validation_module", side_effect=ModuleNotFoundError("missing sidecar")):
+            with patch.object(middleware, "_load_rust_validation_module", side_effect=ModuleNotFoundError("missing extension")):
                 with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
                     middleware._validate_json_data({"name": "<script>"})
             assert exc_info.value.status_code == 422
 
-    def test_validate_json_data_rust_sidecar_respects_warn_only_mode(self):
+    def test_validate_json_data_rust_extension_respects_warn_only_mode(self):
         """Test Rust mode preserves warn-only behavior outside production."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
@@ -426,7 +426,7 @@ class TestValidationMiddleware:
             with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
                 middleware._validate_json_data({"name": "<script>"})
 
-    def test_validate_json_data_rust_sidecar_maps_max_length_errors(self):
+    def test_validate_json_data_rust_extension_maps_max_length_errors(self):
         """Test Rust mode maps max-length failures to HTTP 422 responses."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
@@ -448,8 +448,8 @@ class TestValidationMiddleware:
 
             assert exc_info.value.status_code == 422
 
-    def test_validate_json_data_rust_sidecar_maps_depth_errors(self):
-        """Test Rust mode maps sidecar depth errors to HTTP 422 responses."""
+    def test_validate_json_data_rust_extension_maps_depth_errors(self):
+        """Test Rust mode maps Rust depth errors to HTTP 422 responses."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.experimental_rust_validation_middleware_enabled = True
