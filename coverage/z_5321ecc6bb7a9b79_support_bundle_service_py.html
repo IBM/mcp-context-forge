@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_system_stats_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-09 03:05 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
+            created at 2026-04-06 00:56 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -181,8 +181,8 @@
     <p class="run run2"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t">        <span class="op">(</span><span class="nam">re</span><span class="op">.</span><span class="nam">compile</span><span class="op">(</span><span class="str">r'secret["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)'</span><span class="op">,</span> <span class="nam">re</span><span class="op">.</span><span class="nam">IGNORECASE</span><span class="op">)</span><span class="op">,</span> <span class="str">r"secret: *****"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t">        <span class="op">(</span><span class="nam">re</span><span class="op">.</span><span class="nam">compile</span><span class="op">(</span><span class="str">r"bearer\s+[A-Za-z0-9\-._~+/]+=*"</span><span class="op">,</span> <span class="nam">re</span><span class="op">.</span><span class="nam">IGNORECASE</span><span class="op">)</span><span class="op">,</span> <span class="str">r"bearer *****"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t">        <span class="op">(</span><span class="nam">re</span><span class="op">.</span><span class="nam">compile</span><span class="op">(</span><span class="str">r'authorization:\s*["\']?([^"\'\s,}]+)'</span><span class="op">,</span> <span class="nam">re</span><span class="op">.</span><span class="nam">IGNORECASE</span><span class="op">)</span><span class="op">,</span> <span class="str">r"authorization: *****"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">        <span class="com"># Database URLs</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">        <span class="op">(</span><span class="nam">re</span><span class="op">.</span><span class="nam">compile</span><span class="op">(</span><span class="str">r"(postgresql|mysql|redis)://([^:]+):([^@]+)@"</span><span class="op">)</span><span class="op">,</span> <span class="str">r"\1://\2:*****@"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">        <span class="com"># Database / service URLs (scheme-agnostic to catch legacy or misconfigured DSNs)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">        <span class="op">(</span><span class="nam">re</span><span class="op">.</span><span class="nam">compile</span><span class="op">(</span><span class="str">r"(\w[\w+.-]*)://([^:]+):([^@]+)@"</span><span class="op">)</span><span class="op">,</span> <span class="str">r"\1://\2:*****@"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">        <span class="com"># JWT tokens (eyJ pattern)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">        <span class="op">(</span><span class="nam">re</span><span class="op">.</span><span class="nam">compile</span><span class="op">(</span><span class="str">r"eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+"</span><span class="op">)</span><span class="op">,</span> <span class="str">r"eyJ*****"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">    <span class="op">]</span>&nbsp;</span><span class="r"></span></p>
@@ -602,8 +602,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_5321ecc6bb7a9b79_system_stats_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-09 03:05 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
+            created at 2026-04-06 00:56 +0100
         </p>
     </div>
 </footer>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/services/metrics_rollup_service.py: 100%</title>
+    <title>Coverage for mcpgateway/services/metrics_rollup_service.py: 99%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;services&#8201;/&#8201;metrics_rollup_service.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">99%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">345 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">345<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">340<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">5<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_notification_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-09 03:05 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
+            created at 2026-04-06 00:56 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -384,8 +384,8 @@
     <p class="run run2"><span class="n"><a id="t302" href="#t302">302</a></span><span class="t">                    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t303" href="#t303">303</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t304" href="#t304">304</a></span><span class="t">            <span class="key">except</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">CancelledError</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t305" href="#t305">305</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"Rollup loop cancelled"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t306" href="#t306">306</a></span><span class="t">                <span class="key">raise</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t305" href="#t305">305</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"Rollup loop cancelled"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t306" href="#t306">306</a></span><span class="t">                <span class="key">raise</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t307" href="#t307">307</a></span><span class="t">            <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t308" href="#t308">308</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error in metrics rollup loop: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span> <span class="nam">exc_info</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t309" href="#t309">309</a></span><span class="t">                <span class="com"># Continue the loop despite errors</span>&nbsp;</span><span class="r"></span></p>
@@ -601,9 +601,9 @@
     <p class="pln"><span class="n"><a id="t519" href="#t519">519</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t520" href="#t520">520</a></span><span class="t">                <span class="nam">db</span><span class="op">.</span><span class="nam">commit</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t521" href="#t521">521</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t522" href="#t522">522</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t523" href="#t523">523</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error rolling up </span><span class="op">{</span><span class="nam">table_name</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span> <span class="nam">exc_info</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t524" href="#t524">524</a></span><span class="t">            <span class="nam">error_msg</span> <span class="op">=</span> <span class="nam">str</span><span class="op">(</span><span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t522" href="#t522">522</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t523" href="#t523">523</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error rolling up </span><span class="op">{</span><span class="nam">table_name</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span> <span class="nam">exc_info</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t524" href="#t524">524</a></span><span class="t">            <span class="nam">error_msg</span> <span class="op">=</span> <span class="nam">str</span><span class="op">(</span><span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t525" href="#t525">525</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t526" href="#t526">526</a></span><span class="t">        <span class="nam">duration</span> <span class="op">=</span> <span class="nam">time</span><span class="op">.</span><span class="nam">monotonic</span><span class="op">(</span><span class="op">)</span> <span class="op">-</span> <span class="nam">start_time</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t527" href="#t527">527</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1105,8 +1105,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_5321ecc6bb7a9b79_notification_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-09 03:05 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
+            created at 2026-04-06 00:56 +0100
         </p>
     </div>
 </footer>
