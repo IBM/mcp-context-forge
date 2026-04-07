@@ -64,8 +64,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-09 03:05 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
+            created at 2026-04-06 00:56 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -231,7 +231,7 @@
     <p class="pln"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t">    <span class="com"># --- JWT_SECRET_KEY ---</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t">    <span class="nam">jwt</span> <span class="op">=</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">jwt_secret_key</span><span class="op">.</span><span class="nam">get_secret_value</span><span class="op">(</span><span class="op">)</span> <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">settings</span><span class="op">.</span><span class="nam">jwt_secret_key</span><span class="op">,</span> <span class="nam">SecretStr</span><span class="op">)</span> <span class="key">else</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">jwt_secret_key</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t">    <span class="nam">weak_jwt</span> <span class="op">=</span> <span class="op">[</span><span class="str">"my-test-key"</span><span class="op">,</span> <span class="str">"changeme"</span><span class="op">,</span> <span class="str">"secret"</span><span class="op">,</span> <span class="str">"password"</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t">    <span class="nam">weak_jwt</span> <span class="op">=</span> <span class="op">[</span><span class="str">"my-test-key"</span><span class="op">,</span> <span class="str">"my-test-key-but-now-longer-than-32-bytes"</span><span class="op">,</span> <span class="str">"changeme"</span><span class="op">,</span> <span class="str">"secret"</span><span class="op">,</span> <span class="str">"password"</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t">    <span class="key">if</span> <span class="nam">jwt</span><span class="op">.</span><span class="nam">lower</span><span class="op">(</span><span class="op">)</span> <span class="key">in</span> <span class="nam">weak_jwt</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">        <span class="nam">warnings</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="str">"JWT_SECRET_KEY: Default/weak secret detected! Please set a strong, unique value for production."</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -346,8 +346,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_5321ecc6bb7a9b79___init___py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.4">coverage.py v7.13.4</a>,
-            created at 2026-03-09 03:05 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.5">coverage.py v7.13.5</a>,
+            created at 2026-04-06 00:56 +0100
         </p>
     </div>
 </footer>
