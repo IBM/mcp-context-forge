@@ -4,15 +4,15 @@ Use the benchmark suite when you want repeatable, scenario-driven benchmark runs
 against the Docker/Compose stack from a Rust-native runner, console, and load
 driver.
 
-The suite now distinguishes three lanes:
+The committed scenarios cover three main benchmark shapes:
 
-- `benchmark_smoke`
-  Fast sanity validation only. Do not use its numbers for performance claims.
-- `benchmark_runtime_baseline`
-  Authenticated end-to-end runtime comparisons through `nginx`.
-- `benchmark_plugin_sensitivity`
-  Prompt/resource/tool-heavy comparisons that exercise MCP prompt, resource,
-  and tool paths through `/servers/{server_id}/mcp`.
+- smoke-oriented validation runs
+  Fast sanity validation only. Do not use their numbers for performance claims.
+- end-to-end runtime comparisons through `nginx`
+  Authenticated runs that measure gateway behavior under representative load.
+- MCP prompt/resource/tool-heavy comparisons
+  Scenarios that exercise MCP prompt, resource, and tool paths through
+  `/servers/{server_id}/mcp`.
 
 ## What It Runs
 
@@ -116,16 +116,16 @@ Supported sections are:
 - `[defaults.measurement]`
 - `[defaults.requests]`
 - `[defaults.profiling]`
-- `[defaults.plugins]`
 - `[defaults.execution]`
 - `[[scenario]]`
 - `[scenario.runtime]`
 - `[scenario.load]`
 - `[scenario.requests]`
-- `[scenario.plugins]`
 - `[scenario.execution]`
 
-Unsupported keys now fail validation instead of being silently accepted.
+Unknown keys are currently ignored unless the runner checks them explicitly, so
+scenario authors should treat validation as shape checking for supported fields
+rather than strict unknown-key rejection.
 
 ## Important Fields
 
