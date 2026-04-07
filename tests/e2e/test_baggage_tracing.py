@@ -124,7 +124,7 @@ class TestBaggageTracingE2E:
         """Test baggage is propagated to downstream service calls."""
         client = TestClient(tracing_app)
 
-        with patch("mcpgateway.config.get_settings") as mock_get_settings:
+        with patch("mcpgateway.observability.get_settings") as mock_get_settings:
             mock_settings = MagicMock()
             mock_settings.otel_baggage_enabled = True
             mock_settings.otel_baggage_propagate_to_external = True
@@ -150,7 +150,7 @@ class TestBaggageTracingE2E:
         """Test baggage is not propagated when propagate_to_external is false."""
         client = TestClient(tracing_app)
 
-        with patch("mcpgateway.config.get_settings") as mock_get_settings:
+        with patch("mcpgateway.observability.get_settings") as mock_get_settings:
             mock_settings = MagicMock()
             mock_settings.otel_baggage_enabled = True
             mock_settings.otel_baggage_propagate_to_external = False
@@ -190,7 +190,7 @@ class TestBaggageTracingE2E:
         """Test baggage values are sanitized before propagation."""
         client = TestClient(tracing_app)
 
-        with patch("mcpgateway.config.get_settings") as mock_get_settings:
+        with patch("mcpgateway.observability.get_settings") as mock_get_settings:
             mock_settings = MagicMock()
             mock_settings.otel_baggage_enabled = True
             mock_settings.otel_baggage_propagate_to_external = True
