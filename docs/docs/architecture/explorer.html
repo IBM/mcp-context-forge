@@ -505,6 +505,53 @@ main {
   display: inline-block;
 }
 
+a.card-path, a.gh-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: var(--transition);
+}
+
+a.card-path:hover, a.gh-link:hover {
+  color: var(--accent-blue);
+  text-decoration: underline;
+}
+
+.detail-exports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.detail-export {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--accent-green);
+  border: 1px solid rgba(52, 211, 153, 0.15);
+}
+
+.detail-extended {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.7;
+  margin-bottom: 1rem;
+}
+
+.detail-config-var {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--accent-yellow);
+  border: 1px solid rgba(251, 191, 36, 0.12);
+  display: inline-block;
+  margin: 0.15rem 0.2rem 0.15rem 0;
+}
+
 .card-tags {
   display: flex;
   flex-wrap: wrap;
@@ -2372,26 +2419,44 @@ const COMPONENTS = [
   { id:"tool_service", name:"Tool Service", category:"service", group:"mcp",
     path:"mcpgateway/services/tool_service.py",
     desc:"Tool management, execution routing, versioning, federation. Core MCP primitive.",
+    details:"Central service for all tool operations. Handles tool CRUD, schema validation, invocation routing to backend MCP servers (local or federated), version management, and metrics collection. Supports team-scoped visibility, tag filtering, and tool deduplication across federated peers.",
+    exports:["invoke_tool()","list_tools()","create_tool()","update_tool()","delete_tool()","get_tool_by_name()"],
+    config:["TOOL_LOOKUP_CACHE_ENABLED","TOOL_LOOKUP_CACHE_TTL_SECONDS","MCP_SESSION_POOL_ENABLED"],
     tags:["mcp","tools","federation","versioning"], connections:["gateway_service","session_pool","metrics_buffer"] },
   { id:"resource_service", name:"Resource Service", category:"service", group:"mcp",
     path:"mcpgateway/services/resource_service.py",
     desc:"Resource management, URI templates, subscription tracking, content negotiation.",
+    details:"Manages MCP resources: CRUD operations, URI template definitions, content reads from backend servers, subscription tracking for real-time updates, and MIME type negotiation. Resources are team-scoped and cached via the resource cache layer.",
+    exports:["list_resources()","read_resource()","create_resource()","subscribe()","unsubscribe()","list_templates()"],
+    config:["REGISTRY_CACHE_RESOURCES_TTL","CONTENT_MAX_RESOURCE_SIZE"],
     tags:["mcp","resources","subscriptions"], connections:["session_pool","metrics_buffer"] },
   { id:"prompt_service", name:"Prompt Service", category:"service", group:"mcp",
     path:"mcpgateway/services/prompt_service.py",
     desc:"Prompt template management with Jinja2 rendering, argument validation, multimodal support.",
+    details:"Manages prompt templates with Jinja2 sandboxed rendering, argument schema validation, multimodal content (text, images, embedded resources), and team-scoped access. Prompts can be versioned and tagged for organization.",
+    exports:["list_prompts()","get_prompt()","create_prompt()","update_prompt()","delete_prompt()"],
+    config:["REGISTRY_CACHE_PROMPTS_TTL"],
     tags:["mcp","prompts","jinja2","multimodal"], connections:["metrics_buffer"] },
   { id:"server_service", name:"Server Service", category:"service", group:"mcp",
     path:"mcpgateway/services/server_service.py",
     desc:"MCP server registry, health checking, connection string management.",
+    details:"Registry for virtual MCP servers (the /servers API). Handles server creation with connection strings (SSE, Streamable HTTP, STDIO), periodic health checking, status toggling, and OAuth credential management per server. Each server can expose tools, resources, and prompts.",
+    exports:["create_server()","list_servers()","get_server()","update_server()","delete_server()","check_health()"],
+    config:["HEALTH_CHECK_INTERVAL","HEALTH_CHECK_TIMEOUT","UNHEALTHY_THRESHOLD"],
     tags:["mcp","servers","health"], connections:["gateway_service","session_pool"] },
   { id:"gateway_service", name:"Gateway Service", category:"service", group:"mcp",
     path:"mcpgateway/services/gateway_service.py",
     desc:"Gateway federation, peer discovery, cross-gateway tool resolution, health monitoring.",
+    details:"Manages federated peer gateways via the /gateways API. Handles peer registration, health monitoring, cross-gateway tool discovery and invocation routing, and credential management for inter-gateway auth. Supports parallel fanout to multiple peers for tool aggregation.",
+    exports:["register_gateway()","list_gateways()","discover_federated_tools()","forward_to_peer()","check_gateway_health()"],
+    config:["GATEWAY_HEALTH_CHECK_TIMEOUT","GATEWAY_VALIDATION_TIMEOUT"],
     tags:["mcp","federation","discovery","peers"], connections:["tool_service","server_service","http_client"] },
   { id:"session_pool", name:"Session Pool", category:"service", group:"mcp",
     path:"mcpgateway/services/mcp_session_pool.py",
     desc:"MCP session lifecycle management, connection pooling, reconnection with backoff.",
+    details:"Maintains a pool of live MCP client sessions to backend servers, providing 10-20x latency improvement over per-request connections. Implements circuit breaker pattern (configurable threshold/reset), automatic reconnection with exponential backoff, health check pings, and parallel session cleanup via asyncio.gather().",
+    exports:["acquire_session()","release_session()","close_all()","get_pool_stats()"],
+    config:["MCP_SESSION_POOL_ENABLED","MCP_SESSION_POOL_MAX_PER_KEY","MCP_SESSION_POOL_TTL","MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD"],
     tags:["mcp","sessions","pooling"], connections:["tool_service","resource_service"] },
   { id:"completion_service", name:"Completion Service", category:"service", group:"mcp",
     path:"mcpgateway/services/completion_service.py",
@@ -2414,18 +2479,30 @@ const COMPONENTS = [
   { id:"email_auth", name:"Email Auth Service", category:"service", group:"auth",
     path:"mcpgateway/services/email_auth_service.py",
     desc:"Email/password registration, login, verification, password reset with Argon2id.",
+    details:"Full email-based auth lifecycle: registration (with optional admin approval), login with rate limiting and account lockout, email verification, password reset with rate-limited token generation, password policy enforcement (complexity, history, max age), and bootstrap admin seeding.",
+    exports:["register()","login()","verify_email()","request_password_reset()","reset_password()","change_password()"],
+    config:["EMAIL_AUTH_ENABLED","PUBLIC_REGISTRATION_ENABLED","MAX_FAILED_LOGIN_ATTEMPTS","PASSWORD_MIN_LENGTH","PASSWORD_RESET_ENABLED"],
     tags:["auth","email","passwords","argon2"], connections:["argon2_service","encryption_service"] },
   { id:"sso_service", name:"SSO Service", category:"service", group:"auth",
     path:"mcpgateway/services/sso_service.py",
     desc:"SSO integration: Keycloak, Entra ID, Google, GitHub. OIDC discovery and token exchange.",
+    details:"Integrates with 8 identity providers: GitHub (org-based admin), Google (domain-based admin), Keycloak (realm/client roles), Microsoft Entra ID (groups + Graph API), Okta, IBM Security Verify, ADFS, and generic OIDC. Handles OIDC discovery, token exchange, user provisioning on first login, role mapping, and admin sync.",
+    exports:["initiate_login()","handle_callback()","validate_token()","sync_roles()","get_provider_config()"],
+    config:["SSO_ENABLED","SSO_AUTO_CREATE_USERS","SSO_GITHUB_ENABLED","SSO_KEYCLOAK_ENABLED","SSO_ENTRA_ENABLED"],
     tags:["auth","sso","oidc","oauth"], connections:["oauth_manager"] },
   { id:"oauth_manager", name:"OAuth Manager", category:"service", group:"auth",
     path:"mcpgateway/services/oauth_manager.py",
     desc:"OAuth 2.0 authorization code flow, token lifecycle, Dynamic Client Registration (RFC 7591).",
+    details:"Manages the full OAuth 2.0 lifecycle: authorization code flow with PKCE, client credentials, token issuance/refresh/revocation, and Dynamic Client Registration (RFC 7591). Handles state management (Redis or in-memory), token encryption at rest, and integration with the SSO service for IdP token exchange.",
+    exports:["authorize()","exchange_code()","refresh_token()","revoke_token()","register_client()","validate_client()"],
+    config:["DCR_ENABLED","DCR_DEFAULT_SCOPES","OAUTH_REQUEST_TIMEOUT","OAUTH_MAX_RETRIES"],
     tags:["auth","oauth","tokens","dcr"], connections:["encryption_service","token_storage"] },
   { id:"team_mgmt", name:"Team Management", category:"service", group:"auth",
     path:"mcpgateway/services/team_management_service.py",
     desc:"Multi-tenant team RBAC: creation, membership, role assignment, invitation workflows.",
+    details:"Core multi-tenancy service. Manages team lifecycle (create/update/delete), membership (add/remove/role changes), invitation workflows (create/accept/expire), join requests, and team settings. Enforces limits (max teams per user, max members per team). Teams are the primary scope boundary for tool/resource visibility.",
+    exports:["create_team()","add_member()","remove_member()","assign_role()","create_invitation()","resolve_teams()"],
+    config:["AUTO_CREATE_PERSONAL_TEAMS","MAX_TEAMS_PER_USER","MAX_MEMBERS_PER_TEAM","INVITATION_EXPIRY_DAYS"],
     tags:["auth","teams","rbac","multitenancy"], connections:["role_service","permission_service"] },
   { id:"role_service", name:"Role Service", category:"service", group:"auth",
     path:"mcpgateway/services/role_service.py",
@@ -2472,6 +2549,9 @@ const COMPONENTS = [
   { id:"a2a_service", name:"A2A Service", category:"service", group:"ai",
     path:"mcpgateway/services/a2a_service.py",
     desc:"Agent-to-Agent protocol integration, agent registration, tool bridge, metrics.",
+    details:"Implements Google's A2A (Agent-to-Agent) protocol. Manages agent registration with Agent Cards, task creation and delegation, and bidirectional communication between agents. Bridges A2A agents as MCP tools so they can be discovered and invoked through the standard tool interface. Collects per-agent metrics.",
+    exports:["register_agent()","list_agents()","invoke_agent()","get_agent_card()","create_agent_tool()"],
+    config:["MCPGATEWAY_A2A_ENABLED","MCPGATEWAY_A2A_MAX_AGENTS","MCPGATEWAY_A2A_DEFAULT_TIMEOUT"],
     tags:["a2a","agents","federation"], connections:["tool_service","metrics_buffer"] },
   { id:"llm_provider", name:"LLM Provider Service", category:"service", group:"ai",
     path:"mcpgateway/services/llm_provider_service.py",
@@ -2490,6 +2570,9 @@ const COMPONENTS = [
   { id:"observability_svc", name:"Observability Service", category:"service", group:"observability",
     path:"mcpgateway/services/observability_service.py",
     desc:"OpenTelemetry data collection: traces, spans, events, metrics export.",
+    details:"Collects and stores OpenTelemetry-compatible trace data: traces, spans, events, and custom metrics. Supports configurable sampling rates, retention policies, path include/exclude filters, and saved queries for the admin dashboard. Exports to OTLP, Jaeger, Zipkin, or console backends.",
+    exports:["record_trace()","record_span()","record_event()","query_traces()","get_saved_queries()"],
+    config:["OBSERVABILITY_ENABLED","OBSERVABILITY_SAMPLE_RATE","OBSERVABILITY_TRACE_RETENTION_DAYS","OTEL_TRACES_EXPORTER"],
     tags:["otel","traces","spans","metrics"], connections:["metrics_buffer"] },
   { id:"metrics_buffer", name:"Metrics Buffer", category:"service", group:"observability",
     path:"mcpgateway/services/metrics_buffer_service.py",
@@ -2614,10 +2697,16 @@ const COMPONENTS = [
   { id:"mw_rbac", name:"RBAC Middleware", category:"middleware", group:"auth",
     path:"mcpgateway/middleware/rbac.py",
     desc:"Role-based access control enforcement on every request path.",
+    details:"Evaluates permissions for every incoming request against the user's roles. Maps URL paths and HTTP methods to required permissions. Supports wildcards, team-scoped permissions, and admin bypass. Default-deny for unmapped protected paths. Emits permission audit logs.",
+    exports:["RBACMiddleware","check_permission()","get_required_permission()"],
+    config:["AUTH_REQUIRED","DEFAULT_ADMIN_ROLE"],
     tags:["auth","rbac","permissions"], connections:["permission_service","role_service"] },
   { id:"mw_token_scoping", name:"Token Scoping Middleware", category:"middleware", group:"auth",
     path:"mcpgateway/middleware/token_scoping.py",
     desc:"Token-based scope validation: team visibility, admin bypass, fail-closed defaults.",
+    details:"Layer 1 of the two-layer security model. Determines what resources a caller can see by interpreting the JWT teams claim. API tokens use normalize_token_teams() (JWT-only authority); session tokens use resolve_session_teams() (DB authority, JWT narrows). Fail-closed: missing teams = public-only. Admin bypass requires both teams:null AND is_admin:true.",
+    exports:["TokenScopingMiddleware","normalize_token_teams()","resolve_session_teams()"],
+    config:["AUTH_REQUIRED","MCP_REQUIRE_AUTH"],
     tags:["auth","scoping","teams","visibility"], connections:["mw_auth"] },
   { id:"mw_logging", name:"Request Logging Middleware", category:"middleware", group:"observability",
     path:"mcpgateway/middleware/request_logging_middleware.py",
@@ -2680,6 +2769,9 @@ const COMPONENTS = [
   { id:"tp_streamable", name:"Streamable HTTP", category:"transport", group:"mcp",
     path:"mcpgateway/transports/streamablehttp_transport.py",
     desc:"Streamable HTTP transport: JSON-RPC over HTTP with session management.",
+    details:"Primary production transport. Handles JSON-RPC 2.0 over HTTP with session management via Mcp-Session-Id headers, in-memory event store for message resumption, and session affinity support for multi-worker deployments. Supports both stateful (session-based) and stateless modes.",
+    exports:["StreamableHTTPTransport","handle_request()","create_session()","resume_session()"],
+    config:["PROTOCOL_VERSION"],
     tags:["http","streaming","json-rpc"], connections:["session_pool"] },
   { id:"tp_rust", name:"Rust MCP Runtime", category:"transport", group:"mcp",
     path:"mcpgateway/transports/rust_mcp_runtime_proxy.py",
@@ -3112,6 +3204,19 @@ function el(tag, attrs, children) {
   return node;
 }
 
+var GH_BASE = 'https://github.com/IBM/mcp-context-forge/blob/main/';
+
+function ghLink(path, opts) {
+  opts = opts || {};
+  var a = document.createElement('a');
+  a.href = GH_BASE + path;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = opts.text || path;
+  a.className = opts.className || 'gh-link card-path';
+  return a;
+}
+
 /* ================================================================
    COMPONENT EXPLORER
    ================================================================ */
@@ -3159,7 +3264,7 @@ function renderComponents() {
         })
       ]),
       el('div', { className: 'card-desc', textContent: c.desc }),
-      el('div', { className: 'card-path', textContent: c.path }),
+      (function() { var link = ghLink(c.path); link.addEventListener('click', function(e) { e.stopPropagation(); }); return link; })(),
       el('div', { className: 'card-tags' },
         c.tags.map(function(t) { return el('span', { className: 'card-tag', textContent: t }); })
       )
@@ -3193,8 +3298,10 @@ function openDetail(id) {
   if (!comp) return;
 
   var color = CATEGORY_COLORS[comp.category] || 'var(--accent-blue)';
+  var groupColor = GROUP_COLORS[comp.group] || color;
   clearChildren(detailContent);
 
+  // Header
   detailContent.appendChild(el('span', {
     className: 'detail-category',
     textContent: comp.category + ' / ' + comp.group,
@@ -3203,60 +3310,96 @@ function openDetail(id) {
   detailContent.appendChild(el('h2', { textContent: comp.name }));
   detailContent.appendChild(el('div', { className: 'detail-desc', textContent: comp.desc }));
 
-  // File path
+  // Extended details (if available)
+  if (comp.details) {
+    detailContent.appendChild(el('div', { className: 'detail-extended', textContent: comp.details }));
+  }
+
+  // Source file (clickable GitHub link)
   var pathSection = el('div', { className: 'detail-section' }, [
-    el('h3', { textContent: 'File Path' }),
-    el('code', { textContent: comp.path })
+    el('h3', { textContent: 'Source' }),
+    ghLink(comp.path, { className: 'gh-link', text: comp.path + ' \u2197' })
   ]);
   detailContent.appendChild(pathSection);
 
+  // Key exports (if available)
+  if (comp.exports && comp.exports.length > 0) {
+    detailContent.appendChild(el('div', { className: 'detail-section' }, [
+      el('h3', { textContent: 'Key Exports' }),
+      el('div', { className: 'detail-exports' },
+        comp.exports.map(function(e) { return el('span', { className: 'detail-export', textContent: e }); })
+      )
+    ]));
+  }
+
+  // Related config vars (if available)
+  if (comp.config && comp.config.length > 0) {
+    var configItems = el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '0' } });
+    comp.config.forEach(function(cv) {
+      configItems.appendChild(el('span', { className: 'detail-config-var', textContent: cv }));
+    });
+    detailContent.appendChild(el('div', { className: 'detail-section' }, [
+      el('h3', { textContent: 'Related Config' }),
+      configItems
+    ]));
+  }
+
   // Tags
-  var tagSection = el('div', { className: 'detail-section' }, [
+  detailContent.appendChild(el('div', { className: 'detail-section' }, [
     el('h3', { textContent: 'Tags' }),
     el('div', { className: 'card-tags' },
       comp.tags.map(function(t) { return el('span', { className: 'card-tag', textContent: t }); })
     )
-  ]);
-  detailContent.appendChild(tagSection);
+  ]));
 
-  // Dependencies
+  // Dependencies (clickable)
   var connections = (comp.connections || []).map(function(cid) {
     return COMPONENTS.find(function(c) { return c.id === cid; });
   }).filter(Boolean);
 
   if (connections.length > 0) {
-    var depSection = el('div', { className: 'detail-section' }, [
-      el('h3', { textContent: 'Depends On' }),
+    detailContent.appendChild(el('div', { className: 'detail-section' }, [
+      el('h3', { textContent: 'Depends On (' + connections.length + ')' }),
       el('ul', {},
         connections.map(function(target) {
-          return el('li', {}, [
-            el('code', { textContent: target.name }),
+          var li = el('li', {}, [
+            el('code', { textContent: target.name, style: { cursor: 'pointer' } }),
             document.createTextNode(' \u2014 ' + target.desc.split('.')[0])
           ]);
+          li.querySelector('code').addEventListener('click', function() { openDetail(target.id); });
+          return li;
         })
       )
-    ]);
-    detailContent.appendChild(depSection);
+    ]));
   }
 
-  // Used by
+  // Used by (clickable)
   var dependents = COMPONENTS.filter(function(c) {
     return (c.connections || []).indexOf(id) !== -1;
   });
 
   if (dependents.length > 0) {
-    var usedBySection = el('div', { className: 'detail-section' }, [
-      el('h3', { textContent: 'Used By' }),
+    detailContent.appendChild(el('div', { className: 'detail-section' }, [
+      el('h3', { textContent: 'Used By (' + dependents.length + ')' }),
       el('ul', {},
         dependents.map(function(c) {
-          return el('li', {}, [
-            el('code', { textContent: c.name }),
+          var li = el('li', {}, [
+            el('code', { textContent: c.name, style: { cursor: 'pointer' } }),
             document.createTextNode(' \u2014 ' + c.desc.split('.')[0])
           ]);
+          li.querySelector('code').addEventListener('click', function() { openDetail(c.id); });
+          return li;
         })
       )
-    ]);
-    detailContent.appendChild(usedBySection);
+    ]));
+  }
+
+  // No connections at all - show a note
+  if (connections.length === 0 && dependents.length === 0) {
+    detailContent.appendChild(el('div', { className: 'detail-section' }, [
+      el('h3', { textContent: 'Dependencies' }),
+      el('p', { textContent: 'No tracked connections to other components.', style: { color: 'var(--text-muted)', fontSize: '0.8rem' } })
+    ]));
   }
 
   detailOverlay.classList.add('open');
@@ -3871,8 +4014,11 @@ var TECH_STACK = [
       )
     ]);
     card.querySelector('h4').insertAdjacentElement('afterend',
-      el('div', { className:'card-path', textContent:'mcpgateway/transports/'+p.file,
-        style:{marginBottom:'0.5rem', display:'inline-block'} }));
+      (function() {
+        var link = ghLink('mcpgateway/transports/'+p.file);
+        link.style.marginBottom = '0.5rem';
+        return link;
+      })());
     tpContainer.appendChild(card);
   });
 
@@ -3965,7 +4111,7 @@ renderAdrs();
     totalGet += r.get; totalPost += r.post; totalPut += r.put; totalDel += r.del; totalPatch += r.patch;
     tbody.appendChild(el('tr', {}, [
       el('td', { textContent:r.name, style:{fontWeight:'600', color:'var(--text-primary)'} }),
-      el('td', {}, [el('code', { textContent:'routers/'+r.file, style:{fontSize:'0.7rem'} })]),
+      el('td', {}, [ghLink('mcpgateway/routers/'+r.file, { className:'gh-link', text:r.file })]),
       el('td', { textContent:r.get || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.get ? 'var(--accent-green)' : 'var(--text-muted)'} }),
       el('td', { textContent:r.post || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.post ? 'var(--accent-blue)' : 'var(--text-muted)'} }),
       el('td', { textContent:r.put || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.put ? 'var(--accent-yellow)' : 'var(--text-muted)'} }),
@@ -4314,7 +4460,7 @@ renderConfig();
   workflows.forEach(function(w) {
     wfContainer.appendChild(el('div', { className:'workflow-card' }, [
       el('h4', { textContent:w.name }),
-      el('div', { className:'wf-file', textContent:'.github/workflows/'+w.file }),
+      ghLink('.github/workflows/'+w.file, { className:'gh-link wf-file' }),
       el('p', { textContent:w.desc }),
       el('div', { className:'trigger-badges' },
         w.triggers.map(function(t) {
