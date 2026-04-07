@@ -1651,6 +1651,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
+    logger.info("✅ LIFESPAN: Redis initialized, continuing with services...")
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
@@ -1785,16 +1786,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("Elicitation service initialized")
 
         # Initialize metrics buffer service for batching metric writes
+        logger.info(f"Checking metrics_buffer_enabled: {settings.metrics_buffer_enabled}")
         if settings.metrics_buffer_enabled:
             # First-Party
             from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service  # pylint: disable=import-outside-toplevel
 
             metrics_buffer_service = get_metrics_buffer_service()
+            logger.info("Calling metrics_buffer_service.start()")
             await metrics_buffer_service.start()
             if settings.db_metrics_recording_enabled:
                 logger.info("Metrics buffer service initialized")
             else:
                 logger.info("Metrics buffer service initialized (recording disabled)")
+        else:
+            logger.warning("Metrics buffer service DISABLED")
 
         # Initialize metrics cleanup service for automatic deletion of old metrics
         if settings.metrics_cleanup_enabled:

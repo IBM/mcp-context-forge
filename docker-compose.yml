@@ -860,18 +860,17 @@ services:
       # After enabling, run in psql:
       #   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
       #   SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
-      # - "-c"
-      # - "shared_preload_libraries=pg_stat_statements"
-      # - "shared_preload_libraries=pg_stat_statements,auto_explain"  # Use this line to enable both
-      # - "-c"
-      # - "pg_stat_statements.track=all"
-      # - "-c"
-      #- "pg_stat_statements.max=10000"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements,auto_explain"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "pg_stat_statements.max=10000"
       # AUTO_EXPLAIN settings (uncomment if using combined shared_preload_libraries above)
-      # - "-c"
-      # - "auto_explain.log_min_duration=1000"
-      # - "-c"
-      # - "auto_explain.log_analyze=on"
+      - "-c"
+      - "auto_explain.log_min_duration=1000"
+      - "-c"
+      - "auto_explain.log_analyze=on"
       # === ROLLBACK DEBUGGING (disabled for performance) ===
       # - "-c"
       # - "log_min_error_statement=error"
@@ -902,6 +901,7 @@ services:
     volumes:
       # - pgdata:/var/lib/postgresql/data
       - pgdata:/var/lib/postgresql  # Enable for postgres 18+
+      - ./infra/postgres/initdb.d:/docker-entrypoint-initdb.d:ro  # Auto-run init scripts on first startup
     networks: [mcpnet]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
@@ -961,11 +961,11 @@ services:
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
       - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (4x IDLE_TRANSACTION_TIMEOUT; DB_POOL_RECYCLE=60 is half this, ensuring proactive recycle before PgBouncer closes them)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
-      # Transaction cleanup - critical for avoiding idle-in-transaction buildup
-      # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
-      # can stick unless the reset query clears them; DISCARD ALL is safest.
-      - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
-      - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
+      # Transaction cleanup - disabled for performance (24k DISCARD ALL/min overhead)
+      # Only safe when: no temp tables, no SET commands, no advisory locks, no prepared statements
+      # Normal FastAPI get_db() lifecycle safely commits/rollbacks and closes sessions
+      - SERVER_RESET_QUERY=            # Empty = no reset query on connection return
+      - SERVER_RESET_QUERY_ALWAYS=0    # Never run reset query (performance optimization)
       - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method

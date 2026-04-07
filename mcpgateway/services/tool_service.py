@@ -57,7 +57,7 @@ from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric, ToolMetricsHourly
+from mcpgateway.db import ToolMetric, ToolMetricsHourly, ServerMetric
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error
 from mcpgateway.plugins.framework import (
     get_plugin_manager,
@@ -91,6 +91,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.metric_buffer import MetricBuffer
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -146,6 +147,11 @@ perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
+
+# MetricBuffer instances for batching direct metric inserts
+# These are used by fallback methods when MetricsBufferService is disabled
+_tool_metric_buffer = MetricBuffer(fresh_db_session, ToolMetric, batch_size=1000)
+_server_metric_buffer = MetricBuffer(fresh_db_session, ServerMetric, batch_size=1000)
 
 _ENCRYPTED_TOOL_HEADER_VALUE_KEY = "_mcpgateway_encrypted_header_value_v1"
 _TOOL_HEADER_DATA_KEY = "data"
@@ -962,11 +968,11 @@ class ToolService(BaseService):
 
     async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
-        Records a metric for a tool invocation.
+        Records a metric for a tool invocation using buffered batching.
 
         This function calculates the response time using the provided start time and records
         the metric details (including whether the invocation was successful and any error message)
-        into the database. The metric is then committed to the database.
+        into the database via MetricBuffer for batched writes.
 
         Args:
             db (Session): The SQLAlchemy database session.
@@ -975,20 +981,19 @@ class ToolService(BaseService):
             success (bool): True if the invocation succeeded; otherwise, False.
             error_message (Optional[str]): The error message if the invocation failed, otherwise None.
         """
-        end_time = time.monotonic()
-        response_time = end_time - start_time
-        metric = ToolMetric(
-            tool_id=tool.id,
-            response_time=response_time,
-            is_success=success,
-            error_message=error_message,
-        )
-        db.add(metric)
-        db.commit()
+        from datetime import datetime, timezone  # First-Party
+
+        response_time = time.monotonic() - start_time
+        _tool_metric_buffer.add({
+            "tool_id": tool.id,
+            "timestamp": datetime.now(timezone.utc),
+            "response_time": response_time,
+            "is_success": success,
+            "error_message": error_message,
+        })
 
     def _record_tool_metric_by_id(
         self,
-        db: Session,
         tool_id: str,
         start_time: float,
         success: bool,
@@ -996,27 +1001,25 @@ class ToolService(BaseService):
     ) -> None:
         """Record tool metric using tool ID instead of ORM object.
 
-        This method is designed to be used with a fresh database session after the main
-        request session has been released. It avoids requiring the ORM tool object,
-        which may have been detached from the session.
+        This method uses MetricBuffer for batched writes to reduce database pressure.
+        It avoids requiring the ORM tool object which may have been detached from the session.
 
         Args:
-            db: A fresh database session (not the request session).
             tool_id: The UUID string of the tool.
             start_time: The monotonic start time of the invocation.
             success: True if the invocation succeeded; otherwise, False.
             error_message: The error message if the invocation failed, otherwise None.
         """
-        end_time = time.monotonic()
-        response_time = end_time - start_time
-        metric = ToolMetric(
-            tool_id=tool_id,
-            response_time=response_time,
-            is_success=success,
-            error_message=error_message,
-        )
-        db.add(metric)
-        db.commit()
+        from datetime import datetime, timezone  # First-Party
+
+        response_time = time.monotonic() - start_time
+        _tool_metric_buffer.add({
+            "tool_id": tool_id,
+            "timestamp": datetime.now(timezone.utc),
+            "response_time": response_time,
+            "is_success": success,
+            "error_message": error_message,
+        })
 
     def _record_tool_metric_sync(
         self,
@@ -1025,11 +1028,10 @@ class ToolService(BaseService):
         success: bool,
         error_message: Optional[str],
     ) -> None:
-        """Synchronous helper to record tool metrics with its own session.
+        """Synchronous helper to record tool metrics via buffered batching.
 
-        This method creates a fresh database session, records the metric, and closes
-        the session. Designed to be called via asyncio.to_thread() to avoid blocking
-        the event loop.
+        This method records metrics via MetricBuffer for batched writes.
+        Designed to be called via asyncio.to_thread() to avoid blocking the event loop.
 
         Args:
             tool_id: The UUID string of the tool.
@@ -1037,14 +1039,12 @@ class ToolService(BaseService):
             success: True if the invocation succeeded; otherwise, False.
             error_message: The error message if the invocation failed, otherwise None.
         """
-        with fresh_db_session() as db_metrics:
-            self._record_tool_metric_by_id(
-                db_metrics,
-                tool_id=tool_id,
-                start_time=start_time,
-                success=success,
-                error_message=error_message,
-            )
+        self._record_tool_metric_by_id(
+            tool_id=tool_id,
+            start_time=start_time,
+            success=success,
+            error_message=error_message,
+        )
 
     def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> bool:
         """

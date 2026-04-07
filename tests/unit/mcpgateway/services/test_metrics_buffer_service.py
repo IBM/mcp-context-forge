@@ -241,36 +241,11 @@ class TestImmediateWritesWhenDisabled:
         mock_write.assert_called_once()
 
     def test_a2a_metric_with_duration_immediate_write(self, monkeypatch):
-        """Immediate write with duration should persist metric via DB session."""
+        """Immediate write with duration should buffer metric via MetricBuffer."""
         # First-Party
         from mcpgateway.db import A2AAgentMetric
 
         service = MetricsBufferService(enabled=False)
-
-        class DummySession:
-            def __init__(self):
-                self.added = None
-                self.committed = False
-
-            def add(self, obj):
-                self.added = obj
-
-            def commit(self):
-                self.committed = True
-
-        class DummyContext:
-            def __init__(self, session):
-                self._session = session
-
-            def __enter__(self):
-                return self._session
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        dummy_session = DummySession()
-
-        monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: DummyContext(dummy_session))
 
         service.record_a2a_agent_metric_with_duration(
             a2a_agent_id="agent-1",
@@ -279,8 +254,10 @@ class TestImmediateWritesWhenDisabled:
             interaction_type="invoke",
         )
 
-        assert isinstance(dummy_session.added, A2AAgentMetric)
-        assert dummy_session.committed is True
+        # Metric should be in the MetricBuffer, not directly in DB
+        assert service._a2a_agent_metric_buffer.total_added == 1
+        stats = service._a2a_agent_metric_buffer.get_stats()
+        assert stats["current_buffer_size"] == 1
 
     def test_a2a_metric_with_duration_immediate_write_error_is_swallowed(self, monkeypatch):
         service = MetricsBufferService(enabled=False)
@@ -850,106 +827,98 @@ class TestMetricsSetup:
 # Coverage: _write_*_immediately methods (lines 560-738)                       #
 # --------------------------------------------------------------------------- #
 class TestImmediateWriteMethods:
-    """Tests for all _write_*_immediately methods with actual DB mock."""
+    """Tests for all _write_*_immediately methods with MetricBuffer batching."""
 
-    def _make_session_context(self):
-        """Create a mock fresh_db_session context manager."""
-        mock_db = MagicMock()
-
-        class Ctx:
-            def __enter__(self_inner):
-                return mock_db
-
-            def __exit__(self_inner, *args):
-                return False
-
-        return Ctx(), mock_db
-
-    def test_write_tool_metric_immediately_success(self, monkeypatch):
-        ctx, mock_db = self._make_session_context()
-        monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: ctx)
+    def test_write_tool_metric_immediately_success(self):
+        """Should add metric to MetricBuffer instead of direct DB write."""
         service = MetricsBufferService(enabled=False)
         service._write_tool_metric_immediately("t1", time.monotonic(), True, None)
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
+
+        # Verify metric was added to the buffer
+        assert service._tool_metric_buffer.total_added == 1
+        stats = service._tool_metric_buffer.get_stats()
+        assert stats["current_buffer_size"] == 1
 
     def test_write_tool_metric_immediately_error(self, monkeypatch):
-        monkeypatch.setattr(
-            "mcpgateway.services.metrics_buffer_service.fresh_db_session",
-            MagicMock(side_effect=Exception("db error")),
-        )
+        """Should log error but not raise when MetricBuffer flush fails."""
         service = MetricsBufferService(enabled=False)
-        service._write_tool_metric_immediately("t1", time.monotonic(), False, "err")
-        # Should not raise
+        # Make the buffer fail by mocking the session factory
+        service._tool_metric_buffer.session_factory = MagicMock(side_effect=Exception("db error"))
+        # Add enough metrics to trigger a flush
+        for i in range(200):
+            service._write_tool_metric_immediately(f"t{i}", time.monotonic(), True, None)
+        # Should not raise (errors are logged internally)
 
-    def test_write_resource_metric_immediately_success(self, monkeypatch):
-        ctx, mock_db = self._make_session_context()
-        monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: ctx)
+    def test_write_resource_metric_immediately_success(self):
+        """Should add metric to MetricBuffer."""
         service = MetricsBufferService(enabled=False)
         service._write_resource_metric_immediately("r1", time.monotonic(), True, None)
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
 
-    def test_write_prompt_metric_immediately_success(self, monkeypatch):
-        ctx, mock_db = self._make_session_context()
-        monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: ctx)
+        assert service._resource_metric_buffer.total_added == 1
+        stats = service._resource_metric_buffer.get_stats()
+        assert stats["current_buffer_size"] == 1
+
+    def test_write_prompt_metric_immediately_success(self):
+        """Should add metric to MetricBuffer."""
         service = MetricsBufferService(enabled=False)
         service._write_prompt_metric_immediately("p1", time.monotonic(), True, None)
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
 
-    def test_write_server_metric_immediately_success(self, monkeypatch):
-        ctx, mock_db = self._make_session_context()
-        monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: ctx)
+        assert service._prompt_metric_buffer.total_added == 1
+        stats = service._prompt_metric_buffer.get_stats()
+        assert stats["current_buffer_size"] == 1
+
+    def test_write_server_metric_immediately_success(self):
+        """Should add metric to MetricBuffer."""
         service = MetricsBufferService(enabled=False)
         service._write_server_metric_immediately("s1", time.monotonic(), True, None)
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
 
-    def test_write_a2a_metric_immediately_success(self, monkeypatch):
-        ctx, mock_db = self._make_session_context()
-        monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: ctx)
+        assert service._server_metric_buffer.total_added == 1
+        stats = service._server_metric_buffer.get_stats()
+        assert stats["current_buffer_size"] == 1
+
+    def test_write_a2a_metric_immediately_success(self):
+        """Should add metric to MetricBuffer."""
         service = MetricsBufferService(enabled=False)
         service._write_a2a_agent_metric_immediately("a1", time.monotonic(), True, "invoke", None)
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
 
-    def test_write_a2a_metric_with_duration_immediately_success(self, monkeypatch):
-        ctx, mock_db = self._make_session_context()
-        monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: ctx)
+        assert service._a2a_agent_metric_buffer.total_added == 1
+        stats = service._a2a_agent_metric_buffer.get_stats()
+        assert stats["current_buffer_size"] == 1
+
+    def test_write_a2a_metric_with_duration_immediately_success(self):
+        """Should add metric to MetricBuffer with pre-calculated duration."""
         service = MetricsBufferService(enabled=False)
         service._write_a2a_agent_metric_with_duration_immediately("a1", 1.5, True, "invoke", None)
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
 
-    def test_write_resource_metric_immediately_error(self, monkeypatch):
-        monkeypatch.setattr(
-            "mcpgateway.services.metrics_buffer_service.fresh_db_session",
-            MagicMock(side_effect=Exception("db error")),
-        )
-        service = MetricsBufferService(enabled=False)
-        service._write_resource_metric_immediately("r1", time.monotonic(), False, "err")
+        assert service._a2a_agent_metric_buffer.total_added == 1
+        stats = service._a2a_agent_metric_buffer.get_stats()
+        assert stats["current_buffer_size"] == 1
 
-    def test_write_prompt_metric_immediately_error(self, monkeypatch):
-        monkeypatch.setattr(
-            "mcpgateway.services.metrics_buffer_service.fresh_db_session",
-            MagicMock(side_effect=Exception("db error")),
-        )
+    def test_write_resource_metric_immediately_error(self):
+        """Should handle errors gracefully when MetricBuffer flush fails."""
         service = MetricsBufferService(enabled=False)
-        service._write_prompt_metric_immediately("p1", time.monotonic(), False, "err")
+        service._resource_metric_buffer.session_factory = MagicMock(side_effect=Exception("db error"))
+        # Add enough to trigger flush
+        for i in range(200):
+            service._write_resource_metric_immediately(f"r{i}", time.monotonic(), False, "err")
 
-    def test_write_server_metric_immediately_error(self, monkeypatch):
-        monkeypatch.setattr(
-            "mcpgateway.services.metrics_buffer_service.fresh_db_session",
-            MagicMock(side_effect=Exception("db error")),
-        )
+    def test_write_prompt_metric_immediately_error(self):
+        """Should handle errors gracefully when MetricBuffer flush fails."""
         service = MetricsBufferService(enabled=False)
-        service._write_server_metric_immediately("s1", time.monotonic(), False, "err")
+        service._prompt_metric_buffer.session_factory = MagicMock(side_effect=Exception("db error"))
+        for i in range(200):
+            service._write_prompt_metric_immediately(f"p{i}", time.monotonic(), False, "err")
 
-    def test_write_a2a_metric_immediately_error(self, monkeypatch):
-        monkeypatch.setattr(
-            "mcpgateway.services.metrics_buffer_service.fresh_db_session",
-            MagicMock(side_effect=Exception("db error")),
-        )
+    def test_write_server_metric_immediately_error(self):
+        """Should handle errors gracefully when MetricBuffer flush fails."""
         service = MetricsBufferService(enabled=False)
-        service._write_a2a_agent_metric_immediately("a1", time.monotonic(), False, "invoke", "err")
+        service._server_metric_buffer.session_factory = MagicMock(side_effect=Exception("db error"))
+        for i in range(200):
+            service._write_server_metric_immediately(f"s{i}", time.monotonic(), False, "err")
+
+    def test_write_a2a_metric_immediately_error(self):
+        """Should handle errors gracefully when MetricBuffer flush fails."""
+        service = MetricsBufferService(enabled=False)
+        service._a2a_agent_metric_buffer.session_factory = MagicMock(side_effect=Exception("db error"))
+        for i in range(200):
+            service._write_a2a_agent_metric_immediately(f"a{i}", time.monotonic(), False, "invoke", "err")

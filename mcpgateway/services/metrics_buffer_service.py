@@ -21,6 +21,8 @@ from typing import Deque, Optional
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgentMetric, fresh_db_session, PromptMetric, ResourceMetric, ServerMetric, ToolMetric
+from mcpgateway.utils.metric_buffer import MetricBuffer
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +131,14 @@ class MetricsBufferService:
         self._total_buffered = 0
         self._total_flushed = 0
         self._flush_count = 0
+
+        # MetricBuffer instances for fallback immediate writes when buffering is disabled
+        # These batch inserts even in "immediate" mode to reduce DB pressure
+        self._tool_metric_buffer = MetricBuffer(fresh_db_session, ToolMetric, batch_size=100)
+        self._server_metric_buffer = MetricBuffer(fresh_db_session, ServerMetric, batch_size=100)
+        self._resource_metric_buffer = MetricBuffer(fresh_db_session, ResourceMetric, batch_size=100)
+        self._prompt_metric_buffer = MetricBuffer(fresh_db_session, PromptMetric, batch_size=100)
+        self._a2a_agent_metric_buffer = MetricBuffer(fresh_db_session, A2AAgentMetric, batch_size=100)
 
         logger.info(
             f"MetricsBufferService initialized: recording_enabled={self.recording_enabled}, "
@@ -580,6 +590,9 @@ class MetricsBufferService:
     ) -> None:
         """Write buffered metrics to database (runs in thread).
 
+        Uses PostgreSQL multi-row INSERT via insert().values() for maximum efficiency —
+        each batch becomes a SINGLE SQL statement instead of N individual statements.
+
         Args:
             tool_metrics: List of buffered tool metrics to write.
             resource_metrics: List of buffered resource metrics to write.
@@ -589,70 +602,62 @@ class MetricsBufferService:
         """
         try:
             with fresh_db_session() as db:
-                # Bulk insert tool metrics
+                # Bulk insert tool metrics — single multi-row INSERT statement
                 if tool_metrics:
-                    db.bulk_insert_mappings(
-                        ToolMetric,
-                        [
-                            {
-                                "tool_id": m.tool_id,
-                                "timestamp": m.timestamp,
-                                "response_time": m.response_time,
-                                "is_success": m.is_success,
-                                "error_message": m.error_message,
-                            }
-                            for m in tool_metrics
-                        ],
-                    )
+                    values_list = [
+                        {
+                            "tool_id": m.tool_id,
+                            "timestamp": m.timestamp,
+                            "response_time": m.response_time,
+                            "is_success": m.is_success,
+                            "error_message": m.error_message,
+                        }
+                        for m in tool_metrics
+                    ]
+                    db.execute(pg_insert(ToolMetric).values(values_list))
 
                 # Bulk insert resource metrics
                 if resource_metrics:
-                    db.bulk_insert_mappings(
-                        ResourceMetric,
-                        [
-                            {
-                                "resource_id": m.resource_id,
-                                "timestamp": m.timestamp,
-                                "response_time": m.response_time,
-                                "is_success": m.is_success,
-                                "error_message": m.error_message,
-                            }
-                            for m in resource_metrics
-                        ],
-                    )
+                    values_list = [
+                        {
+                            "resource_id": m.resource_id,
+                            "timestamp": m.timestamp,
+                            "response_time": m.response_time,
+                            "is_success": m.is_success,
+                            "error_message": m.error_message,
+                        }
+                        for m in resource_metrics
+                    ]
+                    db.execute(pg_insert(ResourceMetric).values(values_list))
 
                 # Bulk insert prompt metrics
                 if prompt_metrics:
-                    db.bulk_insert_mappings(
-                        PromptMetric,
-                        [
-                            {
-                                "prompt_id": m.prompt_id,
-                                "timestamp": m.timestamp,
-                                "response_time": m.response_time,
-                                "is_success": m.is_success,
-                                "error_message": m.error_message,
-                            }
-                            for m in prompt_metrics
-                        ],
-                    )
+                    values_list = [
+                        {
+                            "prompt_id": m.prompt_id,
+                            "timestamp": m.timestamp,
+                            "response_time": m.response_time,
+                            "is_success": m.is_success,
+                            "error_message": m.error_message,
+                        }
+                        for m in prompt_metrics
+                    ]
+                    db.execute(pg_insert(PromptMetric).values(values_list))
 
                 # Bulk insert A2A agent metrics
                 if a2a_agent_metrics:
-                    db.bulk_insert_mappings(
-                        A2AAgentMetric,
-                        [
-                            {
-                                "a2a_agent_id": m.a2a_agent_id,
-                                "timestamp": m.timestamp,
-                                "response_time": m.response_time,
-                                "is_success": m.is_success,
-                                "interaction_type": m.interaction_type,
-                                "error_message": m.error_message,
-                            }
-                            for m in a2a_agent_metrics
-                        ],
-                    )
+                    values_list = [
+                        {
+                            "a2a_agent_id": m.a2a_agent_id,
+                            "timestamp": m.timestamp,
+                            "response_time": m.response_time,
+                            "is_success": m.is_success,
+                            "interaction_type": m.interaction_type,
+                            "error_message": m.error_message,
+                        }
+                        for m in a2a_agent_metrics
+                    ]
+                    db.execute(pg_insert(A2AAgentMetric).values(values_list))
 
                 db.commit()
 
@@ -668,19 +673,17 @@ class MetricsBufferService:
         if server_metrics:
             try:
                 with fresh_db_session() as db:
-                    db.bulk_insert_mappings(
-                        ServerMetric,
-                        [
-                            {
-                                "server_id": m.server_id,
-                                "timestamp": m.timestamp,
-                                "response_time": m.response_time,
-                                "is_success": m.is_success,
-                                "error_message": m.error_message,
-                            }
-                            for m in server_metrics
-                        ],
-                    )
+                    values_list = [
+                        {
+                            "server_id": m.server_id,
+                            "timestamp": m.timestamp,
+                            "response_time": m.response_time,
+                            "is_success": m.is_success,
+                            "error_message": m.error_message,
+                        }
+                        for m in server_metrics
+                    ]
+                    db.execute(pg_insert(ServerMetric).values(values_list))
                     db.commit()
             except Exception as e:
                 logger.error(f"Failed to flush server metrics to database: {e}", exc_info=True)
@@ -692,7 +695,7 @@ class MetricsBufferService:
         success: bool,
         error_message: Optional[str],
     ) -> None:
-        """Write a single tool metric immediately (fallback when buffering disabled).
+        """Write a single tool metric via batching (fallback when buffering disabled).
 
         Args:
             tool_id: UUID of the tool.
@@ -701,16 +704,14 @@ class MetricsBufferService:
             error_message: Optional error message if failed.
         """
         try:
-            with fresh_db_session() as db:
-                metric = ToolMetric(
-                    tool_id=tool_id,
-                    timestamp=datetime.now(timezone.utc),
-                    response_time=time.monotonic() - start_time,
-                    is_success=success,
-                    error_message=error_message,
-                )
-                db.add(metric)
-                db.commit()
+            metric_data = {
+                "tool_id": tool_id,
+                "timestamp": datetime.now(timezone.utc),
+                "response_time": time.monotonic() - start_time,
+                "is_success": success,
+                "error_message": error_message,
+            }
+            self._tool_metric_buffer.add(metric_data)
         except Exception as e:
             logger.error(f"Failed to write tool metric: {e}")
 
@@ -721,7 +722,7 @@ class MetricsBufferService:
         success: bool,
         error_message: Optional[str],
     ) -> None:
-        """Write a single tool metric with pre-calculated duration immediately.
+        """Write a single tool metric with pre-calculated duration via batching.
 
         Args:
             tool_id: UUID of the tool.
@@ -730,16 +731,14 @@ class MetricsBufferService:
             error_message: Optional error message if failed.
         """
         try:
-            with fresh_db_session() as db:
-                metric = ToolMetric(
-                    tool_id=tool_id,
-                    timestamp=datetime.now(timezone.utc),
-                    response_time=response_time,
-                    is_success=success,
-                    error_message=error_message,
-                )
-                db.add(metric)
-                db.commit()
+            metric_data = {
+                "tool_id": tool_id,
+                "timestamp": datetime.now(timezone.utc),
+                "response_time": response_time,
+                "is_success": success,
+                "error_message": error_message,
+            }
+            self._tool_metric_buffer.add(metric_data)
         except Exception as e:
             logger.error(f"Failed to write tool metric: {e}")
 
@@ -750,7 +749,7 @@ class MetricsBufferService:
         success: bool,
         error_message: Optional[str],
     ) -> None:
-        """Write a single resource metric immediately.
+        """Write a single resource metric via batching.
 
         Args:
             resource_id: UUID of the resource.
@@ -759,16 +758,14 @@ class MetricsBufferService:
             error_message: Optional error message if failed.
         """
         try:
-            with fresh_db_session() as db:
-                metric = ResourceMetric(
-                    resource_id=resource_id,
-                    timestamp=datetime.now(timezone.utc),
-                    response_time=time.monotonic() - start_time,
-                    is_success=success,
-                    error_message=error_message,
-                )
-                db.add(metric)
-                db.commit()
+            metric_data = {
+                "resource_id": resource_id,
+                "timestamp": datetime.now(timezone.utc),
+                "response_time": time.monotonic() - start_time,
+                "is_success": success,
+                "error_message": error_message,
+            }
+            self._resource_metric_buffer.add(metric_data)
         except Exception as e:
             logger.error(f"Failed to write resource metric: {e}")
 
@@ -779,7 +776,7 @@ class MetricsBufferService:
         success: bool,
         error_message: Optional[str],
     ) -> None:
-        """Write a single prompt metric immediately.
+        """Write a single prompt metric via batching.
 
         Args:
             prompt_id: UUID of the prompt.
@@ -788,16 +785,14 @@ class MetricsBufferService:
             error_message: Optional error message if failed.
         """
         try:
-            with fresh_db_session() as db:
-                metric = PromptMetric(
-                    prompt_id=prompt_id,
-                    timestamp=datetime.now(timezone.utc),
-                    response_time=time.monotonic() - start_time,
-                    is_success=success,
-                    error_message=error_message,
-                )
-                db.add(metric)
-                db.commit()
+            metric_data = {
+                "prompt_id": prompt_id,
+                "timestamp": datetime.now(timezone.utc),
+                "response_time": time.monotonic() - start_time,
+                "is_success": success,
+                "error_message": error_message,
+            }
+            self._prompt_metric_buffer.add(metric_data)
         except Exception as e:
             logger.error(f"Failed to write prompt metric: {e}")
 
@@ -808,7 +803,7 @@ class MetricsBufferService:
         success: bool,
         error_message: Optional[str],
     ) -> None:
-        """Write a single server metric immediately.
+        """Write a single server metric via batching.
 
         Args:
             server_id: UUID of the server.
@@ -817,16 +812,14 @@ class MetricsBufferService:
             error_message: Optional error message if failed.
         """
         try:
-            with fresh_db_session() as db:
-                metric = ServerMetric(
-                    server_id=server_id,
-                    timestamp=datetime.now(timezone.utc),
-                    response_time=time.monotonic() - start_time,
-                    is_success=success,
-                    error_message=error_message,
-                )
-                db.add(metric)
-                db.commit()
+            metric_data = {
+                "server_id": server_id,
+                "timestamp": datetime.now(timezone.utc),
+                "response_time": time.monotonic() - start_time,
+                "is_success": success,
+                "error_message": error_message,
+            }
+            self._server_metric_buffer.add(metric_data)
         except Exception as e:
             logger.error(f"Failed to write server metric: {e}")
 
@@ -837,7 +830,7 @@ class MetricsBufferService:
         success: bool,
         error_message: Optional[str],
     ) -> None:
-        """Write a single server metric with pre-calculated duration immediately.
+        """Write a single server metric with pre-calculated duration via batching.
 
         Args:
             server_id: UUID of the server.
@@ -846,16 +839,14 @@ class MetricsBufferService:
             error_message: Optional error message if failed.
         """
         try:
-            with fresh_db_session() as db:
-                metric = ServerMetric(
-                    server_id=server_id,
-                    timestamp=datetime.now(timezone.utc),
-                    response_time=response_time,
-                    is_success=success,
-                    error_message=error_message,
-                )
-                db.add(metric)
-                db.commit()
+            metric_data = {
+                "server_id": server_id,
+                "timestamp": datetime.now(timezone.utc),
+                "response_time": response_time,
+                "is_success": success,
+                "error_message": error_message,
+            }
+            self._server_metric_buffer.add(metric_data)
         except Exception as e:
             logger.error(f"Failed to write server metric: {e}")
 
@@ -867,7 +858,7 @@ class MetricsBufferService:
         interaction_type: str,
         error_message: Optional[str],
     ) -> None:
-        """Write a single A2A agent metric immediately.
+        """Write a single A2A agent metric via batching.
 
         Args:
             a2a_agent_id: UUID of the A2A agent.
@@ -877,17 +868,15 @@ class MetricsBufferService:
             error_message: Optional error message if failed.
         """
         try:
-            with fresh_db_session() as db:
-                metric = A2AAgentMetric(
-                    a2a_agent_id=a2a_agent_id,
-                    timestamp=datetime.now(timezone.utc),
-                    response_time=time.monotonic() - start_time,
-                    is_success=success,
-                    interaction_type=interaction_type,
-                    error_message=error_message,
-                )
-                db.add(metric)
-                db.commit()
+            metric_data = {
+                "a2a_agent_id": a2a_agent_id,
+                "timestamp": datetime.now(timezone.utc),
+                "response_time": time.monotonic() - start_time,
+                "is_success": success,
+                "interaction_type": interaction_type,
+                "error_message": error_message,
+            }
+            self._a2a_agent_metric_buffer.add(metric_data)
         except Exception as e:
             logger.error(f"Failed to write A2A agent metric: {e}")
 
@@ -899,7 +888,7 @@ class MetricsBufferService:
         interaction_type: str,
         error_message: Optional[str],
     ) -> None:
-        """Write a single A2A agent metric with pre-calculated duration immediately.
+        """Write a single A2A agent metric with pre-calculated duration via batching.
 
         Args:
             a2a_agent_id: UUID of the A2A agent.
@@ -909,17 +898,15 @@ class MetricsBufferService:
             error_message: Optional error message if failed.
         """
         try:
-            with fresh_db_session() as db:
-                metric = A2AAgentMetric(
-                    a2a_agent_id=a2a_agent_id,
-                    timestamp=datetime.now(timezone.utc),
-                    response_time=response_time,
-                    is_success=success,
-                    interaction_type=interaction_type,
-                    error_message=error_message,
-                )
-                db.add(metric)
-                db.commit()
+            metric_data = {
+                "a2a_agent_id": a2a_agent_id,
+                "timestamp": datetime.now(timezone.utc),
+                "response_time": response_time,
+                "is_success": success,
+                "interaction_type": interaction_type,
+                "error_message": error_message,
+            }
+            self._a2a_agent_metric_buffer.add(metric_data)
         except Exception as e:
             logger.error(f"Failed to write A2A agent metric: {e}")
 

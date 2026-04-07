@@ -277,34 +277,24 @@ class TestToolServiceHelpersExtended:
         assert service._pydantic_tool_from_payload({"bad": "payload"}) is None
 
     def test_record_tool_metric_by_id_records(self):
-        """_record_tool_metric_by_id should add and commit metric."""
+        """_record_tool_metric_by_id should add metric to MetricBuffer."""
         service = ToolService()
-        db = MagicMock()
 
-        service._record_tool_metric_by_id(db, "tool-1", time.monotonic(), True, None)
+        service._record_tool_metric_by_id("tool-1", time.monotonic(), True, None)
 
-        db.add.assert_called_once()
-        db.commit.assert_called_once()
+        # Verify metric was added to the buffer (not direct DB call)
+        # Import the buffer from tool_service module
+        from mcpgateway.services.tool_service import _tool_metric_buffer
+        assert _tool_metric_buffer.total_added >= 1
 
     def test_record_tool_metric_sync_uses_fresh_session(self, monkeypatch):
-        """_record_tool_metric_sync should call record helper with fresh session."""
+        """_record_tool_metric_sync should delegate to _record_tool_metric_by_id."""
         service = ToolService()
-        dummy_db = MagicMock()
-
-        class DummySession:
-            def __enter__(self):
-                return dummy_db
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
 
         with patch.object(service, "_record_tool_metric_by_id") as mock_record:
             service._record_tool_metric_sync("tool-1", 1.23, True, None)
 
         mock_record.assert_called_once_with(
-            dummy_db,
             tool_id="tool-1",
             start_time=1.23,
             success=True,
@@ -3124,30 +3114,24 @@ class TestToolService:
         success = True
         error_message = None
 
-        # Mock database
+        # Mock database (not used anymore, but keep for API compatibility)
         mock_db = MagicMock()
+
+        # Import the buffer to verify it was used
+        from mcpgateway.services.tool_service import _tool_metric_buffer
+
+        initial_count = _tool_metric_buffer.total_added
 
         # Mock time.monotonic to return a consistent value
         with patch("mcpgateway.services.tool_service.time.monotonic", return_value=105.0):
-            # Mock ToolMetric class
-            with patch("mcpgateway.services.tool_service.ToolMetric") as MockToolMetric:
-                mock_metric_instance = MagicMock()
-                MockToolMetric.return_value = mock_metric_instance
+            # Call the method
+            await tool_service._record_tool_metric(mock_db, mock_tool, start_time, success, error_message)
 
-                # Call the method
-                await tool_service._record_tool_metric(mock_db, mock_tool, start_time, success, error_message)
-
-                # Verify ToolMetric was created with correct data
-                MockToolMetric.assert_called_once_with(
-                    tool_id=mock_tool.id,
-                    response_time=5.0,  # 105.0 - 100.0
-                    is_success=True,
-                    error_message=None,
-                )
-
-                # Verify DB operations
-                mock_db.add.assert_called_once_with(mock_metric_instance)
-                mock_db.commit.assert_called_once()
+            # Verify metric was added to buffer (not direct DB)
+            assert _tool_metric_buffer.total_added == initial_count + 1
+            # Verify buffer stats
+            stats = _tool_metric_buffer.get_stats()
+            assert stats["model"] == "tool_metrics"
 
     async def test_record_tool_metric_with_error(self, tool_service, mock_tool):
         """Test recording tool invocation metrics with error."""
@@ -3155,21 +3139,18 @@ class TestToolService:
         success = False
         error_message = "Connection timeout"
 
-        # Mock database
+        # Mock database (not used anymore)
         mock_db = MagicMock()
 
+        from mcpgateway.services.tool_service import _tool_metric_buffer
+
+        initial_count = _tool_metric_buffer.total_added
+
         with patch("mcpgateway.services.tool_service.time.monotonic", return_value=102.5):
-            with patch("mcpgateway.services.tool_service.ToolMetric") as MockToolMetric:
-                mock_metric_instance = MagicMock()
-                MockToolMetric.return_value = mock_metric_instance
+            await tool_service._record_tool_metric(mock_db, mock_tool, start_time, success, error_message)
 
-                await tool_service._record_tool_metric(mock_db, mock_tool, start_time, success, error_message)
-
-                # Verify ToolMetric was created with error data
-                MockToolMetric.assert_called_once_with(tool_id=mock_tool.id, response_time=2.5, is_success=False, error_message="Connection timeout")
-
-                mock_db.add.assert_called_once_with(mock_metric_instance)
-                mock_db.commit.assert_called_once()
+            # Verify metric was added to buffer
+            assert _tool_metric_buffer.total_added == initial_count + 1
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics(self, tool_service, monkeypatch):
