@@ -255,7 +255,7 @@ class TestValidationMiddleware:
 
             rust_module = MagicMock()
             rust_validator = MagicMock()
-            rust_validator.validate_json_bytes.return_value = None
+            rust_validator.validate_request.return_value = None
             rust_module.Validator.return_value = rust_validator
 
             with patch("mcpgateway.middleware.validation_middleware._RUST_VALIDATION_MODULE", None):
@@ -272,7 +272,7 @@ class TestValidationMiddleware:
 
             await middleware._validate_request(DummyRequest())
 
-            rust_validator.validate_json_bytes.assert_called_once_with(b'{"name":"safe"}')
+            rust_validator.validate_request.assert_called_once_with([], b'{"name":"safe"}')
 
     @pytest.mark.asyncio
     async def test_validate_request_rust_bytes_extension_falls_back_to_python_validation(self):
@@ -289,7 +289,7 @@ class TestValidationMiddleware:
 
             middleware = ValidationMiddleware(app=None)
             rust_validator = MagicMock()
-            rust_validator.validate_json_bytes.side_effect = RuntimeError("boom")
+            rust_validator.validate_request.side_effect = RuntimeError("boom")
             middleware._rust_validator = rust_validator
 
             class DummyRequest:
@@ -304,6 +304,40 @@ class TestValidationMiddleware:
                 await middleware._validate_request(DummyRequest())
 
             assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_validate_request_uses_single_rust_call_for_parameters_and_json_body(self):
+        """Test request validation uses one Rust call when params and JSON are both present."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.validate_request.return_value = None
+            middleware._rust_validator = rust_validator
+
+            class DummyRequest:
+                path_params = {"id": 123}
+                query_params = {"q": "safe"}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return b'{"name":"safe"}'
+
+            await middleware._validate_request(DummyRequest())
+
+            rust_validator.validate_request.assert_called_once_with(
+                [("id", "123"), ("q", "safe")],
+                b'{"name":"safe"}',
+            )
 
     @pytest.mark.asyncio
     async def test_validate_request_without_path_params_attribute(self):
@@ -455,7 +489,7 @@ class TestValidationMiddleware:
 
             middleware._validate_json_data({"name": "safe"})
 
-            rust_module.Validator.assert_called_once_with(1000, [r"<script"])
+            rust_module.Validator.assert_called_once_with(1000, [r"<script"], [], mock_settings.max_path_depth)
             rust_validator.validate_json_data.assert_called_once_with({"name": "safe"})
 
     def test_validate_json_data_reuses_compiled_rust_validator(self):
@@ -482,9 +516,74 @@ class TestValidationMiddleware:
             middleware._validate_json_data({"name": "safe"})
             middleware._validate_json_data({"name": "still-safe"})
 
-            rust_module.Validator.assert_called_once_with(1000, [r"<script"])
+            rust_module.Validator.assert_called_once_with(1000, [r"<script"], [], mock_settings.max_path_depth)
             assert middleware._rust_validator is rust_validator
             assert rust_validator.validate_json_data.call_count == 2
+
+    def test_validate_request_uses_rust_parameter_batch_when_enabled(self):
+        """Test request validation uses the Rust parameter batch path when explicitly enabled."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.validate_parameters.return_value = None
+            middleware._rust_validator = rust_validator
+
+            middleware._validate_parameters([("id", "123"), ("q", "safe")])
+
+            rust_validator.validate_parameters.assert_called_once_with([("id", "123"), ("q", "safe")])
+
+    def test_validate_resource_path_uses_rust_extension_when_enabled(self):
+        """Test resource path validation uses the Rust extension when explicitly enabled."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 10
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.validate_resource_path.return_value = "/safe/path"
+            middleware._rust_validator = rust_validator
+
+            assert middleware.validate_resource_path("/safe/path") == "/safe/path"
+            rust_validator.validate_resource_path.assert_called_once_with("/safe/path")
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_uses_rust_extension_when_enabled(self):
+        """Test response sanitization uses the Rust extension when explicitly enabled."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.sanitize_response_body.return_value = b"HelloWorld"
+            middleware._rust_validator = rust_validator
+
+            response = Response(content="Hello\x00World")
+            sanitized = await middleware._sanitize_response(response)
+
+            assert sanitized.body == b"HelloWorld"
+            rust_validator.sanitize_response_body.assert_called_once()
 
     def test_validate_json_data_rust_extension_falls_back_to_python_validation(self):
         """Test Rust mode falls back to Python validation when the extension cannot be loaded."""

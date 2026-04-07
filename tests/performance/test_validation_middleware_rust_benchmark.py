@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable
 # Third-Party
 from fastapi import HTTPException
 import orjson
+from starlette.responses import Response
 
 # First-Party
 from mcpgateway.config import settings
@@ -44,6 +45,15 @@ class _JSONBodyRequest:
 
     async def body(self) -> bytes:
         return self._body
+
+
+class _QueryRequest:
+    """Minimal request stub for benchmarking parameter validation."""
+
+    def __init__(self, query_params: dict[str, str]) -> None:
+        self.path_params = {"id": "123"}
+        self.query_params = query_params
+        self.headers = {}
 
 
 def _ensure_rust_extension_installed() -> Any:
@@ -79,6 +89,100 @@ def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) 
     return _run
 
 
+def _build_python_parameter_runner(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[dict[str, str]], None]:
+    settings.max_param_length = max_param_length
+    settings.dangerous_patterns = dangerous_patterns
+    settings.experimental_rust_validation_middleware_enabled = False
+    settings.environment = "production"
+    middleware = ValidationMiddleware(app=None)
+    middleware.dangerous_patterns = [re.compile(pattern) for pattern in dangerous_patterns]
+
+    def _run(query_params: dict[str, str]) -> None:
+        request = _QueryRequest(query_params)
+        middleware._validate_parameters(
+            [("id", "123"), *list(request.query_params.items())]
+        )
+
+    return _run
+
+
+def _build_rust_parameter_runner(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[dict[str, str]], None]:
+    _ensure_rust_extension_installed()
+    settings.max_param_length = max_param_length
+    settings.dangerous_patterns = dangerous_patterns
+    settings.experimental_rust_validation_middleware_enabled = True
+    settings.environment = "production"
+    middleware = ValidationMiddleware(app=None)
+
+    def _run(query_params: dict[str, str]) -> None:
+        request = _QueryRequest(query_params)
+        middleware._validate_parameters(
+            [("id", "123"), *list(request.query_params.items())]
+        )
+
+    return _run
+
+
+def _build_python_resource_runner(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[str], None]:
+    settings.max_param_length = max_param_length
+    settings.dangerous_patterns = dangerous_patterns
+    settings.experimental_rust_validation_middleware_enabled = False
+    settings.environment = "production"
+    settings.max_path_depth = 32
+    settings.allowed_roots = []
+    middleware = ValidationMiddleware(app=None)
+
+    def _run(path: str) -> None:
+        middleware.validate_resource_path(path)
+
+    return _run
+
+
+def _build_rust_resource_runner(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[str], None]:
+    _ensure_rust_extension_installed()
+    settings.max_param_length = max_param_length
+    settings.dangerous_patterns = dangerous_patterns
+    settings.experimental_rust_validation_middleware_enabled = True
+    settings.environment = "production"
+    settings.max_path_depth = 32
+    settings.allowed_roots = []
+    middleware = ValidationMiddleware(app=None)
+
+    def _run(path: str) -> None:
+        middleware.validate_resource_path(path)
+
+    return _run
+
+
+def _build_python_sanitizer(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:
+    settings.max_param_length = max_param_length
+    settings.dangerous_patterns = dangerous_patterns
+    settings.experimental_rust_validation_middleware_enabled = False
+    settings.environment = "production"
+    settings.sanitize_output = True
+    middleware = ValidationMiddleware(app=None)
+
+    async def _run(body: bytes) -> None:
+        await middleware._sanitize_response(Response(content=body))
+
+    return _run
+
+
+def _build_rust_sanitizer(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:
+    _ensure_rust_extension_installed()
+    settings.max_param_length = max_param_length
+    settings.dangerous_patterns = dangerous_patterns
+    settings.experimental_rust_validation_middleware_enabled = True
+    settings.environment = "production"
+    settings.sanitize_output = True
+    middleware = ValidationMiddleware(app=None)
+
+    async def _run(body: bytes) -> None:
+        await middleware._sanitize_response(Response(content=body))
+
+    return _run
+
+
 async def _measure(label: str, fn: Callable[[bytes], Awaitable[None]], payload: bytes, iterations: int) -> tuple[float, float]:
     samples = []
     for _ in range(iterations):
@@ -109,6 +213,43 @@ async def _measure_pair(
         run_result: dict[str, tuple[float, float]] = {}
         for label, fn in order:
             run_result[label] = await _measure(label, fn, payload, iterations)
+        ordered_runs.append(run_result)
+
+    python_median = statistics.mean(result["python"][0] for result in ordered_runs)
+    rust_median = statistics.mean(result["rust"][0] for result in ordered_runs)
+    return python_median, rust_median
+
+
+def _measure_sync(label: str, fn: Callable[[Any], None], payload: Any, iterations: int) -> tuple[float, float]:
+    samples = []
+    for _ in range(iterations):
+        started = time.perf_counter_ns()
+        try:
+            fn(payload)
+        except HTTPException:
+            pass
+        samples.append(time.perf_counter_ns() - started)
+
+    median_ms = statistics.median(samples) / 1_000_000
+    p95_ms = statistics.quantiles(samples, n=100)[94] / 1_000_000
+    print(f"{label}: median={median_ms:.3f}ms p95={p95_ms:.3f}ms")
+    return median_ms, p95_ms
+
+
+def _measure_sync_pair(
+    python_fn: Callable[[Any], None],
+    rust_fn: Callable[[Any], None],
+    payload: Any,
+    iterations: int,
+) -> tuple[float, float]:
+    ordered_runs = []
+    for order in (
+        (("python", python_fn), ("rust", rust_fn)),
+        (("rust", rust_fn), ("python", python_fn)),
+    ):
+        run_result: dict[str, tuple[float, float]] = {}
+        for label, fn in order:
+            run_result[label] = _measure_sync(label, fn, payload, iterations)
         ordered_runs.append(run_result)
 
     python_median = statistics.mean(result["python"][0] for result in ordered_runs)
@@ -169,6 +310,12 @@ async def main() -> None:
 
     python_fn = _build_python_validator(max_param_length, dangerous_patterns)
     rust_fn = _build_rust_validator(max_param_length, dangerous_patterns)
+    python_param_fn = _build_python_parameter_runner(max_param_length, dangerous_patterns)
+    rust_param_fn = _build_rust_parameter_runner(max_param_length, dangerous_patterns)
+    python_resource_fn = _build_python_resource_runner(max_param_length, dangerous_patterns)
+    rust_resource_fn = _build_rust_resource_runner(max_param_length, dangerous_patterns)
+    python_sanitize_fn = _build_python_sanitizer(max_param_length, dangerous_patterns)
+    rust_sanitize_fn = _build_rust_sanitizer(max_param_length, dangerous_patterns)
 
     parity_payloads = [
         orjson.dumps({"name": "safe", "nested": {"description": "still safe"}}),
@@ -223,6 +370,36 @@ async def main() -> None:
     print("\ncold_first_call (1 iteration)")
     print(f"python={python_cold_ms:.3f}ms rust={rust_cold_ms:.3f}ms")
     print(f"speedup={python_cold_ms / rust_cold_ms:.2f}x")
+
+    print("\nparameter_batch (2000 iterations)")
+    python_param_median, rust_param_median = _measure_sync_pair(
+        python_param_fn,
+        rust_param_fn,
+        {f"q{index}": f"value-{index}" for index in range(16)},
+        2000,
+    )
+    print(f"python_avg_median={python_param_median:.3f}ms rust_avg_median={rust_param_median:.3f}ms")
+    print(f"speedup={python_param_median / rust_param_median:.2f}x")
+
+    print("\nresource_path (2000 iterations)")
+    python_resource_median, rust_resource_median = _measure_sync_pair(
+        python_resource_fn,
+        rust_resource_fn,
+        "safe/subdir/file.txt",
+        2000,
+    )
+    print(f"python_avg_median={python_resource_median:.3f}ms rust_avg_median={rust_resource_median:.3f}ms")
+    print(f"speedup={python_resource_median / rust_resource_median:.2f}x")
+
+    print("\nresponse_sanitization (1000 iterations)")
+    python_sanitize_median, rust_sanitize_median = await _measure_pair(
+        python_sanitize_fn,
+        rust_sanitize_fn,
+        b"prefix\x00middle\x1fsuffix" * 256,
+        1000,
+    )
+    print(f"python_avg_median={python_sanitize_median:.3f}ms rust_avg_median={rust_sanitize_median:.3f}ms")
+    print(f"speedup={python_sanitize_median / rust_sanitize_median:.2f}x")
 
     for name, payload, iterations in scenarios:
         body = orjson.dumps(payload)
