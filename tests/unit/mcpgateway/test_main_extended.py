@@ -407,7 +407,7 @@ class TestJwtIdentityExtractor:
 
     def test_extractor_returns_none_on_jwt_decode_exception(self):
         """JWT decode raising an exception should return None and log debug message."""
-        # Third-Party
+        # Standard
         from unittest.mock import patch
 
         extractor = _create_jwt_identity_extractor()
@@ -424,11 +424,7 @@ class TestJwtIdentityExtractor:
         import jwt
 
         extractor = _create_jwt_identity_extractor()
-        token = jwt.encode(
-            {"sub": "user-sub", "email": "user@example.com", "user_id": "uid-123"},
-            "secret",
-            algorithm="HS256"
-        )
+        token = jwt.encode({"sub": "user-sub", "email": "user@example.com", "user_id": "uid-123"}, "secret", algorithm="HS256")
         headers = {"Authorization": f"Bearer {token}"}
 
         result = extractor(headers)
@@ -440,11 +436,7 @@ class TestJwtIdentityExtractor:
         import jwt
 
         extractor = _create_jwt_identity_extractor()
-        token = jwt.encode(
-            {"email": "user@example.com", "user_id": "uid-123"},
-            "secret",
-            algorithm="HS256"
-        )
+        token = jwt.encode({"email": "user@example.com", "user_id": "uid-123"}, "secret", algorithm="HS256")
         headers = {"Authorization": f"Bearer {token}"}
 
         result = extractor(headers)
