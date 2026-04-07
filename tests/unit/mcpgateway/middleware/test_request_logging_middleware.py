@@ -265,6 +265,25 @@ async def test_dispatch_logs_json_body(dummy_logger, mock_structured_logger, dum
 
 
 @pytest.mark.asyncio
+async def test_dispatch_uses_native_json_bytes_fast_path_when_available(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_json_bytes.return_value = b'{"password":"******","data":"ok"}'  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
+    body = orjson.dumps({"password": "123", "data": "ok"})
+    request = make_request(body=body, headers={"Authorization": "Bearer abc"})
+
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension):
+        response = await middleware.dispatch(request, dummy_call_next)
+
+    assert response.status_code == 200
+    native_extension.mask_sensitive_json_bytes.assert_called_once_with(body, 10)
+    native_extension.mask_sensitive_data.assert_not_called()
+    assert any('"password":"******"' in msg for _, msg in dummy_logger.logged)  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
 async def test_dispatch_falls_back_to_python_masking_when_native_extension_import_fails(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", MagicMock(side_effect=ImportError("boom")))

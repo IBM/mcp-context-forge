@@ -1,5 +1,7 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyList, PyString};
+use pyo3::exceptions::PyValueError;
+use pyo3::types::{PyAny, PyBytes, PyDict, PyList, PyString};
+use serde_json::Value;
 use std::collections::HashMap;
 
 const MASKED_VALUE: &str = "******";
@@ -32,7 +34,11 @@ fn normalize_key_for_masking(key: &str) -> String {
         }
     }
 
-    normalized.trim_matches('_').to_owned()
+    while normalized.ends_with('_') {
+        normalized.pop();
+    }
+
+    normalized
 }
 
 fn has_non_sensitive_suffix(normalized_key: &str) -> bool {
@@ -122,9 +128,16 @@ fn is_sensitive_key_cached(key: &str, cache: &mut HashMap<String, bool>) -> bool
 }
 
 fn mask_cookie_header(cookie_header: &str) -> String {
-    let mut masked = Vec::new();
+    let mut masked = String::with_capacity(cookie_header.len());
+    let mut first = true;
 
     for cookie in cookie_header.split(';') {
+        if first {
+            first = false;
+        } else {
+            masked.push_str("; ");
+        }
+
         let trimmed = cookie.trim();
         if let Some((name, _)) = trimmed.split_once('=') {
             let name = name.trim();
@@ -134,16 +147,18 @@ fn mask_cookie_header(cookie_header: &str) -> String {
                 || lowered.contains("auth")
                 || lowered.contains("session")
             {
-                masked.push(format!("{name}={MASKED_VALUE}"));
+                masked.push_str(name);
+                masked.push('=');
+                masked.push_str(MASKED_VALUE);
             } else {
-                masked.push(trimmed.to_owned());
+                masked.push_str(trimmed);
             }
         } else {
-            masked.push(trimmed.to_owned());
+            masked.push_str(trimmed);
         }
     }
 
-    masked.join("; ")
+    masked
 }
 
 fn mask_sensitive_data_inner(
@@ -159,8 +174,9 @@ fn mask_sensitive_data_inner(
     if let Ok(dict) = data.cast::<PyDict>() {
         let masked = PyDict::new(py);
         for (key, value) in dict.iter() {
-            let key_string = key.str()?.to_string_lossy().into_owned();
-            if is_sensitive_key_cached(&key_string, key_cache) {
+            let key_string_object = key.str()?;
+            let key_string = key_string_object.to_string_lossy();
+            if is_sensitive_key_cached(key_string.as_ref(), key_cache) {
                 masked.set_item(key, MASKED_VALUE)?;
             } else {
                 masked.set_item(
@@ -188,13 +204,40 @@ fn mask_sensitive_data_inner(
     Ok(data.clone().unbind())
 }
 
+fn mask_json_value_inner(value: Value, max_depth: i32, key_cache: &mut HashMap<String, bool>) -> Value {
+    if max_depth <= 0 {
+        return Value::String(NESTED_TOO_DEEP.to_owned());
+    }
+
+    match value {
+        Value::Object(source) => {
+            let mut masked = serde_json::Map::with_capacity(source.len());
+            for (key, value) in source {
+                if is_sensitive_key_cached(&key, key_cache) {
+                    masked.insert(key, Value::String(MASKED_VALUE.to_owned()));
+                } else {
+                    masked.insert(key, mask_json_value_inner(value, max_depth - 1, key_cache));
+                }
+            }
+            Value::Object(masked)
+        }
+        Value::Array(source) => Value::Array(
+            source
+                .into_iter()
+                .map(|item| mask_json_value_inner(item, max_depth - 1, key_cache))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 #[pyfunction]
 fn mask_sensitive_data(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
     max_depth: Option<i32>,
 ) -> PyResult<Py<PyAny>> {
-    let mut key_cache = HashMap::new();
+    let mut key_cache = HashMap::with_capacity(16);
     mask_sensitive_data_inner(py, data, max_depth.unwrap_or(10), &mut key_cache)
 }
 
@@ -205,13 +248,14 @@ fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResul
     let mut key_cache = HashMap::with_capacity(source.len());
 
     for (key, value) in source.iter() {
-        let key_string = key.str()?.to_string_lossy().into_owned();
-        if is_sensitive_key_cached(&key_string, &mut key_cache) {
+        let key_string_object = key.str()?;
+        let key_string = key_string_object.to_string_lossy();
+        if is_sensitive_key_cached(key_string.as_ref(), &mut key_cache) {
             masked.set_item(key, MASKED_VALUE)?;
             continue;
         }
 
-        if key_string.eq_ignore_ascii_case("cookie") && value.is_instance_of::<PyString>() {
+        if key_string.as_ref().eq_ignore_ascii_case("cookie") && value.is_instance_of::<PyString>() {
             let cookie_value = value.cast::<PyString>()?.to_str()?;
             masked.set_item(key, mask_cookie_header(cookie_value))?;
             continue;
@@ -223,9 +267,60 @@ fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResul
     Ok(masked.into_any().unbind())
 }
 
+#[pyfunction]
+fn mask_sensitive_json_bytes(
+    py: Python<'_>,
+    payload: &[u8],
+    max_depth: Option<i32>,
+) -> PyResult<Py<PyAny>> {
+    let parsed: Value = serde_json::from_slice(payload).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let mut key_cache = HashMap::with_capacity(16);
+    let masked = mask_json_value_inner(parsed, max_depth.unwrap_or(10), &mut key_cache);
+    let serialized = serde_json::to_vec(&masked).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok(PyBytes::new(py, &serialized).into_any().unbind())
+}
+
 #[pymodule]
 fn request_logging_masking_native_extension(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(mask_sensitive_data, module)?)?;
     module.add_function(wrap_pyfunction!(mask_sensitive_headers, module)?)?;
+    module.add_function(wrap_pyfunction!(mask_sensitive_json_bytes, module)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mask_cookie_header, mask_json_value_inner, normalize_key_for_masking};
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[test]
+    fn normalize_key_trims_trailing_separators_without_extra_allocation_artifacts() {
+        assert_eq!(normalize_key_for_masking("__ClientSecret__"), "client_secret");
+        assert_eq!(normalize_key_for_masking("auth-token---"), "auth_token");
+    }
+
+    #[test]
+    fn mask_cookie_header_preserves_spacing_and_masks_sensitive_cookie_names() {
+        assert_eq!(
+            mask_cookie_header("jwt_token=abc; theme=dark; session_id=xyz"),
+            "jwt_token=******; theme=dark; session_id=******"
+        );
+        assert_eq!(mask_cookie_header("theme=dark"), "theme=dark");
+    }
+
+    #[test]
+    fn mask_json_value_masks_nested_sensitive_keys() {
+        let mut cache = HashMap::new();
+        let masked = mask_json_value_inner(
+            json!({"password": "secret", "nested": {"authToken": "abc", "count": 3}}),
+            10,
+            &mut cache,
+        );
+
+        assert_eq!(
+            masked,
+            json!({"password": "******", "nested": {"authToken": "******", "count": 3}}) // pragma: allowlist secret
+        );
+    }
 }
