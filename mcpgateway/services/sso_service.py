@@ -1457,6 +1457,7 @@ class SSOService:
                     return None
 
                 # Validate expiration — reject missing or non-numeric exp
+                # Standard
                 import time  # pylint: disable=import-outside-toplevel
 
                 exp = id_token_claims.get("exp")
