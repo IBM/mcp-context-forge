@@ -1893,7 +1893,7 @@ main {
     </div>
 
     <div class="protocol-section">
-      <h3>MCP JSON-RPC Methods (21 methods)</h3>
+      <h3>MCP JSON-RPC Methods (22 methods)</h3>
       <p class="section-subtitle" style="margin-bottom:1rem">All methods follow the JSON-RPC 2.0 specification over any supported transport.</p>
       <div class="mcp-method-grid" id="mcp-methods"></div>
     </div>
@@ -1935,7 +1935,7 @@ main {
       <div style="overflow-x:auto">
         <table class="api-table" id="api-table">
           <thead>
-            <tr><th>Router</th><th>File</th><th>GET</th><th>POST</th><th>PUT</th><th>DELETE</th><th>Total</th></tr>
+            <tr><th>Router</th><th>File</th><th>GET</th><th>POST</th><th>PUT</th><th>DELETE</th><th>PATCH</th><th>Total</th></tr>
           </thead>
           <tbody id="api-table-body"></tbody>
         </table>
@@ -3307,6 +3307,7 @@ var MCP_METHODS = [
   { method:"sampling/createMessage", desc:"Create an LLM sampling message", group:"Sampling" },
   { method:"elicitation/create", desc:"Create user elicitation (MCP 2025-06-18)", group:"Elicitation" },
   { method:"logging/setLevel", desc:"Set server-side log level", group:"Logging" },
+  { method:"list_tools", desc:"Legacy tool listing (backward compat)", group:"Legacy" },
   { method:"list_roots", desc:"Legacy roots listing (backward compat)", group:"Legacy" }
 ];
 
@@ -3331,28 +3332,29 @@ var HIGHER_PROTOCOLS = [
 var ADRS = [
   { num:"001", title:"Adopt FastAPI + Pydantic", status:"accepted" },
   { num:"002", title:"Use Async SQLAlchemy ORM", status:"accepted" },
-  { num:"003", title:"Expose Multi-Transport Endpoints", status:"accepted" },
+  { num:"003", title:"Expose Multi-Transport Endpoints (HTTP/WebSocket/SSE/STDIO)", status:"accepted" },
   { num:"004", title:"Combine JWT & Basic Auth", status:"accepted" },
   { num:"005", title:"Structured JSON Logging", status:"implemented" },
+  { num:"005b", title:"VS Code Dev Container Support", status:"accepted" },
   { num:"006", title:"Gateway & Tool-Level Rate Limiting", status:"accepted" },
-  { num:"007", title:"Pluggable Cache Backend", status:"accepted" },
-  { num:"008", title:"Federation & Auto-Discovery via DNS-SD", status:"deprecated" },
+  { num:"007", title:"Pluggable Cache Backend (memory/Redis/database)", status:"accepted" },
+  { num:"008", title:"Federation & Auto-Discovery via DNS-SD", status:"accepted" },
   { num:"009", title:"Built-in Health Checks & Self-Monitoring", status:"accepted" },
-  { num:"010", title:"Observability via Prometheus", status:"accepted" },
-  { num:"011", title:"Tool Federation", status:"implemented" },
+  { num:"010", title:"Observability via Prometheus, Structured Logs, and Metrics", status:"accepted" },
+  { num:"011", title:"Tool Federation (same-name tools without conflict)", status:"implemented" },
   { num:"012", title:"Dropdown UI Tool Selection", status:"draft" },
   { num:"013", title:"APIs for Server Connection Strings", status:"draft" },
-  { num:"014", title:"Security Headers and CORS Middleware", status:"accepted" },
+  { num:"014", title:"Security Headers and Environment-Aware CORS Middleware", status:"accepted" },
   { num:"015", title:"Configurable Well-Known URI Handler", status:"accepted" },
-  { num:"016", title:"Plugin Framework and AI Middleware", status:"implemented" },
-  { num:"017", title:"Adopt orjson for JSON Serialization", status:"accepted" },
-  { num:"018", title:"Built-in Response Compression", status:"accepted" },
-  { num:"019", title:"Modular Architecture Split (14 Modules)", status:"accepted" },
+  { num:"016", title:"Plugin Framework and AI Middleware Architecture", status:"implemented" },
+  { num:"017", title:"Adopt orjson for High-Performance JSON Serialization", status:"accepted" },
+  { num:"018", title:"Built-in Response Compression Middleware", status:"accepted" },
+  { num:"019", title:"Modular Architecture Split (14 Independent Modules)", status:"accepted" },
   { num:"020", title:"Multi-Format Packaging Strategy", status:"accepted" },
-  { num:"021", title:"Built-in Proxy vs Service Mesh", status:"accepted" },
+  { num:"021", title:"Built-in Proxy Capabilities vs Service Mesh", status:"accepted" },
   { num:"022", title:"Elicitation Passthrough Implementation", status:"accepted" },
-  { num:"023", title:"One-Time Authentication Servers", status:"accepted" },
-  { num:"024", title:"Adopt uvicorn[standard]", status:"accepted" },
+  { num:"023", title:"One-Time Authentication for Gateway Registration", status:"accepted" },
+  { num:"024", title:"Adopt uvicorn[standard] for Enhanced Server Performance", status:"accepted" },
   { num:"025", title:"Add Granian as Alternative HTTP Server", status:"accepted" },
   { num:"026", title:"Add Hiredis as Default Redis Parser", status:"accepted" },
   { num:"027", title:"Migrate from Psycopg2 to Psycopg3", status:"accepted" },
@@ -3363,47 +3365,46 @@ var ADRS = [
   { num:"032", title:"MCP Session Pool for Connection Reuse", status:"accepted" },
   { num:"033", title:"Tool Lookup Cache for invoke_tool", status:"accepted" },
   { num:"034a", title:"Centralized Notification Service", status:"accepted" },
-  { num:"034b", title:"SSO Admin Synchronization & Config Precedence", status:"accepted" },
-  { num:"035", title:"Query Parameter Authentication for Peers", status:"accepted" },
-  { num:"036", title:"Bootstrap Custom Roles", status:"accepted" },
-  { num:"037", title:"External Plugin STDIO Launch", status:"accepted" },
-  { num:"038a", title:"Experimental Rust Transport Backend", status:"superseded" },
-  { num:"038b", title:"Multi-Worker Session Affinity", status:"accepted" },
-  { num:"039", title:"Fully Independent Plugin Crates", status:"proposed" },
-  { num:"040", title:"Flexible Admin UI Sections", status:"accepted" },
-  { num:"041", title:"Top-Level Rust Workspace", status:"accepted" },
-  { num:"042", title:"Enforce Rust in Build Process", status:"proposed" },
-  { num:"043", title:"Rust MCP Runtime Sidecar Mode Model", status:"accepted" },
+  { num:"034b", title:"SSO Admin Synchronization and Configuration Precedence", status:"accepted" },
+  { num:"035", title:"Query Parameter Authentication for Gateway Peers", status:"accepted" },
+  { num:"036", title:"Bootstrap Custom Roles from Configuration File", status:"accepted" },
+  { num:"037", title:"External Plugin STDIO Launch with Command/Env Overrides", status:"accepted" },
+  { num:"038a", title:"Experimental Rust Transport Backend (Streamable HTTP)", status:"superseded" },
+  { num:"038b", title:"Multi-Worker Session Affinity for SSE and Streamable HTTP", status:"accepted" },
+  { num:"039", title:"Fully Independent Plugin Crates Architecture", status:"accepted" },
+  { num:"040", title:"Flexible Admin UI Section Visibility", status:"accepted" },
+  { num:"041", title:"Top-Level Rust Workspace (Cargo.toml at Repository Root)", status:"accepted" },
+  { num:"042", title:"Enforce Rust in the Build Process", status:"proposed" },
+  { num:"043", title:"Rust MCP Runtime Sidecar with Mode-Based Rollout", status:"accepted" },
   { num:"044", title:"Module Communication Protocol", status:"proposed" },
-  { num:"045", title:"Authentication Remains in Core", status:"proposed" },
-  { num:"046", title:"Shared-Nothing Between Modules", status:"proposed" },
-  { num:"047", title:"Incremental Migration Over Rewrite", status:"proposed" },
-  { num:"048", title:"RFC 9728 OAuth Protected Resource Metadata", status:"implemented" }
+  { num:"045", title:"Authentication and Authorization Remain in Core", status:"proposed" },
+  { num:"046", title:"Shared-Nothing Between Protocol Modules", status:"proposed" },
+  { num:"047", title:"Incremental Migration Over Rewrite", status:"proposed" }
 ];
 
 /* ================================================================
    DATA: API surface
    ================================================================ */
 var API_ROUTERS = [
-  { name:"Auth", file:"auth.py", get:2, post:1, put:0, del:0 },
-  { name:"Email Auth", file:"email_auth.py", get:3, post:5, put:1, del:0 },
-  { name:"OAuth", file:"oauth_router.py", get:5, post:3, put:0, del:1 },
-  { name:"SSO", file:"sso.py", get:3, post:2, put:1, del:1 },
-  { name:"Tokens", file:"tokens.py", get:4, post:2, put:1, del:2 },
-  { name:"RBAC", file:"rbac.py", get:6, post:3, put:1, del:2 },
-  { name:"Teams", file:"teams.py", get:6, post:4, put:2, del:2 },
-  { name:"LLM Chat", file:"llmchat_router.py", get:2, post:3, put:0, del:0 },
-  { name:"LLM Admin", file:"llm_admin_router.py", get:3, post:2, put:1, del:1 },
-  { name:"LLM Config", file:"llm_config_router.py", get:2, post:1, put:1, del:1 },
-  { name:"LLM Proxy", file:"llm_proxy_router.py", get:0, post:1, put:0, del:0 },
-  { name:"Observability", file:"observability.py", get:4, post:2, put:0, del:1 },
-  { name:"Log Search", file:"log_search.py", get:3, post:1, put:0, del:0 },
-  { name:"Metrics Maint.", file:"metrics_maintenance.py", get:2, post:2, put:0, del:0 },
-  { name:"Cancellation", file:"cancellation_router.py", get:1, post:1, put:0, del:0 },
-  { name:"Well-Known", file:"well_known.py", get:3, post:0, put:0, del:0 },
-  { name:"Server Well-Known", file:"server_well_known.py", get:2, post:0, put:0, del:0 },
-  { name:"Reverse Proxy", file:"reverse_proxy.py", get:2, post:1, put:0, del:1 },
-  { name:"ToolOps", file:"toolops_router.py", get:1, post:1, put:0, del:0 }
+  { name:"Auth", file:"auth.py", get:0, post:1, put:0, del:0, patch:0 },
+  { name:"Email Auth", file:"email_auth.py", get:6, post:7, put:1, del:1, patch:0 },
+  { name:"OAuth", file:"oauth_router.py", get:5, post:1, put:0, del:1, patch:0 },
+  { name:"SSO", file:"sso.py", get:6, post:2, put:1, del:1, patch:0 },
+  { name:"Tokens", file:"tokens.py", get:5, post:2, put:1, del:2, patch:0 },
+  { name:"RBAC", file:"rbac.py", get:7, post:3, put:1, del:2, patch:0 },
+  { name:"Teams", file:"teams.py", get:6, post:6, put:2, del:5, patch:0 },
+  { name:"LLM Chat", file:"llmchat_router.py", get:3, post:3, put:0, del:0, patch:0 },
+  { name:"LLM Admin", file:"llm_admin_router.py", get:5, post:6, put:0, del:2, patch:0 },
+  { name:"LLM Config", file:"llm_config_router.py", get:5, post:5, put:0, del:2, patch:2 },
+  { name:"LLM Proxy", file:"llm_proxy_router.py", get:1, post:1, put:0, del:0, patch:0 },
+  { name:"Observability", file:"observability.py", get:5, post:2, put:0, del:1, patch:0 },
+  { name:"Log Search", file:"log_search.py", get:4, post:1, put:0, del:0, patch:0 },
+  { name:"Metrics Maint.", file:"metrics_maintenance.py", get:2, post:2, put:0, del:0, patch:0 },
+  { name:"Cancellation", file:"cancellation_router.py", get:1, post:1, put:0, del:0, patch:0 },
+  { name:"Well-Known", file:"well_known.py", get:4, post:0, put:0, del:0, patch:0 },
+  { name:"Server Well-Known", file:"server_well_known.py", get:2, post:0, put:0, del:0, patch:0 },
+  { name:"Reverse Proxy", file:"reverse_proxy.py", get:2, post:1, put:0, del:1, patch:0 },
+  { name:"ToolOps", file:"toolops_router.py", get:0, post:3, put:0, del:0, patch:0 }
 ];
 
 var CORE_ROUTES = [
@@ -3443,7 +3444,7 @@ var TECH_STACK = [
     { name:"SQLAlchemy", ver:">= 2.0.48", note:"ORM with 55 models" },
     { name:"Psycopg[c]", ver:">= 3.3.3", note:"PostgreSQL with C accel (ADR-027)" },
     { name:"Alembic", ver:">= 1.18.4", note:"DB migrations" },
-    { name:"Redis[hiredis]", ver:">= 7.3.0", note:"Cache with C parser (ADR-026)" }
+    { name:"Redis[hiredis]", ver:">= 6.4.0 / 7.3.0", note:"Cache with C parser (ADR-026)" }
   ]},
   { category:"Validation & Config", icon:"\u2705", color:"var(--accent-purple)", deps:[
     { name:"Pydantic", ver:">= 2.12.5", note:"Schema validation" },
@@ -3583,10 +3584,10 @@ renderAdrs();
    ================================================================ */
 (function renderApi() {
   var tbody = document.getElementById('api-table-body');
-  var totalGet=0, totalPost=0, totalPut=0, totalDel=0;
+  var totalGet=0, totalPost=0, totalPut=0, totalDel=0, totalPatch=0;
   API_ROUTERS.forEach(function(r) {
-    var total = r.get + r.post + r.put + r.del;
-    totalGet += r.get; totalPost += r.post; totalPut += r.put; totalDel += r.del;
+    var total = r.get + r.post + r.put + r.del + r.patch;
+    totalGet += r.get; totalPost += r.post; totalPut += r.put; totalDel += r.del; totalPatch += r.patch;
     tbody.appendChild(el('tr', {}, [
       el('td', { textContent:r.name, style:{fontWeight:'600', color:'var(--text-primary)'} }),
       el('td', {}, [el('code', { textContent:'routers/'+r.file, style:{fontSize:'0.7rem'} })]),
@@ -3594,10 +3595,11 @@ renderAdrs();
       el('td', { textContent:r.post || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.post ? 'var(--accent-blue)' : 'var(--text-muted)'} }),
       el('td', { textContent:r.put || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.put ? 'var(--accent-yellow)' : 'var(--text-muted)'} }),
       el('td', { textContent:r.del || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.del ? 'var(--accent-red)' : 'var(--text-muted)'} }),
+      el('td', { textContent:r.patch || '-', style:{textAlign:'center', fontFamily:'var(--font-mono)', color: r.patch ? 'var(--accent-purple)' : 'var(--text-muted)'} }),
       el('td', { textContent:total, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)'} })
     ]));
   });
-  var grandTotal = totalGet + totalPost + totalPut + totalDel;
+  var grandTotal = totalGet + totalPost + totalPut + totalDel + totalPatch;
   tbody.appendChild(el('tr', { style:{borderTop:'2px solid var(--border-subtle)'} }, [
     el('td', { textContent:'TOTAL', style:{fontWeight:'800', color:'var(--text-primary)'} }),
     el('td', { textContent:'19 routers' }),
@@ -3605,6 +3607,7 @@ renderAdrs();
     el('td', { textContent:totalPost, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)', color:'var(--accent-blue)'} }),
     el('td', { textContent:totalPut, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)', color:'var(--accent-yellow)'} }),
     el('td', { textContent:totalDel, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)', color:'var(--accent-red)'} }),
+    el('td', { textContent:totalPatch, style:{textAlign:'center', fontWeight:'700', fontFamily:'var(--font-mono)', color:'var(--accent-purple)'} }),
     el('td', { textContent:grandTotal, style:{textAlign:'center', fontWeight:'800', fontFamily:'var(--font-mono)'} })
   ]));
 
