@@ -56,7 +56,6 @@ def _configure_common_settings(max_param_length: int, dangerous_patterns: list[s
 
 def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:
     _configure_common_settings(max_param_length, dangerous_patterns)
-    settings.experimental_rust_validation_middleware_enabled = False
     settings.experimental_rust_validation_sidecar_enabled = False
     middleware = ValidationMiddleware(app=None)
     middleware.dangerous_patterns = [re.compile(pattern) for pattern in dangerous_patterns]
@@ -147,7 +146,6 @@ def _build_uds_sidecar_validator(
     uds_path: Path,
 ) -> Callable[[bytes], Awaitable[None]]:
     _configure_common_settings(max_param_length, dangerous_patterns)
-    settings.experimental_rust_validation_middleware_enabled = False
     settings.experimental_rust_validation_sidecar_enabled = True
     settings.experimental_rust_validation_sidecar_uds = str(uds_path)
     settings.experimental_rust_validation_sidecar_timeout_seconds = 30.0

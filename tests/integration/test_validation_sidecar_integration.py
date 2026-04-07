@@ -81,7 +81,6 @@ def _wait_for_sidecar_ready(uds_path: Path, timeout_seconds: float = 10.0) -> No
 def _configure_sidecar_settings(monkeypatch: pytest.MonkeyPatch, uds_path: str, dangerous_patterns: list[str]) -> None:
     monkeypatch.setattr(settings, "experimental_validate_io", True)
     monkeypatch.setattr(settings, "validation_middleware_enabled", True)
-    monkeypatch.setattr(settings, "experimental_rust_validation_middleware_enabled", False)
     monkeypatch.setattr(settings, "experimental_rust_validation_sidecar_enabled", True)
     monkeypatch.setattr(settings, "experimental_rust_validation_sidecar_uds", uds_path)
     monkeypatch.setattr(settings, "experimental_rust_validation_sidecar_timeout_seconds", 0.5)

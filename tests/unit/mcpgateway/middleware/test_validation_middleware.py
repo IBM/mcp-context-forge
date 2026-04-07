@@ -388,36 +388,12 @@ class TestValidationMiddleware:
 
             assert exc_info.value.status_code == 422
 
-    def test_validate_json_data_uses_legacy_rust_when_sidecar_is_disabled(self):
-        """Test JSON validation still uses the legacy PyO3 path when the sidecar is disabled."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = False
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = [r"<script"]
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-            rust_module = MagicMock()
-            rust_module.validate_json_data.return_value = None
-
-            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
-                middleware._validate_json_data({"name": "safe"})
-
-            rust_module.validate_json_data.assert_called_once_with({"name": "safe"}, 1000, [r"<script"])
-
     @pytest.mark.asyncio
     async def test_validate_request_uses_sidecar_only_when_both_gates_are_enabled(self, mock_request):
         """Test the sidecar path only activates when both middleware gates are enabled."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = True
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
@@ -442,7 +418,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = False
-            mock_settings.experimental_rust_validation_middleware_enabled = True
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
@@ -465,38 +440,11 @@ class TestValidationMiddleware:
             parsed_validate.assert_awaited_once_with({"name": "safe"})
 
     @pytest.mark.asyncio
-    async def test_validate_request_prefers_sidecar_over_legacy_rust(self):
-        """Test the sidecar backend takes precedence over the legacy PyO3 flag."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_sidecar_enabled = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-            sidecar_validate = AsyncMock(return_value=None)
-
-            middleware._validate_json_body_with_sidecar = sidecar_validate  # type: ignore[method-assign]
-            middleware._load_rust_validation_module = MagicMock(side_effect=AssertionError("legacy path should not be used"))  # type: ignore[method-assign]
-
-            request = _JSONBodyRequest(b'{"name":"safe"}')
-            await middleware._validate_request(request)
-
-            sidecar_validate.assert_awaited_once_with(b'{"name":"safe"}')
-
-    @pytest.mark.asyncio
     async def test_sidecar_validation_failures_are_warn_only_in_development(self):
         """Test warn-only mode still swallows ordinary sidecar validation failures in development."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = False
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = False
             mock_settings.sanitize_output = False
@@ -520,7 +468,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = False
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
@@ -546,7 +493,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = False
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = False
             mock_settings.sanitize_output = False
@@ -572,7 +518,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = False
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
@@ -605,7 +550,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = False
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
@@ -631,7 +575,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = False
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = False
             mock_settings.sanitize_output = False
@@ -661,7 +604,6 @@ class TestValidationMiddleware:
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
-            mock_settings.experimental_rust_validation_middleware_enabled = False
             mock_settings.experimental_rust_validation_sidecar_enabled = True
             mock_settings.validation_strict = True
             mock_settings.sanitize_output = False
@@ -679,92 +621,6 @@ class TestValidationMiddleware:
                 await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
 
             assert exc_info.value.status_code == 503
-
-    def test_validate_json_data_rust_sidecar_falls_back_to_python_validation(self):
-        """Test Rust mode falls back to Python validation when the sidecar cannot be loaded."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.experimental_rust_validation_middleware_enabled = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = [r"<script"]
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-
-            with patch.object(middleware, "_load_rust_validation_module", side_effect=ModuleNotFoundError("missing sidecar")):
-                with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
-                    middleware._validate_json_data({"name": "<script>"})
-            assert exc_info.value.status_code == 422
-
-    def test_validate_json_data_rust_sidecar_respects_warn_only_mode(self):
-        """Test Rust mode preserves warn-only behavior outside production."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.experimental_rust_validation_middleware_enabled = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.validation_strict = False
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = [r"<script"]
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "development"
-
-            middleware = ValidationMiddleware(app=None)
-            rust_module = MagicMock()
-            rust_module.validate_json_data.return_value = ("name", "dangerous_pattern")
-
-            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
-                middleware._validate_json_data({"name": "<script>"})
-
-    def test_validate_json_data_rust_sidecar_maps_max_length_errors(self):
-        """Test Rust mode maps max-length failures to HTTP 422 responses."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.experimental_rust_validation_middleware_enabled = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 5
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-            rust_module = MagicMock()
-            rust_module.validate_json_data.return_value = ("name", "max_length")
-
-            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
-                with pytest.raises(HTTPException, match="exceeds maximum length") as exc_info:
-                    middleware._validate_json_data({"name": "toolong"})
-
-            assert exc_info.value.status_code == 422
-
-    def test_validate_json_data_rust_sidecar_maps_depth_errors(self):
-        """Test Rust mode maps sidecar depth errors to HTTP 422 responses."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.experimental_rust_validation_middleware_enabled = True
-            mock_settings.validation_middleware_enabled = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = False
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = []
-            mock_settings.max_param_length = 1000
-            mock_settings.environment = "production"
-
-            middleware = ValidationMiddleware(app=None)
-            rust_module = MagicMock()
-            rust_module.validate_json_data.side_effect = ValueError("JSON payload exceeds maximum supported nesting depth")
-
-            with patch.object(middleware, "_load_rust_validation_module", return_value=rust_module):
-                with pytest.raises(HTTPException, match="exceeds maximum supported nesting depth") as exc_info:
-                    middleware._validate_json_data({"name": "safe"})
-
-            assert exc_info.value.status_code == 422
 
     def test_validate_resource_path_traversal(self):
         """Test resource path validation for traversal."""

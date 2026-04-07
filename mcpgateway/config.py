@@ -422,10 +422,6 @@ class Settings(BaseSettings):
         default=False,
         description="Enable experimental Rust native extension for request logging sensitive-data masking",
     )
-    experimental_rust_validation_middleware_enabled: bool = Field(
-        default=False,
-        description="Enable experimental Rust sidecar for recursive validation middleware JSON checks",
-    )
     experimental_rust_validation_sidecar_enabled: bool = Field(
         default=False,
         description="Enable the experimental Rust validation sidecar over a Unix domain socket.",

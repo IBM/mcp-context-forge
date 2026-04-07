@@ -18,7 +18,6 @@ Examples:
 
 # Standard
 import asyncio
-import importlib
 import logging
 from pathlib import Path
 import re
@@ -41,7 +40,6 @@ from mcpgateway.services.validation_sidecar_client import (
 
 logger = logging.getLogger(__name__)
 
-_RUST_VALIDATION_MODULE = None
 _MAX_JSON_VALIDATION_DEPTH = 1024
 
 
@@ -95,7 +93,6 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         self.dangerous_pattern_strings = list(settings.dangerous_patterns)
         self.dangerous_patterns = [re.compile(pattern) for pattern in settings.dangerous_patterns]
         self.validation_middleware_enabled = _get_bool_setting("validation_middleware_enabled")
-        self.experimental_rust_validation_middleware_enabled = _get_bool_setting("experimental_rust_validation_middleware_enabled")
         self.experimental_rust_validation_sidecar_enabled = _get_bool_setting("experimental_rust_validation_sidecar_enabled")
         self._validation_sidecar_client = None
         if self.validation_middleware_enabled and self.enabled and self.experimental_rust_validation_sidecar_enabled:
@@ -243,13 +240,6 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Raises:
             HTTPException: If validation fails in strict mode
         """
-        if self.experimental_rust_validation_middleware_enabled and not self._should_use_sidecar_validation():
-            result = self._validate_json_data_with_rust(data)
-            if result is not None:
-                key, error_type = result
-                self._raise_validation_failure(key, error_type)
-            return
-
         result = self._validate_json_data_with_python(data)
         if result is not None:
             key, error_type = result
@@ -279,41 +269,6 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except (ValidationSidecarTimeoutError, ValidationSidecarTransportError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    def _load_rust_validation_module(self):
-        """Load the experimental Rust validation sidecar on demand.
-
-        Returns:
-            The imported PyO3 validation module.
-        """
-        global _RUST_VALIDATION_MODULE
-
-        if _RUST_VALIDATION_MODULE is None:
-            _RUST_VALIDATION_MODULE = importlib.import_module("validation_middleware_sidecar")
-        return _RUST_VALIDATION_MODULE
-
-    def _validate_json_data_with_rust(self, data: Any) -> tuple[str, str] | None:
-        """Validate JSON data with the Rust sidecar, falling back to Python on sidecar failures.
-
-        Args:
-            data: Parsed JSON payload to validate.
-
-        Returns:
-            A `(key, error_type)` tuple when validation fails, otherwise `None`.
-
-        Raises:
-            HTTPException: If the Rust validator reports a max-depth error.
-        """
-        try:
-            return self._load_rust_validation_module().validate_json_data(data, settings.max_param_length, self.dangerous_pattern_strings)
-        except ValueError as exc:
-            if "maximum supported nesting depth" in str(exc):
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
-            logger.warning("Rust validation sidecar unavailable or failed; falling back to Python validation: %s", exc)
-            return self._validate_json_data_with_python(data)
-        except Exception as exc:
-            logger.warning("Rust validation sidecar unavailable or failed; falling back to Python validation: %s", exc)
-            return self._validate_json_data_with_python(data)
 
     def _validate_json_data_with_python(self, data: Any, depth: int = 0) -> tuple[str, str] | None:
         """Validate JSON data with the Python implementation.

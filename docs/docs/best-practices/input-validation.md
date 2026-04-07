@@ -18,9 +18,6 @@ ContextForge provides comprehensive input validation and output sanitization to 
 # Enable experimental validation (default: false)
 EXPERIMENTAL_VALIDATE_IO=true
 
-# Optional: enable the Rust JSON validation sidecar after `make rust-sidecar-install`
-EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=false
-
 # Optional: enable the UDS validation sidecar after `make validation-sidecar-build`
 EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED=false
 EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=/tmp/contextforge-validation-sidecar.sock
@@ -56,14 +53,6 @@ The validation feature supports a phased roll-out approach:
 ```bash
 EXPERIMENTAL_VALIDATE_IO=false  # Disabled in production
 ```
-
-#### Optional Rust Sidecar
-```bash
-make rust-sidecar-install
-EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED=true
-```
-
-Enable this only after the sidecar is installed into the active virtual environment. If the sidecar is unavailable, the middleware falls back to the Python validator for standard validation failures.
 
 #### Optional UDS Validation Sidecar
 ```bash
