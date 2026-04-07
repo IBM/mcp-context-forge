@@ -400,3 +400,148 @@ class TestBaggageMiddlewareSecurityControls:
 
         assert response.status_code == 200
         assert captured == [{"tenant.id": "tenant-123"}]
+
+
+class TestMiddlewareEdgeCases:
+    """Test middleware edge cases for improved coverage."""
+
+    @pytest.mark.asyncio
+    async def test_middleware_without_otel_baggage_api(self):
+        """Test middleware behavior when OTEL baggage API is unavailable."""
+        mock_app = AsyncMock()
+        mock_scope = {"type": "http", "headers": []}
+        mock_receive = AsyncMock()
+        mock_send = AsyncMock()
+
+        with patch('mcpgateway.middleware.baggage_middleware.OTEL_BAGGAGE_AVAILABLE', False):
+            middleware = BaggageMiddleware(app=mock_app)
+            await middleware(mock_scope, mock_receive, mock_send)
+
+            # Should call app without crashing
+            mock_app.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_middleware_config_load_error(self):
+        """Test middleware behavior when config loading fails."""
+        mock_app = AsyncMock()
+        mock_scope = {"type": "http", "headers": []}
+        mock_receive = AsyncMock()
+        mock_send = AsyncMock()
+
+        with patch('mcpgateway.baggage.BaggageConfig.from_settings', side_effect=Exception("Config error")):
+            middleware = BaggageMiddleware(app=mock_app)
+            await middleware(mock_scope, mock_receive, mock_send)
+
+            # Should handle error gracefully and call app
+            mock_app.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_middleware_disabled(self):
+        """Test middleware when baggage feature is disabled."""
+        mock_app = AsyncMock()
+        mock_scope = {"type": "http", "headers": []}
+        mock_receive = AsyncMock()
+        mock_send = AsyncMock()
+
+        config = BaggageConfig(
+            enabled=False,
+            mappings=[],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=8192,
+            log_rejected=False,
+            log_sanitization=False,
+        )
+
+        middleware = BaggageMiddleware(app=mock_app, config=config)
+        await middleware(mock_scope, mock_receive, mock_send)
+
+        # Should call app without processing
+        mock_app.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_middleware_otel_context_unavailable(self):
+        """Test middleware when OTEL context is unavailable."""
+        mock_app = AsyncMock()
+        mock_scope = {
+            "type": "http",
+            "headers": [(b"x-tenant-id", b"tenant-123")]
+        }
+        mock_receive = AsyncMock()
+        mock_send = AsyncMock()
+
+        config = BaggageConfig(
+            enabled=True,
+            mappings=[HeaderMapping("X-Tenant-ID", "tenant.id")],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=8192,
+            log_rejected=False,
+            log_sanitization=False,
+        )
+
+        with patch('mcpgateway.middleware.baggage_middleware.otel_get_current', return_value=None):
+            middleware = BaggageMiddleware(app=mock_app, config=config)
+            await middleware(mock_scope, mock_receive, mock_send)
+
+            # Should handle gracefully
+            mock_app.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_middleware_extraction_error(self):
+        """Test middleware when header extraction fails."""
+        mock_app = AsyncMock()
+        mock_scope = {
+            "type": "http",
+            "headers": [(b"x-tenant-id", b"tenant-123")]
+        }
+        mock_receive = AsyncMock()
+        mock_send = AsyncMock()
+
+        config = BaggageConfig(
+            enabled=True,
+            mappings=[HeaderMapping("X-Tenant-ID", "tenant.id")],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=8192,
+            log_rejected=False,
+            log_sanitization=False,
+        )
+
+        with patch('mcpgateway.baggage.extract_baggage_from_headers', side_effect=Exception("Extraction error")):
+            middleware = BaggageMiddleware(app=mock_app, config=config)
+            await middleware(mock_scope, mock_receive, mock_send)
+
+            # Should handle error and call app
+            mock_app.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_middleware_baggage_parsing_error(self):
+        """Test middleware when inbound baggage parsing fails."""
+        mock_app = AsyncMock()
+        mock_scope = {
+            "type": "http",
+            "headers": [
+                (b"x-tenant-id", b"tenant-123"),
+                (b"baggage", b"invalid-baggage")
+            ]
+        }
+        mock_receive = AsyncMock()
+        mock_send = AsyncMock()
+
+        config = BaggageConfig(
+            enabled=True,
+            mappings=[HeaderMapping("X-Tenant-ID", "tenant.id")],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=8192,
+            log_rejected=False,
+            log_sanitization=False,
+        )
+
+        with patch('mcpgateway.baggage.parse_w3c_baggage_header', side_effect=Exception("Parse error")):
+            middleware = BaggageMiddleware(app=mock_app, config=config)
+            await middleware(mock_scope, mock_receive, mock_send)
+
+            # Should handle error and call app
+            mock_app.assert_called_once()

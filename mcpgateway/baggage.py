@@ -400,6 +400,13 @@ def filter_incoming_baggage(
     Incoming HTTP baggage is external input. Apply the same fail-closed posture used
     for mapped headers: only configured baggage keys are accepted and values remain
     subject to sanitization and size limits.
+
+    Args:
+        baggage: Dictionary of baggage key-value pairs to filter
+        config: BaggageConfig instance with allowlist and limits
+
+    Returns:
+        Filtered dictionary containing only allowed baggage keys
     """
     if not config.enabled or not baggage:
         return {}

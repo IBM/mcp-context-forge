@@ -586,9 +586,6 @@ def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) ->
 
     # Inject baggage if propagation is enabled
     try:
-        # First-Party
-        from mcpgateway.config import get_settings
-
         settings = get_settings()
         if settings.otel_baggage_enabled and settings.otel_baggage_propagate_to_external:
             if OTEL_AVAILABLE and otel_baggage:

@@ -140,6 +140,7 @@ class BaggageMiddleware:
 
         Args:
             headers: HTTP request headers
+            config: BaggageConfig instance for filtering baggage
 
         Returns:
             Dictionary of existing baggage key -> value

@@ -137,6 +137,228 @@ that improve trace filtering and cross-service diagnosis.
 When baggage support is enabled, the gateway can map specific inbound HTTP headers
 to baggage keys:
 
+
+## Security-Enhanced Baggage Processing
+
+### Dual Processing Model
+
+ContextForge implements a **fail-closed security model** for baggage processing with two distinct input channels:
+
+#### 1. Header Extraction (Gatekeeper)
+
+Inbound HTTP headers are converted to baggage using an explicit allowlist:
+
+```bash
+OTEL_BAGGAGE_HEADER_MAPPINGS='[
+  {"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"},
+  {"header_name": "X-User-ID", "baggage_key": "user.id"}
+]'
+```
+
+**Security Properties:**
+- Only explicitly configured headers are processed
+- Case-insensitive header matching prevents bypass
+- Values are sanitized (control characters removed)
+- Size limits prevent resource exhaustion
+- Undefined headers are logged and rejected
+
+#### 2. Inbound Baggage Header (Security Enhancement)
+
+The W3C `baggage` header from upstream callers is also processed, but with strict filtering:
+
+```http
+GET /mcp/sse HTTP/1.1
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+baggage: tenant.id=tenant-123,user.id=user-456,malicious.key=attack
+```
+
+**Security Properties:**
+- Only baggage keys matching configured `baggage_key` values are accepted
+- Unauthorized keys (e.g., `malicious.key`) are filtered out
+- Values undergo same sanitization as header-extracted baggage
+- Same size and item limits apply
+- Fail-closed: unknown keys are rejected, not propagated
+
+### Configuration Approach
+
+#### Production-Ready Example
+
+```bash
+# Enable baggage with security controls
+OTEL_BAGGAGE_ENABLED=true
+
+# Define allowlist: only these headers → baggage keys
+OTEL_BAGGAGE_HEADER_MAPPINGS='[
+  {"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"},
+  {"header_name": "X-User-ID", "baggage_key": "user.id"},
+  {"header_name": "X-Request-ID", "baggage_key": "request.id"},
+  {"header_name": "X-Correlation-ID", "baggage_key": "correlation.id"}
+]'
+
+# Security: disable downstream propagation by default
+OTEL_BAGGAGE_PROPAGATE_TO_EXTERNAL=false
+
+# Resource limits
+OTEL_BAGGAGE_MAX_ITEMS=32
+OTEL_BAGGAGE_MAX_SIZE_BYTES=8192
+
+# Audit logging
+OTEL_BAGGAGE_LOG_REJECTED=true
+OTEL_BAGGAGE_LOG_SANITIZATION=true
+```
+
+#### Multi-Tenant Example
+
+```bash
+# Multi-tenant SaaS with user context
+OTEL_BAGGAGE_HEADER_MAPPINGS='[
+  {"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"},
+  {"header_name": "X-Organization-ID", "baggage_key": "org.id"},
+  {"header_name": "X-User-ID", "baggage_key": "user.id"},
+  {"header_name": "X-User-Email", "baggage_key": "user.email"},
+  {"header_name": "X-Session-ID", "baggage_key": "session.id"}
+]'
+```
+
+#### Distributed Tracing Example
+
+```bash
+# Enable downstream propagation for distributed tracing
+OTEL_BAGGAGE_PROPAGATE_TO_EXTERNAL=true
+
+# Minimal context for cross-service correlation
+OTEL_BAGGAGE_HEADER_MAPPINGS='[
+  {"header_name": "X-Request-ID", "baggage_key": "request.id"},
+  {"header_name": "X-Trace-ID", "baggage_key": "trace.id"}
+]'
+```
+
+### Security Implications of `PROPAGATE_TO_EXTERNAL`
+
+#### When Disabled (Default - Recommended)
+
+```bash
+OTEL_BAGGAGE_PROPAGATE_TO_EXTERNAL=false
+```
+
+**Behavior:**
+- Baggage is recorded on internal spans only
+- Downstream MCP servers do NOT receive `baggage` header
+- Trace context (`traceparent`) still propagates
+- Prevents leaking tenant/user metadata to external services
+
+**Use When:**
+- Downstream services are untrusted or third-party
+- Baggage contains sensitive tenant/user identifiers
+- You want observability without metadata exposure
+- Compliance requires data minimization
+
+#### When Enabled (Opt-In)
+
+```bash
+OTEL_BAGGAGE_PROPAGATE_TO_EXTERNAL=true
+```
+
+**Behavior:**
+- Baggage is sent to downstream MCP servers via `baggage` header
+- Enables end-to-end correlation across service boundaries
+- Downstream services can attach baggage to their spans
+
+**Use When:**
+- All downstream services are trusted and internal
+- Cross-service correlation is required
+- Downstream services need tenant/user context
+- You control the entire service mesh
+
+**Security Considerations:**
+- Review what metadata is being propagated
+- Ensure downstream services sanitize baggage
+- Consider data residency and compliance requirements
+- Monitor for baggage size explosion
+
+### Validation and Constraints
+
+#### Header Name Validation
+
+```python
+# Valid header names (RFC 7230)
+X-Tenant-ID      ✅
+X-User-ID        ✅
+X-Request-ID     ✅
+
+# Invalid header names
+X-Tenant@ID      ❌ (special characters)
+1-Tenant-ID      ❌ (starts with number)
+X Tenant ID      ❌ (contains spaces)
+```
+
+#### Baggage Key Validation
+
+```python
+# Valid baggage keys (W3C spec)
+tenant.id        ✅
+user.id          ✅
+request-id       ✅
+user_email       ✅
+
+# Invalid baggage keys
+tenant@id        ❌ (special characters)
+1tenant.id       ❌ (starts with number)
+tenant id        ❌ (contains spaces)
+```
+
+#### Size Limits
+
+| Limit | Default | Purpose |
+|-------|---------|---------|
+| Max Items | 32 | Prevent cardinality explosion |
+| Max Size | 8192 bytes | Prevent resource exhaustion |
+| Max Key Length | 256 chars | W3C spec compliance |
+| Max Value Length | 4096 chars | Prevent header bloat |
+
+### Sanitization Process
+
+All baggage values undergo sanitization:
+
+```python
+# Control characters removed
+"value\x00\x01\x02" → "value"
+
+# Whitespace normalized
+"value   with   spaces" → "value with spaces"
+
+# Empty after sanitization → rejected
+"\x00\x01\x02" → (rejected)
+```
+
+### Monitoring and Auditing
+
+Enable logging to track security events:
+
+```bash
+OTEL_BAGGAGE_LOG_REJECTED=true      # Log rejected headers/keys
+OTEL_BAGGAGE_LOG_SANITIZATION=true  # Log sanitized values
+```
+
+**Logged Events:**
+- Rejected undefined headers (not in allowlist)
+- Rejected unauthorized baggage keys (not in allowlist)
+- Values sanitized (control characters removed)
+- Size limit violations
+- Item limit violations
+
+### Best Practices
+
+1. **Minimize Baggage Keys**: Only include essential correlation metadata
+2. **Disable External Propagation**: Keep `PROPAGATE_TO_EXTERNAL=false` unless required
+3. **Use Low-Cardinality Values**: Avoid high-cardinality data (e.g., timestamps, UUIDs in values)
+4. **Enable Audit Logging**: Monitor rejected headers and sanitization events
+5. **Review Regularly**: Audit configured mappings and remove unused entries
+6. **Test Limits**: Verify size and item limits match your use case
+7. **Document Mappings**: Maintain documentation of header → baggage key mappings
+
+
+
 ```http
 GET /mcp/sse HTTP/1.1
 traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01

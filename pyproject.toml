@@ -352,7 +352,6 @@ python_version = "3.11"          # match default runtime
 
 [tool.check-manifest]
 ignore = [
-    ".bob/**",
     "docs/**",
     "tests/**",
     ".github/**",
