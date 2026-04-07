@@ -1528,6 +1528,212 @@ main {
 }
 
 /* ============================================================
+   DEVELOPMENT & CI/CD VIEW
+   ============================================================ */
+.dev-section {
+  margin-bottom: 2.5rem;
+}
+
+.dev-section > h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pipeline-flow {
+  display: flex;
+  gap: 0;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.pipeline-stage {
+  flex: 1;
+  min-width: 160px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  padding: 1rem;
+  position: relative;
+  transition: var(--transition);
+}
+
+.pipeline-stage:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.pipeline-stage:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.pipeline-stage:hover { border-color: var(--border-accent); z-index: 1; }
+
+.pipeline-stage::after {
+  content: "\25B6";
+  position: absolute;
+  right: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  z-index: 2;
+}
+
+.pipeline-stage:last-child::after { content: ""; }
+
+.pipeline-stage h4 {
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+}
+
+.pipeline-stage ul {
+  list-style: none;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.pipeline-stage li {
+  padding: 0.15rem 0;
+  padding-left: 0.8rem;
+  position: relative;
+}
+
+.pipeline-stage li::before {
+  content: "\25B8";
+  position: absolute;
+  left: 0;
+  font-size: 0.55rem;
+  top: 0.25rem;
+}
+
+.workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 0.75rem;
+}
+
+.workflow-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+  transition: var(--transition);
+}
+
+.workflow-card:hover { border-color: var(--border-accent); }
+
+.workflow-card h4 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-bottom: 0.3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.workflow-card .wf-file {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.workflow-card p {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.4rem;
+}
+
+.trigger-badges {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.trigger-badge {
+  font-size: 0.6rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-weight: 600;
+  background: rgba(56, 189, 248, 0.1);
+  color: var(--accent-blue);
+}
+
+.trigger-badge--release { background: rgba(52, 211, 153, 0.1); color: var(--accent-green); }
+.trigger-badge--cron { background: rgba(251, 191, 36, 0.1); color: var(--accent-yellow); }
+.trigger-badge--manual { background: rgba(167, 139, 250, 0.1); color: var(--accent-purple); }
+
+.quality-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.quality-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 0.85rem 1rem;
+  transition: var(--transition);
+}
+
+.quality-card:hover { border-color: var(--border-accent); }
+
+.quality-card h4 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+  font-family: var(--font-mono);
+}
+
+.quality-card p {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.quality-card .quality-threshold {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--accent-green);
+  margin-top: 0.3rem;
+}
+
+.release-phases {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.5rem;
+}
+
+.release-phase {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  transition: var(--transition);
+}
+
+.release-phase:hover { border-color: var(--border-accent); }
+
+.release-phase-num {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--accent-blue);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .pipeline-flow { flex-direction: column; }
+  .pipeline-stage { border-radius: var(--radius-sm) !important; }
+  .pipeline-stage::after { content: ""; }
+}
+
+/* ============================================================
    PRINT STYLES
    ============================================================ */
 @media print {
@@ -1557,6 +1763,7 @@ main {
     <li><a data-view="api">API Surface</a></li>
     <li><a data-view="stack">Tech Stack</a></li>
     <li><a data-view="config">Config</a></li>
+    <li><a data-view="devops">Dev &amp; CI/CD</a></li>
   </ul>
   <div class="nav-search">
     <input type="text" id="global-search" placeholder="Search components... (Ctrl+K)" autocomplete="off">
@@ -2105,6 +2312,40 @@ main {
     <input type="text" class="config-search" id="config-search" placeholder="Search variables by name or description...">
 
     <div id="config-categories"></div>
+  </div>
+
+  <!-- ============================================================
+       DEVELOPMENT & CI/CD VIEW
+       ============================================================ -->
+  <div id="devops" class="view">
+    <h2 class="section-title">Development &amp; CI/CD</h2>
+    <p class="section-subtitle">Development workflow, 18 GitHub Actions workflows, code quality gates, and the 16-phase release process.</p>
+
+    <div class="dev-section">
+      <h3>CI/CD Pipeline</h3>
+      <div class="pipeline-flow" id="pipeline-flow"></div>
+    </div>
+
+    <div class="dev-section">
+      <h3>GitHub Actions Workflows (18)</h3>
+      <div class="workflow-grid" id="workflow-grid"></div>
+    </div>
+
+    <div class="dev-section">
+      <h3>Code Quality Gates</h3>
+      <div class="quality-grid" id="quality-grid"></div>
+    </div>
+
+    <div class="dev-section">
+      <h3>Release Process (16 Phases)</h3>
+      <p class="section-subtitle" style="margin-bottom:1rem">Semantic versioning with RC support. Version bumped via bump2version across 4 canonical files.</p>
+      <div class="release-phases" id="release-phases"></div>
+    </div>
+
+    <div class="dev-section">
+      <h3>Testing Matrix</h3>
+      <div class="quality-grid" id="testing-grid"></div>
+    </div>
   </div>
 </main>
 
@@ -4025,6 +4266,135 @@ function renderConfig() {
 
 configSearch.addEventListener('input', renderConfig);
 renderConfig();
+
+/* ================================================================
+   DATA & RENDER: Development & CI/CD view
+   ================================================================ */
+(function renderDevops() {
+  // --- Pipeline flow ---
+  var pipelineContainer = document.getElementById('pipeline-flow');
+  var stages = [
+    { title:"Commit", color:"var(--accent-cyan)", items:["Pre-commit hooks (15+)","detect-secrets","Black + Ruff auto-fix","AST validation","Trailing whitespace"] },
+    { title:"PR / Push", color:"var(--accent-blue)", items:["Lint & static analysis","pytest (3.11/3.12/3.13)","Coverage gate (90%)","Dependency review","Pre-commit CI"] },
+    { title:"Build", color:"var(--accent-purple)", items:["Python sdist + wheel","Docker multiplatform","Helm chart lint","SBOM generation","Cosign signing"] },
+    { title:"Test", color:"var(--accent-green)", items:["Unit + integration","Playwright UI smoke","Vitest (JS/browser)","Alembic migrations","MCP compliance suite"] },
+    { title:"Security", color:"var(--accent-orange)", items:["Bandit analysis","detect-secrets scan","Dependency CVE check","Docker security scan","License compliance"] },
+    { title:"Release", color:"var(--accent-pink)", items:["GitHub Release tag","Docker re-tag + push","Helm OCI publish","Release notes","Milestone cleanup"] }
+  ];
+  stages.forEach(function(s) {
+    pipelineContainer.appendChild(el('div', { className:'pipeline-stage' }, [
+      el('h4', { textContent:s.title, style:{color:s.color} }),
+      el('ul', {}, s.items.map(function(i) { return el('li', { textContent:i }); }))
+    ]));
+  });
+
+  // --- Workflows ---
+  var wfContainer = document.getElementById('workflow-grid');
+  var workflows = [
+    { name:"Lint & Static Analysis", file:"lint.yml", desc:"Ruff, Black, isort, mypy, Pylint, Bandit, Interrogate on mcpgateway/ and plugins/.", triggers:["push","PR"] },
+    { name:"Tests & Coverage", file:"pytest.yml", desc:"Full test suite across Python 3.11/3.12/3.13. Branch + line coverage (fails below 90%). Weekly cron.", triggers:["push","PR","cron"] },
+    { name:"Pre-commit Checks", file:"pre-commit.yml", desc:"Run all pre-commit hooks (detect-secrets, formatting, AST, security patterns).", triggers:["PR"] },
+    { name:"Dependency Review", file:"dependency-review.yml", desc:"Diff dependencies on pyproject.toml changes. Fail on MODERATE+ CVEs or copyleft licenses.", triggers:["push","PR"] },
+    { name:"Docker Multiplatform Build", file:"docker-multiplatform.yml", desc:"Build for amd64, arm64, s390x, ppc64le. Cosign keyless signing on tags.", triggers:["push","PR","tag"] },
+    { name:"Docker Release", file:"docker-release.yml", desc:"Re-tag and push Docker image with semantic version on GitHub Release.", triggers:["release"] },
+    { name:"Docker Security Scan", file:"docker-scan.yml", desc:"Build locally, generate SBOM with Syft, upload artifact.", triggers:["push","PR"] },
+    { name:"Helm Chart Publish", file:"helm-publish.yml", desc:"Lint mcp-stack chart, publish to OCI registry on release.", triggers:["push","PR","release"] },
+    { name:"Python Package Build", file:"python-package.yml", desc:"Build sdist and wheel (make dist) on code changes.", triggers:["push","PR"] },
+    { name:"JavaScript Tests (Vitest)", file:"vitest.yml", desc:"Vitest unit tests for browser JavaScript (jsdom environment).", triggers:["push","PR"] },
+    { name:"Web Lint", file:"lint-web.yml", desc:"ESLint, HTMLHint, Stylelint in separate matrix jobs.", triggers:["push","PR"] },
+    { name:"Playwright CI Smoke", file:"playwright.yml", desc:"UI automation smoke tests against live gateway.", triggers:["push","PR","manual"] },
+    { name:"Rust Tools CI/CD", file:"rust-tools.yml", desc:"Cargo test and clippy for tools_rust/ and mcp-servers/rust/.", triggers:["push"] },
+    { name:"Rust Plugins CI/CD", file:"rust-plugins.yml", desc:"Cargo test and clippy for plugins_rust/ on all OS.", triggers:["push"] },
+    { name:"Alembic Upgrade Validation", file:"alembic-upgrade-validation.yml", desc:"Validate DB migration paths (upgrade testing).", triggers:["PR","push","manual"] },
+    { name:"License Check", file:"license-check.yml", desc:"Scan for license compliance on dependency changes.", triggers:["push","PR"] },
+    { name:"Full Linting", file:"linting-full.yml", desc:"Comprehensive linting pass on main branch.", triggers:["push","manual"] },
+    { name:"s390x Wheel Builder", file:"s390x-wheels.yml", desc:"Build native Python wheels for s390x (packages lacking PyPI binaries).", triggers:["manual"] },
+    { name:"Wrapper E2E", file:"wrapper.yml", desc:"End-to-end testing for Rust wrapper + Go fast-time-server.", triggers:["push"] }
+  ];
+  workflows.forEach(function(w) {
+    wfContainer.appendChild(el('div', { className:'workflow-card' }, [
+      el('h4', { textContent:w.name }),
+      el('div', { className:'wf-file', textContent:'.github/workflows/'+w.file }),
+      el('p', { textContent:w.desc }),
+      el('div', { className:'trigger-badges' },
+        w.triggers.map(function(t) {
+          var cls = 'trigger-badge';
+          if (t === 'release') cls += ' trigger-badge--release';
+          if (t === 'cron') cls += ' trigger-badge--cron';
+          if (t === 'manual') cls += ' trigger-badge--manual';
+          return el('span', { className:cls, textContent:t });
+        })
+      )
+    ]));
+  });
+
+  // --- Quality gates ---
+  var qContainer = document.getElementById('quality-grid');
+  var qualityTools = [
+    { name:"Black", desc:"Code formatter", threshold:"line-length: 200" },
+    { name:"Ruff", desc:"Linter (replaces flake8)", threshold:"E3,E4,E7,E9,F,D1,PL" },
+    { name:"isort", desc:"Import sorter", threshold:"profile: black" },
+    { name:"mypy", desc:"Static type checker", threshold:"strict = true" },
+    { name:"Pylint", desc:"Code analysis", threshold:"errors-only in CI" },
+    { name:"Bandit", desc:"Security linter", threshold:"no global skips" },
+    { name:"Interrogate", desc:"Docstring coverage", threshold:"fail-under: 100%" },
+    { name:"Coverage", desc:"Test coverage", threshold:"fail-under: 90%" },
+    { name:"detect-secrets", desc:"Secret detection", threshold:"baseline-aware" },
+    { name:"ESLint", desc:"JS/TS linting", threshold:"browser + admin UI" },
+    { name:"HTMLHint", desc:"HTML validation", threshold:"templates" },
+    { name:"Stylelint", desc:"CSS linting", threshold:"static CSS" }
+  ];
+  qualityTools.forEach(function(t) {
+    qContainer.appendChild(el('div', { className:'quality-card' }, [
+      el('h4', { textContent:t.name }),
+      el('p', { textContent:t.desc }),
+      el('div', { className:'quality-threshold', textContent:t.threshold })
+    ]));
+  });
+
+  // --- Release phases ---
+  var rpContainer = document.getElementById('release-phases');
+  var phases = [
+    "Version bump (bump2version)", "Python dep updates + pip-audit",
+    "Rust, Go & JS dep updates", "Quality gates (format + lint + secrets)",
+    "Test gates (unit + JS + UI + MCP)", "Build verification (Docker + compose)",
+    "SSO verification (Keycloak)", "Observability verification (under load)",
+    "Security analysis (SonarQube)", "Deployment verification (Helm + Minikube)",
+    "Documentation (links + build + deploy)", "Plugin testing (PII + hooks)",
+    "Upgrade testing (PostgreSQL + SQLite)", "Manual testing (MCP + Inspector + VS Code)",
+    "Draft release (GitHub + notes)", "Post-release (milestone + next iteration)"
+  ];
+  phases.forEach(function(p, i) {
+    rpContainer.appendChild(el('div', { className:'release-phase' }, [
+      el('span', { className:'release-phase-num', textContent:String(i+1) }),
+      el('span', { textContent:p })
+    ]));
+  });
+
+  // --- Testing matrix ---
+  var tContainer = document.getElementById('testing-grid');
+  var testTypes = [
+    { name:"Unit Tests", desc:"Fast, isolated tests with mocked persistence", threshold:"Python 3.11/3.12/3.13" },
+    { name:"Integration", desc:"Cross-module and service integration", threshold:"make test" },
+    { name:"E2E", desc:"End-to-end flows (may require services)", threshold:"make smoketest" },
+    { name:"Playwright", desc:"UI automation smoke tests", threshold:"Admin UI flows" },
+    { name:"Vitest", desc:"Browser JavaScript tests (jsdom)", threshold:"Static JS + Alpine" },
+    { name:"MCP Compliance", desc:"MCP 2025-11-25 protocol suite", threshold:"make 2025-11-25" },
+    { name:"DB Performance", desc:"N+1 detection and query logging", threshold:"make test-db-perf" },
+    { name:"Load Testing", desc:"JMeter and Locust scenarios", threshold:"tests/load/" },
+    { name:"Security", desc:"Security validation tests", threshold:"tests/security/" },
+    { name:"Fuzz Testing", desc:"Property-based testing (Hypothesis)", threshold:"tests/fuzz/" },
+    { name:"Doctest", desc:"In-module executable examples", threshold:"fail-under: 35%" },
+    { name:"Migration", desc:"Alembic upgrade/downgrade paths", threshold:"CI workflow" }
+  ];
+  testTypes.forEach(function(t) {
+    tContainer.appendChild(el('div', { className:'quality-card' }, [
+      el('h4', { textContent:t.name }),
+      el('p', { textContent:t.desc }),
+      el('div', { className:'quality-threshold', textContent:t.threshold })
+    ]));
+  });
+})();
 
 /* ================================================================
    INIT
