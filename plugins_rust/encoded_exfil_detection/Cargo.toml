@@ -16,6 +16,7 @@ name = "stub_gen"
 path = "src/bin/stub_gen.rs"
 
 [dependencies]
+plugin_telemetry_common = { path = "../../tools_rust/plugin_telemetry_common" }
 pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
 pyo3-stub-gen = "0.19"
 regex = "1.12"

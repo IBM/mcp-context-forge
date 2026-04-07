@@ -1,0 +1,21 @@
+[package]
+name = "plugin_telemetry_common"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["ContextForge Contributors"]
+description = "Shared OpenTelemetry helpers for ContextForge Rust-backed plugins"
+
+[lib]
+name = "plugin_telemetry_common"
+path = "src/lib.rs"
+
+[dependencies]
+opentelemetry = "0.31.0"
+opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+opentelemetry_sdk = "0.31.0"
+pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
+
+[dev-dependencies]
+serde_json = "1.0.149"

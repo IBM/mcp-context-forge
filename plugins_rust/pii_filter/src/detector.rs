@@ -3,6 +3,7 @@
 //
 // Core PII detection logic with PyO3 bindings
 
+use plugin_telemetry_common::{PluginTraceContext, start_plugin_span};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
 use pyo3_stub_gen::derive::*;
@@ -149,12 +150,18 @@ impl PIIDetectorRust {
     ///     ]
     /// }
     /// ```
-    pub fn detect(&self, text: &str) -> PyResult<Py<PyAny>> {
+    pub fn detect(
+        &self,
+        text: &str,
+        trace_context: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+        let mut span = start_plugin_span("pii_filter", "detect", &trace_context);
         validate_text_size(text, self.config.max_text_bytes)?;
         let detections = self.detect_internal(text);
 
         // Convert Rust HashMap to Python dict
-        Python::attach(|py| {
+        let result: PyResult<Py<PyAny>> = Python::attach(|py| {
             let py_dict = PyDict::new(py);
 
             for (pii_type, items) in detections {
@@ -177,7 +184,12 @@ impl PIIDetectorRust {
             }
 
             Ok(py_dict.into_any().unbind())
-        })
+        });
+        match &result {
+            Ok(_) => span.mark_ok(),
+            Err(err) => span.mark_error(err.to_string()),
+        }
+        result
     }
 
     /// Mask detected PII in text
@@ -188,16 +200,28 @@ impl PIIDetectorRust {
     ///
     /// # Returns
     /// Masked text with PII replaced
-    pub fn mask(&self, text: &str, detections: &Bound<'_, PyAny>) -> PyResult<String> {
+    pub fn mask(
+        &self,
+        text: &str,
+        detections: &Bound<'_, PyAny>,
+        trace_context: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<String> {
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+        let mut span = start_plugin_span("pii_filter", "mask", &trace_context);
         validate_text_size(text, self.config.max_text_bytes)?;
 
         // Convert Python detections back to Rust format
         let rust_detections = self.py_detections_to_rust(detections)?;
 
         // Apply masking
-        masking::mask_pii(text, &rust_detections, &self.config)
+        let result = masking::mask_pii(text, &rust_detections, &self.config)
             .map(|masked| masked.into_owned())
-            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>)
+            .map_err(PyErr::new::<pyo3::exceptions::PyValueError, _>);
+        match &result {
+            Ok(_) => span.mark_ok(),
+            Err(err) => span.mark_error(err.to_string()),
+        }
+        result
     }
 
     /// Process nested data structures (dicts, lists, strings)
@@ -213,8 +237,16 @@ impl PIIDetectorRust {
         py: Python,
         data: &Bound<'_, PyAny>,
         path: &str,
+        trace_context: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(bool, Py<PyAny>, Py<PyAny>)> {
-        self.process_nested_internal(py, data, path, 0)
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+        let mut span = start_plugin_span("pii_filter", "process_nested", &trace_context);
+        let result = self.process_nested_internal(py, data, path, 0);
+        match &result {
+            Ok(_) => span.mark_ok(),
+            Err(err) => span.mark_error(err.to_string()),
+        }
+        result
     }
 }
 
@@ -1065,7 +1097,7 @@ mod tests {
             let data = PyDict::new(py);
             data.set_item(1, "EMP123456").unwrap();
 
-            let result = detector.process_nested(py, &data.into_any(), "");
+            let result = detector.process_nested(py, &data.into_any(), "", None);
             assert!(
                 result.is_ok(),
                 "process_nested should not fail on non-string dict keys: {:?}",
@@ -1107,7 +1139,7 @@ mod tests {
             let detector = PIIDetectorRust { patterns, config };
             let oversized = "a".repeat(max_text_bytes + 1);
 
-            let err = detector.detect(&oversized).unwrap_err();
+            let err = detector.detect(&oversized, None).unwrap_err();
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });
     }
@@ -1134,7 +1166,7 @@ mod tests {
             let detector = PIIDetectorRust { patterns, config };
             let text = format!("{} SSN: 123-45-6789", "x".repeat(300 * 1024));
 
-            assert!(detector.detect(&text).is_ok());
+            assert!(detector.detect(&text, None).is_ok());
         });
     }
 
@@ -1197,7 +1229,7 @@ mod tests {
             config.set_item("max_text_bytes", 8).unwrap();
 
             let detector = PIIDetectorRust::new(&config.into_any()).unwrap();
-            let err = detector.detect("123456789").unwrap_err();
+            let err = detector.detect("123456789", None).unwrap_err();
 
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });
@@ -1217,7 +1249,7 @@ mod tests {
             data.append("b@example.com").unwrap();
 
             let err = detector
-                .process_nested(py, &data.into_any(), "")
+                .process_nested(py, &data.into_any(), "", None)
                 .unwrap_err();
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });
@@ -1270,7 +1302,7 @@ mod tests {
             detections.set_item("email", items).unwrap();
 
             let err = detector
-                .mask("john@example.com", &detections.into_any())
+                .mask("john@example.com", &detections.into_any(), None)
                 .unwrap_err();
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });
@@ -1296,7 +1328,7 @@ mod tests {
             detections.set_item("custom", items).unwrap();
 
             let err = detector
-                .mask("123456789", &detections.into_any())
+                .mask("123456789", &detections.into_any(), None)
                 .unwrap_err();
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });
@@ -1324,7 +1356,7 @@ mod tests {
             detections.set_item("email", items).unwrap();
 
             let err = detector
-                .mask("john@example.com", &detections.into_any())
+                .mask("john@example.com", &detections.into_any(), None)
                 .unwrap_err();
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
         });

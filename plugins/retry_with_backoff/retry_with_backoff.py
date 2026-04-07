@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.config import get_settings
+from mcpgateway.observability import build_rust_plugin_trace_context
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -424,6 +425,7 @@ class RetryWithBackoffPlugin(Plugin):
                 request_id,
                 is_error,
                 status_code,
+                build_rust_plugin_trace_context(context),
             )
             if should_retry:
                 log.debug(

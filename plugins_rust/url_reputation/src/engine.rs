@@ -6,6 +6,7 @@ use crate::{
     types::{PluginViolation, URLPluginResult, URLReputationConfig},
 };
 use log::warn;
+use plugin_telemetry_common::{PluginTraceContext, start_plugin_span};
 use pyo3::{prelude::*, types::PyDict};
 use regex::Regex;
 use std::{
@@ -58,9 +59,20 @@ impl URLReputationPlugin {
         }
     }
     // exposed function return python dict
-    fn validate_url_py(&self, py: Python, url: &str) -> PyResult<Py<PyDict>> {
-        let result = self.validate_url(url);
-        result.to_py_dict(py)
+    fn validate_url_py(
+        &self,
+        py: Python,
+        url: &str,
+        trace_context: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyDict>> {
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+        let mut span = start_plugin_span("url_reputation", "validate_url_py", &trace_context);
+        let result = self.validate_url(url).to_py_dict(py);
+        match &result {
+            Ok(_) => span.mark_ok(),
+            Err(err) => span.mark_error(err.to_string()),
+        }
+        result
     }
 
     pub fn validate_url(&self, url: &str) -> URLPluginResult {

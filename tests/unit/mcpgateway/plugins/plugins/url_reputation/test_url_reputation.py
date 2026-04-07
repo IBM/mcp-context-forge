@@ -20,6 +20,7 @@ from plugins.url_reputation.url_reputation import URLReputationPlugin, URLReputa
 
 try:
     import url_reputation_rust  # noqa: F401
+
     _RUST_AVAILABLE = True
 except ImportError:
     _RUST_AVAILABLE = False
@@ -74,7 +75,6 @@ async def test_phishing_like_domain_blocked():
     url = "https://pаypal.com/login"  # Cyrillic 'а'
     res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri=url), None)
     assert not res.continue_processing
-
 
 
 @pytest.mark.skipif(not _RUST_AVAILABLE, reason="Rust url_reputation plugin not available")
@@ -470,13 +470,46 @@ async def test_rust_error_fallback_blocks_url():
     )
     mock_rust = MagicMock()
     mock_rust.validate_url_py.side_effect = RuntimeError("Rust engine crashed")
-    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", True), \
-         patch(f"{_PLUGIN_MODULE}.URLReputationPluginRust", return_value=mock_rust, create=True):
+    with patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", True), patch(f"{_PLUGIN_MODULE}.URLReputationPluginRust", return_value=mock_rust, create=True):
         plugin = URLReputationPlugin(config)
         res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://example.com"), None)
     assert not res.continue_processing
     assert res.violation.reason == "Rust validation failure"
     assert res.violation.code == "URL_REPUTATION_BLOCK"
+
+
+@pytest.mark.asyncio
+async def test_rust_path_passes_trace_context():
+    """Rust URL reputation path should forward trace context to the extension."""
+    config = PluginConfig(
+        name="urlrep",
+        kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
+        config={
+            "whitelist_domains": [],
+            "allowed_patterns": [],
+            "blocked_domains": [],
+            "blocked_patterns": [],
+            "use_heuristic_check": False,
+            "entropy_threshold": 3.5,
+            "block_non_secure_http": False,
+        },
+    )
+    mock_rust = MagicMock()
+    mock_rust.validate_url_py.return_value = {"continue_processing": True}
+    context = MagicMock()
+    with (
+        patch(f"{_PLUGIN_MODULE}._RUST_AVAILABLE", True),
+        patch(f"{_PLUGIN_MODULE}.URLReputationPluginRust", return_value=mock_rust, create=True),
+        patch(f"{_PLUGIN_MODULE}.build_rust_plugin_trace_context", return_value={"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"}),
+    ):
+        plugin = URLReputationPlugin(config)
+        res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://example.com"), context)
+    assert res.continue_processing
+    mock_rust.validate_url_py.assert_called_once_with(
+        "https://example.com",
+        {"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"},
+    )
 
 
 @pytest.mark.asyncio

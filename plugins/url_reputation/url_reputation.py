@@ -20,6 +20,7 @@ import logging
 from pydantic import BaseModel, Field, field_validator
 
 # First-Party
+from mcpgateway.observability import build_rust_plugin_trace_context
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Try to import Rust-accelerated implementation
 try:
     from url_reputation_rust import URLReputationPlugin as URLReputationPluginRust
+
     _RUST_AVAILABLE = True
     logger.info("Rust url reputation plugin available")
 except ImportError as e:
@@ -45,37 +47,15 @@ except Exception as e:
 
 
 class URLReputationConfig(BaseModel):
-    """Configuration for URL reputation checks.
-    """
+    """Configuration for URL reputation checks."""
 
-    whitelist_domains: Set[str] = Field(
-        default_factory=set,
-        description="Domains that are always allowed, bypassing checks."
-    )
-    allowed_patterns: List[str] = Field(
-        default_factory=list,
-        description="URL patterns that are explicitly allowed."
-    )
-    blocked_domains: Set[str] = Field(
-        default_factory=set,
-        description="Domains that are blocked by the plugin."
-    )
-    blocked_patterns: List[str] = Field(
-        default_factory=list,
-        description="URL patterns that are blocked by the plugin."
-    )
-    use_heuristic_check: bool = Field(
-        default=False,
-        description="Enable heuristic checks for suspicious URLs."
-    )
-    entropy_threshold: float = Field(
-        default=3.65,
-        description="Entropy threshold for detecting suspicious URLs."
-    )
-    block_non_secure_http: bool = Field(
-        default=True,
-        description="Block non-HTTPS URLs if True."
-    )
+    whitelist_domains: Set[str] = Field(default_factory=set, description="Domains that are always allowed, bypassing checks.")
+    allowed_patterns: List[str] = Field(default_factory=list, description="URL patterns that are explicitly allowed.")
+    blocked_domains: Set[str] = Field(default_factory=set, description="Domains that are blocked by the plugin.")
+    blocked_patterns: List[str] = Field(default_factory=list, description="URL patterns that are blocked by the plugin.")
+    use_heuristic_check: bool = Field(default=False, description="Enable heuristic checks for suspicious URLs.")
+    entropy_threshold: float = Field(default=3.65, description="Entropy threshold for detecting suspicious URLs.")
+    block_non_secure_http: bool = Field(default=True, description="Block non-HTTPS URLs if True.")
 
     @field_validator("whitelist_domains", "blocked_domains", mode="before")
     @classmethod
@@ -100,10 +80,7 @@ class URLReputationPlugin(Plugin):
         if _RUST_AVAILABLE:
             self.rust_plugin = URLReputationPluginRust(self._cfg)
         else:
-            logger.warning(
-                "Rust plugin not available. Using Python implementation with less features; "
-                "Heuristic checks and regex patterns are not implemented in Python."
-            )
+            logger.warning("Rust plugin not available. Using Python implementation with less features; " "Heuristic checks and regex patterns are not implemented in Python.")
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
         """Check URL against blocked domains and patterns before fetch.
@@ -118,7 +95,7 @@ class URLReputationPlugin(Plugin):
 
         if _RUST_AVAILABLE:
             try:
-                result_dict = self.rust_plugin.validate_url_py(payload.uri)
+                result_dict = self.rust_plugin.validate_url_py(payload.uri, build_rust_plugin_trace_context(context))
                 return ResourcePreFetchResult(**result_dict)
             except Exception as e:
                 logger.warning(

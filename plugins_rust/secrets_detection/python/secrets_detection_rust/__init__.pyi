@@ -8,7 +8,7 @@ __all__ = [
     "py_scan_container",
 ]
 
-def py_scan_container(container: typing.Any, config: typing.Any) -> tuple[builtins.int, typing.Any, list]:
+def py_scan_container(container: typing.Any, config: typing.Any, trace_context: typing.Optional[typing.Any] = None) -> tuple[builtins.int, typing.Any, list]:
     r"""
     Scan Python container for secrets using optimized type dispatch
     """

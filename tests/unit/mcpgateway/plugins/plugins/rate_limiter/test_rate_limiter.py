@@ -3124,14 +3124,22 @@ async def test_arch01_single_call_covers_all_active_dimensions():
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice", tenant_id="acme"))
     payload = ToolPreInvokePayload(name="search", arguments={})
 
-    with patch.object(plugin._rust_engine, "check", wraps=plugin._rust_engine.check) as mock_check:
+    with (
+        patch("plugins.rate_limiter.rate_limiter.build_rust_plugin_trace_context", return_value={"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"}),
+        patch.object(plugin._rust_engine, "check", wraps=plugin._rust_engine.check) as mock_check,
+    ):
         await plugin.tool_pre_invoke(payload, ctx)
         assert mock_check.call_count == 1
-        # check() receives (user, tenant, tool, now_unix, include_retry_after)
+        # check() receives (user, tenant, tool, now_unix, include_retry_after, trace_context)
         args = mock_check.call_args[0]
         assert args[0] == "alice", f"user must be passed; got {args[0]}"
         assert args[1] == "acme", f"tenant must be passed; got {args[1]}"
         assert args[2] == "search", f"tool must be passed; got {args[2]}"
+        assert args[5] == {
+            "traceparent": "tp",
+            "trace_id": "tid",
+            "parent_span_id": "sid",
+        }
 
 
 @_skip_no_rust

@@ -58,7 +58,15 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
-from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error
+from mcpgateway.observability import (
+    create_child_span,
+    create_span,
+    get_active_parent_span_id,
+    get_active_traceparent,
+    inject_trace_context_headers,
+    set_span_attribute,
+    set_span_error,
+)
 from mcpgateway.plugins.framework import (
     get_plugin_manager,
     GlobalContext,
@@ -3321,6 +3329,12 @@ class ToolService(BaseService):
             hook_global_context.metadata[TOOL_METADATA] = tool_metadata
         if gateway_metadata:
             hook_global_context.metadata[GATEWAY_METADATA] = gateway_metadata
+        hook_global_context.metadata["observability"] = {
+            "traceparent": get_active_traceparent(),
+            "trace_id": current_trace_id.get(),
+            "parent_span_id": get_active_parent_span_id(),
+            "runtime": "python",
+        }
         return hook_global_context
 
     def _build_rust_native_tool_post_invoke_retry_policy(

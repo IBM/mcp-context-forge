@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use log::warn;
+use plugin_telemetry_common::{PluginTraceContext, start_plugin_span};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
@@ -176,15 +177,23 @@ impl RateLimiterEngine {
         &self,
         checks: Vec<(String, u64, u64)>,
         now_unix: i64,
+        trace_context: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<EvalResult> {
-        let dim_results = eval_dims_sync(
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+        let mut span = start_plugin_span("rate_limiter", "evaluate_many", &trace_context);
+        let result = eval_dims_sync(
             &self.backend,
             self.config.algorithm,
             &self.clock,
             checks,
             now_unix,
-        )?;
-        Ok(EvalResult::from_dims(&dim_results))
+        )
+        .map(|dim_results| EvalResult::from_dims(&dim_results));
+        match &result {
+            Ok(_) => span.mark_ok(),
+            Err(err) => span.mark_error(err.to_string()),
+        }
+        result
     }
 
     /// Evaluate all active dimensions asynchronously.
@@ -196,14 +205,25 @@ impl RateLimiterEngine {
         py: Python<'py>,
         checks: Vec<(String, u64, u64)>,
         now_unix: i64,
+        trace_context: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
         let backend = self.backend.clone();
         let algorithm = self.config.algorithm;
         let clock = Arc::clone(&self.clock);
 
         future_into_py(py, async move {
-            let dim_results = eval_dims_async(backend, algorithm, clock, checks, now_unix).await?;
-            Python::attach(|py| Py::new(py, EvalResult::from_dims(&dim_results)))
+            let mut span = start_plugin_span("rate_limiter", "evaluate_many_async", &trace_context);
+            let result = eval_dims_async(backend, algorithm, clock, checks, now_unix)
+                .await
+                .and_then(|dim_results| {
+                    Python::attach(|py| Py::new(py, EvalResult::from_dims(&dim_results)))
+                });
+            match &result {
+                Ok(_) => span.mark_ok(),
+                Err(err) => span.mark_error(err.to_string()),
+            }
+            result
         })
     }
 
@@ -223,27 +243,37 @@ impl RateLimiterEngine {
         tool: &str,
         now_unix: i64,
         include_retry_after: bool,
+        trace_context: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<(bool, Bound<'py, PyDict>, Bound<'py, PyDict>)> {
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+        let mut span = start_plugin_span("rate_limiter", "check", &trace_context);
         let checks = self.build_checks(user, tenant, tool);
         if checks.is_empty() {
             let headers = PyDict::new(py);
             let meta = PyDict::new(py);
             meta.set_item("limited", false)?;
+            span.mark_ok();
             return Ok((true, headers, meta));
         }
 
-        let dim_results = eval_dims_sync(
+        let result = eval_dims_sync(
             &self.backend,
             self.config.algorithm,
             &self.clock,
             checks,
             now_unix,
-        )?;
-
-        let eval = EvalResult::from_dims(&dim_results);
-        let headers = build_headers_dict(py, &eval, include_retry_after)?;
-        let meta = build_meta_dict(py, &eval, now_unix)?;
-        Ok((eval.allowed, headers, meta))
+        )
+        .and_then(|dim_results| {
+            let eval = EvalResult::from_dims(&dim_results);
+            let headers = build_headers_dict(py, &eval, include_retry_after)?;
+            let meta = build_meta_dict(py, &eval, now_unix)?;
+            Ok((eval.allowed, headers, meta))
+        });
+        match &result {
+            Ok(_) => span.mark_ok(),
+            Err(err) => span.mark_error(err.to_string()),
+        }
+        result
     }
 
     /// Async variant of `check()` for Redis-backed deployments.
@@ -257,11 +287,14 @@ impl RateLimiterEngine {
         tool: &str,
         now_unix: i64,
         include_retry_after: bool,
+        trace_context: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
         let checks = self.build_checks(user, tenant, tool);
         if checks.is_empty() {
             return future_into_py(py, async move {
-                Python::attach(|py| -> PyResult<Py<PyAny>> {
+                let mut span = start_plugin_span("rate_limiter", "check_async", &trace_context);
+                let result = Python::attach(|py| -> PyResult<Py<PyAny>> {
                     let headers = PyDict::new(py);
                     let meta = PyDict::new(py);
                     meta.set_item("limited", false)?;
@@ -274,7 +307,12 @@ impl RateLimiterEngine {
                         ],
                     )?;
                     Ok(tup.into())
-                })
+                });
+                match &result {
+                    Ok(_) => span.mark_ok(),
+                    Err(err) => span.mark_error(err.to_string()),
+                }
+                result
             });
         }
 
@@ -283,22 +321,30 @@ impl RateLimiterEngine {
         let clock = Arc::clone(&self.clock);
 
         future_into_py(py, async move {
-            let dim_results = eval_dims_async(backend, algorithm, clock, checks, now_unix).await?;
-
-            let eval = EvalResult::from_dims(&dim_results);
-            Python::attach(|py| -> PyResult<Py<PyAny>> {
-                let headers = build_headers_dict(py, &eval, include_retry_after)?;
-                let meta = build_meta_dict(py, &eval, now_unix)?;
-                let tup = pyo3::types::PyTuple::new(
-                    py,
-                    [
-                        eval.allowed.into_pyobject(py)?.to_owned().into_any(),
-                        headers.into_any(),
-                        meta.into_any(),
-                    ],
-                )?;
-                Ok(tup.into())
-            })
+            let mut span = start_plugin_span("rate_limiter", "check_async", &trace_context);
+            let result = eval_dims_async(backend, algorithm, clock, checks, now_unix)
+                .await
+                .and_then(|dim_results| {
+                    let eval = EvalResult::from_dims(&dim_results);
+                    Python::attach(|py| -> PyResult<Py<PyAny>> {
+                        let headers = build_headers_dict(py, &eval, include_retry_after)?;
+                        let meta = build_meta_dict(py, &eval, now_unix)?;
+                        let tup = pyo3::types::PyTuple::new(
+                            py,
+                            [
+                                eval.allowed.into_pyobject(py)?.to_owned().into_any(),
+                                headers.into_any(),
+                                meta.into_any(),
+                            ],
+                        )?;
+                        Ok(tup.into())
+                    })
+                });
+            match &result {
+                Ok(_) => span.mark_ok(),
+                Err(err) => span.mark_error(err.to_string()),
+            }
+            result
         })
     }
 }
@@ -549,7 +595,9 @@ mod tests {
     fn evaluate_many_returns_eval_result_shape() {
         let (engine, handle) = engine_with_fake_clock(Some("10/s"), Algorithm::FixedWindow);
         let checks = vec![("user:alice".to_string(), 10, 1_000_000_000)];
-        let result = engine.evaluate_many(checks, handle.unix_secs()).unwrap();
+        let result = engine
+            .evaluate_many(checks, handle.unix_secs(), None)
+            .unwrap();
         // Shape: all fields present, first call always allowed
         assert!(result.allowed);
         assert_eq!(result.limit, 10);
@@ -567,7 +615,7 @@ mod tests {
         let (engine, handle) = engine_with_fake_clock(Some("10/s"), Algorithm::FixedWindow);
         let now_unix = handle.unix_secs();
         let checks = vec![("user:bob".to_string(), 10, 1_000_000_000)];
-        let result = engine.evaluate_many(checks, now_unix).unwrap();
+        let result = engine.evaluate_many(checks, now_unix, None).unwrap();
         assert!(result.allowed);
         assert!(
             result.reset_timestamp > now_unix,
@@ -587,9 +635,9 @@ mod tests {
         let (engine, _handle) = engine_with_fake_clock(Some("2/s"), Algorithm::FixedWindow);
         // Exhaust the limit
         let checks = || vec![("user:carol".to_string(), 2, 1_000_000_000)];
-        let _ = engine.evaluate_many(checks(), 1_000_000).unwrap(); // 1
-        let _ = engine.evaluate_many(checks(), 1_000_000).unwrap(); // 2
-        let result = engine.evaluate_many(checks(), 1_000_000).unwrap(); // 3 — must be blocked
+        let _ = engine.evaluate_many(checks(), 1_000_000, None).unwrap(); // 1
+        let _ = engine.evaluate_many(checks(), 1_000_000, None).unwrap(); // 2
+        let result = engine.evaluate_many(checks(), 1_000_000, None).unwrap(); // 3 — must be blocked
         assert!(!result.allowed);
         assert_eq!(result.remaining, 0);
         assert!(result.retry_after.is_some());
@@ -607,9 +655,9 @@ mod tests {
                 (tenant_key.clone(), 2, 1_000_000_000),
             ]
         };
-        let _ = engine.evaluate_many(checks(), 1_000_000).unwrap();
-        let _ = engine.evaluate_many(checks(), 1_000_000).unwrap();
-        let result = engine.evaluate_many(checks(), 1_000_000).unwrap();
+        let _ = engine.evaluate_many(checks(), 1_000_000, None).unwrap();
+        let _ = engine.evaluate_many(checks(), 1_000_000, None).unwrap();
+        let result = engine.evaluate_many(checks(), 1_000_000, None).unwrap();
         assert!(!result.allowed); // tenant exhausted → blocked
     }
 }

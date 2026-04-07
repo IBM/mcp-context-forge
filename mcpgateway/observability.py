@@ -579,6 +579,67 @@ def inject_trace_context_headers(headers: Optional[Mapping[str, str]] = None) ->
     return carrier
 
 
+def get_active_traceparent() -> Optional[str]:
+    """Return the active W3C traceparent header value, if one can be injected."""
+
+    carrier = inject_trace_context_headers({})
+    traceparent = carrier.get("traceparent")
+    return str(traceparent) if traceparent else None
+
+
+def get_active_parent_span_id() -> Optional[str]:
+    """Return the currently active OTEL span id as a 16-char lowercase hex string."""
+
+    if not OTEL_AVAILABLE or trace is None:
+        return None
+    try:
+        current_span = trace.get_current_span()
+        if current_span is None:
+            return None
+        span_context = current_span.get_span_context()
+        if not getattr(span_context, "is_valid", False):
+            return None
+        return format(span_context.span_id, "016x")
+    except Exception as exc:
+        logger.debug("Failed to read active parent span id: %s", exc)
+        return None
+
+
+def build_rust_plugin_trace_context(context: Optional[Any] = None) -> Dict[str, Optional[str]]:
+    """Build the trace-context payload passed into Rust-backed plugin entrypoints."""
+
+    observability_metadata: Mapping[str, Any] = {}
+    try:
+        if context is not None:
+            global_context = getattr(context, "global_context", None)
+            metadata = getattr(global_context, "metadata", None) if global_context is not None else None
+            if isinstance(metadata, Mapping):
+                candidate = metadata.get("observability")
+                if isinstance(candidate, Mapping):
+                    observability_metadata = candidate
+    except Exception as exc:
+        logger.debug("Failed to inspect plugin context for observability metadata: %s", exc)
+
+    trace_id = observability_metadata.get("trace_id")
+    if trace_id is None:
+        try:
+            # First-Party
+            from mcpgateway.services.observability_service import current_trace_id  # pylint: disable=import-outside-toplevel
+
+            trace_id = current_trace_id.get()
+        except Exception as exc:
+            logger.debug("Failed to read active trace id for Rust plugin context: %s", exc)
+
+    traceparent = observability_metadata.get("traceparent") or get_active_traceparent()
+    parent_span_id = observability_metadata.get("parent_span_id") or get_active_parent_span_id()
+
+    return {
+        "traceparent": str(traceparent) if traceparent else None,
+        "trace_id": str(trace_id) if trace_id else None,
+        "parent_span_id": str(parent_span_id) if parent_span_id else None,
+    }
+
+
 def _scope_headers_to_carrier(scope_headers: list[tuple[bytes, bytes]]) -> Dict[str, str]:
     """Convert ASGI scope headers to a text carrier for propagation/extraction.
 
@@ -715,6 +776,8 @@ class OpenTelemetryRequestMiddleware:
         status_code_holder: Dict[str, int] = {}
 
         async def _send_with_span_status(message: Mapping[str, Any]) -> None:
+            """Capture the response status on the request span before forwarding."""
+
             if message.get("type") == "http.response.start":
                 status_code = int(message.get("status", 0) or 0)
                 status_code_holder["status"] = status_code

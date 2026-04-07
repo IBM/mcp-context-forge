@@ -69,7 +69,6 @@ class RustPIIDetector:
             raise TypeError(f"Expected PIIFilterConfig, got {type(config)}")
 
         self.config = config
-
         # Convert Pydantic config to dictionary for Rust
         config_dict = config.model_dump()
 
@@ -81,7 +80,7 @@ class RustPIIDetector:
             logger.error(f"Failed to initialize Rust PII detector: {e}")
             raise ValueError(f"Rust detector initialization failed: {e}") from e
 
-    def detect(self, text: str) -> Dict[str, List[Dict]]:
+    def detect(self, text: str, trace_context: Dict[str, Any] | None = None) -> Dict[str, List[Dict]]:
         """Detect PII in text using Rust implementation.
 
         Args:
@@ -106,12 +105,12 @@ class RustPIIDetector:
             {'ssn': [{'value': '123-45-6789', 'start': 5, 'end': 16, 'mask_strategy': 'partial'}]}
         """
         try:
-            return self._rust_detector.detect(text)
+            return self._rust_detector.detect(text, trace_context)
         except Exception as e:
             logger.error(f"Rust detection failed: {e}")
             raise RuntimeError(f"PII detection failed: {e}") from e
 
-    def mask(self, text: str, detections: Dict[str, List[Dict]]) -> str:
+    def mask(self, text: str, detections: Dict[str, List[Dict]], trace_context: Dict[str, Any] | None = None) -> str:
         """Mask detected PII in text using Rust implementation.
 
         Args:
@@ -131,12 +130,12 @@ class RustPIIDetector:
             'SSN: ***-**-6789'
         """
         try:
-            return self._rust_detector.mask(text, detections)
+            return self._rust_detector.mask(text, detections, trace_context)
         except Exception as e:
             logger.error(f"Rust masking failed: {e}")
             raise RuntimeError(f"PII masking failed: {e}") from e
 
-    def process_nested(self, data: Any, path: str = "") -> tuple[bool, Any, Dict]:
+    def process_nested(self, data: Any, path: str = "", trace_context: Dict[str, Any] | None = None) -> tuple[bool, Any, Dict]:
         """Process nested data structures (dicts, lists, strings) using Rust.
 
         This method recursively traverses nested structures and detects/masks
@@ -162,7 +161,7 @@ class RustPIIDetector:
             {'user': {'ssn': '***-**-6789', 'name': 'John'}}
         """
         try:
-            return self._rust_detector.process_nested(data, path)
+            return self._rust_detector.process_nested(data, path, trace_context)
         except Exception as e:
             logger.error(f"Rust nested processing failed: {e}")
             raise RuntimeError(f"Nested PII processing failed: {e}") from e

@@ -115,6 +115,69 @@ class TestObservability:
         result = init_telemetry()
         assert result is None
 
+    def test_build_rust_plugin_trace_context_prefers_metadata(self):
+        """Metadata should win over live OTEL context when both are present."""
+        context = MagicMock()
+        context.global_context = MagicMock()
+        context.global_context.metadata = {
+            "observability": {
+                "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+                "trace_id": "trace-from-meta",
+                "parent_span_id": "bbbbbbbbbbbbbbbb",
+            }
+        }
+
+        with (
+            patch("mcpgateway.observability.get_active_traceparent", return_value="00-live-live-live-live-live-live-live-live-cccccccccccccccc-01"),
+            patch("mcpgateway.observability.get_active_parent_span_id", return_value="cccccccccccccccc"),
+            patch("mcpgateway.services.observability_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-from-live"))),
+        ):
+            result = observability.build_rust_plugin_trace_context(context)
+
+        assert result == {
+            "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+            "trace_id": "trace-from-meta",
+            "parent_span_id": "bbbbbbbbbbbbbbbb",
+        }
+
+    def test_build_rust_plugin_trace_context_falls_back_to_live_context(self):
+        """Live OTEL state should be used when plugin metadata does not provide it."""
+        context = MagicMock()
+        context.global_context = MagicMock()
+        context.global_context.metadata = {}
+
+        with (
+            patch("mcpgateway.observability.get_active_traceparent", return_value="00-dddddddddddddddddddddddddddddddd-eeeeeeeeeeeeeeee-01"),
+            patch("mcpgateway.observability.get_active_parent_span_id", return_value="eeeeeeeeeeeeeeee"),
+            patch("mcpgateway.services.observability_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-from-live"))),
+        ):
+            result = observability.build_rust_plugin_trace_context(context)
+
+        assert result == {
+            "traceparent": "00-dddddddddddddddddddddddddddddddd-eeeeeeeeeeeeeeee-01",
+            "trace_id": "trace-from-live",
+            "parent_span_id": "eeeeeeeeeeeeeeee",
+        }
+
+    def test_build_rust_plugin_trace_context_tolerates_malformed_metadata(self):
+        """Malformed metadata should not break helper fallback behavior."""
+        context = MagicMock()
+        context.global_context = MagicMock()
+        context.global_context.metadata = object()
+
+        with (
+            patch("mcpgateway.observability.get_active_traceparent", return_value=None),
+            patch("mcpgateway.observability.get_active_parent_span_id", return_value=None),
+            patch("mcpgateway.services.observability_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+        ):
+            result = observability.build_rust_plugin_trace_context(context)
+
+        assert result == {
+            "traceparent": None,
+            "trace_id": None,
+            "parent_span_id": None,
+        }
+
     @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
     @patch("mcpgateway.observability.OTLP_SPAN_EXPORTER")
     @patch("mcpgateway.observability.TracerProvider")
@@ -884,6 +947,7 @@ class TestObservability:
         """create_span wraps the context when auto-injected attributes are present."""
         # First-Party
         import mcpgateway.observability
+
         self._enable_langfuse_span_attrs()
 
         mock_span = MagicMock()
@@ -906,6 +970,7 @@ class TestObservability:
         """Test SpanWithAttributes records errors and sets status."""
         # First-Party
         import mcpgateway.observability
+
         self._enable_langfuse_span_attrs()
 
         class DummyStatusCode:
@@ -949,6 +1014,7 @@ class TestObservability:
         """SpanWithAttributes should sanitize and bound exception messages."""
         # First-Party
         import mcpgateway.observability
+
         self._enable_langfuse_span_attrs()
 
         class DummyStatusCode:

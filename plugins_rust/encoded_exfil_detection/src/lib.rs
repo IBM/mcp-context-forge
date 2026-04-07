@@ -1,5 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE};
+use plugin_telemetry_common::{PluginTraceContext, start_plugin_span};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use pyo3_stub_gen::define_stub_info_gatherer;
@@ -838,8 +839,16 @@ impl ExfilDetectorEngine {
         &self,
         py: Python<'py>,
         container: Bound<'py, PyAny>,
+        trace_context: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> {
-        scan_container(py, &container, "", &self.cfg, 0)
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+        let mut span = start_plugin_span("encoded_exfil_detection", "scan", &trace_context);
+        let result = scan_container(py, &container, "", &self.cfg, 0);
+        match &result {
+            Ok(_) => span.mark_ok(),
+            Err(err) => span.mark_error(err.to_string()),
+        }
+        result
     }
 }
 
@@ -850,9 +859,21 @@ fn py_scan_container<'py>(
     py: Python<'py>,
     container: Bound<'py, PyAny>,
     config: Bound<'py, PyAny>,
+    trace_context: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> {
+    let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+    let mut span = start_plugin_span(
+        "encoded_exfil_detection",
+        "py_scan_container",
+        &trace_context,
+    );
     let cfg = DetectorConfig::try_from(&config)?;
-    scan_container(py, &container, "", &cfg, 0)
+    let result = scan_container(py, &container, "", &cfg, 0);
+    match &result {
+        Ok(_) => span.mark_ok(),
+        Err(err) => span.mark_error(err.to_string()),
+    }
+    result
 }
 
 #[pymodule]

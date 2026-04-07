@@ -28,6 +28,7 @@ from urllib.parse import unquote_to_bytes
 from pydantic import BaseModel, Field, field_validator
 
 # First-Party
+from mcpgateway.observability import build_rust_plugin_trace_context
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -412,6 +413,7 @@ def _scan_container(
     cfg: EncodedExfilDetectorConfig,
     path: str = "",
     use_rust: bool = True,
+    context: PluginContext | None = None,
     _depth: int = 0,
 ) -> tuple[int, Any, list[dict[str, Any]]]:
     """Recursively scan container for encoded exfiltration patterns."""
@@ -420,7 +422,7 @@ def _scan_container(
 
     if use_rust and _RUST_AVAILABLE and encoded_exfil_detection is not None:  # pragma: no cover - Rust path
         try:
-            count, redacted, findings = encoded_exfil_detection(container, cfg)
+            count, redacted, findings = encoded_exfil_detection(container, cfg, build_rust_plugin_trace_context(context))
             normalized_findings = []
             for finding in findings:
                 if isinstance(finding, dict):
@@ -441,7 +443,7 @@ def _scan_container(
                 parsed = json.loads(container)
                 if isinstance(parsed, (dict, list)):
                     json_path = f"{path}(json)" if path else "(json)"
-                    _, _, json_findings = _scan_container(parsed, cfg, path=json_path, use_rust=False, _depth=_depth + 1)
+                    _, _, json_findings = _scan_container(parsed, cfg, path=json_path, use_rust=False, context=context, _depth=_depth + 1)
                     # Deduplicate: only add JSON findings whose encoded match isn't already found in raw scan
                     raw_matches = {f.get("match") for f in findings}
                     for jf in json_findings:
@@ -463,7 +465,7 @@ def _scan_container(
                 _, key_findings = _scan_text(key, cfg, path=key_path)
                 findings.extend(key_findings)
                 total += len(key_findings)
-            count, new_value, child_findings = _scan_container(value, cfg, path=child_path, use_rust=False, _depth=_depth + 1)
+            count, new_value, child_findings = _scan_container(value, cfg, path=child_path, use_rust=False, context=context, _depth=_depth + 1)
             total += count
             findings.extend(child_findings)
             updated[key] = new_value
@@ -475,7 +477,7 @@ def _scan_container(
         updated_list: list[Any] = []
         for index, value in enumerate(container):
             child_path = f"{path}[{index}]" if path else f"[{index}]"
-            count, new_value, child_findings = _scan_container(value, cfg, path=child_path, use_rust=False, _depth=_depth + 1)
+            count, new_value, child_findings = _scan_container(value, cfg, path=child_path, use_rust=False, context=context, _depth=_depth + 1)
             total += count
             findings.extend(child_findings)
             updated_list.append(new_value)
@@ -511,11 +513,11 @@ class EncodedExfilDetectorPlugin(Plugin):
             return findings[:10]
         return [{"encoding": f.get("encoding"), "path": f.get("path"), "score": f.get("score")} for f in findings[:10]]
 
-    def _scan(self, container: Any, path: str = "") -> tuple[int, Any, list[dict[str, Any]]]:
+    def _scan(self, container: Any, path: str = "", context: PluginContext | None = None) -> tuple[int, Any, list[dict[str, Any]]]:
         """Run the scanner with plugin-level configuration."""
         if self._rust_engine is not None:  # pragma: no cover - Rust path
             try:
-                count, redacted, findings = self._rust_engine.scan(container)
+                count, redacted, findings = self._rust_engine.scan(container, build_rust_plugin_trace_context(context))
                 normalized = []
                 for f in findings:
                     if isinstance(f, dict):
@@ -525,7 +527,7 @@ class EncodedExfilDetectorPlugin(Plugin):
                 return int(count), redacted, normalized
             except Exception as e:  # pragma: no cover - fallback path safety
                 logger.warning(f"Rust engine scan failed, falling back to Python: {e}")
-        return _scan_container(container, self._cfg, path=path, use_rust=False)
+        return _scan_container(container, self._cfg, path=path, use_rust=False, context=context)
 
     def _log_detection(self, hook: str, count: int, findings: list[dict[str, Any]], context: PluginContext) -> None:
         """Log detection events without exposing sensitive content."""
@@ -537,7 +539,7 @@ class EncodedExfilDetectorPlugin(Plugin):
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """Scan prompt arguments for encoded exfiltration attempts."""
-        count, new_args, findings = self._scan(payload.args or {}, path="args")
+        count, new_args, findings = self._scan(payload.args or {}, path="args", context=context)
         self._log_detection("prompt_pre_fetch", count, findings, context)
 
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
@@ -567,7 +569,7 @@ class EncodedExfilDetectorPlugin(Plugin):
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Scan tool outputs for suspicious encoded exfiltration payloads."""
-        count, new_result, findings = self._scan(payload.result, path="result")
+        count, new_result, findings = self._scan(payload.result, path="result", context=context)
         self._log_detection("tool_post_invoke", count, findings, context)
 
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
@@ -598,7 +600,7 @@ class EncodedExfilDetectorPlugin(Plugin):
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
         """Scan fetched resource content for suspicious encoded exfiltration payloads."""
-        count, new_content, findings = self._scan(payload.content, path="content")
+        count, new_content, findings = self._scan(payload.content, path="content", context=context)
         self._log_detection("resource_post_fetch", count, findings, context)
 
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:

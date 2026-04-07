@@ -7042,6 +7042,29 @@ class TestRustMcpExecutionPlan:
 
         test_db.execute = Mock(side_effect=execute_side_effect)
 
+    def test_build_rust_tool_hook_global_context_includes_observability_parent_context(self, tool_service):
+        """Rust hook context should include the active parent OTEL context for plugin spans."""
+        with (
+            patch("mcpgateway.services.tool_service.get_active_traceparent", return_value="00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"),
+            patch("mcpgateway.services.tool_service.get_active_parent_span_id", return_value="bbbbbbbbbbbbbbbb"),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-1"))),
+        ):
+            context = tool_service._build_rust_tool_hook_global_context(
+                app_user_email="alice@example.com",
+                server_id="srv-1",
+                tool_gateway_id="gw-1",
+                plugin_global_context=None,
+                tool_payload=None,
+                gateway_payload=None,
+            )
+
+        assert context.metadata["observability"] == {
+            "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+            "trace_id": "trace-1",
+            "parent_span_id": "bbbbbbbbbbbbbbbb",
+            "runtime": "python",
+        }
+
     @pytest.mark.asyncio
     async def test_list_server_mcp_tool_definitions_public_only_and_output_schema(self, tool_service):
         """Server-scoped MCP tool definitions should include outputSchema only when present."""

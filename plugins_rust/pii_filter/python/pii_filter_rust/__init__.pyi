@@ -53,7 +53,7 @@ class PIIDetectorRust:
         * `whitelist_patterns` (list[str]): Regex patterns to exclude from detection
         """
 
-    def detect(self, text: builtins.str) -> typing.Any:
+    def detect(self, text: builtins.str, trace_context: typing.Optional[typing.Any] = None) -> typing.Any:
         r"""
         Detect PII in text
 
@@ -74,7 +74,7 @@ class PIIDetectorRust:
         ```
         """
 
-    def mask(self, text: builtins.str, detections: typing.Any) -> builtins.str:
+    def mask(self, text: builtins.str, detections: typing.Any, trace_context: typing.Optional[typing.Any] = None) -> builtins.str:
         r"""
         Mask detected PII in text
 
@@ -86,7 +86,7 @@ class PIIDetectorRust:
         Masked text with PII replaced
         """
 
-    def process_nested(self, data: typing.Any, path: builtins.str) -> tuple[builtins.bool, typing.Any, typing.Any]:
+    def process_nested(self, data: typing.Any, path: builtins.str, trace_context: typing.Optional[typing.Any] = None) -> tuple[builtins.bool, typing.Any, typing.Any]:
         r"""
         Process nested data structures (dicts, lists, strings)
 

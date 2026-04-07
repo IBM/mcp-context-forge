@@ -3,6 +3,7 @@
 
 import builtins
 import typing
+
 __all__ = [
     "EvalDimension",
     "EvalResult",
@@ -15,16 +16,19 @@ class EvalDimension:
     The outcome of a single active dimension, exposed to Python for
     per-dimension inspection (e.g. which dimension blocked the request).
     """
+
     @property
     def remaining(self) -> builtins.int:
         r"""
         Requests remaining for this active dimension.
         """
+
     @property
     def reset_timestamp(self) -> builtins.int:
         r"""
         Unix timestamp when this dimension resets or refills.
         """
+
     @property
     def retry_after(self) -> typing.Optional[builtins.int]:
         r"""
@@ -40,41 +44,49 @@ class EvalResult:
     (min remaining, earliest unblock among blocked dimensions — matching
     Python `_select_most_restrictive`).
     """
+
     @property
     def allowed(self) -> builtins.bool:
         r"""
         `True` if all active dimensions allow the request.
         """
+
     @property
     def limit(self) -> builtins.int:
         r"""
         Configured limit for the most restrictive active dimension.
         """
+
     @property
     def remaining(self) -> builtins.int:
         r"""
         Remaining requests for the most restrictive active dimension.
         """
+
     @property
     def reset_timestamp(self) -> builtins.int:
         r"""
         Unix timestamp when the most restrictive dimension resets.
         """
+
     @property
     def retry_after(self) -> typing.Optional[builtins.int]:
         r"""
         Seconds until reset — populated only when `allowed == False`.
         """
+
     @property
     def violated_dimensions(self) -> builtins.list[EvalDimension]:
         r"""
         Per-dimension outcomes that were blocked for this request.
         """
+
     @property
     def allowed_dimensions(self) -> builtins.list[EvalDimension]:
         r"""
         Per-dimension outcomes that still allowed this request.
         """
+
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -90,6 +102,7 @@ class RateLimiterEngine:
     - `backend: "redis"` — Rust owns the Redis connection; same batch Lua
       scripts as the Python `RedisBackend`, one EVAL per hook invocation
     """
+
     def __new__(cls, config: dict) -> RateLimiterEngine:
         r"""
         Construct from the Python config dict.
@@ -102,7 +115,8 @@ class RateLimiterEngine:
         - `redis_url`: required when `backend = "redis"`
         - `redis_key_prefix`: key namespace prefix (default `"rl"`)
         """
-    def evaluate_many(self, checks: typing.Sequence[tuple[builtins.str, builtins.int, builtins.int]], now_unix: builtins.int) -> EvalResult:
+
+    def evaluate_many(self, checks: typing.Sequence[tuple[builtins.str, builtins.int, builtins.int]], now_unix: builtins.int, trace_context: typing.Optional[dict] = None) -> EvalResult:
         r"""
         Evaluate all active dimensions in a single call (ARCH-01, IFACE-02).
 
@@ -114,14 +128,18 @@ class RateLimiterEngine:
 
         Returns the most restrictive `EvalResult` across all dimensions (ARCH-02).
         """
-    def evaluate_many_async(self, checks: typing.Sequence[tuple[builtins.str, builtins.int, builtins.int]], now_unix: builtins.int) -> typing.Any:
+
+    def evaluate_many_async(self, checks: typing.Sequence[tuple[builtins.str, builtins.int, builtins.int]], now_unix: builtins.int, trace_context: typing.Optional[dict] = None) -> typing.Any:
         r"""
         Evaluate all active dimensions asynchronously.
 
         Intended for Redis-backed deployments so Python async hooks can await
         the Rust Redis path without blocking the event loop.
         """
-    def check(self, user: builtins.str, tenant: typing.Optional[builtins.str], tool: builtins.str, now_unix: builtins.int, include_retry_after: builtins.bool) -> tuple[builtins.bool, dict, dict]:
+
+    def check(
+        self, user: builtins.str, tenant: typing.Optional[builtins.str], tool: builtins.str, now_unix: builtins.int, include_retry_after: builtins.bool, trace_context: typing.Optional[dict] = None
+    ) -> tuple[builtins.bool, dict, dict]:
         r"""
         High-level check: builds dimension keys internally, evaluates, and
         returns pre-built Python dicts for headers and metadata.
@@ -132,7 +150,10 @@ class RateLimiterEngine:
 
         Returns `(allowed, headers_dict, meta_dict)`.
         """
-    def check_async(self, user: builtins.str, tenant: typing.Optional[builtins.str], tool: builtins.str, now_unix: builtins.int, include_retry_after: builtins.bool) -> typing.Any:
+
+    def check_async(
+        self, user: builtins.str, tenant: typing.Optional[builtins.str], tool: builtins.str, now_unix: builtins.int, include_retry_after: builtins.bool, trace_context: typing.Optional[dict] = None
+    ) -> typing.Any:
         r"""
         Async variant of `check()` for Redis-backed deployments.
 

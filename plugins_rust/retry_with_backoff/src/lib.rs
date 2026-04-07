@@ -6,6 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use log::{debug, warn};
+use plugin_telemetry_common::{PluginTraceContext, start_plugin_span};
 use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
 use pyo3_stub_gen::derive::*;
@@ -226,48 +227,55 @@ impl RetryStateManager {
         request_id: &str,
         is_error: bool,
         status_code: Option<i32>,
-    ) -> (bool, u64) {
+        trace_context: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(bool, u64)> {
+        let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+        let mut span = start_plugin_span("retry_with_backoff", "check_and_update", &trace_context);
         let failed = is_failure_from_signals(is_error, status_code, &self.retry_on_status);
 
-        // Acquire the lock once for the entire check-then-act sequence.
-        let mut map = state_map().lock().unwrap();
-        evict_stale(&mut map);
-        let key = make_key(tool, request_id);
+        let result = {
+            // Acquire the lock once for the entire check-then-act sequence.
+            let mut map = state_map().lock().unwrap();
+            evict_stale(&mut map);
+            let key = make_key(tool, request_id);
 
-        if failed {
-            let state = map.entry(key.clone()).or_insert_with(ToolRetryState::new);
-            state.consecutive_failures += 1;
-            state.last_failure_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs_f64();
+            if failed {
+                let state = map.entry(key.clone()).or_insert_with(ToolRetryState::new);
+                state.consecutive_failures += 1;
+                state.last_failure_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs_f64();
 
-            if state.consecutive_failures <= self.max_retries {
-                // attempt index is 0-based; saturating_sub guards against underflow.
-                let attempt = state.consecutive_failures.saturating_sub(1);
-                let delay = compute_delay_ms(attempt, self.base_ms, self.max_ms, self.jitter);
-                debug!(
-                    "check_and_update: tool={tool} request_id={request_id} \
-                     failure={}/{} — retry in {delay}ms",
-                    state.consecutive_failures, self.max_retries
-                );
-                (true, delay)
+                if state.consecutive_failures <= self.max_retries {
+                    // attempt index is 0-based; saturating_sub guards against underflow.
+                    let attempt = state.consecutive_failures.saturating_sub(1);
+                    let delay = compute_delay_ms(attempt, self.base_ms, self.max_ms, self.jitter);
+                    debug!(
+                        "check_and_update: tool={tool} request_id={request_id} \
+                         failure={}/{} — retry in {delay}ms",
+                        state.consecutive_failures, self.max_retries
+                    );
+                    (true, delay)
+                } else {
+                    warn!(
+                        "check_and_update: tool={tool} request_id={request_id} \
+                         retry budget exhausted ({} failures) — propagating error",
+                        state.consecutive_failures
+                    );
+                    map.remove(&key);
+                    (false, 0)
+                }
             } else {
-                warn!(
-                    "check_and_update: tool={tool} request_id={request_id} \
-                     retry budget exhausted ({} failures) — propagating error",
-                    state.consecutive_failures
+                debug!(
+                    "check_and_update: tool={tool} request_id={request_id} — success, state cleared"
                 );
-                map.remove(&key);
+                let _ = map.remove(&key);
                 (false, 0)
             }
-        } else {
-            debug!(
-                "check_and_update: tool={tool} request_id={request_id} — success, state cleared"
-            );
-            let _ = map.remove(&key);
-            (false, 0)
-        }
+        };
+        span.mark_ok();
+        Ok(result)
     }
 }
 
@@ -463,7 +471,9 @@ mod tests {
     #[test]
     fn check_and_update_success_returns_no_retry() {
         let m = manager_with(100, 10_000);
-        let (retry, delay) = m.check_and_update("cau_ok_t", "cau_ok_r", false, None);
+        let (retry, delay) = m
+            .check_and_update("cau_ok_t", "cau_ok_r", false, None, None)
+            .unwrap();
         assert!(!retry);
         assert_eq!(delay, 0);
     }
@@ -473,7 +483,7 @@ mod tests {
         let m = manager_with(100, 10_000);
         let (tool, req) = ("cau_f1_t", "cau_f1_r");
         m.delete_state(tool, req);
-        let (retry, delay) = m.check_and_update(tool, req, true, None);
+        let (retry, delay) = m.check_and_update(tool, req, true, None, None).unwrap();
         assert!(retry, "expected retry on first failure");
         assert_eq!(delay, 100, "first failure should use base_ms (attempt 0)");
         m.delete_state(tool, req);
@@ -484,7 +494,9 @@ mod tests {
         let m = manager_with(100, 10_000);
         let (tool, req) = ("cau_sc_t", "cau_sc_r");
         m.delete_state(tool, req);
-        let (retry, _) = m.check_and_update(tool, req, false, Some(500));
+        let (retry, _) = m
+            .check_and_update(tool, req, false, Some(500), None)
+            .unwrap();
         assert!(retry, "status 500 should trigger retry");
         m.delete_state(tool, req);
     }
@@ -494,8 +506,8 @@ mod tests {
         let m = RetryStateManager::new(2, 100, 10_000, false, vec![]);
         let (tool, req) = ("cau_exp_t", "cau_exp_r");
         m.delete_state(tool, req);
-        let (_, d1) = m.check_and_update(tool, req, true, None); // attempt 0 → 100
-        let (_, d2) = m.check_and_update(tool, req, true, None); // attempt 1 → 200
+        let (_, d1) = m.check_and_update(tool, req, true, None, None).unwrap(); // attempt 0 → 100
+        let (_, d2) = m.check_and_update(tool, req, true, None, None).unwrap(); // attempt 1 → 200
         assert_eq!(d1, 100);
         assert_eq!(d2, 200);
         m.delete_state(tool, req);
@@ -508,11 +520,11 @@ mod tests {
         m.delete_state(tool, req);
         // First 2 failures are within budget.
         for i in 1..=2 {
-            let (retry, _) = m.check_and_update(tool, req, true, None);
+            let (retry, _) = m.check_and_update(tool, req, true, None, None).unwrap();
             assert!(retry, "failure {i} should still be within retry budget");
         }
         // 3rd failure exceeds max_retries — entry is removed, no retry.
-        let (retry, delay) = m.check_and_update(tool, req, true, None);
+        let (retry, delay) = m.check_and_update(tool, req, true, None, None).unwrap();
         assert!(!retry, "retry budget exhausted — should not retry");
         assert_eq!(delay, 0);
     }
@@ -522,8 +534,8 @@ mod tests {
         let m = manager_with(100, 10_000);
         let (tool, req) = ("cau_clr_t", "cau_clr_r");
         m.delete_state(tool, req);
-        m.check_and_update(tool, req, true, None); // record a failure
-        let (retry, delay) = m.check_and_update(tool, req, false, None); // success
+        m.check_and_update(tool, req, true, None, None).unwrap(); // record a failure
+        let (retry, delay) = m.check_and_update(tool, req, false, None, None).unwrap(); // success
         assert!(!retry);
         assert_eq!(delay, 0);
         // Entry should be gone — subsequent get_failures returns 0.

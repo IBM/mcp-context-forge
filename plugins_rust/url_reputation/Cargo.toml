@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 idna = "1.1.0"
 log = "0.4"
+plugin_telemetry_common = { path = "../../tools_rust/plugin_telemetry_common" }
 phf = { version = "0.13.1", features = ["macros"] }
 pyo3 = { version = "0.28.2", features = ["abi3-py311"] }
 pyo3-log = "0.13.3"

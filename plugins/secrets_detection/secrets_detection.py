@@ -23,6 +23,7 @@ from typing import Any, Dict, Tuple
 from pydantic import BaseModel, Field, field_validator
 
 # First-Party
+from mcpgateway.observability import build_rust_plugin_trace_context
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -150,7 +151,12 @@ def _detect(text: str, cfg: SecretsDetectionConfig) -> list[dict[str, Any]]:
     return findings
 
 
-def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool = True) -> Tuple[int, Any, list[dict[str, Any]]]:
+def _scan_container(
+    container: Any,
+    cfg: SecretsDetectionConfig,
+    use_rust: bool = True,
+    context: PluginContext | None = None,
+) -> Tuple[int, Any, list[dict[str, Any]]]:
     """Recursively scan container for secrets and optionally redact.
 
     Args:
@@ -166,7 +172,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool 
         try:
             logger.debug("Using Rust implementation")
             # Pass Pydantic model directly - Rust extracts attributes
-            return secrets_detection(container, cfg)
+            return secrets_detection(container, cfg, build_rust_plugin_trace_context(context))
         except Exception as e:
             logger.warning("Rust scan failed, falling back to Python: %s", e, exc_info=True)
             # Fall through to Python implementation
@@ -189,7 +195,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool 
     if isinstance(container, dict):
         new = {}
         for k, v in container.items():
-            c, rv, f = _scan_container(v, cfg, use_rust=use_rust)
+            c, rv, f = _scan_container(v, cfg, use_rust=use_rust, context=context)
             total += c
             all_findings.extend(f)
             new[k] = rv
@@ -197,7 +203,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool 
     if isinstance(container, list):
         new_list = []
         for v in container:
-            c, rv, f = _scan_container(v, cfg, use_rust=use_rust)
+            c, rv, f = _scan_container(v, cfg, use_rust=use_rust, context=context)
             total += c
             all_findings.extend(f)
             new_list.append(rv)
@@ -245,7 +251,7 @@ class SecretsDetectionPlugin(Plugin):
         Returns:
             Result indicating secrets found or content redacted.
         """
-        count, new_args, findings = _scan_container(payload.args or {}, self._cfg)
+        count, new_args, findings = _scan_container(payload.args or {}, self._cfg, context=context)
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
             return PromptPrehookResult(
                 continue_processing=False,
@@ -270,7 +276,7 @@ class SecretsDetectionPlugin(Plugin):
         Returns:
             Result indicating secrets found or content redacted.
         """
-        count, new_result, findings = _scan_container(payload.result, self._cfg)
+        count, new_result, findings = _scan_container(payload.result, self._cfg, context=context)
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
             return ToolPostInvokeResult(
                 continue_processing=False,
@@ -298,7 +304,7 @@ class SecretsDetectionPlugin(Plugin):
         content = payload.content
         # Only scan textual content
         if hasattr(content, "text") and isinstance(content.text, str):
-            count, new_text, findings = _scan_container(content.text, self._cfg)
+            count, new_text, findings = _scan_container(content.text, self._cfg, context=context)
             if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
                 return ResourcePostFetchResult(
                     continue_processing=False,

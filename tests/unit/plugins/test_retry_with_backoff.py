@@ -527,11 +527,34 @@ class TestRustFallback:
         mock_rust = MagicMock()
         mock_rust.check_and_update.return_value = (True, 300)
 
-        with patch.object(plugin, "_rust", mock_rust):
+        with (
+            patch.object(plugin, "_rust", mock_rust),
+            patch("plugins.retry_with_backoff.retry_with_backoff.build_rust_plugin_trace_context", return_value={"traceparent": "tp", "trace_id": "tid", "parent_span_id": "sid"}),
+        ):
             r = await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
 
         mock_rust.check_and_update.assert_called_once()
+        assert mock_rust.check_and_update.call_args[0][4] == {
+            "traceparent": "tp",
+            "trace_id": "tid",
+            "parent_span_id": "sid",
+        }
         assert r.retry_delay_ms == 300
+
+    @pytest.mark.asyncio
+    async def test_rust_path_propagates_invalid_trace_context_error(self):
+        plugin = make_plugin()
+        ctx = make_context()
+
+        mock_rust = MagicMock()
+        mock_rust.check_and_update.side_effect = ValueError("trace_context must be a dict with optional traceparent, trace_id, and parent_span_id fields")
+
+        with (
+            patch.object(plugin, "_rust", mock_rust),
+            patch("plugins.retry_with_backoff.retry_with_backoff.build_rust_plugin_trace_context", return_value=object()),
+        ):
+            with pytest.raises(ValueError, match="trace_context must be a dict"):
+                await plugin.tool_post_invoke(make_payload("t", {"isError": True}), ctx)
 
     @pytest.mark.asyncio
     async def test_rust_path_bypassed_for_check_text_content(self):

@@ -42,6 +42,7 @@ import uuid
 from pydantic import BaseModel, Field
 
 # First-Party
+from mcpgateway.observability import build_rust_plugin_trace_context
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -93,7 +94,7 @@ class RustRateLimiterEngine:
         """
         self._engine = _RateLimiterEngine(config)
 
-    def evaluate_many(self, checks: List[Tuple[str, int, int]], now_unix: int) -> Any:
+    def evaluate_many(self, checks: List[Tuple[str, int, int]], now_unix: int, trace_context: dict | None = None) -> Any:
         """Delegate to the PyO3 engine (ARCH-01: single call per hook).
 
         Args:
@@ -103,9 +104,9 @@ class RustRateLimiterEngine:
         Returns:
             An ``EvalResult`` with the most restrictive outcome across all dimensions.
         """
-        return self._engine.evaluate_many(checks, now_unix)
+        return self._engine.evaluate_many(checks, now_unix, trace_context)
 
-    async def evaluate_many_async(self, checks: List[Tuple[str, int, int]], now_unix: int) -> Any:
+    async def evaluate_many_async(self, checks: List[Tuple[str, int, int]], now_unix: int, trace_context: dict | None = None) -> Any:
         """Delegate to the PyO3 async engine for Redis-backed calls.
 
         Args:
@@ -115,9 +116,17 @@ class RustRateLimiterEngine:
         Returns:
             An ``EvalResult`` with the most restrictive outcome across all dimensions.
         """
-        return await self._engine.evaluate_many_async(checks, now_unix)
+        return await self._engine.evaluate_many_async(checks, now_unix, trace_context)
 
-    def check(self, user: str, tenant: Optional[str], tool: str, now_unix: int, include_retry_after: bool) -> Tuple[bool, dict, dict]:
+    def check(
+        self,
+        user: str,
+        tenant: Optional[str],
+        tool: str,
+        now_unix: int,
+        include_retry_after: bool,
+        trace_context: dict | None = None,
+    ) -> Tuple[bool, dict, dict]:
         """High-level check: returns (allowed, headers_dict, meta_dict).
 
         Builds dimension keys internally, evaluates, and returns pre-built
@@ -133,9 +142,17 @@ class RustRateLimiterEngine:
         Returns:
             Tuple of ``(allowed, headers_dict, meta_dict)``.
         """
-        return self._engine.check(user, tenant, tool, now_unix, include_retry_after)
+        return self._engine.check(user, tenant, tool, now_unix, include_retry_after, trace_context)
 
-    async def check_async(self, user: str, tenant: Optional[str], tool: str, now_unix: int, include_retry_after: bool) -> Tuple[bool, dict, dict]:
+    async def check_async(
+        self,
+        user: str,
+        tenant: Optional[str],
+        tool: str,
+        now_unix: int,
+        include_retry_after: bool,
+        trace_context: dict | None = None,
+    ) -> Tuple[bool, dict, dict]:
         """Async variant of check() for Redis-backed deployments.
 
         Args:
@@ -148,7 +165,7 @@ class RustRateLimiterEngine:
         Returns:
             Tuple of ``(allowed, headers_dict, meta_dict)``.
         """
-        return await self._engine.check_async(user, tenant, tool, now_unix, include_retry_after)
+        return await self._engine.check_async(user, tenant, tool, now_unix, include_retry_after, trace_context)
 
 
 # ---------------------------------------------------------------------------
@@ -1465,7 +1482,14 @@ class RateLimiterPlugin(Plugin):
         """
         return self._cfg.backend == "redis"
 
-    async def _check_rust_fast_path(self, user: str, tenant: Optional[str], entity: str, hook_name: str) -> Optional[Tuple[bool, Optional[Dict[str, str]], Dict[str, Any]]]:
+    async def _check_rust_fast_path(
+        self,
+        user: str,
+        tenant: Optional[str],
+        entity: str,
+        hook_name: str,
+        context: PluginContext,
+    ) -> Optional[Tuple[bool, Optional[Dict[str, str]], Dict[str, Any]]]:
         """Attempt rate evaluation via the Rust engine (ARCH-01).
 
         Args:
@@ -1480,10 +1504,11 @@ class RateLimiterPlugin(Plugin):
         """
         try:
             now_unix = int(time.time())
+            trace_context = build_rust_plugin_trace_context(context)
             if self._should_use_async_rust_redis():
-                allowed, headers, meta = await self._rust_engine.check_async(user, tenant, entity, now_unix, True)
+                allowed, headers, meta = await self._rust_engine.check_async(user, tenant, entity, now_unix, True, trace_context)
             else:
-                allowed, headers, meta = self._rust_engine.check(user, tenant, entity, now_unix, True)
+                allowed, headers, meta = self._rust_engine.check(user, tenant, entity, now_unix, True, trace_context)
         except Exception:
             with self._rust_failure_lock:
                 self._rust_consecutive_failures += 1
@@ -1575,7 +1600,14 @@ class RateLimiterPlugin(Plugin):
 
         return True, None, meta
 
-    async def _check_rate_limit(self, user: str, tenant: Optional[str], entity: str, hook_name: str) -> Tuple[bool, Optional[Dict[str, str]], Dict[str, Any]]:
+    async def _check_rate_limit(
+        self,
+        user: str,
+        tenant: Optional[str],
+        entity: str,
+        hook_name: str,
+        context: PluginContext,
+    ) -> Tuple[bool, Optional[Dict[str, str]], Dict[str, Any]]:
         """Core rate-limit evaluation shared by prompt_pre_fetch and tool_pre_invoke.
 
         Args:
@@ -1592,7 +1624,7 @@ class RateLimiterPlugin(Plugin):
             self._maybe_recover_rust_engine()
 
         if self._rust_engine is not None:
-            result = await self._check_rust_fast_path(user, tenant, entity, hook_name)
+            result = await self._check_rust_fast_path(user, tenant, entity, hook_name, context)
             if result is not None:
                 return result
 
@@ -1619,7 +1651,7 @@ class RateLimiterPlugin(Plugin):
             user = _extract_user_identity(context.global_context.user)
             tenant = str(context.global_context.tenant_id).strip() if context.global_context.tenant_id else None
 
-            allowed, headers, meta = await self._check_rate_limit(user, tenant, entity, hook_name)
+            allowed, headers, meta = await self._check_rate_limit(user, tenant, entity, hook_name, context)
 
             if not allowed:
                 return result_cls(

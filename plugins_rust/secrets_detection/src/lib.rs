@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use log::{LevelFilter, debug, error, info, warn};
+use plugin_telemetry_common::{PluginTraceContext, start_plugin_span};
 use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
@@ -24,7 +25,10 @@ fn py_scan_container<'py>(
     py: Python<'py>,
     container: Bound<'py, PyAny>,
     config: Bound<'py, PyAny>,
+    trace_context: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<(usize, Bound<'py, PyAny>, Bound<'py, PyList>)> {
+    let trace_context = PluginTraceContext::from_optional_pyany(trace_context)?;
+    let mut span = start_plugin_span("secrets_detection", "py_scan_container", &trace_context);
     let container_kind = describe_python_type(&container);
     debug!(
         "Starting Rust secrets scan for container_type={} at top level",
@@ -70,6 +74,9 @@ fn py_scan_container<'py>(
             "Rust secrets scan failed for container_type={}: {}",
             container_kind, err
         );
+        span.mark_error(err.to_string());
+    } else {
+        span.mark_ok();
     }
 
     result
