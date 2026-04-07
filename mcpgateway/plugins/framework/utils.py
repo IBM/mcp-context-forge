@@ -202,7 +202,13 @@ def normalize_content_type(content_type: str) -> str:
         'text/plain'
         >>> normalize_content_type('application/json;charset=utf-8')
         'application/json'
+        >>> normalize_content_type('')
+        ''
+        >>> normalize_content_type('   ')
+        ''
     """
+    if not isinstance(content_type, str):
+        return ""
     return content_type.split(";")[0].strip().lower()
 
 
@@ -256,8 +262,7 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
     # Check content types
     if condition.content_types and context.content_type:
         normalized_request = normalize_content_type(context.content_type)
-        normalized_conditions = [normalize_content_type(ct) for ct in condition.content_types]
-        if normalized_request not in normalized_conditions:
+        if normalized_request not in condition.content_types:
             return False
 
     return True

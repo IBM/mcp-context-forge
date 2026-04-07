@@ -14,7 +14,7 @@ from enum import Enum
 import logging
 import os
 from pathlib import Path
-from typing import Any, Generic, Optional, Self, TypeVar, Union
+from typing import Any, Generic, Literal, Optional, Self, TypeVar, Union
 
 # Third-Party
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
@@ -222,11 +222,26 @@ class PluginCondition(BaseModel):
             The set as a serializable list.
         """
         if value:
-            values = []
+            values: list[Any] = []
             for key in value:
                 values.append(key)
             return values
         return None
+
+    @field_validator("content_types")
+    @classmethod
+    def normalize_content_types(cls, value: str | None) -> list[str] | Literal[""] | None:
+        """Pre-normalize content types during initialization.
+
+        Args:
+            value: str of content type.
+
+        Returns:
+            Normalized content type.
+        """
+        if value:
+            return [each.split(sep=";")[0].strip().lower() for each in value]
+        return value
 
 
 class AppliedTo(BaseModel):
@@ -1417,6 +1432,28 @@ class GlobalContext(BaseModel):
     content_type: Optional[str] = None
     state: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str | None) -> str | None:
+        """Pre Validate content types during initialization.
+
+        Args:
+            value: str of content type.
+
+        Raises:
+            ValueError: if name is length > 200 or not a valid character.
+
+        Returns:
+            validated content type.
+        """
+        if value is None:
+            return value
+        if len(value) > 200:
+            raise ValueError("Content-Type header too long")
+        if not value.isprintable():
+            raise ValueError("Content-Type contains invalid characters")
+        return value
 
 
 class PluginContext(BaseModel):
