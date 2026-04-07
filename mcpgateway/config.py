@@ -1897,6 +1897,48 @@ class Settings(BaseSettings):
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
 
     # ===================================
+
+    # ===================================
+    # OpenTelemetry Baggage Configuration
+    # ===================================
+
+    otel_baggage_enabled: bool = Field(
+        default=False,
+        description="Enable HTTP header to W3C baggage conversion for distributed tracing context propagation",
+    )
+    otel_baggage_header_mappings: str = Field(
+        default="[]",
+        description=("JSON array of header-to-baggage mappings. " 'Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'),
+    )
+    otel_baggage_propagate_to_external: bool = Field(
+        default=False,
+        description=(
+            "Propagate baggage to external downstream services via W3C baggage header. "
+            "When false (default), baggage is captured in spans only for internal observability. "
+            "Enable only for trusted internal microservices."
+        ),
+    )
+    otel_baggage_max_items: int = Field(
+        default=32,
+        ge=1,
+        le=64,
+        description="Maximum number of baggage items from headers (security limit to prevent DoS)",
+    )
+    otel_baggage_max_size_bytes: int = Field(
+        default=8192,
+        ge=1024,
+        le=16384,
+        description="Maximum total size of header-derived baggage in bytes (security limit)",
+    )
+    otel_baggage_log_rejected: bool = Field(
+        default=True,
+        description="Log rejected headers for security auditing",
+    )
+    otel_baggage_log_sanitization: bool = Field(
+        default=True,
+        description="Log sanitization events for compliance tracking",
+    )
+
     # Well-Known URI Configuration
     # ===================================
 

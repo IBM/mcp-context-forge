@@ -2443,6 +2443,7 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch("mcpgateway.services.tool_service.create_span", side_effect=record_span),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
+            patch("mcpgateway.services.tool_service.otel_context_active", return_value=True),
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-123"),
         ):
             mock_settings.mcp_session_pool_enabled = False

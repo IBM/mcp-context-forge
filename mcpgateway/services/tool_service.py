@@ -58,7 +58,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
-from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, set_span_attribute, set_span_error
+from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
 from mcpgateway.plugins.framework import (
     get_plugin_manager,
     GlobalContext,
@@ -4362,6 +4362,7 @@ class ToolService(BaseService):
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
+                        tracing_active = otel_context_active()
 
                         # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
                         # MCP SDK pins headers at transport creation, so adding per-request headers
@@ -4386,7 +4387,7 @@ class ToolService(BaseService):
                             tool_call_result = None
                             use_pool = False
                             pool = None
-                            if settings.mcp_session_pool_enabled:
+                            if settings.mcp_session_pool_enabled and not tracing_active:
                                 try:
                                     pool = get_mcp_session_pool()
                                     use_pool = True
@@ -4543,6 +4544,7 @@ class ToolService(BaseService):
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
+                        tracing_active = otel_context_active()
 
                         # NOTE: X-Correlation-ID is NOT added to headers for pooled sessions.
                         # MCP SDK pins headers at transport creation, so adding per-request headers
@@ -4567,7 +4569,7 @@ class ToolService(BaseService):
                             tool_call_result = None
                             use_pool = False
                             pool = None
-                            if settings.mcp_session_pool_enabled:
+                            if settings.mcp_session_pool_enabled and not tracing_active:
                                 try:
                                     pool = get_mcp_session_pool()
                                     use_pool = True
