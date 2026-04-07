@@ -227,14 +227,7 @@ class RegistryCache:
         filter_str = str(sorted_items)
         return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324
 
-
-    async def _redis_operation_with_timeout(
-        self,
-        operation: Callable,
-        *args,
-        operation_name: str = "redis_op",
-        **kwargs
-    ) -> Optional[Any]:
+    async def _redis_operation_with_timeout(self, operation: Callable, *args, operation_name: str = "redis_op", **kwargs) -> Optional[Any]:
         """Execute Redis operation with timeout and circuit breaker.
 
         Args:
@@ -283,18 +276,12 @@ class RegistryCache:
         except asyncio.TimeoutError:
             self._redis_failure_count += 1
             self._redis_last_failure_time = time.time()
-            logger.warning(
-                f"Redis {operation_name} timeout after {timeout}s "
-                f"(failure {self._redis_failure_count}/{self._redis_failure_threshold})"
-            )
+            logger.warning(f"Redis {operation_name} timeout after {timeout}s " f"(failure {self._redis_failure_count}/{self._redis_failure_threshold})")
 
             # Open circuit if threshold reached
             if self._redis_failure_count >= self._redis_failure_threshold:
                 self._redis_circuit_open = True
-                logger.error(
-                    f"Redis circuit opened after {self._redis_failure_count} failures. "
-                    f"Will retry in {self._redis_circuit_open_duration}s"
-                )
+                logger.error(f"Redis circuit opened after {self._redis_failure_count} failures. " f"Will retry in {self._redis_circuit_open_duration}s")
 
             return None
 
@@ -307,7 +294,6 @@ class RegistryCache:
                 self._redis_circuit_open = True
 
             return None
-
 
     async def _get_redis_client(self):
         """Get Redis client if available, with periodic reconnection attempts.
@@ -390,11 +376,7 @@ class RegistryCache:
         redis = await self._get_redis_client()
         if redis:
             try:
-                data = await self._redis_operation_with_timeout(
-                    redis.get,
-                    cache_key,
-                    operation_name="get"
-                )
+                data = await self._redis_operation_with_timeout(redis.get, cache_key, operation_name="get")
                 if data:
                     # Third-Party
                     import orjson  # pylint: disable=import-outside-toplevel
@@ -455,13 +437,7 @@ class RegistryCache:
                 # Third-Party
                 import orjson  # pylint: disable=import-outside-toplevel
 
-                await self._redis_operation_with_timeout(
-                    redis.setex,
-                    cache_key,
-                    ttl,
-                    orjson.dumps(data),
-                    operation_name="setex"
-                )
+                await self._redis_operation_with_timeout(redis.setex, cache_key, ttl, orjson.dumps(data), operation_name="setex")
             except Exception as e:
                 logger.warning(f"RegistryCache Redis set failed: {e}")
 
@@ -494,35 +470,24 @@ class RegistryCache:
         if redis:
             try:
                 pattern = f"{prefix}*"
-                
+
                 # Wrap scan_iter with timeout
                 keys_to_delete = []
+
                 async def scan_keys():
                     keys = []
                     async for key in redis.scan_iter(match=pattern):
                         keys.append(key)
                     return keys
-                
-                keys_to_delete = await self._redis_operation_with_timeout(
-                    scan_keys,
-                    operation_name="scan_iter"
-                ) or []
+
+                keys_to_delete = await self._redis_operation_with_timeout(scan_keys, operation_name="scan_iter") or []
 
                 # Delete keys with timeout
                 for key in keys_to_delete:
-                    await self._redis_operation_with_timeout(
-                        redis.delete,
-                        key,
-                        operation_name="delete"
-                    )
+                    await self._redis_operation_with_timeout(redis.delete, key, operation_name="delete")
 
                 # Publish invalidation for other workers
-                await self._redis_operation_with_timeout(
-                    redis.publish,
-                    "mcpgw:cache:invalidate",
-                    f"registry:{cache_type}",
-                    operation_name="publish"
-                )
+                await self._redis_operation_with_timeout(redis.publish, "mcpgw:cache:invalidate", f"registry:{cache_type}", operation_name="publish")
             except Exception as e:
                 logger.warning(f"RegistryCache Redis invalidate failed: {e}")
 
