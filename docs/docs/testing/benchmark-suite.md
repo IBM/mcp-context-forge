@@ -10,7 +10,8 @@ The suite now distinguishes three lanes:
 - `benchmark_runtime_baseline`
   Authenticated end-to-end runtime comparisons through `nginx`.
 - `benchmark_plugin_sensitivity`
-  Prompt/resource/tool-heavy comparisons that exercise plugin hooks through `/rpc`.
+  Prompt/resource/tool-heavy comparisons that exercise MCP prompt, resource,
+  and tool paths through `/servers/{server_id}/mcp`.
 
 ## What It Runs
 
@@ -151,7 +152,7 @@ families:
 
 - health checks
 - admin plugin UI
-- REST discovery (`/tools`, `/resources`, `/prompts`)
+- REST discovery (`/servers`, `/resources`, `/prompts`)
 - JSON-RPC discovery (`tools/list`, `resources/list`, `prompts/list`)
 - JSON-RPC prompt/resource/tool calls from payload fixtures in
   `tools_rust/contextforge_benchmark/assets/payloads/`
