@@ -139,24 +139,45 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         if is_json_body:
             body = await request.body()
 
+        rust_request_failed = False
         if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
             try:
-                result = self._validate_request_with_rust(parameters_to_validate, body if is_json_body and body else None)
+                serialized_request = self._serialize_request_for_rust_validation(
+                    parameters_to_validate,
+                    body if is_json_body and body else None,
+                )
+                result = self._validate_request_with_rust(serialized_request)
                 if result is not None:
                     key, error_type = result
                     self._raise_validation_failure(key, error_type)
                 return
             except orjson.JSONDecodeError:
                 pass
+            except HTTPException:
+                raise
+            except Exception:
+                rust_request_failed = True
 
         if parameters_to_validate:
-            self._validate_parameters(parameters_to_validate)
+            if rust_request_failed:
+                result = self._validate_parameters_with_python(parameters_to_validate)
+                if result is not None:
+                    key, error_type = result
+                    self._raise_validation_failure(key, error_type)
+            else:
+                self._validate_parameters(parameters_to_validate)
 
         if is_json_body:
             try:
                 if body:
                     data = orjson.loads(body)
-                    self._validate_json_data(data)
+                    if rust_request_failed:
+                        result = self._validate_json_data_with_python(data)
+                        if result is not None:
+                            key, error_type = result
+                            self._raise_validation_failure(key, error_type)
+                    else:
+                        self._validate_json_data(data)
             except orjson.JSONDecodeError:
                 pass  # Let other middleware handle JSON errors
 
@@ -266,50 +287,35 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_parameters_with_python(parameters)
 
-    def _validate_request_with_rust(
+    def _serialize_request_for_rust_validation(
         self,
         parameters: list[tuple[str, str]],
         body: bytes | None,
-    ) -> tuple[str, str] | None:
-        """Validate request parameters and optional JSON body in one Rust call."""
+    ) -> bytes:
+        """Serialize request parameters and optional JSON body for one Rust call."""
+        serialized = orjson.dumps({"parameters": parameters})
+        body_bytes = body if body else b"null"
+        return serialized[:-1] + b',"body":' + body_bytes + b"}"
+
+    def _validate_request_with_rust(self, serialized_request: bytes) -> tuple[str, str] | None:
+        """Validate serialized request bytes with the Rust extension."""
         try:
             if self._rust_validator is None:
                 self._rust_validator = self._build_rust_validator()
                 if self._rust_validator is None:
-                    if parameters:
-                        result = self._validate_parameters_with_python(parameters)
-                        if result is not None:
-                            return result
-                    if body:
-                        data = orjson.loads(body)
-                        return self._validate_json_data_with_python(data)
-                    return None
+                    raise RuntimeError("rust validator unavailable")
 
-            return self._rust_validator.validate_request(parameters, body)
+            return self._rust_validator.validate_request_bytes(serialized_request)
         except ValueError as exc:
             if "maximum supported nesting depth" in str(exc):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             if "Request body contains invalid JSON:" in str(exc):
                 raise orjson.JSONDecodeError("invalid json", b"", 0) from exc
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
-            if parameters:
-                result = self._validate_parameters_with_python(parameters)
-                if result is not None:
-                    return result
-            if body:
-                data = orjson.loads(body)
-                return self._validate_json_data_with_python(data)
-            return None
+            raise
         except Exception as exc:
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
-            if parameters:
-                result = self._validate_parameters_with_python(parameters)
-                if result is not None:
-                    return result
-            if body:
-                data = orjson.loads(body)
-                return self._validate_json_data_with_python(data)
-            return None
+            raise
 
     def _validate_json_data_with_rust(self, data: Any) -> tuple[str, str] | None:
         """Validate JSON data with the Rust extension, falling back to Python on extension failures."""

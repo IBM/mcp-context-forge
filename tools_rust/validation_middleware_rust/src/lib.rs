@@ -2,17 +2,137 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use regex::Regex;
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
-use std::path::{Component, Path, PathBuf};
 use std::fmt;
+use std::path::{Component, Path, PathBuf};
 
 const MAX_JSON_DEPTH: usize = 1024;
 
 #[pyclass(name = "Validator")]
 struct CompiledValidator {
     max_param_length: usize,
-    dangerous_pattern: Option<Regex>,
+    matcher: DangerousPatternMatcher,
     allowed_roots: Vec<PathBuf>,
     max_path_depth: usize,
+}
+
+struct DangerousPatternMatcher {
+    shell_metacharacters: bool,
+    path_traversal: bool,
+    control_characters: bool,
+    fallback_pattern: Option<Regex>,
+}
+
+impl DangerousPatternMatcher {
+    fn from_patterns(patterns: &[String]) -> PyResult<Self> {
+        let mut shell_metacharacters = false;
+        let mut path_traversal = false;
+        let mut control_characters = false;
+        let mut fallback_patterns = Vec::new();
+
+        for pattern in patterns {
+            match pattern.as_str() {
+                r"[;&|`$(){}\[\]<>]" => shell_metacharacters = true,
+                r"\.\.[\\/]" => path_traversal = true,
+                r"[\x00-\x1f\x7f-\x9f]" => control_characters = true,
+                _ => fallback_patterns.push(pattern.as_str()),
+            }
+        }
+
+        let fallback_pattern = if fallback_patterns.is_empty() {
+            None
+        } else {
+            let joined = fallback_patterns
+                .iter()
+                .map(|pattern| format!("(?:{pattern})"))
+                .collect::<Vec<_>>()
+                .join("|");
+            Some(Regex::new(&joined).map_err(|error| {
+                PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
+            })?)
+        };
+
+        Ok(Self {
+            shell_metacharacters,
+            path_traversal,
+            control_characters,
+            fallback_pattern,
+        })
+    }
+
+    fn is_match(&self, value: &str) -> bool {
+        if value.is_ascii() {
+            let bytes = value.as_bytes();
+            if self.shell_metacharacters
+                && bytes.iter().any(|byte| {
+                    matches!(
+                        byte,
+                        b';' | b'&'
+                            | b'|'
+                            | b'`'
+                            | b'$'
+                            | b'('
+                            | b')'
+                            | b'{'
+                            | b'}'
+                            | b'['
+                            | b']'
+                            | b'<'
+                            | b'>'
+                    )
+                })
+            {
+                return true;
+            }
+            if self.path_traversal
+                && bytes
+                    .windows(3)
+                    .any(|window| window == b"../" || window == b"..\\")
+            {
+                return true;
+            }
+            if self.control_characters
+                && bytes
+                    .iter()
+                    .any(|byte| matches!(byte, 0x00..=0x1f | 0x7f..=0x9f))
+            {
+                return true;
+            }
+        } else {
+            if self.path_traversal {
+                let mut chars = value.chars();
+                let mut first = chars.next();
+                let mut second = chars.next();
+                for third in chars {
+                    if first == Some('.') && second == Some('.') && matches!(third, '/' | '\\') {
+                        return true;
+                    }
+                    first = second;
+                    second = Some(third);
+                }
+            }
+
+            for ch in value.chars() {
+                if self.shell_metacharacters
+                    && matches!(
+                        ch,
+                        ';' | '&' | '|' | '`' | '$' | '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>'
+                    )
+                {
+                    return true;
+                }
+                if self.control_characters {
+                    let code = ch as u32;
+                    if matches!(code, 0x00..=0x1f | 0x7f..=0x9f) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        self.fallback_pattern
+            .as_ref()
+            .is_some_and(|pattern| pattern.is_match(value))
+    }
 }
 
 enum ValidationFailure {
@@ -26,38 +146,26 @@ fn compile_validator(
     allowed_roots: Vec<String>,
     max_path_depth: usize,
 ) -> PyResult<CompiledValidator> {
-    let combined_pattern =
-        if dangerous_patterns.is_empty() {
-            None
-        } else {
-            let joined = dangerous_patterns
-                .iter()
-                .map(|pattern| format!("(?:{pattern})"))
-                .collect::<Vec<_>>()
-                .join("|");
-            Some(Regex::new(&joined).map_err(|error| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
-            })?)
-        };
+    let matcher = DangerousPatternMatcher::from_patterns(&dangerous_patterns)?;
 
     Ok(CompiledValidator {
         max_param_length,
-        dangerous_pattern: combined_pattern,
+        matcher,
         allowed_roots: allowed_roots.into_iter().map(PathBuf::from).collect(),
         max_path_depth,
     })
 }
 
 fn validate_string(value: &str, validator: &CompiledValidator) -> Option<ValidationFailure> {
-    if value.chars().count() > validator.max_param_length {
+    if value.is_ascii() {
+        if value.len() > validator.max_param_length {
+            return Some(ValidationFailure::MaxLength);
+        }
+    } else if value.chars().count() > validator.max_param_length {
         return Some(ValidationFailure::MaxLength);
     }
 
-    if validator
-        .dangerous_pattern
-        .as_ref()
-        .is_some_and(|pattern| pattern.is_match(value))
-    {
+    if validator.matcher.is_match(value) {
         return Some(ValidationFailure::DangerousPattern);
     }
 
@@ -237,6 +345,109 @@ impl<'a> ValueSeed<'a> {
     }
 }
 
+struct RequestSeed<'a> {
+    validator: &'a CompiledValidator,
+}
+
+struct RequestVisitor<'a> {
+    validator: &'a CompiledValidator,
+}
+
+struct ParametersSeed<'a> {
+    validator: &'a CompiledValidator,
+}
+
+struct ParametersVisitor<'a> {
+    validator: &'a CompiledValidator,
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for RequestSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_map(RequestVisitor {
+            validator: self.validator,
+        })
+    }
+}
+
+impl<'de, 'a> Visitor<'de> for RequestVisitor<'a> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a serialized validation request")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "parameters" => {
+                    map.next_value_seed(ParametersSeed {
+                        validator: self.validator,
+                    })?;
+                }
+                "body" => {
+                    map.next_value_seed(ValueSeed {
+                        validator: self.validator,
+                        depth: 0,
+                        key_context: None,
+                        list_item_context: false,
+                    })?;
+                }
+                _ => {
+                    map.next_value::<de::IgnoredAny>()?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for ParametersSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(ParametersVisitor {
+            validator: self.validator,
+        })
+    }
+}
+
+impl<'de, 'a> Visitor<'de> for ParametersVisitor<'a> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a sequence of request parameters")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        while let Some((key, value)) = seq.next_element::<(String, String)>()? {
+            if let Some(result) = validate_string(&value, self.validator) {
+                let error_type = match result {
+                    ValidationFailure::MaxLength => "max_length".to_owned(),
+                    ValidationFailure::DangerousPattern => "dangerous_pattern".to_owned(),
+                };
+                return Err(stream_stop_error(StreamStop::Failure(key, error_type)));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn validate_json_bytes_streaming(
     raw_body: &[u8],
     validator: &CompiledValidator,
@@ -259,9 +470,35 @@ fn validate_json_bytes_streaming(
             StreamStop::MaxDepth => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "JSON payload exceeds maximum supported nesting depth",
             )),
-            StreamStop::InvalidJson(message) => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                format!("Request body contains invalid JSON: {message}"),
+            StreamStop::InvalidJson(message) => {
+                Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Request body contains invalid JSON: {message}"
+                )))
+            }
+        },
+    }
+}
+
+fn validate_request_bytes_streaming(
+    raw_body: &[u8],
+    validator: &CompiledValidator,
+) -> PyResult<Option<(String, String)>> {
+    let mut deserializer = serde_json::Deserializer::from_slice(raw_body);
+    deserializer.disable_recursion_limit();
+    let deserializer = serde_stacker::Deserializer::new(&mut deserializer);
+
+    match (RequestSeed { validator }).deserialize(deserializer) {
+        Ok(()) => Ok(None),
+        Err(error) => match parse_stream_stop(error) {
+            StreamStop::Failure(key, error_type) => Ok(Some((key, error_type))),
+            StreamStop::MaxDepth => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "JSON payload exceeds maximum supported nesting depth",
             )),
+            StreamStop::InvalidJson(message) => {
+                Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Request body contains invalid JSON: {message}"
+                )))
+            }
         },
     }
 }
@@ -430,6 +667,10 @@ impl CompiledValidator {
         validate_json_bytes_streaming(raw_body, self)
     }
 
+    fn validate_request_bytes(&self, raw_body: &[u8]) -> PyResult<Option<(String, String)>> {
+        validate_request_bytes_streaming(raw_body, self)
+    }
+
     #[pyo3(signature = (parameters, raw_body=None))]
     fn validate_request(
         &self,
@@ -448,12 +689,12 @@ impl CompiledValidator {
     }
 
     fn validate_parameters(&self, parameters: Vec<(String, String)>) -> Option<(String, String)> {
-        parameters
-            .into_iter()
-            .find_map(|(key, value)| validate_string(&value, self).map(|failure| match failure {
+        parameters.into_iter().find_map(|(key, value)| {
+            validate_string(&value, self).map(|failure| match failure {
                 ValidationFailure::MaxLength => (key, "max_length".to_owned()),
                 ValidationFailure::DangerousPattern => (key, "dangerous_pattern".to_owned()),
-            }))
+            })
+        })
     }
 
     fn validate_resource_path(&self, path: &str) -> PyResult<String> {
@@ -491,7 +732,12 @@ mod tests {
     fn validate_string_uses_character_count_not_utf8_bytes() {
         let validator = CompiledValidator {
             max_param_length: 1,
-            dangerous_pattern: None,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
         };
@@ -505,7 +751,12 @@ mod tests {
         Python::attach(|py| {
             let validator = CompiledValidator {
                 max_param_length: 32,
-                dangerous_pattern: Some(Regex::new("<script").unwrap()),
+                matcher: DangerousPatternMatcher {
+                    shell_metacharacters: false,
+                    path_traversal: false,
+                    control_characters: false,
+                    fallback_pattern: Some(Regex::new("<script").unwrap()),
+                },
                 allowed_roots: Vec::new(),
                 max_path_depth: 1024,
             };
@@ -543,7 +794,12 @@ mod tests {
         Python::attach(|py| {
             let validator = CompiledValidator {
                 max_param_length: 32,
-                dangerous_pattern: Some(Regex::new("<script").unwrap()),
+                matcher: DangerousPatternMatcher {
+                    shell_metacharacters: false,
+                    path_traversal: false,
+                    control_characters: false,
+                    fallback_pattern: Some(Regex::new("<script").unwrap()),
+                },
                 allowed_roots: Vec::new(),
                 max_path_depth: 1024,
             };
@@ -563,7 +819,12 @@ mod tests {
     fn validate_json_bytes_rejects_dangerous_strings() {
         let validator = CompiledValidator {
             max_param_length: 32,
-            dangerous_pattern: Some(Regex::new("<script").unwrap()),
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: Some(Regex::new("<script").unwrap()),
+            },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
         };
@@ -581,7 +842,12 @@ mod tests {
     fn validate_json_bytes_uses_character_count_not_utf8_bytes() {
         let validator = CompiledValidator {
             max_param_length: 1,
-            dangerous_pattern: None,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
         };
@@ -596,7 +862,12 @@ mod tests {
     fn validate_parameters_rejects_dangerous_values() {
         let validator = CompiledValidator {
             max_param_length: 32,
-            dangerous_pattern: Some(Regex::new("<script").unwrap()),
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: Some(Regex::new("<script").unwrap()),
+            },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
         };
@@ -606,7 +877,10 @@ mod tests {
             ("bad".to_owned(), "<script>".to_owned()),
         ]);
 
-        assert_eq!(result, Some(("bad".to_owned(), "dangerous_pattern".to_owned())));
+        assert_eq!(
+            result,
+            Some(("bad".to_owned(), "dangerous_pattern".to_owned()))
+        );
     }
 
     #[test]
@@ -614,7 +888,12 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let validator = CompiledValidator {
             max_param_length: 32,
-            dangerous_pattern: None,
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: None,
+            },
             allowed_roots: vec![tempdir.path().to_path_buf()],
             max_path_depth: 1024,
         };
@@ -635,7 +914,12 @@ mod tests {
     fn validate_request_checks_parameters_before_json_body() {
         let validator = CompiledValidator {
             max_param_length: 32,
-            dangerous_pattern: Some(Regex::new("<script").unwrap()),
+            matcher: DangerousPatternMatcher {
+                shell_metacharacters: false,
+                path_traversal: false,
+                control_characters: false,
+                fallback_pattern: Some(Regex::new("<script").unwrap()),
+            },
             allowed_roots: Vec::new(),
             max_path_depth: 1024,
         };
@@ -651,5 +935,46 @@ mod tests {
             result,
             Some(("query".to_owned(), "dangerous_pattern".to_owned()))
         );
+    }
+
+    #[test]
+    fn validate_request_bytes_checks_parameters_and_body() {
+        let validator = compile_validator(
+            32,
+            vec![
+                r"[;&|`$(){}\[\]<>]".to_owned(),
+                r"\.\.[\\/]".to_owned(),
+                r"[\x00-\x1f\x7f-\x9f]".to_owned(),
+            ],
+            Vec::new(),
+            1024,
+        )
+        .unwrap();
+
+        let result = validator
+            .validate_request_bytes(
+                br#"{"parameters":[["query","safe"]],"body":{"name":"<script>"}}"#,
+            )
+            .unwrap();
+
+        assert_eq!(
+            result,
+            Some(("name".to_owned(), "dangerous_pattern".to_owned()))
+        );
+    }
+
+    #[test]
+    fn dangerous_pattern_matcher_supports_fast_path_rules() {
+        let matcher = DangerousPatternMatcher::from_patterns(&[
+            r"[;&|`$(){}\[\]<>]".to_owned(),
+            r"\.\.[\\/]".to_owned(),
+            r"[\x00-\x1f\x7f-\x9f]".to_owned(),
+        ])
+        .unwrap();
+
+        assert!(matcher.is_match("<script>"));
+        assert!(matcher.is_match("../etc/passwd"));
+        assert!(matcher.is_match("hello\u{7f}world"));
+        assert!(!matcher.is_match("plain-text"));
     }
 }
