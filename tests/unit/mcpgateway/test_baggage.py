@@ -19,11 +19,10 @@ import pytest
 from mcpgateway.baggage import (
     BaggageConfig,
     BaggageConfigError,
-    BaggageSizeLimitError,
-    filter_incoming_baggage,
-    HeaderMapping,
     extract_baggage_from_headers,
+    filter_incoming_baggage,
     format_w3c_baggage_header,
+    HeaderMapping,
     merge_baggage,
     parse_w3c_baggage_header,
     sanitize_baggage_for_propagation,
@@ -487,8 +486,6 @@ class TestSanitizeBaggageForPropagation:
         assert result == {}
 
 
-
-
 class TestLoggingCoverage:
     """Test logging paths for improved coverage."""
 
@@ -508,7 +505,7 @@ class TestLoggingCoverage:
         headers = {"x-data": "value\x00\x01"}
 
         with patch("mcpgateway.baggage.logger") as mock_logger:
-            result = extract_baggage_from_headers(headers, config)
+            extract_baggage_from_headers(headers, config)
             # Should log sanitization
             assert mock_logger.info.called or mock_logger.warning.called
 
@@ -527,7 +524,7 @@ class TestLoggingCoverage:
         headers = {"x-data": "x" * 100}
 
         with patch("mcpgateway.baggage.logger") as mock_logger:
-            result = extract_baggage_from_headers(headers, config)
+            extract_baggage_from_headers(headers, config)
             # Should log size limit rejection
             assert mock_logger.warning.called
 
@@ -543,13 +540,10 @@ class TestLoggingCoverage:
             log_sanitization=False,
         )
 
-        headers = {
-            "x-tenant-id": "tenant-123",
-            "x-unknown-header": "value"  # Not in allowlist
-        }
+        headers = {"x-tenant-id": "tenant-123", "x-unknown-header": "value"}  # Not in allowlist
 
         with patch("mcpgateway.baggage.logger") as mock_logger:
-            result = extract_baggage_from_headers(headers, config)
+            extract_baggage_from_headers(headers, config)
             # Should log rejected header
             assert mock_logger.debug.called
 
@@ -613,7 +607,7 @@ class TestW3CBaggageParsingEdgeCases:
 
     def test_parse_exception_during_decode(self):
         """Test exception handling during URL decode."""
-        with patch('mcpgateway.baggage.unquote', side_effect=Exception("Decode error")):
+        with patch("mcpgateway.baggage.unquote", side_effect=Exception("Decode error")):
             result = parse_w3c_baggage_header("key=value")
             assert result == {}
 
@@ -630,12 +624,10 @@ class TestW3CBaggageEdgeCases:
 
     def test_parse_with_exception(self):
         """Test exception handling during parsing."""
-        with patch('mcpgateway.baggage.unquote', side_effect=Exception("Decode error")):
+        with patch("mcpgateway.baggage.unquote", side_effect=Exception("Decode error")):
             result = parse_w3c_baggage_header("key=value")
             # Should return empty dict on error
             assert result == {}
-
-
 
 
 class TestRemainingCoveragePaths:
@@ -665,8 +657,7 @@ class TestRemainingCoveragePaths:
         """Test configuration exceeding max items (line 231)."""
         with patch("mcpgateway.baggage.get_settings") as mock_settings:
             # Create 65 mappings (exceeds default max of 32)
-            mappings = [{"header_name": f"X-Header-{i}", "baggage_key": f"key.{i}"}
-                        for i in range(65)]
+            mappings = [{"header_name": f"X-Header-{i}", "baggage_key": f"key.{i}"} for i in range(65)]
             mock_settings.return_value = MagicMock(
                 otel_baggage_enabled=True,
                 otel_baggage_header_mappings=str(mappings).replace("'", '"'),
@@ -689,7 +680,7 @@ class TestRemainingCoveragePaths:
 
         headers = {"x-data": "value"}
 
-        with patch('mcpgateway.baggage.sanitize_header_value', side_effect=Exception("Sanitization error")):
+        with patch("mcpgateway.baggage.sanitize_header_value", side_effect=Exception("Sanitization error")):
             result = extract_baggage_from_headers(headers, config)
             # Should handle exception and continue
             assert result == {}
@@ -769,15 +760,13 @@ class TestRemainingCoveragePaths:
         assert result == {"key": "value"}
 
 
-
-
 class TestFinalCoveragePaths:
     """Test final remaining uncovered lines for 100% coverage."""
 
     def test_parse_baggage_exception_in_decode(self):
         """Test exception handling in parse_w3c_baggage_header (line 366)."""
         # Trigger exception during URL decode
-        with patch('mcpgateway.baggage.unquote', side_effect=Exception("Decode error")):
+        with patch("mcpgateway.baggage.unquote", side_effect=Exception("Decode error")):
             result = parse_w3c_baggage_header("key=value")
             # Should return empty dict on exception
             assert result == {}
@@ -795,10 +784,7 @@ class TestFinalCoveragePaths:
         )
 
         # Baggage with unauthorized key
-        baggage = {
-            "tenant.id": "tenant-123",
-            "unauthorized.key": "should-be-filtered"
-        }
+        baggage = {"tenant.id": "tenant-123", "unauthorized.key": "should-be-filtered"}
 
         result = filter_incoming_baggage(baggage, config)
         # Should only include allowed key
@@ -820,7 +806,7 @@ class TestFinalCoveragePaths:
         baggage = {"data": "value"}
 
         # Trigger exception during sanitization
-        with patch('mcpgateway.baggage.sanitize_header_value', side_effect=Exception("Sanitization error")):
+        with patch("mcpgateway.baggage.sanitize_header_value", side_effect=Exception("Sanitization error")):
             result = filter_incoming_baggage(baggage, config)
             # Should handle exception and continue
             assert result == {}
@@ -839,22 +825,36 @@ class TestFinalCoveragePaths:
 
     def test_sanitize_for_propagation_with_control_chars(self):
         """Test sanitize_baggage_for_propagation with control characters (lines 530-532)."""
-        baggage = {
-            "clean.key": "clean-value",
-            "dirty.key": "value\x00\x01\x02with\x03control",
-            "only.control": "\x00\x01\x02"
-        }
+        baggage = {"clean.key": "clean-value", "dirty.key": "value\x00\x01\x02with\x03control", "only.control": "\x00\x01\x02"}
 
         result = sanitize_baggage_for_propagation(baggage)
 
-        # Clean key should remain
-
+        # Clean key should remain unchanged
+        assert result["clean.key"] == "clean-value"
+        # Dirty key should have control chars removed
+        assert result["dirty.key"] == "valuewithcontrol"
+        # Key with only control chars should be excluded
+        assert "only.control" not in result
 
 
 class TestExceptionHandlingPaths:
     """Test exception handling paths for 100% coverage."""
 
+    def test_filter_incoming_empty_baggage_line_412(self):
+        """Test filter_incoming_baggage with empty baggage dict (line 412)."""
+        config = BaggageConfig(
+            enabled=True,
+            mappings=[HeaderMapping("X-Test", "test.key")],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=8192,
+            log_rejected=False,
+            log_sanitization=False,
+        )
 
+        # Empty baggage should return empty dict immediately
+        result = filter_incoming_baggage({}, config)
+        assert result == {}
 
     def test_filter_incoming_not_in_allowlist_with_logging(self):
         """Test filter_incoming_baggage logs rejected keys (line 405)."""
@@ -868,12 +868,9 @@ class TestExceptionHandlingPaths:
             log_sanitization=False,
         )
 
-        baggage = {
-            "allowed.key": "allowed-value",
-            "not.allowed": "rejected-value"
-        }
+        baggage = {"allowed.key": "allowed-value", "not.allowed": "rejected-value"}
 
-        with patch('mcpgateway.baggage.logger') as mock_logger:
+        with patch("mcpgateway.baggage.logger") as mock_logger:
             result = filter_incoming_baggage(baggage, config)
             # Should log rejected key
             assert mock_logger.debug.called
@@ -894,28 +891,38 @@ class TestExceptionHandlingPaths:
 
         baggage = {"data": "value"}
 
-        with patch('mcpgateway.baggage.sanitize_header_value', side_effect=Exception("Sanitize failed")):
-            with patch('mcpgateway.baggage.logger') as mock_logger:
+        with patch("mcpgateway.baggage.sanitize_header_value", side_effect=Exception("Sanitize failed")):
+            with patch("mcpgateway.baggage.logger") as mock_logger:
                 result = filter_incoming_baggage(baggage, config)
                 # Should log the exception
                 assert mock_logger.warning.called
                 assert result == {}
 
 
-
-
 class TestDefensiveErrorPaths:
     """Test defensive error handling paths for 100% coverage."""
 
     def test_parse_baggage_decode_exception_line_366(self):
-        """Test parse_w3c_baggage_header exception at line 366."""
-        # Create a scenario where unquote raises an exception
-        with patch('mcpgateway.baggage.unquote') as mock_unquote:
-            mock_unquote.side_effect = Exception("Decode failed")
-            result = parse_w3c_baggage_header("key=value")
-            # Should handle exception and return empty dict
-            assert result == {}
-            assert mock_unquote.called
+        """Test parse_w3c_baggage_header exception at line 366 during URL decode."""
+        # Standard
+        from urllib.parse import unquote as original_unquote
+
+        def failing_unquote(value):
+            # Fail on specific value to trigger exception path
+            if value == "bad%value":
+                raise ValueError("Invalid percent encoding")
+            return original_unquote(value)
+
+        with patch("mcpgateway.baggage.unquote", side_effect=failing_unquote):
+            with patch("mcpgateway.baggage.logger") as mock_logger:
+                # This will trigger the exception during decode
+                result = parse_w3c_baggage_header("key=bad%value,other=good")
+                # Should log the exception for the bad key
+                assert any("Failed to decode baggage value" in str(call) for call in mock_logger.debug.call_args_list)
+                # The bad key should not be in result
+                assert "key" not in result
+                # The good key should still be processed
+                assert "other" in result
 
     def test_filter_incoming_rejected_key_line_405(self):
         """Test filter_incoming_baggage rejected key logging at line 405."""
@@ -930,15 +937,45 @@ class TestDefensiveErrorPaths:
         )
 
         # Include a key not in allowlist
-        baggage = {
-            "allowed.key": "value1",
-            "not.in.allowlist": "value2"
-        }
+        baggage = {"allowed.key": "value1", "not.in.allowlist": "value2"}
 
         result = filter_incoming_baggage(baggage, config)
         # Should filter out unauthorized key
         assert "allowed.key" in result
         assert "not.in.allowlist" not in result
+
+    def test_filter_incoming_size_limit_reached_line_437(self):
+        """Test filter_incoming_baggage size limit break statement (line 437)."""
+        config = BaggageConfig(
+            enabled=True,
+            mappings=[
+                HeaderMapping("X-Key1", "key1"),
+                HeaderMapping("X-Key2", "key2"),
+                HeaderMapping("X-Key3", "key3"),
+            ],
+            propagate_to_external=False,
+            max_items=32,
+            max_size_bytes=15,  # Small limit: key1=val1 is 10 bytes, key2=val2 would be 20 total
+            log_rejected=False,  # Disable logging to hit the break directly
+            log_sanitization=False,
+        )
+
+        # First key fits (10 bytes), second key would exceed limit
+        baggage = {
+            "key1": "val1",  # 4+4+2 = 10 bytes
+            "key2": "val2",  # Would be 10 more = 20 total, exceeds 15
+            "key3": "val3",  # Should never be processed
+        }
+
+        result = filter_incoming_baggage(baggage, config)
+        # First key should be included
+        assert "key1" in result
+        assert result["key1"] == "val1"
+        # Second and third keys should be rejected due to size limit
+        assert "key2" not in result
+        assert "key3" not in result
+        # Only one key in result
+        assert len(result) == 1
 
     def test_filter_incoming_sanitize_exception_line_430(self):
         """Test filter_incoming_baggage exception handling at line 430."""
@@ -955,7 +992,7 @@ class TestDefensiveErrorPaths:
         baggage = {"data": "value"}
 
         # Mock sanitize_header_value to raise exception
-        with patch('mcpgateway.baggage.sanitize_header_value') as mock_sanitize:
+        with patch("mcpgateway.baggage.sanitize_header_value") as mock_sanitize:
             mock_sanitize.side_effect = Exception("Sanitize error")
             result = filter_incoming_baggage(baggage, config)
             # Should handle exception and skip the key
@@ -967,14 +1004,12 @@ class TestDefensiveErrorPaths:
         baggage = {"key": "value"}
 
         # Mock sanitize_header_value to raise exception
-        with patch('mcpgateway.baggage.sanitize_header_value') as mock_sanitize:
+        with patch("mcpgateway.baggage.sanitize_header_value") as mock_sanitize:
             mock_sanitize.side_effect = Exception("Sanitize error")
             result = sanitize_baggage_for_propagation(baggage)
             # Should handle exception and return empty dict
             assert result == {}
             assert mock_sanitize.called
-
-
 
 
 class TestActualLoggerCalls:
@@ -983,7 +1018,7 @@ class TestActualLoggerCalls:
     def test_parse_baggage_decode_exception_actual_logging(self):
         """Test parse_w3c_baggage_header exception triggers actual logger.debug (line 366)."""
         # Don't mock logger - let actual logging happen
-        with patch('mcpgateway.baggage.unquote', side_effect=Exception("Decode failed")):
+        with patch("mcpgateway.baggage.unquote", side_effect=Exception("Decode failed")):
             result = parse_w3c_baggage_header("key=value")
             # Should handle exception and return empty dict
             assert result == {}
@@ -1001,10 +1036,7 @@ class TestActualLoggerCalls:
         )
 
         # Include a key not in allowlist - don't mock logger
-        baggage = {
-            "allowed.key": "value1",
-            "not.in.allowlist": "value2"
-        }
+        baggage = {"allowed.key": "value1", "not.in.allowlist": "value2"}
 
         result = filter_incoming_baggage(baggage, config)
         # Should filter out unauthorized key and log it
@@ -1026,7 +1058,7 @@ class TestActualLoggerCalls:
         baggage = {"data": "value"}
 
         # Mock sanitize_header_value to raise exception, but don't mock logger
-        with patch('mcpgateway.baggage.sanitize_header_value', side_effect=Exception("Sanitize error")):
+        with patch("mcpgateway.baggage.sanitize_header_value", side_effect=Exception("Sanitize error")):
             result = filter_incoming_baggage(baggage, config)
             # Should handle exception, log it, and skip the key
             assert result == {}

@@ -742,6 +742,7 @@ class OpenTelemetryRequestMiddleware:
         status_code_holder: Dict[str, int] = {}
 
         async def _send_with_span_status(message: Mapping[str, Any]) -> None:
+            """Send ASGI message and update span status based on HTTP response code."""
             if message.get("type") == "http.response.start":
                 status_code = int(message.get("status", 0) or 0)
                 status_code_holder["status"] = status_code
@@ -1165,10 +1166,8 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
                     # Prefix baggage attributes to distinguish from direct attributes
                     attributes.setdefault(f"baggage.{key}", value)
                 logger.debug(f"Injected {len(baggage_dict)} baggage entries as span attributes")
-    except Exception as exc:
-        logger.debug("Failed to inject baggage into span attributes: %s", exc)
-
-        logger.debug("Failed to auto-inject trace context into span: %s", exc)
+    except Exception:
+        logger.warning("Failed to inject baggage into span attributes", exc_info=True)
 
     # Start span and return the context manager
     span_context = _TRACER.start_as_current_span(name)
