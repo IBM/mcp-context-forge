@@ -61,6 +61,7 @@ from mcpgateway.plugins.framework.models import (
     PluginResult,
     PluginViolation,
 )
+from mcpgateway.plugins.framework.hooks.gateway import GatewayHookType, ServerPreRegisterPayload, ServerPreRegisterResult, RuntimePreDeployPayload, RuntimePreDeployResult
 from mcpgateway.plugins.framework.utils import get_attr
 
 # Plugin manager singleton (lazy initialization)
@@ -115,6 +116,7 @@ __all__ = [
     "get_attr",
     "get_hook_registry",
     "get_plugin_manager",
+    "GatewayHookType",
     "GlobalContext",
     "HookRegistry",
     "HttpAuthCheckPermissionPayload",
@@ -154,6 +156,10 @@ __all__ = [
     "ResourcePostFetchResult",
     "ResourcePreFetchPayload",
     "ResourcePreFetchResult",
+    "RuntimePreDeployPayload",
+    "RuntimePreDeployResult",
+    "ServerPreRegisterPayload",
+    "ServerPreRegisterResult",
     "ToolHookType",
     "ToolPostInvokePayload",
     "ToolPostInvokeResult",

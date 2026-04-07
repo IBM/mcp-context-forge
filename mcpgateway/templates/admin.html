@@ -658,6 +658,13 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
+            <a href="#container-scanner" id="tab-container-scanner" data-testid="container-scanner-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('container-scanner')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔒</span>
+              <span x-show="!sidebarCollapsed">Container Scanner</span>
+            </a>
             {% endif %}
           </div>
           {% endif %}
@@ -1653,6 +1660,21 @@
       {% if 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
+      {% endif %}
+
+      {% if is_admin %}
+      <div id="container-scanner-panel" class="tab-panel hidden"
+           hx-get="{{ root_path }}/admin/container-scanner/partial"
+           hx-trigger="revealed once"
+           hx-swap="innerHTML">
+        <div class="flex justify-center items-center py-8">
+          <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          <span class="ml-3 text-gray-600 dark:text-gray-400">Loading container scanner results...</span>
+        </div>
+      </div>
       {% endif %}
 
       <!-- Performance Panel -->
