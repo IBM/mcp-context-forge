@@ -2,6 +2,74 @@
 
 > All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
+## [UNRELEASED] - BREAKING CHANGE
+
+### ⚠️ Breaking Changes
+
+#### **🔌 Plugin Condition Evaluation: Hybrid AND/OR Logic** ([#3930](https://github.com/IBM/mcp-context-forge/issues/3930))
+
+**Action Required**: Plugin condition evaluation has changed from pure OR logic to hybrid AND/OR logic.
+
+**Previous Behavior (OR Logic):**
+- ANY field match in ANY condition triggered plugin execution
+- Example: `tenant_ids: ["healthcare"], tools: ["patient_reader"]` executed if tenant=healthcare **OR** tool=patient_reader
+
+**New Behavior (Hybrid AND/OR Logic):**
+- **Within a condition object:** ALL fields must match (AND logic)
+- **Across condition objects:** ANY object can match (OR logic)
+- Example: `tenant_ids: ["healthcare"], tools: ["patient_reader"]` executes ONLY if tenant=healthcare **AND** tool=patient_reader
+
+**Impact:**
+- Plugins with multiple fields in a single condition object will have different execution behavior
+- Security policies become more precise and restrictive by default
+- Enables defense-in-depth with multiple required conditions
+
+**Migration Steps:**
+
+1. **Audit Configuration**: Run the validation script to identify affected plugins
+   ```bash
+   python scripts/validate_plugin_conditions.py
+   ```
+
+2. **Redesign Conditions**: For each flagged plugin, determine desired behavior:
+   - **AND logic desired**: Keep fields in same object (no YAML changes needed)
+   - **OR logic desired**: Split fields into separate condition objects
+
+3. **Test Thoroughly**: Validate new behavior in non-production environment with debug logging
+   ```bash
+   LOG_LEVEL=DEBUG python -m mcpgateway.main
+   ```
+
+**Example Migration:**
+
+```yaml
+# OLD: Executed if tenant=healthcare OR tool=patient_reader
+conditions:
+  - tenant_ids: ["healthcare"]
+    tools: ["patient_reader"]
+
+# NEW Option 1: AND logic (more secure, no YAML change)
+conditions:
+  - tenant_ids: ["healthcare"]
+    tools: ["patient_reader"]
+# Executes ONLY if tenant=healthcare AND tool=patient_reader
+
+# NEW Option 2: OR logic (split into separate objects)
+conditions:
+  - tenant_ids: ["healthcare"]
+  - tools: ["patient_reader"]
+# Executes if tenant=healthcare OR tool=patient_reader
+```
+
+**Resources:**
+- **Migration Guide**: `docs/docs/architecture/MIGRATION-PLUGIN-CONDITIONS.md`
+- **Validation Script**: `scripts/validate_plugin_conditions.py`
+- **Architecture Docs**: `docs/docs/architecture/plugins.md#plugin-condition-evaluation`
+
+**Rollback**: Keep configuration backups. Restore previous `plugins/config.yaml` if issues arise.
+
+
+
 ## [1.0.0] - 2026-03-31 - General Availability
 
 ### Overview
