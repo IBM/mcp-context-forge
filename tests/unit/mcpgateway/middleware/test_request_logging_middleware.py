@@ -65,6 +65,12 @@ def dummy_call_next():
     return _call_next
 
 
+@pytest.fixture(autouse=True)
+def reset_rust_request_logging_module_state(monkeypatch):
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware._RUST_REQUEST_LOGGING_MODULE", None)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware._RUST_REQUEST_LOGGING_IMPORT_FAILED", False)
+
+
 def make_request(body: bytes = b"{}", headers=None, query_params=None):
     scope: Scope = {
         "type": "http",
@@ -125,16 +131,42 @@ def test_mask_sensitive_data_ignores_empty_normalized_keys():
     assert masked["password"] == "******"
 
 
-def test_mask_sensitive_data_uses_pyo3_module_when_enabled(monkeypatch):
-    rust_module = MagicMock()
-    rust_module.mask_sensitive_data.return_value = {"password": "******", "username": "user"}  # pragma: allowlist secret
+def test_mask_sensitive_data_uses_native_extension_when_enabled(monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_data.return_value = {"password": "******", "username": "user"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
 
-    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=rust_module):
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension):
         masked = mask_sensitive_data({"password": "secret", "username": "user"})  # pragma: allowlist secret
 
     assert masked == {"password": "******", "username": "user"}  # pragma: allowlist secret
-    rust_module.mask_sensitive_data.assert_called_once_with({"password": "secret", "username": "user"}, 10)  # pragma: allowlist secret
+    native_extension.mask_sensitive_data.assert_called_once_with({"password": "secret", "username": "user"}, 10)  # pragma: allowlist secret
+
+
+def test_mask_sensitive_data_falls_back_to_python_when_native_extension_import_fails(monkeypatch, dummy_logger):
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", MagicMock(side_effect=ImportError("boom")))
+
+    masked = mask_sensitive_data({"password": "secret", "username": "user"})  # pragma: allowlist secret
+
+    assert masked == {"password": "******", "username": "user"}  # pragma: allowlist secret
+    assert len(dummy_logger.warnings) == 1
+    assert "falling back to Python masking" in dummy_logger.warnings[0]
+    assert "native extension" in dummy_logger.warnings[0]
+
+
+def test_mask_sensitive_data_caches_failed_native_extension_import(monkeypatch, dummy_logger):
+    import_module = MagicMock(side_effect=ImportError("boom"))
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", import_module)
+
+    first = mask_sensitive_data({"password": "secret"})  # pragma: allowlist secret
+    second = mask_sensitive_data({"password": "secret"})  # pragma: allowlist secret
+
+    assert first == {"password": "******"}  # pragma: allowlist secret
+    assert second == {"password": "******"}  # pragma: allowlist secret
+    assert import_module.call_count == 1
+    assert len(dummy_logger.warnings) == 1
 
 
 # --- mask_jwt_in_cookies tests ---
@@ -196,16 +228,26 @@ def test_mask_sensitive_headers_respects_non_sensitive_suffixes():
     assert masked["X-JWT_Status_Count"] == "7"
 
 
-def test_mask_sensitive_headers_uses_pyo3_module_when_enabled(monkeypatch):
-    rust_module = MagicMock()
-    rust_module.mask_sensitive_headers.return_value = {"Authorization": "******"}
+def test_mask_sensitive_headers_uses_native_extension_when_enabled(monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_headers.return_value = {"Authorization": "******"}
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
 
-    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=rust_module):
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension):
         masked = mask_sensitive_headers({"Authorization": "Bearer abc"})
 
     assert masked == {"Authorization": "******"}
-    rust_module.mask_sensitive_headers.assert_called_once_with({"Authorization": "Bearer abc"})
+    native_extension.mask_sensitive_headers.assert_called_once_with({"Authorization": "Bearer abc"})
+
+
+def test_mask_sensitive_headers_fall_back_to_python_when_native_extension_import_fails(monkeypatch, dummy_logger):
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", MagicMock(side_effect=ImportError("boom")))
+
+    masked = mask_sensitive_headers({"Authorization": "Bearer abc", "X-Trace-Id": "123"})
+
+    assert masked == {"Authorization": "******", "X-Trace-Id": "123"}
+    assert len(dummy_logger.warnings) == 1
 
 
 # --- RequestLoggingMiddleware tests ---
@@ -220,6 +262,23 @@ async def test_dispatch_logs_json_body(dummy_logger, mock_structured_logger, dum
     assert response.status_code == 200
     assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
     assert "******" in dummy_logger.logged[0][1]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_falls_back_to_python_masking_when_native_extension_import_fails(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.importlib.import_module", MagicMock(side_effect=ImportError("boom")))
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
+    body = orjson.dumps({"password": "123", "data": "ok"})
+    request = make_request(body=body, headers={"Authorization": "Bearer abc"})
+
+    response = await middleware.dispatch(request, dummy_call_next)
+
+    assert response.status_code == 200
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+    assert "******" in dummy_logger.logged[0][1]
+    assert any("falling back to Python masking" in warning for warning in dummy_logger.warnings)
 
 
 @pytest.mark.asyncio

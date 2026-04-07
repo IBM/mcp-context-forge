@@ -1,11 +1,11 @@
 [package]
-name = "request_logging_masking_sidecar"
+name = "request_logging_masking_native_extension"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
 [lib]
-name = "request_logging_masking_sidecar"
+name = "request_logging_masking_native_extension"
 crate-type = ["cdylib"]
 
 [dependencies]

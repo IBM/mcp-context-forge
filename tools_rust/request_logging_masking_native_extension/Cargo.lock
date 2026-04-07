@@ -130,7 +130,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "request_logging_masking_sidecar"
+name = "request_logging_masking_native_extension"
 version = "0.1.0"
 dependencies = [
  "pyo3",

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Benchmark the request-logging masking Rust sidecar against the Python path."""
+"""Benchmark the request-logging masking Rust native extension against the Python path."""
 
 # Standard
 from __future__ import annotations
@@ -16,12 +16,12 @@ from mcpgateway.config import settings
 from mcpgateway.middleware.request_logging_middleware import mask_sensitive_data, mask_sensitive_headers
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SIDECAR_MANIFEST = REPO_ROOT / "tools_rust" / "request_logging_masking_sidecar" / "Cargo.toml"
+NATIVE_EXTENSION_MANIFEST = REPO_ROOT / "tools_rust" / "request_logging_masking_native_extension" / "Cargo.toml"
 
 
-def _ensure_sidecar_installed() -> Any:
-    subprocess.run(["uv", "run", "maturin", "develop", "--release", "--manifest-path", str(SIDECAR_MANIFEST)], check=True, cwd=REPO_ROOT)
-    return importlib.import_module("request_logging_masking_sidecar")
+def _ensure_native_extension_installed() -> Any:
+    subprocess.run(["uv", "run", "maturin", "develop", "--release", "--manifest-path", str(NATIVE_EXTENSION_MANIFEST)], check=True, cwd=REPO_ROOT)
+    return importlib.import_module("request_logging_masking_native_extension")
 
 
 def _measure(label: str, fn: Callable[[Any], Any], payload: Any, iterations: int) -> tuple[float, float]:
@@ -46,17 +46,17 @@ def _assert_parity(python_fn: Callable[[Any], Any], rust_fn: Callable[[Any], Any
 
 
 def main() -> None:
-    sidecar = _ensure_sidecar_installed()
+    native_extension = _ensure_native_extension_installed()
     settings.experimental_rust_request_logging_masking_enabled = False
 
     def python_data(payload: Any) -> Any:
         return mask_sensitive_data(payload, 12)
 
     def rust_data(payload: Any) -> Any:
-        return sidecar.mask_sensitive_data(payload, 12)
+        return native_extension.mask_sensitive_data(payload, 12)
 
     python_headers = mask_sensitive_headers
-    rust_headers = sidecar.mask_sensitive_headers
+    rust_headers = native_extension.mask_sensitive_headers
 
     _assert_parity(
         python_data,

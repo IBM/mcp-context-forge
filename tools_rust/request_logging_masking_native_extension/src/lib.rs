@@ -224,7 +224,7 @@ fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResul
 }
 
 #[pymodule]
-fn request_logging_masking_sidecar(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn request_logging_masking_native_extension(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(mask_sensitive_data, module)?)?;
     module.add_function(wrap_pyfunction!(mask_sensitive_headers, module)?)?;
     Ok(())
