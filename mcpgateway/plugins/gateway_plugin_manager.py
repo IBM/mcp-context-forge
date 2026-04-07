@@ -119,6 +119,6 @@ def make_context_id(team_id: str, tool_name: str) -> str:
         tool_name: Tool name (use ``"*"`` for team-wide wildcard lookups).
 
     Returns:
-        ``"<team_id>::<tool_name>"``
+        str: ``"<team_id>CONTEXT_ID_SEPARATOR<tool_name>"``
     """
     return f"{team_id}{CONTEXT_ID_SEPARATOR}{tool_name}"

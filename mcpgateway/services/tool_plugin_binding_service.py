@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import ToolPluginBinding, utc_now
-from mcpgateway.schemas import PLUGIN_ID_TO_NAME, ToolPluginBindingRequest, ToolPluginBindingResponse
+from mcpgateway.schemas import ToolPluginBindingRequest, ToolPluginBindingResponse
 
 logger = logging.getLogger(__name__)
 

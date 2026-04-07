@@ -67,8 +67,7 @@ async def upsert_tool_plugin_bindings(
         ToolPluginBindingListResponse: All created/updated bindings.
 
     Raises:
-        HTTPException 400: If the request payload is invalid.
-        HTTPException 403: If the caller lacks permission.
+        HTTPException: 400 if the request payload is invalid, 403 if the caller lacks permission.
 
     Examples:
         >>> import asyncio
@@ -186,7 +185,7 @@ async def delete_tool_plugin_binding(
         ToolPluginBindingResponse: The deleted binding record.
 
     Raises:
-        HTTPException 404: If no binding with the given ID exists.
+        HTTPException: 404 if no binding with the given ID exists.
 
     Examples:
         >>> import asyncio
