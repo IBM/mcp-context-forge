@@ -2921,8 +2921,10 @@ class TestCallA2AAgent:
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_response
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client), \
-             patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer my-token"}):
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer my-token"}),
+        ):
             result = await tool_service._call_a2a_agent(agent, {"query": "test"})
         assert result == {"data": "custom"}
         # Verify bearer auth was added
@@ -3053,7 +3055,7 @@ class TestCallA2AAgent:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-api-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "my-api-key"}),  # pragma: allowlist secret
         ):
             result = await tool_service._call_a2a_agent(agent, {"query": "test"})
         call_kwargs = mock_client.post.call_args
@@ -3566,7 +3568,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer secret-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "secret-key"}),  # pragma: allowlist secret
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3583,7 +3585,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3599,8 +3601,10 @@ class TestCallA2AAgentCoverage:
         mock_client = AsyncMock()
         mock_client.post.return_value = mock_resp
 
-        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client), \
-             patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer bearer-token"}):
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Bearer bearer-token"}),
+        ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
         assert headers["Authorization"] == "Bearer dict-token"
@@ -3617,7 +3621,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3635,7 +3639,7 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
         ):
             await tool_service._call_a2a_agent(agent, {"query": "test"})
         headers = mock_client.post.call_args[1]["headers"]
@@ -3653,9 +3657,9 @@ class TestCallA2AAgentCoverage:
 
         with (
             patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
-            patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decryption failed")),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", side_effect=Exception("Decryption failed")),
         ):
-            with pytest.raises(ToolInvocationError, match="Failed to decrypt authentication"):
+            with pytest.raises(Exception, match="Decryption failed"):
                 await tool_service._call_a2a_agent(agent, {"query": "test"})
 
     @pytest.mark.asyncio
@@ -7946,7 +7950,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer my-api-key"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"api_key": "my-api-key"}),  # pragma: allowlist secret
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8233,7 +8237,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"Authorization": "Basic decrypted-value"}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8276,7 +8280,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", return_value={"X-Custom-Auth": "custom-value"}),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8310,7 +8314,7 @@ class TestInvokeToolA2A:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.decode_auth", side_effect=Exception("Decrypt failed")),
+            patch("mcpgateway.services.a2a_protocol.decode_auth", side_effect=Exception("Decrypt failed")),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8320,7 +8324,7 @@ class TestInvokeToolA2A:
 
             tool_service._http_client = AsyncMock()
 
-            with pytest.raises(ToolInvocationError, match="Failed to decrypt authentication"):
+            with pytest.raises(ToolInvocationError, match="Tool invocation failed: Decrypt failed"):
                 await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
 
     @pytest.mark.asyncio

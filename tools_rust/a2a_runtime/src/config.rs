@@ -66,7 +66,7 @@ pub struct RuntimeConfig {
     /// When set, the runtime decrypts `auth_headers_encrypted` and
     /// `auth_query_params_encrypted` fields in invoke requests.
     #[arg(long, env = "A2A_RUST_AUTH_SECRET")]
-    pub auth_secret: Option<String>,
+    pub auth_secret: Option<String>,  // pragma: allowlist secret
 
     // --- Backend (Python gateway) --------------------------------------
     /// Base URL of the Python gateway for proxied requests and internal

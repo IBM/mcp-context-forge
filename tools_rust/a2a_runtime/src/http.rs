@@ -111,7 +111,7 @@ pub struct ResolvedRequest {
 /// encrypted fields are present, returns an error.
 pub fn resolve_requests(
     requests: &[InvokeRequestDto],
-    auth_secret: Option<&str>,
+    auth_secret: Option<&str>,  // pragma: allowlist secret
 ) -> Result<Vec<ResolvedRequest>, InvokeError> {
     let mut resolved = Vec::with_capacity(requests.len());
 
@@ -131,7 +131,7 @@ pub fn resolve_requests(
         // Decrypt and merge auth headers.
         let decrypted_headers = match (&req.auth_headers_encrypted, auth_secret) {
             (Some(blob), Some(secret)) => {
-                Some(crate::auth::decrypt_auth(blob, secret).map_err(|e| {
+                Some(crate::auth::decrypt_auth(blob, secret).map_err(|e| {  // pragma: allowlist secret
                     InvokeError::Auth(format!("auth header decryption failed: {e}"))
                 })?)
             }
@@ -141,7 +141,7 @@ pub fn resolve_requests(
         // Decrypt and merge auth query params.
         let decrypted_params = match (&req.auth_query_params_encrypted, auth_secret) {
             (Some(map), Some(secret)) => {
-                Some(crate::auth::decrypt_map_values(map, secret).map_err(|e| {
+                Some(crate::auth::decrypt_map_values(map, secret).map_err(|e| {  // pragma: allowlist secret
                     InvokeError::Auth(format!("auth query param decryption failed: {e}"))
                 })?)
             }
@@ -151,7 +151,7 @@ pub fn resolve_requests(
         // Apply auth to URL and headers.
         if decrypted_headers.is_some() || decrypted_params.is_some() {
             let params = decrypted_params.unwrap_or_default();
-            endpoint_url = crate::auth::apply_invoke_auth(
+            endpoint_url = crate::auth::apply_invoke_auth(  // pragma: allowlist secret
                 &endpoint_url,
                 &params,
                 &mut headers,

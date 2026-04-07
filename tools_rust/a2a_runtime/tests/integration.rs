@@ -8,6 +8,8 @@
 //! Uses `tower::ServiceExt::oneshot` to drive the Axum app in-memory
 //! and `wiremock` to mock the downstream agent endpoint.
 
+mod test_helpers;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use contextforge_a2a_runtime::config::RuntimeConfig;
@@ -16,6 +18,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+use test_helpers::*;
 
 /// Build a test-ready Axum app with the given config.
 fn test_app(config: RuntimeConfig) -> axum::Router {
@@ -344,7 +347,7 @@ async fn test_invoke_with_encrypted_auth_rejects_when_no_secret() {
     // deny_unknown_fields deserialization rejects.  This validates that
     // unexpected auth-related fields do not silently pass through.
     let mut config = default_test_config();
-    config.auth_secret = None;
+    config.auth_secret = None;   // pragma: allowlist secret
     let app = test_app(config);
 
     let (status, body) = post_json(
@@ -539,11 +542,27 @@ async fn test_health_includes_runtime_name() {
 
 use wiremock::matchers::path_regex;
 
-/// Initialize the global queue exactly once for tests that exercise the
+/// Ensures the global work queue is initialized exactly once.
+///
+/// Required before calling any test that exercises the
 /// `/a2a/{agent_name}/invoke` handler (which submits work via the queue).
 ///
-/// Uses `std::sync::Once` because `queue::init_queue` writes to a
-/// `OnceLock` and panics on double-init.
+/// # Implementation Note
+///
+/// Uses `std::sync::Once` because `queue::init_queue` writes to a static
+/// `OnceLock<WorkQueue>` and panics on double-initialization. The `Once`
+/// guard ensures thread-safe, single initialization across all test runs
+/// in the same process.
+///
+/// This pattern is necessary because:
+/// - The work queue is a global singleton accessed via `queue::submit_work()`
+/// - Multiple tests may run concurrently and attempt initialization
+/// - Rust's test harness runs tests in the same process by default
+/// - The `OnceLock` constraint prevents re-initialization after the first call
+///
+/// Alternative approaches (e.g., test fixtures with `#[ctor]`) were considered
+/// but rejected to avoid additional dependencies and maintain explicit control
+/// over initialization timing.
 fn ensure_queue_initialized() {
     use contextforge_a2a_runtime::queue;
     use std::sync::{Arc, Once};
@@ -599,56 +618,8 @@ async fn test_a2a_invoke_full_trust_chain() {
     ensure_queue_initialized();
     let mock_server = MockServer::start().await;
 
-    // 1. authenticate → 200 with auth context
-    Mock::given(method("POST"))
-        .and(path("/_internal/a2a/authenticate"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "authContext": {
-                "email": "user@example.com",
-                "is_admin": false,
-                "teams": ["team1"]
-            }
-        })))
-        .expect(1)
-        .mount(&mock_server)
-        .await;
-
-    // 2. invoke/authz → 204
-    Mock::given(method("POST"))
-        .and(path_regex(".*invoke/authz$"))
-        .respond_with(ResponseTemplate::new(204))
-        .expect(1)
-        .mount(&mock_server)
-        .await;
-
-    // 3. agents/test-agent/resolve → 200 with ResolvedAgent pointing to
-    //    the mock agent endpoint (served by the same wiremock instance on
-    //    a distinct path).
-    let agent_path = "/mock-agent-endpoint";
-    Mock::given(method("POST"))
-        .and(path_regex(".*/agents/test-agent/resolve$"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(resolved_agent_json(&format!(
-                "{}{}",
-                mock_server.uri(),
-                agent_path
-            ))),
-        )
-        .expect(1)
-        .mount(&mock_server)
-        .await;
-
-    // 4. Mock agent endpoint → 200 with JSON result
-    Mock::given(method("POST"))
-        .and(path(agent_path))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {"status": "completed", "message": "Hello from agent"}
-        })))
-        .expect(1)
-        .mount(&mock_server)
-        .await;
+    // Setup full trust chain using helper function
+    setup_full_trust_chain_mocks(&mock_server, "test-agent", "Hello from agent").await;
 
     let mut config = default_test_config();
     config.backend_base_url = mock_server.uri();
@@ -658,12 +629,7 @@ async fn test_a2a_invoke_full_trust_chain() {
     let (status, body) = post_json(
         app,
         "/a2a/test-agent/invoke",
-        json!({
-            "jsonrpc": "2.0",
-            "method": "SendMessage",
-            "id": 1,
-            "params": {"message": "hello"}
-        }),
+        send_message_json(1, "hello"),
     )
     .await;
 
@@ -2021,12 +1987,7 @@ async fn test_streaming_method_falls_back_to_json_when_agent_returns_json() {
     let (status, body) = post_json(
         app,
         "/a2a/test-agent/invoke",
-        json!({
-            "jsonrpc": "2.0",
-            "method": "SendStreamingMessage",
-            "id": 1,
-            "params": {"message": {"role": "ROLE_USER", "parts": [{"text": "hello"}]}}
-        }),
+        streaming_message_json(1, "hello", "ROLE_USER"),
     )
     .await;
 
@@ -2353,12 +2314,7 @@ async fn test_streaming_method_handles_agent_error() {
     let (status, body) = post_json(
         app,
         "/a2a/test-agent/invoke",
-        json!({
-            "jsonrpc": "2.0",
-            "method": "SendStreamingMessage",
-            "id": 1,
-            "params": {"message": {"role": "ROLE_USER", "parts": [{"text": "hello"}]}}
-        }),
+        streaming_message_json(1, "hello", "ROLE_USER"),
     )
     .await;
 
@@ -2445,12 +2401,7 @@ async fn test_streaming_method_handles_agent_timeout() {
     let (status, body) = post_json(
         app,
         "/a2a/test-agent/invoke",
-        json!({
-            "jsonrpc": "2.0",
-            "method": "SendStreamingMessage",
-            "id": 1,
-            "params": {"message": {"role": "ROLE_USER", "parts": [{"text": "hello"}]}}
-        }),
+        streaming_message_json(1, "hello", "ROLE_USER"),
     )
     .await;
 
@@ -2693,12 +2644,7 @@ async fn test_streaming_method_with_last_event_id_without_redis() {
         .header("content-type", "application/json")
         .header("last-event-id", "evt-001")
         .body(Body::from(
-            serde_json::to_vec(&json!({
-                "jsonrpc": "2.0",
-                "method": "SendStreamingMessage",
-                "id": 1,
-                "params": {"message": {"role": "ROLE_USER", "parts": [{"text": "hello"}]}}
-            }))
+            serde_json::to_vec(&streaming_message_json(1, "hello", "ROLE_USER"))
             .unwrap(),
         ))
         .unwrap();

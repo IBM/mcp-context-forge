@@ -1258,6 +1258,8 @@ class Permissions:
     TOOLS_EXECUTE = "tools.execute"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
+    TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
+
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
     RESOURCES_READ = "resources.read"

@@ -25,6 +25,7 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 const RUNTIME_NAME: &str = "contextforge-a2a-runtime";
+const CONTENT_TYPE_SSE: &str = "text/event-stream";
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -565,7 +566,8 @@ async fn handle_a2a_invoke(
                     mgr.extend(sid).await;
                     (record.auth_context, Some(sid.clone()))
                 } else {
-                    // Fingerprint mismatch — re-authenticate and create a new session.
+                    // Fingerprint mismatch — invalidate old session and create a new one.
+                    mgr.invalidate(sid).await;
                     let ctx = full_authenticate(&state, &request_headers, &agent_name).await?;
                     let new_sid = create_session(&state, &ctx, &request_headers).await;
                     (ctx, new_sid)
@@ -895,7 +897,7 @@ async fn handle_streaming_method(
         .unwrap_or("")
         .to_lowercase();
 
-    if content_type.contains("text/event-stream") {
+if content_type.contains(CONTENT_TYPE_SSE) {
         // Agent supports streaming — forward as SSE.
         let task_id = extract_task_id(body);
         info!(
@@ -949,32 +951,39 @@ fn extract_task_id(body: &Value) -> String {
 /// Supported formats:
 /// - `{task_id}:{sequence}` — task ID and sequence directly in the header
 /// - `{event_id}:{sequence}` — event ID with sequence (task_id from body)
+/// - `{sequence}` — numeric sequence only (task_id extracted from body)
 ///
-/// Falls back to extracting the task_id from the body params if the header
-/// contains only a numeric sequence.
+/// Returns `None` if the header cannot be parsed or if the task_id cannot be
+/// extracted from the body when needed.
 fn parse_last_event_id(header: &str, body: &Value) -> Option<(String, i64)> {
-    if let Some(pos) = header.rfind(':') {
-        let left = &header[..pos];
-        let right = &header[pos + 1..];
-        if let Ok(seq) = right.parse::<i64>() {
-            // If left looks like a task_id (not empty), use it.
-            if !left.is_empty() {
-                return Some((left.to_string(), seq));
+    // Try parsing as "{task_id}:{sequence}" format
+    match header.rfind(':') {
+        Some(pos) => {
+            let task_id_part = &header[..pos];
+            let sequence_part = &header[pos + 1..];
+
+            match (task_id_part.is_empty(), sequence_part.parse::<i64>()) {
+                // Non-empty task_id with valid sequence
+                (false, Ok(seq)) => return Some((task_id_part.to_string(), seq)),
+                // Empty task_id or invalid sequence — fall through to next attempt
+                _ => {}
             }
         }
+        None => {}
     }
 
-    // Try parsing the whole value as a sequence, using task_id from body.
-    if let Ok(seq) = header.parse::<i64>() {
-        let task_id = body
-            .get("params")
-            .and_then(|p| p.get("id"))
-            .and_then(|id| id.as_str())
-            .map(String::from)?;
-        return Some((task_id, seq));
+    // Try parsing entire header as a numeric sequence, extract task_id from body
+    match header.parse::<i64>() {
+        Ok(seq) => {
+            let task_id = body
+                .get("params")
+                .and_then(|p| p.get("id"))
+                .and_then(|id| id.as_str())
+                .map(String::from)?;
+            Some((task_id, seq))
+        }
+        Err(_) => None,
     }
-
-    None
 }
 
 // ---------------------------------------------------------------------------

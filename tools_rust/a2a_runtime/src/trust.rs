@@ -24,7 +24,7 @@ const AUTH_CONTEXT_DERIVATION: &str = "contextforge-internal-mcp-runtime-v1";
 /// Compute the HMAC trust header value from the auth secret.
 ///
 /// Format: `SHA256("{secret}:{AUTH_CONTEXT_DERIVATION}").hex()`
-pub fn compute_trust_header(auth_secret: &str) -> String {
+pub fn compute_trust_header(auth_secret: &str) -> String {  // pragma: allowlist secret
     let material = format!("{auth_secret}:{AUTH_CONTEXT_DERIVATION}");
     let digest = Sha256::digest(material.as_bytes());
     digest.iter().fold(String::with_capacity(64), |mut s, b| {
@@ -35,7 +35,7 @@ pub fn compute_trust_header(auth_secret: &str) -> String {
 }
 
 /// Build the standard trust headers for Rust → Python internal requests.
-pub fn build_trust_headers(auth_secret: &str) -> HashMap<String, String> {
+pub fn build_trust_headers(auth_secret: &str) -> HashMap<String, String> {  // pragma: allowlist secret
     let mut headers = HashMap::new();
     headers.insert(RUNTIME_HEADER.to_string(), "rust".to_string());
     headers.insert(
@@ -98,7 +98,7 @@ pub enum TrustError {
 pub async fn authenticate(
     client: &Client,
     backend_base_url: &str,
-    auth_secret: &str,
+    auth_secret: &str,  // pragma: allowlist secret
     request: &AuthenticateRequest,
 ) -> Result<serde_json::Value, TrustError> {
     let url = format!(
@@ -137,7 +137,7 @@ pub async fn authenticate(
 pub async fn authorize(
     client: &Client,
     backend_base_url: &str,
-    auth_secret: &str,
+    auth_secret: &str,  // pragma: allowlist secret
     auth_context: &serde_json::Value,
     action: &str,
 ) -> Result<(), TrustError> {

@@ -10,10 +10,15 @@ Helpers for preparing outbound A2A requests across protocol versions.
 from __future__ import annotations
 
 # Standard
+import binascii
 from dataclasses import dataclass
 import logging
 from typing import Any, Dict, Mapping, Optional
 import uuid
+
+# Third-Party
+from cryptography.exceptions import InvalidTag
+import orjson
 
 # First-Party
 from mcpgateway.utils.services_auth import decode_auth
@@ -347,14 +352,36 @@ def prepare_a2a_invocation(
     if auth_type in {"basic", "bearer", "authheaders", "api_key"} and auth_value:
         if isinstance(auth_value, str):
             if auth_type == "api_key":
-                headers.setdefault("Authorization", f"Bearer {auth_value}")
+                # For api_key, try to decode from base64 first, but fall back to using raw value
+                try:
+                    decoded = decode_auth(auth_value)
+                    if isinstance(decoded, Mapping):
+                        # Extract the actual key value from the decoded dict
+                        api_key = next(iter(decoded.values())) if decoded else auth_value
+                        headers.setdefault("Authorization", f"Bearer {api_key}")
+                    else:
+                        # Fallback if decode returns a string directly
+                        headers.setdefault("Authorization", f"Bearer {decoded}")
+                except (InvalidTag, binascii.Error, orjson.JSONDecodeError, IndexError, ValueError):
+                    # If decoding fails (corrupted data, wrong key, invalid encoding, truncated input,
+                    # or invalid nonce/cipher parameters), use the raw value as the API key
+                    #
+                    # TODO:  Is this a logic failure?  Perhaps the gateway should
+                    # ensure all API Key style auths are encoded -- or vice versa
+                    #
+                    headers.setdefault("Authorization", f"Bearer {auth_value}")
             else:
                 decoded = decode_auth(auth_value)
                 if not isinstance(decoded, Mapping):
                     raise ValueError("Decoded A2A authentication payload must be a mapping")
                 headers.update({str(key): str(value) for key, value in decoded.items()})
         elif isinstance(auth_value, Mapping):
-            headers.update({str(key): str(value) for key, value in auth_value.items()})
+            if auth_type == "api_key":
+                # Extract the actual key value from the mapping
+                api_key = next(iter(auth_value.values()), "") if auth_value else ""
+                headers.setdefault("Authorization", f"Bearer {api_key}")
+            else:
+                headers.update({str(key): str(value) for key, value in auth_value.items()})
 
     auth_query_params_decrypted: Dict[str, str] = {}
     target_endpoint_url = endpoint_url

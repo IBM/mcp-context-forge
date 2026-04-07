@@ -285,7 +285,7 @@ pub fn spawn_flush_task(
 async fn flush_batch(
     client: &Client,
     backend_base_url: &str,
-    auth_secret: &str,
+    auth_secret: &str,  // pragma: allowlist secret
     buffer: &mut Vec<FlushEntry>,
 ) {
     let url = format!(

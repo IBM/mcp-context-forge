@@ -25,7 +25,6 @@ from mcpgateway.services.a2a_protocol import (
     prepare_a2a_invocation,
 )
 
-
 # ── is_v1_a2a_protocol ──────────────────────────────────────────────────────
 
 
@@ -552,7 +551,7 @@ def test_prepare_a2a_invocation_skips_query_param_decrypt_failures(monkeypatch):
         parameters={"query": "hello"},
         interaction_type="query",
         auth_type="query_param",
-        auth_query_params={"api_key": "bad"},
+        auth_query_params={"api_key": "bad"},  # pragma: allowlist secret
     )
 
     assert prepared.endpoint_url == "https://example.com/"
@@ -640,8 +639,8 @@ def test_prepare_a2a_invocation_rejects_non_mapping_decoded_auth(monkeypatch):
 
 def test_prepare_a2a_invocation_query_param_auth_applies(monkeypatch):
     """Successful query param auth decryption applies params to URL."""
-    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: {"api_key": "real-key"})
-    monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=real-key")
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: {"api_key": "real-key"})  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=real-key")  # pragma: allowlist secret
 
     prepared = prepare_a2a_invocation(
         agent_type="generic",
@@ -650,7 +649,7 @@ def test_prepare_a2a_invocation_query_param_auth_applies(monkeypatch):
         parameters={"query": "hi"},
         interaction_type="query",
         auth_type="query_param",
-        auth_query_params={"api_key": "encrypted"},
+        auth_query_params={"api_key": "encrypted"},  # pragma: allowlist secret
     )
 
     assert "api_key=real-key" in prepared.endpoint_url
@@ -778,8 +777,8 @@ def test_prepare_a2a_invocation_v_prefixed_protocol_uses_v1_format():
 
 def test_prepare_a2a_invocation_preserves_encrypted_auth_fields(monkeypatch):
     """Query-param auth preserves encrypted blobs and sets base_endpoint_url."""
-    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: {"api_key": "decrypted-key"})
-    monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=decrypted-key")
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _val: {"api_key": "decrypted-key"})  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, params: url + "?api_key=decrypted-key")  # pragma: allowlist secret
 
     prepared = prepare_a2a_invocation(
         agent_type="generic",
@@ -788,10 +787,10 @@ def test_prepare_a2a_invocation_preserves_encrypted_auth_fields(monkeypatch):
         parameters={"query": "hello"},
         interaction_type="query",
         auth_type="query_param",
-        auth_query_params={"api_key": "encrypted_blob"},
+        auth_query_params={"api_key": "encrypted_blob"},  # pragma: allowlist secret
     )
 
-    assert prepared.auth_query_params_encrypted == {"api_key": "encrypted_blob"}
+    assert prepared.auth_query_params_encrypted == {"api_key": "encrypted_blob"}  # pragma: allowlist secret
     assert prepared.base_endpoint_url == "https://example.com/"
 
 

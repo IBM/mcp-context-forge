@@ -228,7 +228,7 @@ class TestRustA2ARuntimeClient:
             uses_jsonrpc=True,
             base_endpoint_url="https://agent.test/",
             auth_value_encrypted="enc-bearer-blob",
-            auth_query_params_encrypted={"api_key": "enc-qp-blob"},
+            auth_query_params_encrypted={"api_key": "enc-qp-blob"},  # pragma: allowlist secret
         )
 
         mock_response = MagicMock()
@@ -245,7 +245,7 @@ class TestRustA2ARuntimeClient:
         call_kwargs = mock_client.post.call_args
         payload = call_kwargs.kwargs["json"]
         assert payload["auth_headers_encrypted"] == "enc-bearer-blob"
-        assert payload["auth_query_params_encrypted"] == {"api_key": "enc-qp-blob"}
+        assert payload["auth_query_params_encrypted"] == {"api_key": "enc-qp-blob"}  # pragma: allowlist secret
 
     @pytest.mark.asyncio
     async def test_invoke_uses_base_endpoint_url_when_available(self):

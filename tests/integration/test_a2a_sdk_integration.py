@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Integration tests for A2A agent support using an in-memory ASGI fixture.
 

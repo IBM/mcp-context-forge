@@ -19,7 +19,7 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use contextforge_a2a_runtime::auth::{decrypt_auth, decrypt_map_values};
+use contextforge_a2a_runtime::auth::{decrypt_auth, decrypt_map_values};  // pragma: allowlist secret
 use contextforge_a2a_runtime::config::RuntimeConfig;
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ fn default_bench_config() -> RuntimeConfig {
 }
 
 /// Encrypt helper replicating the `#[cfg(test)]` function from `auth.rs`.
-fn encrypt_auth(payload: &HashMap<String, String>, secret: &str) -> String {
+fn encrypt_auth(payload: &HashMap<String, String>, secret: &str) -> String {  // pragma: allowlist secret
     let plaintext = serde_json::to_vec(payload).unwrap();
     let key: [u8; 32] = Sha256::digest(secret.as_bytes()).into();
     let cipher = Aes256Gcm::new(&key.into());
@@ -136,7 +136,7 @@ fn bench_invoke_overhead(c: &mut Criterion) {
 }
 
 fn bench_auth_decrypt(c: &mut Criterion) {
-    let secret = "bench-secret-key-2026";
+    let secret = "bench-secret-key-2026";  // pragma: allowlist secret
 
     // Pre-build a single encrypted blob.
     let mut payload = HashMap::new();

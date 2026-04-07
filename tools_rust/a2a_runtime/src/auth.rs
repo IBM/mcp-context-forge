@@ -40,14 +40,14 @@ pub enum AuthError {
 // ---------------------------------------------------------------------------
 
 /// Derive a 256-bit AES key from the raw bytes of `secret`.
-fn derive_key(secret: &str) -> [u8; 32] {
+fn derive_key(secret: &str) -> [u8; 32] {  // pragma: allowlist secret
     let mut hasher = Sha256::new();
     hasher.update(secret.as_bytes());
     hasher.finalize().into()
 }
 
 /// Build an `Aes256Gcm` cipher from a secret string.
-fn cipher_for(secret: &str) -> Aes256Gcm {
+fn cipher_for(secret: &str) -> Aes256Gcm {  // pragma: allowlist secret
     Aes256Gcm::new(&derive_key(secret).into())
 }
 
@@ -66,7 +66,7 @@ fn cipher_for(secret: &str) -> Aes256Gcm {
 /// Returns the parsed JSON payload as a `HashMap<String, String>`.
 pub fn decrypt_auth(
     ciphertext_b64: &str,
-    secret: &str,
+    secret: &str,  // pragma: allowlist secret
 ) -> Result<HashMap<String, String>, AuthError> {
     let combined = URL_SAFE_NO_PAD
         .decode(ciphertext_b64)
@@ -95,7 +95,7 @@ pub fn decrypt_auth(
 /// `param_name` is extracted into the result.
 pub fn decrypt_map_values(
     map: &HashMap<String, String>,
-    secret: &str,
+    secret: &str,  // pragma: allowlist secret
 ) -> Result<HashMap<String, String>, AuthError> {
     let mut result = HashMap::with_capacity(map.len());
     for (param_name, encrypted_blob) in map {
@@ -119,7 +119,7 @@ pub fn apply_invoke_auth(
     endpoint_url: &str,
     query_params: &HashMap<String, String>,
     headers: &mut HashMap<String, String>,
-    header_auth: Option<&HashMap<String, String>>,
+    header_auth: Option<&HashMap<String, String>>,  // pragma: allowlist secret
 ) -> Result<String, AuthError> {
     let mut url = Url::parse(endpoint_url).map_err(|e| AuthError::InvalidUrl(e.to_string()))?;
 
@@ -161,7 +161,7 @@ mod tests {
     use aes_gcm::aead::OsRng;
 
     /// Test-only encrypt helper that mirrors the Python `encode_auth`.
-    fn encrypt_auth(payload: &HashMap<String, String>, secret: &str) -> String {
+    fn encrypt_auth(payload: &HashMap<String, String>, secret: &str) -> String {  // pragma: allowlist secret
         let plaintext = serde_json::to_vec(payload).unwrap();
         let cipher = cipher_for(secret);
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn round_trip_encrypt_decrypt() {
-        let secret = "test-secret-42";
+        let secret = "test-secret-42";  // pragma: allowlist secret
         let mut payload = HashMap::new();
         payload.insert("user".to_string(), "alice".to_string());
         payload.insert("token".to_string(), "abc123".to_string());
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn decrypt_map_values_extracts_matching_keys() {
-        let secret = "map-secret";
+        let secret = "map-secret";  // pragma: allowlist secret
 
         // Each map value is an independently encrypted blob whose plaintext
         // JSON contains the key matching the map key.
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn decrypt_map_values_skips_missing_key() {
-        let secret = "skip-secret";
+        let secret = "skip-secret";  // pragma: allowlist secret
 
         // Payload does NOT contain the map key "missing_param".
         let mut payload = HashMap::new();
