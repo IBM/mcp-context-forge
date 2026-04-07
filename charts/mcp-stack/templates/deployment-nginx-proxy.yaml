@@ -41,7 +41,11 @@ spec:
           imagePullPolicy: {{ .Values.nginxProxy.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 80
+              containerPort: {{ .Values.nginxProxy.containerPort | default 80 }}
+            {{- if .Values.nginxProxy.tls.enabled }}
+            - name: https
+              containerPort: {{ .Values.nginxProxy.tls.containerPort | default 8443 }}
+            {{- end }}
 
           {{- with .Values.nginxProxy.probes.readiness }}
           readinessProbe:
@@ -62,6 +66,11 @@ spec:
               subPath: nginx.conf
             - name: nginx-cache
               mountPath: /var/cache/nginx
+            {{- if .Values.nginxProxy.tls.enabled }}
+            - name: nginx-tls
+              mountPath: /etc/nginx/tls
+              readOnly: true
+            {{- end }}
 
       volumes:
         - name: nginx-config
@@ -74,4 +83,9 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.nginxProxy.tls.enabled }}
+        - name: nginx-tls
+          secret:
+            secretName: {{ include "mcp-stack.fullname" . }}-nginx-tls
+        {{- end }}
 {{- end }}
