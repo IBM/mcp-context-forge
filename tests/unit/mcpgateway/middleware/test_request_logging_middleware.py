@@ -125,7 +125,7 @@ def test_mask_sensitive_data_ignores_empty_normalized_keys():
     assert masked["password"] == "******"
 
 
-def test_mask_sensitive_data_uses_rust_sidecar_when_enabled(monkeypatch):
+def test_mask_sensitive_data_uses_pyo3_module_when_enabled(monkeypatch):
     rust_module = MagicMock()
     rust_module.mask_sensitive_data.return_value = {"password": "******", "username": "user"}  # pragma: allowlist secret
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
@@ -135,14 +135,6 @@ def test_mask_sensitive_data_uses_rust_sidecar_when_enabled(monkeypatch):
 
     assert masked == {"password": "******", "username": "user"}  # pragma: allowlist secret
     rust_module.mask_sensitive_data.assert_called_once_with({"password": "secret", "username": "user"}, 10)  # pragma: allowlist secret
-
-
-def test_mask_sensitive_headers_missing_sidecar_is_hard_failure_when_enabled(monkeypatch):
-    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
-
-    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", side_effect=ModuleNotFoundError("missing sidecar")):
-        with pytest.raises(ModuleNotFoundError, match="missing sidecar"):
-            mask_sensitive_headers({"Authorization": "Bearer abc"})
 
 
 # --- mask_jwt_in_cookies tests ---
@@ -202,6 +194,18 @@ def test_mask_sensitive_headers_respects_non_sensitive_suffixes():
     masked = mask_sensitive_headers(headers)
     assert masked["X-Auth-Count"] == "5"
     assert masked["X-JWT_Status_Count"] == "7"
+
+
+def test_mask_sensitive_headers_uses_pyo3_module_when_enabled(monkeypatch):
+    rust_module = MagicMock()
+    rust_module.mask_sensitive_headers.return_value = {"Authorization": "******"}
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=rust_module):
+        masked = mask_sensitive_headers({"Authorization": "Bearer abc"})
+
+    assert masked == {"Authorization": "******"}
+    rust_module.mask_sensitive_headers.assert_called_once_with({"Authorization": "Bearer abc"})
 
 
 # --- RequestLoggingMiddleware tests ---
