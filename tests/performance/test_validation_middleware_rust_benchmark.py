@@ -99,9 +99,7 @@ def _build_python_parameter_runner(max_param_length: int, dangerous_patterns: li
 
     def _run(query_params: dict[str, str]) -> None:
         request = _QueryRequest(query_params)
-        middleware._validate_parameters(
-            [("id", "123"), *list(request.query_params.items())]
-        )
+        middleware._validate_parameters([("id", "123"), *list(request.query_params.items())])
 
     return _run
 
@@ -116,9 +114,7 @@ def _build_rust_parameter_runner(max_param_length: int, dangerous_patterns: list
 
     def _run(query_params: dict[str, str]) -> None:
         request = _QueryRequest(query_params)
-        middleware._validate_parameters(
-            [("id", "123"), *list(request.query_params.items())]
-        )
+        middleware._validate_parameters([("id", "123"), *list(request.query_params.items())])
 
     return _run
 
@@ -400,6 +396,16 @@ async def main() -> None:
     )
     print(f"python_avg_median={python_sanitize_median:.3f}ms rust_avg_median={rust_sanitize_median:.3f}ms")
     print(f"speedup={python_sanitize_median / rust_sanitize_median:.2f}x")
+
+    print("\nresponse_sanitization_safe (1000 iterations)")
+    python_sanitize_safe_median, rust_sanitize_safe_median = await _measure_pair(
+        python_sanitize_fn,
+        rust_sanitize_fn,
+        b"plain-ascii-response-body-" * 256,
+        1000,
+    )
+    print(f"python_avg_median={python_sanitize_safe_median:.3f}ms rust_avg_median={rust_sanitize_safe_median:.3f}ms")
+    print(f"speedup={python_sanitize_safe_median / rust_sanitize_safe_median:.2f}x")
 
     for name, payload, iterations in scenarios:
         body = orjson.dumps(payload)

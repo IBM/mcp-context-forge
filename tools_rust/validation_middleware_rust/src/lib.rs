@@ -802,6 +802,12 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_response_body_keeps_safe_ascii_unchanged() {
+        let sanitized = sanitize_response_body_bytes(b"plain-ascii-response-body");
+        assert_eq!(sanitized, b"plain-ascii-response-body");
+    }
+
+    #[test]
     fn validate_request_checks_parameters_before_json_body() {
         let validator = CompiledValidator {
             max_param_length: 32,
