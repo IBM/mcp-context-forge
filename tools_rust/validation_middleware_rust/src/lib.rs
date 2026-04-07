@@ -1,6 +1,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use regex::Regex;
+use serde::Deserialize;
+use serde_json::Value;
 
 const MAX_JSON_DEPTH: usize = 1024;
 
@@ -53,6 +55,72 @@ fn validate_string(value: &str, validator: &CompiledValidator) -> Option<Validat
     }
 
     None
+}
+
+fn parse_json(raw_body: &[u8]) -> PyResult<Value> {
+    let mut deserializer = serde_json::Deserializer::from_slice(raw_body);
+    deserializer.disable_recursion_limit();
+    let deserializer = serde_stacker::Deserializer::new(&mut deserializer);
+    Value::deserialize(deserializer).map_err(|error| {
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Request body contains invalid JSON: {error}"
+        ))
+    })
+}
+
+fn walk_json_value(
+    root: &Value,
+    validator: &CompiledValidator,
+) -> PyResult<Option<(String, String)>> {
+    let mut stack = vec![(root, 0usize)];
+
+    while let Some((value, depth)) = stack.pop() {
+        if depth > MAX_JSON_DEPTH {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "JSON payload exceeds maximum supported nesting depth",
+            ));
+        }
+
+        match value {
+            Value::Object(map) => {
+                for (key, child) in map.iter().rev() {
+                    match child {
+                        Value::String(value_string) => {
+                            if let Some(result) = validate_string(value_string, validator) {
+                                let error_type = match result {
+                                    ValidationFailure::MaxLength => "max_length",
+                                    ValidationFailure::DangerousPattern => "dangerous_pattern",
+                                };
+                                return Ok(Some((key.clone(), error_type.to_owned())));
+                            }
+                        }
+                        Value::Object(_) | Value::Array(_) => stack.push((child, depth + 1)),
+                        _ => {}
+                    }
+                }
+            }
+            Value::Array(items) => {
+                for child in items.iter().rev() {
+                    match child {
+                        Value::String(value_string) => {
+                            if let Some(result) = validate_string(value_string, validator) {
+                                let error_type = match result {
+                                    ValidationFailure::MaxLength => "max_length",
+                                    ValidationFailure::DangerousPattern => "dangerous_pattern",
+                                };
+                                return Ok(Some(("list_item".to_owned(), error_type.to_owned())));
+                            }
+                        }
+                        Value::Object(_) | Value::Array(_) => stack.push((child, depth + 1)),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(None)
 }
 
 fn walk_json_like(
@@ -118,6 +186,11 @@ impl CompiledValidator {
 
     fn validate_json_data(&self, data: &Bound<'_, PyAny>) -> PyResult<Option<(String, String)>> {
         walk_json_like(data.py(), data, self)
+    }
+
+    fn validate_json_bytes(&self, raw_body: &[u8]) -> PyResult<Option<(String, String)>> {
+        let value = parse_json(raw_body)?;
+        walk_json_value(&value, self)
     }
 }
 
@@ -207,5 +280,34 @@ mod tests {
                 Some(("list_item".to_owned(), "dangerous_pattern".to_owned()))
             );
         });
+    }
+
+    #[test]
+    fn validate_json_bytes_rejects_dangerous_strings() {
+        let validator = CompiledValidator {
+            max_param_length: 32,
+            dangerous_pattern: Some(Regex::new("<script").unwrap()),
+        };
+
+        let result = validator
+            .validate_json_bytes(br#"{"name":"<script>"}"#)
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(("name".to_owned(), "dangerous_pattern".to_owned()))
+        );
+    }
+
+    #[test]
+    fn validate_json_bytes_uses_character_count_not_utf8_bytes() {
+        let validator = CompiledValidator {
+            max_param_length: 1,
+            dangerous_pattern: None,
+        };
+
+        let result = validator
+            .validate_json_bytes(b"{\"name\":\"\xC3\xA9\"}")
+            .unwrap();
+        assert!(result.is_none());
     }
 }

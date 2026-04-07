@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Benchmark the validation middleware Rust extension against the Python path.
 
-This benchmark exercises `ValidationMiddleware._validate_json_data()` for both paths so the
-measurements include the Python wrapper work around the extension call.
+This benchmark exercises the request-validation path for JSON bodies so the measurements match the
+historical UDS sidecar benchmark shape from PR discussion.
 """
 
 # Standard
@@ -14,10 +14,11 @@ import statistics
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 # Third-Party
 from fastapi import HTTPException
+import orjson
 
 # First-Party
 from mcpgateway.config import settings
@@ -25,6 +26,24 @@ from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUST_VALIDATION_MANIFEST = REPO_ROOT / "tools_rust" / "validation_middleware_rust" / "Cargo.toml"
+UDS_TARGET_MEDIANS_MS = {
+    "nested_safe": 0.153,
+    "deep_nested": 0.806,
+    "dangerous_string": 0.327,
+}
+
+
+class _JSONBodyRequest:
+    """Minimal request stub for benchmarking the middleware request path."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self.path_params = {}
+        self.query_params = {}
+        self.headers = {"content-type": "application/json"}
+
+    async def body(self) -> bytes:
+        return self._body
 
 
 def _ensure_rust_extension_installed() -> Any:
@@ -32,7 +51,7 @@ def _ensure_rust_extension_installed() -> Any:
     return importlib.import_module("validation_middleware_rust")
 
 
-def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[Any], None]:
+def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
     settings.experimental_rust_validation_middleware_enabled = False
@@ -40,13 +59,13 @@ def _build_python_validator(max_param_length: int, dangerous_patterns: list[str]
     middleware = ValidationMiddleware(app=None)
     middleware.dangerous_patterns = [re.compile(pattern) for pattern in dangerous_patterns]
 
-    def _run(data: Any) -> None:
-        middleware._validate_json_data(data)
+    async def _run(body: bytes) -> None:
+        await middleware._validate_request(_JSONBodyRequest(body))
 
     return _run
 
 
-def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[Any], None]:
+def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) -> Callable[[bytes], Awaitable[None]]:
     _ensure_rust_extension_installed()
     settings.max_param_length = max_param_length
     settings.dangerous_patterns = dangerous_patterns
@@ -54,18 +73,18 @@ def _build_rust_validator(max_param_length: int, dangerous_patterns: list[str]) 
     settings.environment = "production"
     middleware = ValidationMiddleware(app=None)
 
-    def _run(data: Any) -> None:
-        middleware._validate_json_data(data)
+    async def _run(body: bytes) -> None:
+        await middleware._validate_request(_JSONBodyRequest(body))
 
     return _run
 
 
-def _measure(label: str, fn: Callable[[Any], None], payload: Any, iterations: int) -> tuple[float, float]:
+async def _measure(label: str, fn: Callable[[bytes], Awaitable[None]], payload: bytes, iterations: int) -> tuple[float, float]:
     samples = []
     for _ in range(iterations):
         started = time.perf_counter_ns()
         try:
-            fn(payload)
+            await fn(payload)
         except HTTPException:
             pass
         samples.append(time.perf_counter_ns() - started)
@@ -76,10 +95,10 @@ def _measure(label: str, fn: Callable[[Any], None], payload: Any, iterations: in
     return median_ms, p95_ms
 
 
-def _measure_pair(
-    python_fn: Callable[[Any], None],
-    rust_fn: Callable[[Any], None],
-    payload: Any,
+async def _measure_pair(
+    python_fn: Callable[[bytes], Awaitable[None]],
+    rust_fn: Callable[[bytes], Awaitable[None]],
+    payload: bytes,
     iterations: int,
 ) -> tuple[float, float]:
     ordered_runs = []
@@ -89,7 +108,7 @@ def _measure_pair(
     ):
         run_result: dict[str, tuple[float, float]] = {}
         for label, fn in order:
-            run_result[label] = _measure(label, fn, payload, iterations)
+            run_result[label] = await _measure(label, fn, payload, iterations)
         ordered_runs.append(run_result)
 
     python_median = statistics.mean(result["python"][0] for result in ordered_runs)
@@ -97,15 +116,15 @@ def _measure_pair(
     return python_median, rust_median
 
 
-def _measure_cold_pair(
+async def _measure_cold_pair(
     max_param_length: int,
     dangerous_patterns: list[str],
-    payload: Any,
+    payload: bytes,
 ) -> tuple[float, float]:
     started = time.perf_counter_ns()
     python_fn = _build_python_validator(max_param_length, dangerous_patterns)
     try:
-        python_fn(payload)
+        await python_fn(payload)
     except HTTPException:
         pass
     python_ms = (time.perf_counter_ns() - started) / 1_000_000
@@ -113,7 +132,7 @@ def _measure_cold_pair(
     started = time.perf_counter_ns()
     rust_fn = _build_rust_validator(max_param_length, dangerous_patterns)
     try:
-        rust_fn(payload)
+        await rust_fn(payload)
     except HTTPException:
         pass
     rust_ms = (time.perf_counter_ns() - started) / 1_000_000
@@ -121,18 +140,22 @@ def _measure_cold_pair(
     return python_ms, rust_ms
 
 
-def _assert_parity(python_fn: Callable[[Any], None], rust_fn: Callable[[Any], None], payloads: list[Any]) -> None:
+async def _assert_parity(
+    python_fn: Callable[[bytes], Awaitable[None]],
+    rust_fn: Callable[[bytes], Awaitable[None]],
+    payloads: list[bytes],
+) -> None:
     for payload in payloads:
         python_error = None
         rust_error = None
 
         try:
-            python_fn(payload)
+            await python_fn(payload)
         except HTTPException as exc:
             python_error = (exc.status_code, exc.detail)
 
         try:
-            rust_fn(payload)
+            await rust_fn(payload)
         except HTTPException as exc:
             rust_error = (exc.status_code, exc.detail)
 
@@ -140,7 +163,7 @@ def _assert_parity(python_fn: Callable[[Any], None], rust_fn: Callable[[Any], No
             raise AssertionError(f"Parity mismatch for payload {payload!r}: python={python_error!r} rust={rust_error!r}")
 
 
-def main() -> None:
+async def main() -> None:
     max_param_length = 1024
     dangerous_patterns = [r"[;&|`$(){}\[\]<>]", r"\.\.[\\/]", r"[\x00-\x1f\x7f-\x9f]"]
 
@@ -148,13 +171,13 @@ def main() -> None:
     rust_fn = _build_rust_validator(max_param_length, dangerous_patterns)
 
     parity_payloads = [
-        {"name": "safe", "nested": {"description": "still safe"}},
-        {"prompt": "<script>alert(1)</script>"},
-        {"outer": {"inner": "a" * 2048}},
-        ["<script>alert(1)</script>"],
-        {"emoji": "é" * 1025},
+        orjson.dumps({"name": "safe", "nested": {"description": "still safe"}}),
+        orjson.dumps({"prompt": "<script>alert(1)</script>"}),
+        orjson.dumps({"outer": {"inner": "a" * 2048}}),
+        orjson.dumps(["<script>alert(1)</script>"]),
+        orjson.dumps({"emoji": "é" * 1025}),
     ]
-    _assert_parity(python_fn, rust_fn, parity_payloads)
+    await _assert_parity(python_fn, rust_fn, parity_payloads)
 
     scenarios = [
         (
@@ -195,18 +218,24 @@ def main() -> None:
         ),
     ]
 
-    cold_payload = {"tool": {"name": "safe-tool", "description": "ok"}}
-    python_cold_ms, rust_cold_ms = _measure_cold_pair(max_param_length, dangerous_patterns, cold_payload)
+    cold_payload = orjson.dumps({"tool": {"name": "safe-tool", "description": "ok"}})
+    python_cold_ms, rust_cold_ms = await _measure_cold_pair(max_param_length, dangerous_patterns, cold_payload)
     print("\ncold_first_call (1 iteration)")
     print(f"python={python_cold_ms:.3f}ms rust={rust_cold_ms:.3f}ms")
     print(f"speedup={python_cold_ms / rust_cold_ms:.2f}x")
 
     for name, payload, iterations in scenarios:
+        body = orjson.dumps(payload)
         print(f"\n{name} ({iterations} iterations)")
-        python_median, rust_median = _measure_pair(python_fn, rust_fn, payload, iterations)
+        python_median, rust_median = await _measure_pair(python_fn, rust_fn, body, iterations)
         print(f"python_avg_median={python_median:.3f}ms rust_avg_median={rust_median:.3f}ms")
         print(f"speedup={python_median / rust_median:.2f}x")
+        uds_target = UDS_TARGET_MEDIANS_MS.get(name)
+        if uds_target is not None:
+            print(f"uds_target_median={uds_target:.3f}ms beat_target={rust_median < uds_target}")
 
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+
+    asyncio.run(main())

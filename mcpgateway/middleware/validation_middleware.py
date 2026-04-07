@@ -137,8 +137,11 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             try:
                 body = await request.body()
                 if body:
-                    data = orjson.loads(body)
-                    self._validate_json_data(data)
+                    if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
+                        self._validate_json_body_with_rust(body)
+                    else:
+                        data = orjson.loads(body)
+                        self._validate_json_data(data)
             except orjson.JSONDecodeError:
                 pass  # Let other middleware handle JSON errors
 
@@ -216,9 +219,44 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_json_data_with_python(data)
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_json_data_with_python(data)
+
+    def _validate_json_body_with_rust(self, body: bytes):
+        """Validate raw JSON bytes with the Rust extension, falling back to Python on extension failures."""
+        try:
+            if self._rust_validator is None:
+                self._rust_validator = self._build_rust_validator()
+                if self._rust_validator is None:
+                    data = orjson.loads(body)
+                    self._validate_json_data(data)
+                    return
+
+            result = self._rust_validator.validate_json_bytes(body)
+            if result is not None:
+                key, error_type = result
+                self._raise_validation_failure(key, error_type)
+        except ValueError as exc:
+            if "maximum supported nesting depth" in str(exc):
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
+            data = orjson.loads(body)
+            result = self._validate_json_data_with_python(data)
+            if result is not None:
+                key, error_type = result
+                self._raise_validation_failure(key, error_type)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
+            data = orjson.loads(body)
+            result = self._validate_json_data_with_python(data)
+            if result is not None:
+                key, error_type = result
+                self._raise_validation_failure(key, error_type)
 
     def _validate_json_data_with_python(self, data: Any, depth: int = 0) -> tuple[str, str] | None:
         """Validate JSON data with the Python implementation."""

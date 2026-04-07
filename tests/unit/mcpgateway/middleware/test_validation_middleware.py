@@ -241,6 +241,71 @@ class TestValidationMiddleware:
             await middleware._validate_request(DummyRequest())
 
     @pytest.mark.asyncio
+    async def test_validate_request_uses_rust_bytes_extension_when_enabled(self):
+        """Test request validation uses the Rust bytes path when explicitly enabled."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            rust_module = MagicMock()
+            rust_validator = MagicMock()
+            rust_validator.validate_json_bytes.return_value = None
+            rust_module.Validator.return_value = rust_validator
+
+            with patch("mcpgateway.middleware.validation_middleware._RUST_VALIDATION_MODULE", None):
+                with patch("mcpgateway.middleware.validation_middleware.importlib.import_module", return_value=rust_module):
+                    middleware = ValidationMiddleware(app=None)
+
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return b'{"name":"safe"}'
+
+            await middleware._validate_request(DummyRequest())
+
+            rust_validator.validate_json_bytes.assert_called_once_with(b'{"name":"safe"}')
+
+    @pytest.mark.asyncio
+    async def test_validate_request_rust_bytes_extension_falls_back_to_python_validation(self):
+        """Test request validation falls back to Python when the Rust bytes path fails."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.validate_json_bytes.side_effect = RuntimeError("boom")
+            middleware._rust_validator = rust_validator
+
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return b'{"name":"<script>"}'
+
+            with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
+                await middleware._validate_request(DummyRequest())
+
+            assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
     async def test_validate_request_without_path_params_attribute(self):
         """Test _validate_request handles objects without a path_params attribute."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
