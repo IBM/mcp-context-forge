@@ -101,8 +101,12 @@ def test_install_sighup_handler_skips_outside_main_thread(monkeypatch):
     # First-Party
     import mcpgateway.main as main_mod
 
-    monkeypatch.setattr(main_mod.threading, "current_thread", lambda: object())
-    monkeypatch.setattr(main_mod.threading, "main_thread", lambda: object())
+    mock_current = MagicMock()
+    mock_current.name = "TestThread"
+    mock_main = MagicMock()
+    mock_main.name = "MainThread"
+    monkeypatch.setattr(main_mod.threading, "current_thread", lambda: mock_current)
+    monkeypatch.setattr(main_mod.threading, "main_thread", lambda: mock_main)
     mock_signal = MagicMock()
     monkeypatch.setattr(main_mod.signal, "signal", mock_signal)
 
@@ -119,8 +123,12 @@ def test_restore_default_sighup_handler_skips_outside_main_thread(monkeypatch):
     # First-Party
     import mcpgateway.main as main_mod
 
-    monkeypatch.setattr(main_mod.threading, "current_thread", lambda: object())
-    monkeypatch.setattr(main_mod.threading, "main_thread", lambda: object())
+    mock_current = MagicMock()
+    mock_current.name = "TestThread"
+    mock_main = MagicMock()
+    mock_main.name = "MainThread"
+    monkeypatch.setattr(main_mod.threading, "current_thread", lambda: mock_current)
+    monkeypatch.setattr(main_mod.threading, "main_thread", lambda: mock_main)
     mock_signal = MagicMock()
     monkeypatch.setattr(main_mod.signal, "signal", mock_signal)
 
