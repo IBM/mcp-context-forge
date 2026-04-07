@@ -77,7 +77,7 @@ async def upsert_tool_plugin_bindings(
         caller_email: str = current_user_ctx["email"]
         bindings = _service.upsert_bindings(db, request, caller_email=caller_email)
         return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
-    except Exception as exc:
+    except ValueError as exc:
         logger.error("Failed to upsert tool plugin bindings: %s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

@@ -6,23 +6,36 @@ Authors: Madhumohan Jaishankar
 
 Unit tests for the tool plugin bindings router.
 
+Uses an in-memory SQLite database and the real ToolPluginBindingService so
+tests exercise the full stack from router handler down to SQL, with no mocked
+service responses.
+
 Tests cover:
     - POST /  (upsert): success, service exception → 400
-    - GET /   (list all): success
-    - GET /{team_id} (list by team): success
-    - DELETE /{binding_id}: success → 204, not found → 404
+    - GET /   (list all): success, empty
+    - GET /{team_id}: filtered list, empty
+    - DELETE /{binding_id}: success → 200, not found → 404
 """
 
 # Standard
-from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import patch
 
 # Third-Party
 from fastapi import HTTPException, status
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # First-Party
+from mcpgateway.db import Base
+from mcpgateway.routers.tool_plugin_bindings import (
+    delete_tool_plugin_binding,
+    list_tool_plugin_bindings,
+    list_tool_plugin_bindings_for_team,
+    upsert_tool_plugin_bindings,
+)
 from mcpgateway.schemas import (
     PluginBindingMode,
     PluginId,
@@ -38,44 +51,42 @@ from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorator
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Fixtures
 # ---------------------------------------------------------------------------
 
 
-def _make_binding_response(
-    id_="binding-001",
-    team_id="team-a",
-    tool_name="tool_x",
-    plugin_id="OUTPUT_LENGTH_GUARD",
-    mode="enforce",
-    priority=50,
-) -> ToolPluginBindingResponse:
-    """Build a minimal ToolPluginBindingResponse."""
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    return ToolPluginBindingResponse(
-        id=id_,
-        team_id=team_id,
-        tool_name=tool_name,
-        plugin_id=plugin_id,
-        mode=mode,
-        priority=priority,
-        config={"max_chars": 2000, "strategy": "truncate"},
-        created_at=now,
-        created_by="admin@example.com",
-        updated_at=now,
-        updated_by="admin@example.com",
+@pytest.fixture
+def db_session():
+    """In-memory SQLite session shared across all connections within one test."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
+    Base.metadata.create_all(bind=engine)
+    TestSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = TestSession()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
 
 
-def _make_list_response(bindings=None) -> ToolPluginBindingListResponse:
-    """Build a ToolPluginBindingListResponse from a list of response objects."""
-    if bindings is None:
-        bindings = [_make_binding_response()]
-    return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
+@pytest.fixture
+def user_ctx(db_session):
+    """Authenticated admin user context wired to the real DB session."""
+    return {
+        "email": "admin@example.com",
+        "full_name": "Admin User",
+        "is_admin": True,
+        "db": db_session,
+        "permissions": ["tools.manage_plugins", "tools.read"],
+    }
 
 
 def _simple_request() -> ToolPluginBindingRequest:
-    """Return a minimal single-team single-tool POST payload."""
+    """Minimal single-team single-tool POST payload."""
     return ToolPluginBindingRequest(
         teams={
             "team-a": TeamPolicies(
@@ -93,13 +104,43 @@ def _simple_request() -> ToolPluginBindingRequest:
     )
 
 
+def _two_team_request() -> ToolPluginBindingRequest:
+    """Two-team two-tool POST payload for list/filter tests."""
+    return ToolPluginBindingRequest(
+        teams={
+            "team-a": TeamPolicies(
+                policies=[
+                    PluginPolicyItem(
+                        tool_names=["tool_x"],
+                        plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                        mode=PluginBindingMode.ENFORCE,
+                        priority=50,
+                        config={"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
+                    )
+                ]
+            ),
+            "team-b": TeamPolicies(
+                policies=[
+                    PluginPolicyItem(
+                        tool_names=["tool_y"],
+                        plugin_id=PluginId.RATE_LIMITER,
+                        mode=PluginBindingMode.PERMISSIVE,
+                        priority=30,
+                        config={"by_user": "60/m", "by_tenant": "600/m", "by_tool": None},
+                    )
+                ]
+            ),
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test class
 # ---------------------------------------------------------------------------
 
 
 class TestToolPluginBindingsRouter:
-    """Unit tests for the tool plugin bindings FastAPI router."""
+    """Router tests using in-memory SQLite and the real service."""
 
     @pytest.fixture(autouse=True)
     def setup_rbac_mocks(self):
@@ -108,181 +149,197 @@ class TestToolPluginBindingsRouter:
         yield
         restore_rbac_decorators(originals)
 
-    @pytest.fixture
-    def mock_db(self):
-        """Mock database session."""
-        return MagicMock(spec=Session)
-
-    @pytest.fixture
-    def mock_user_ctx(self, mock_db):
-        """Mock user context with plugin management permissions."""
-        return {
-            "email": "admin@example.com",
-            "full_name": "Admin User",
-            "is_admin": True,
-            "db": mock_db,
-            "permissions": ["tools.manage_plugins", "tools.read"],
-        }
-
     # ------------------------------------------------------------------
     # POST / — upsert_tool_plugin_bindings
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_upsert_success(self, mock_user_ctx, mock_db):
-        """POST with valid payload returns 200 with the upserted bindings."""
-        expected_response = _make_list_response()
-
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.upsert_bindings.return_value = expected_response.bindings
-
-            from mcpgateway.routers.tool_plugin_bindings import upsert_tool_plugin_bindings
-
-            result = await upsert_tool_plugin_bindings(
-                request=_simple_request(),
-                current_user_ctx=mock_user_ctx,
-                db=mock_db,
-            )
+    async def test_upsert_success(self, user_ctx, db_session):
+        """POST with valid payload inserts a row and returns it in the response."""
+        result = await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
 
         assert isinstance(result, ToolPluginBindingListResponse)
         assert result.total == 1
-        assert result.bindings[0].team_id == "team-a"
-        mock_svc.upsert_bindings.assert_called_once()
+        binding = result.bindings[0]
+        assert binding.team_id == "team-a"
+        assert binding.tool_name == "tool_x"
+        assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert binding.mode == "enforce"
+        assert binding.priority == 50
+        assert binding.created_by == "admin@example.com"
 
     @pytest.mark.asyncio
-    async def test_upsert_passes_caller_email(self, mock_user_ctx, mock_db):
-        """POST extracts caller email from user context and passes it to the service."""
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.upsert_bindings.return_value = [_make_binding_response()]
-
-            from mcpgateway.routers.tool_plugin_bindings import upsert_tool_plugin_bindings
-
-            await upsert_tool_plugin_bindings(
-                request=_simple_request(),
-                current_user_ctx=mock_user_ctx,
-                db=mock_db,
-            )
-
-        _, call_kwargs = mock_svc.upsert_bindings.call_args
-        assert call_kwargs.get("caller_email") == "admin@example.com"
-
-    @pytest.mark.asyncio
-    async def test_upsert_service_exception_raises_400(self, mock_user_ctx, mock_db):
-        """POST raises HTTP 400 when the service layer throws an exception."""
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.upsert_bindings.side_effect = ValueError("team not found")
-
-            from mcpgateway.routers.tool_plugin_bindings import upsert_tool_plugin_bindings
-
-            with pytest.raises(HTTPException) as exc_info:
-                await upsert_tool_plugin_bindings(
-                    request=_simple_request(),
-                    current_user_ctx=mock_user_ctx,
-                    db=mock_db,
+    async def test_upsert_idempotent_update(self, user_ctx, db_session):
+        """POST twice on the same (team, tool, plugin) updates in place — no duplicate rows."""
+        await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+        updated_request = ToolPluginBindingRequest(
+            teams={
+                "team-a": TeamPolicies(
+                    policies=[
+                        PluginPolicyItem(
+                            tool_names=["tool_x"],
+                            plugin_id=PluginId.OUTPUT_LENGTH_GUARD,
+                            mode=PluginBindingMode.PERMISSIVE,
+                            priority=99,
+                            config={"min_chars": 0, "max_chars": 500, "strategy": "block", "ellipsis": "..."},
+                        )
+                    ]
                 )
+            }
+        )
+        result = await upsert_tool_plugin_bindings(
+            request=updated_request,
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
 
-        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-        assert "team not found" in str(exc_info.value.detail)
+        assert result.total == 1
+        binding = result.bindings[0]
+        assert binding.mode == "permissive"
+        assert binding.priority == 99
+        assert binding.config["max_chars"] == 500
 
     @pytest.mark.asyncio
-    async def test_upsert_missing_email_in_context_raises_400(self, mock_db):
-        """POST raises HTTP 400 when 'email' key is absent from user context.
+    async def test_upsert_service_value_error_raises_400(self, user_ctx, db_session):
+        """Router maps ValueError from the service layer to HTTP 400 Bad Request.
 
-        The auth middleware always populates 'email', so a missing key indicates
-        a broken auth pipeline. The router catches the resulting KeyError via
-        its broad except clause and surfaces it as 400.
+        ValueError signals bad input (e.g. invalid plugin config) — that is a
+        client error and 400 is correct. Other exception types are not caught
+        and propagate as 500, so only ValueError gets this treatment.
+        We patch the service singleton to inject a controlled ValueError since
+        there is no real data path that triggers it with a Pydantic-validated payload.
         """
-        user_ctx_no_email = {"is_admin": True, "db": mock_db}  # no 'email' key
-
-        with patch("mcpgateway.routers.tool_plugin_bindings._service"):
-            from mcpgateway.routers.tool_plugin_bindings import upsert_tool_plugin_bindings
+        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
+            mock_svc.upsert_bindings.side_effect = ValueError("invalid plugin config")
 
             with pytest.raises(HTTPException) as exc_info:
                 await upsert_tool_plugin_bindings(
                     request=_simple_request(),
-                    current_user_ctx=user_ctx_no_email,
-                    db=mock_db,
+                    current_user_ctx=user_ctx,
+                    db=db_session,
                 )
 
         assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "invalid plugin config" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_upsert_unexpected_exception_propagates_as_500(self, user_ctx, db_session):
+        """Unexpected exceptions from the service layer are NOT caught by the router.
+
+        Only ValueError is caught and mapped to 400. A RuntimeError (or any other
+        non-ValueError exception) propagates uncaught, which FastAPI renders as 500.
+        """
+        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
+            mock_svc.upsert_bindings.side_effect = RuntimeError("unexpected bug")
+
+            with pytest.raises(RuntimeError, match="unexpected bug"):
+                await upsert_tool_plugin_bindings(
+                    request=_simple_request(),
+                    current_user_ctx=user_ctx,
+                    db=db_session,
+                )
 
     # ------------------------------------------------------------------
     # GET / — list_tool_plugin_bindings
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_list_all_success(self, mock_user_ctx, mock_db):
-        """GET / returns all bindings with correct total count."""
-        bindings = [_make_binding_response("b1"), _make_binding_response("b2")]
-
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.list_bindings.return_value = bindings
-
-            from mcpgateway.routers.tool_plugin_bindings import list_tool_plugin_bindings
-
-            result = await list_tool_plugin_bindings(
-                current_user_ctx=mock_user_ctx,
-                db=mock_db,
-            )
+    async def test_list_all_empty(self, user_ctx, db_session):
+        """GET / returns total=0 when no bindings have been inserted."""
+        result = await list_tool_plugin_bindings(
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
 
         assert isinstance(result, ToolPluginBindingListResponse)
-        assert result.total == 2
-        assert len(result.bindings) == 2
-        mock_svc.list_bindings.assert_called_once_with(mock_db, team_id=None)
-
-    @pytest.mark.asyncio
-    async def test_list_all_empty(self, mock_user_ctx, mock_db):
-        """GET / returns total=0 when no bindings exist."""
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.list_bindings.return_value = []
-
-            from mcpgateway.routers.tool_plugin_bindings import list_tool_plugin_bindings
-
-            result = await list_tool_plugin_bindings(
-                current_user_ctx=mock_user_ctx,
-                db=mock_db,
-            )
-
         assert result.total == 0
         assert result.bindings == []
+
+    @pytest.mark.asyncio
+    async def test_list_all_returns_all_bindings(self, user_ctx, db_session):
+        """GET / returns all bindings across all teams with correct field values."""
+        await upsert_tool_plugin_bindings(
+            request=_two_team_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+
+        result = await list_tool_plugin_bindings(
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+
+        assert result.total == 2
+        by_team = {b.team_id: b for b in result.bindings}
+        assert set(by_team.keys()) == {"team-a", "team-b"}
+
+        team_a = by_team["team-a"]
+        assert team_a.tool_name == "tool_x"
+        assert team_a.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert team_a.mode == "enforce"
+        assert team_a.priority == 50
+        assert team_a.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
+        assert team_a.created_by == "admin@example.com"
+
+        team_b = by_team["team-b"]
+        assert team_b.tool_name == "tool_y"
+        assert team_b.plugin_id == "RATE_LIMITER"
+        assert team_b.mode == "permissive"
+        assert team_b.priority == 30
+        assert team_b.config == {"by_user": "60/m", "by_tenant": "600/m", "by_tool": None}
+        assert team_b.created_by == "admin@example.com"
 
     # ------------------------------------------------------------------
     # GET /{team_id} — list_tool_plugin_bindings_for_team
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_list_by_team_success(self, mock_user_ctx, mock_db):
-        """GET /{team_id} filters bindings by team and returns correct results."""
-        binding = _make_binding_response(team_id="team-a")
+    async def test_list_by_team_filters_correctly(self, user_ctx, db_session):
+        """GET /{team_id} returns only bindings for that team with correct field values."""
+        await upsert_tool_plugin_bindings(
+            request=_two_team_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
 
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.list_bindings.return_value = [binding]
-
-            from mcpgateway.routers.tool_plugin_bindings import list_tool_plugin_bindings_for_team
-
-            result = await list_tool_plugin_bindings_for_team(
-                team_id="team-a",
-                current_user_ctx=mock_user_ctx,
-                db=mock_db,
-            )
+        result = await list_tool_plugin_bindings_for_team(
+            team_id="team-a",
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
 
         assert result.total == 1
-        assert result.bindings[0].team_id == "team-a"
-        mock_svc.list_bindings.assert_called_once_with(mock_db, team_id="team-a")
+        binding = result.bindings[0]
+        assert binding.team_id == "team-a"
+        assert binding.tool_name == "tool_x"
+        assert binding.plugin_id == "OUTPUT_LENGTH_GUARD"
+        assert binding.mode == "enforce"
+        assert binding.priority == 50
+        assert binding.config == {"min_chars": 0, "max_chars": 2000, "strategy": "truncate", "ellipsis": "..."}
+        assert binding.created_by == "admin@example.com"
 
     @pytest.mark.asyncio
-    async def test_list_by_team_empty(self, mock_user_ctx, mock_db):
-        """GET /{team_id} returns empty list when team has no bindings."""
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.list_bindings.return_value = []
+    async def test_list_by_team_empty_for_unknown_team(self, user_ctx, db_session):
+        """GET /{team_id} returns empty list for a team with no bindings."""
+        await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
 
-            from mcpgateway.routers.tool_plugin_bindings import list_tool_plugin_bindings_for_team
-
-            result = await list_tool_plugin_bindings_for_team(
-                team_id="team-unknown",
-                current_user_ctx=mock_user_ctx,
-                db=mock_db,
-            )
+        result = await list_tool_plugin_bindings_for_team(
+            team_id="team-unknown",
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
 
         assert result.total == 0
         assert result.bindings == []
@@ -292,53 +349,52 @@ class TestToolPluginBindingsRouter:
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
-    async def test_delete_success(self, mock_user_ctx, mock_db):
-        """DELETE with valid ID returns the deleted binding details (200)."""
-        deleted_binding = _make_binding_response()
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.delete_binding.return_value = deleted_binding
+    async def test_delete_success(self, user_ctx, db_session):
+        """DELETE removes the binding and returns its details."""
+        upsert_result = await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+        binding_id = upsert_result.bindings[0].id
 
-            from mcpgateway.routers.tool_plugin_bindings import delete_tool_plugin_binding
-
-            result = await delete_tool_plugin_binding(
-                binding_id="binding-001",
-                current_user_ctx=mock_user_ctx,
-                db=mock_db,
-            )
-
-        assert result.id == deleted_binding.id
-        assert result.team_id == deleted_binding.team_id
-        mock_svc.delete_binding.assert_called_once_with(mock_db, "binding-001")
-
-    @pytest.mark.asyncio
-    async def test_delete_not_found_raises_404(self, mock_user_ctx, mock_db):
-        """DELETE raises HTTP 404 when the binding does not exist."""
-        with patch("mcpgateway.routers.tool_plugin_bindings._service") as mock_svc:
-            mock_svc.delete_binding.side_effect = ToolPluginBindingNotFoundError("Tool plugin binding 'xyz' not found")
-
-            from mcpgateway.routers.tool_plugin_bindings import delete_tool_plugin_binding
-
-            with pytest.raises(HTTPException) as exc_info:
-                await delete_tool_plugin_binding(
-                    binding_id="xyz",
-                    current_user_ctx=mock_user_ctx,
-                    db=mock_db,
-                )
-
-        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-        assert "xyz" in str(exc_info.value.detail)
-
-    @pytest.mark.asyncio
-    async def test_is_coroutine(self):
-        """All router functions are async (coroutine functions)."""
-        import asyncio
-        from mcpgateway.routers.tool_plugin_bindings import (
-            delete_tool_plugin_binding,
-            list_tool_plugin_bindings,
-            list_tool_plugin_bindings_for_team,
-            upsert_tool_plugin_bindings,
+        result = await delete_tool_plugin_binding(
+            binding_id=binding_id,
+            current_user_ctx=user_ctx,
+            db=db_session,
         )
 
+        assert isinstance(result, ToolPluginBindingResponse)
+        assert result.id == binding_id
+        assert result.team_id == "team-a"
+        assert result.tool_name == "tool_x"
+
+        # Confirm it's gone
+        after = await list_tool_plugin_bindings(
+            current_user_ctx=user_ctx,
+            db=db_session,
+        )
+        assert after.total == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_not_found_raises_404(self, user_ctx, db_session):
+        """DELETE raises HTTP 404 when the binding ID does not exist."""
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_tool_plugin_binding(
+                binding_id="nonexistent-id",
+                current_user_ctx=user_ctx,
+                db=db_session,
+            )
+
+        assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "nonexistent-id" in str(exc_info.value.detail)
+
+    # ------------------------------------------------------------------
+    # Structural
+    # ------------------------------------------------------------------
+
+    def test_all_handlers_are_coroutines(self):
+        """All router handler functions are async coroutine functions."""
         assert asyncio.iscoroutinefunction(upsert_tool_plugin_bindings)
         assert asyncio.iscoroutinefunction(list_tool_plugin_bindings)
         assert asyncio.iscoroutinefunction(list_tool_plugin_bindings_for_team)
