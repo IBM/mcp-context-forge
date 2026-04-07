@@ -1407,6 +1407,127 @@ main {
 .nav-links::-webkit-scrollbar { display: none; }
 
 /* ============================================================
+   CONFIGURATION VIEW
+   ============================================================ */
+.config-search {
+  flex: 1;
+  min-width: 250px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  outline: none;
+  transition: var(--transition);
+  font-family: var(--font-sans);
+  margin-bottom: 1.5rem;
+  display: block;
+  width: 100%;
+}
+
+.config-search:focus { border-color: var(--accent-blue); box-shadow: var(--glow-blue); }
+
+.config-category {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+  transition: var(--transition);
+}
+
+.config-category:hover { border-color: var(--border-accent); }
+
+.config-category-header {
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.config-category-header:hover { background: rgba(255,255,255,0.02); }
+
+.config-category-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.config-category-count {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.1);
+  color: var(--accent-blue);
+}
+
+.config-category-chevron {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.config-category.open .config-category-chevron { transform: rotate(90deg); }
+
+.config-category-body {
+  display: none;
+  padding: 0 1.25rem 1rem;
+}
+
+.config-category.open .config-category-body { display: block; }
+
+.config-var {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(120px, auto) 2fr;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  font-size: 0.8rem;
+  align-items: baseline;
+}
+
+.config-var:last-child { border-bottom: none; }
+
+.config-var-name {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--accent-blue);
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.config-var-default {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--accent-green);
+  background: rgba(0,0,0,0.2);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.config-var-desc {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.config-var-required .config-var-name { color: var(--accent-orange); }
+.config-var-security .config-var-name { color: var(--accent-red); }
+
+@media (max-width: 768px) {
+  .config-var { grid-template-columns: 1fr; gap: 0.2rem; }
+}
+
+/* ============================================================
    PRINT STYLES
    ============================================================ */
 @media print {
@@ -1435,6 +1556,7 @@ main {
     <li><a data-view="adrs">ADRs</a></li>
     <li><a data-view="api">API Surface</a></li>
     <li><a data-view="stack">Tech Stack</a></li>
+    <li><a data-view="config">Config</a></li>
   </ul>
   <div class="nav-search">
     <input type="text" id="global-search" placeholder="Search components... (Ctrl+K)" autocomplete="off">
@@ -1971,6 +2093,18 @@ main {
     <p class="section-subtitle">Core dependencies powering ContextForge, organized by domain.</p>
 
     <div class="stack-grid" id="stack-grid"></div>
+  </div>
+
+  <!-- ============================================================
+       CONFIGURATION VIEW
+       ============================================================ -->
+  <div id="config" class="view">
+    <h2 class="section-title">Configuration Reference</h2>
+    <p class="section-subtitle">Key environment variables from <code>.env.example</code> and <code>mcpgateway/config.py</code>, organized by domain. Click a category to expand.</p>
+
+    <input type="text" class="config-search" id="config-search" placeholder="Search variables by name or description...">
+
+    <div id="config-categories"></div>
   </div>
 </main>
 
@@ -3658,6 +3792,239 @@ renderAdrs();
     container.appendChild(card);
   });
 })();
+
+/* ================================================================
+   DATA: Configuration reference
+   ================================================================ */
+var CONFIG_CATEGORIES = [
+  { title:"Required (First-Run)", icon:"\u26A0\uFE0F", color:"var(--accent-orange)", desc:"Change these before production use.", vars:[
+    { name:"BASIC_AUTH_USER", def:"admin", desc:"Admin UI HTTP Basic Auth username", req:true },
+    { name:"BASIC_AUTH_PASSWORD", def:"changeme", desc:"Admin UI HTTP Basic Auth password", req:true },
+    { name:"JWT_SECRET_KEY", def:"my-test-key-...", desc:"JWT signing secret (min 32 bytes)", req:true },
+    { name:"AUTH_ENCRYPTION_SECRET", def:"my-test-salt", desc:"AES passphrase for encrypting stored secrets", req:true },
+    { name:"PLATFORM_ADMIN_EMAIL", def:"admin@example.com", desc:"Bootstrap admin email (email auth)", req:true },
+    { name:"PLATFORM_ADMIN_PASSWORD", def:"changeme", desc:"Bootstrap admin password", req:true },
+    { name:"DEFAULT_USER_PASSWORD", def:"changeme", desc:"Default password for seeded users", req:true }
+  ]},
+  { title:"Core Application", icon:"\u2699\uFE0F", color:"var(--accent-blue)", desc:"Host, port, environment, and application identity.", vars:[
+    { name:"APP_NAME", def:"ContextForge", desc:"Application name shown in UI and logs" },
+    { name:"HOST", def:"127.0.0.1", desc:"Bind address (.env.example overrides to 0.0.0.0)" },
+    { name:"PORT", def:"4444", desc:"HTTP listen port (1-65535)" },
+    { name:"ENVIRONMENT", def:"development", desc:"development | staging | production" },
+    { name:"APP_DOMAIN", def:"localhost:4444", desc:"Public domain for OAuth callbacks and links" },
+    { name:"PROTOCOL_VERSION", def:"2025-11-25", desc:"MCP protocol version advertised" },
+    { name:"DEFAULT_ROOTS", def:"[]", desc:"Default root URIs (JSON array)" }
+  ]},
+  { title:"Database", icon:"\uD83D\uDDC4\uFE0F", color:"var(--accent-green)", desc:"SQLAlchemy connection, pooling, and migration settings.", vars:[
+    { name:"DATABASE_URL", def:"sqlite:///./mcp.db", desc:"SQLAlchemy connection string (PostgreSQL recommended for prod)" },
+    { name:"DB_POOL_SIZE", def:"5", desc:"Connection pool size per worker" },
+    { name:"DB_MAX_OVERFLOW", def:"10", desc:"Burst connections beyond pool_size" },
+    { name:"DB_POOL_TIMEOUT", def:"30", desc:"Seconds to wait for a connection" },
+    { name:"DB_POOL_RECYCLE", def:"1800", desc:"Recycle connections after N seconds" },
+    { name:"DB_DRIVER", def:"(auto)", desc:"Force driver: psycopg, psycopg2, aiosqlite" },
+    { name:"DB_POOL_CLASS", def:"QueuePool", desc:"QueuePool or NullPool (use with PgBouncer)" },
+    { name:"DB_METRICS_RECORDING_ENABLED", def:"true", desc:"Write per-entity execution metrics to DB" }
+  ]},
+  { title:"Redis & Caching", icon:"\uD83D\uDCE6", color:"var(--accent-cyan)", desc:"Redis connection, caching backends, and TTL tuning.", vars:[
+    { name:"REDIS_URL", def:"redis://localhost:6379/0", desc:"Redis connection URL" },
+    { name:"REDIS_MAX_CONNECTIONS", def:"50", desc:"Connection pool size per worker" },
+    { name:"REDIS_PARSER", def:"hiredis", desc:"Protocol parser: hiredis (C) or python" },
+    { name:"AUTH_CACHE_ENABLED", def:"true", desc:"Cache auth lookups (user, team, revocation)" },
+    { name:"AUTH_CACHE_USER_TTL", def:"60", desc:"User auth cache TTL (seconds)" },
+    { name:"REGISTRY_CACHE_ENABLED", def:"true", desc:"Cache tool/resource/prompt list queries" },
+    { name:"REGISTRY_CACHE_TOOLS_TTL", def:"20", desc:"Tool list cache TTL (seconds)" },
+    { name:"TOOL_LOOKUP_CACHE_ENABLED", def:"true", desc:"L1/L2 cache for invoke_tool hot path" },
+    { name:"ADMIN_STATS_CACHE_ENABLED", def:"true", desc:"Cache admin dashboard statistics" }
+  ]},
+  { title:"Authentication", icon:"\uD83D\uDD11", color:"var(--accent-purple)", desc:"JWT, Basic Auth, email auth, and token policy.", vars:[
+    { name:"AUTH_REQUIRED", def:"true", desc:"Require authentication globally" },
+    { name:"MCP_REQUIRE_AUTH", def:"(inherits AUTH_REQUIRED)", desc:"Require auth for MCP endpoints specifically" },
+    { name:"JWT_ALGORITHM", def:"HS256", desc:"JWT signing algorithm (HS256 or RS256)" },
+    { name:"JWT_AUDIENCE", def:"mcpgateway-api", desc:"Expected JWT audience claim" },
+    { name:"TOKEN_EXPIRY", def:"10080", desc:"JWT token lifetime (minutes, 7 days)" },
+    { name:"REQUIRE_JTI", def:"true", desc:"Require JWT ID claim for revocation support" },
+    { name:"REQUIRE_TOKEN_EXPIRATION", def:"true", desc:"Reject tokens without exp claim" },
+    { name:"EMAIL_AUTH_ENABLED", def:"true", desc:"Enable email/password authentication" },
+    { name:"PUBLIC_REGISTRATION_ENABLED", def:"false", desc:"Allow self-registration (admin-only by default)" }
+  ]},
+  { title:"SSO Providers", icon:"\uD83C\uDF10", color:"var(--accent-pink)", desc:"Single Sign-On with 8 supported identity providers.", vars:[
+    { name:"SSO_ENABLED", def:"false", desc:"Master SSO switch" },
+    { name:"SSO_GITHUB_ENABLED", def:"false", desc:"GitHub OAuth (orgs-based admin mapping)" },
+    { name:"SSO_GOOGLE_ENABLED", def:"false", desc:"Google OAuth (domain-based admin mapping)" },
+    { name:"SSO_KEYCLOAK_ENABLED", def:"false", desc:"Keycloak OIDC (realm/client roles)" },
+    { name:"SSO_ENTRA_ENABLED", def:"false", desc:"Microsoft Entra ID (groups, Graph API)" },
+    { name:"SSO_OKTA_ENABLED", def:"false", desc:"Okta OIDC (group mapping)" },
+    { name:"SSO_IBM_VERIFY_ENABLED", def:"false", desc:"IBM Security Verify OIDC" },
+    { name:"SSO_ADFS_ENABLED", def:"false", desc:"Active Directory Federation Services" },
+    { name:"SSO_GENERIC_ENABLED", def:"false", desc:"Generic OIDC provider (any IdP)" },
+    { name:"SSO_AUTO_CREATE_USERS", def:"true", desc:"Auto-provision users on first SSO login" }
+  ]},
+  { title:"RBAC & Teams", icon:"\uD83D\uDC65", color:"var(--accent-yellow)", desc:"Multi-tenant team management and role assignments.", vars:[
+    { name:"AUTO_CREATE_PERSONAL_TEAMS", def:"true", desc:"Create a personal team for new users" },
+    { name:"ALLOW_TEAM_CREATION", def:"true", desc:"Allow non-admin users to create teams" },
+    { name:"MAX_TEAMS_PER_USER", def:"50", desc:"Maximum teams a user can belong to" },
+    { name:"MAX_MEMBERS_PER_TEAM", def:"100", desc:"Maximum members in a single team" },
+    { name:"INVITATION_EXPIRY_DAYS", def:"7", desc:"Team invitation link lifetime" },
+    { name:"DEFAULT_ADMIN_ROLE", def:"platform_admin", desc:"Role assigned to bootstrap admin" },
+    { name:"DEFAULT_USER_ROLE", def:"platform_viewer", desc:"Role assigned to new users" },
+    { name:"DEFAULT_TEAM_OWNER_ROLE", def:"team_admin", desc:"Role for team creators" },
+    { name:"DEFAULT_TEAM_MEMBER_ROLE", def:"viewer", desc:"Default role for invited members" }
+  ]},
+  { title:"Feature Flags", icon:"\uD83D\uDEA9", color:"var(--accent-green)", desc:"Enable or disable major subsystems.", vars:[
+    { name:"MCPGATEWAY_UI_ENABLED", def:"false", desc:"Admin UI at /admin (.env.example sets true)" },
+    { name:"MCPGATEWAY_ADMIN_API_ENABLED", def:"false", desc:"Admin REST API (.env.example sets true)" },
+    { name:"PLUGINS_ENABLED", def:"false", desc:"Plugin framework" },
+    { name:"MCPGATEWAY_A2A_ENABLED", def:"true", desc:"Agent-to-Agent protocol" },
+    { name:"MCPGATEWAY_CATALOG_ENABLED", def:"false", desc:"MCP server catalog feature" },
+    { name:"MCPGATEWAY_GRPC_ENABLED", def:"false", desc:"gRPC-to-MCP translation" },
+    { name:"LLMCHAT_ENABLED", def:"false", desc:"LLM chat completions endpoint" },
+    { name:"TOOLOPS_ENABLED", def:"false", desc:"Tool testing framework" },
+    { name:"MCPGATEWAY_ELICITATION_ENABLED", def:"false", desc:"Elicitation passthrough (MCP 2025-06-18)" },
+    { name:"OBSERVABILITY_ENABLED", def:"false", desc:"OpenTelemetry tracing and events" },
+    { name:"MCPGATEWAY_PERFORMANCE_TRACKING", def:"false", desc:"Performance tracking tab in admin UI" },
+    { name:"DCR_ENABLED", def:"true", desc:"Dynamic Client Registration (RFC 7591)" }
+  ]},
+  { title:"Security Hardening", icon:"\uD83D\uDD12", color:"var(--accent-red)", desc:"SSRF protection, content validation, security headers, and CORS.", vars:[
+    { name:"SSRF_PROTECTION_ENABLED", def:"true", desc:"Block SSRF attacks to internal/metadata endpoints" },
+    { name:"SSRF_ALLOW_LOCALHOST", def:"false", desc:"Allow requests to loopback addresses" },
+    { name:"SSRF_ALLOW_PRIVATE_NETWORKS", def:"false", desc:"Allow RFC 1918 private addresses" },
+    { name:"SECURITY_HEADERS_ENABLED", def:"true", desc:"Inject HSTS, CSP, X-Frame-Options, etc." },
+    { name:"X_FRAME_OPTIONS", def:"DENY", desc:"Clickjacking protection" },
+    { name:"HSTS_ENABLED", def:"true", desc:"HTTP Strict Transport Security" },
+    { name:"CORS_ENABLED", def:"true", desc:"Cross-Origin Resource Sharing" },
+    { name:"ALLOWED_ORIGINS", def:"localhost", desc:"CORS allowed origins (set of URLs)" },
+    { name:"SECURE_COOKIES", def:"true", desc:"HttpOnly + Secure + SameSite cookie flags" },
+    { name:"CONTENT_MAX_RESOURCE_SIZE", def:"102400", desc:"Max resource payload (bytes, 100KB)" },
+    { name:"SANITIZE_OUTPUT", def:"true", desc:"Sanitize response content" }
+  ]},
+  { title:"MCP Session Pool", icon:"\u26A1", color:"var(--accent-blue)", desc:"Connection pooling to backend MCP servers (10-20x latency improvement).", vars:[
+    { name:"MCP_SESSION_POOL_ENABLED", def:"true", desc:"Enable session reuse for MCP servers" },
+    { name:"MCP_SESSION_POOL_MAX_PER_KEY", def:"3", desc:"Max pooled sessions per server" },
+    { name:"MCP_SESSION_POOL_TTL", def:"300", desc:"Idle session lifetime (seconds)" },
+    { name:"MCP_SESSION_POOL_ACQUIRE_TIMEOUT", def:"10", desc:"Seconds to wait for a pooled session" },
+    { name:"MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL", def:"30", desc:"Health check ping interval" },
+    { name:"MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD", def:"5", desc:"Failures before circuit opens" },
+    { name:"MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET", def:"60", desc:"Seconds before circuit half-opens" }
+  ]},
+  { title:"Logging", icon:"\uD83D\uDCDD", color:"var(--text-muted)", desc:"Log level, format, structured logging, and request logging.", vars:[
+    { name:"LOG_LEVEL", def:"ERROR", desc:"Minimum log level: DEBUG|INFO|WARNING|ERROR|CRITICAL" },
+    { name:"LOG_FORMAT", def:"json", desc:"Output format: json or text" },
+    { name:"LOG_TO_FILE", def:"false", desc:"Write logs to file in addition to stdout" },
+    { name:"LOG_REQUESTS", def:"false", desc:"Log every HTTP request/response" },
+    { name:"STRUCTURED_LOGGING_DATABASE_ENABLED", def:"false", desc:"Persist structured logs to database" },
+    { name:"DB_QUERY_LOG_ENABLED", def:"false", desc:"Log SQL queries (N+1 detection)" },
+    { name:"SECURITY_LOGGING_ENABLED", def:"true", desc:"Log security events (auth failures, threats)" },
+    { name:"AUDIT_TRAIL_ENABLED", def:"true", desc:"Log CRUD operations for compliance" }
+  ]},
+  { title:"Observability & Metrics", icon:"\uD83D\uDD2D", color:"var(--accent-purple)", desc:"OpenTelemetry, Prometheus, metrics pipeline, and performance tracking.", vars:[
+    { name:"OTEL_EXPORTER_OTLP_ENDPOINT", def:"(none)", desc:"OTLP collector endpoint (e.g., http://localhost:4317)" },
+    { name:"OTEL_TRACES_EXPORTER", def:"otlp", desc:"Trace exporter: otlp, jaeger, zipkin, console" },
+    { name:"OBSERVABILITY_SAMPLE_RATE", def:"1.0", desc:"Trace sampling rate (0.0-1.0)" },
+    { name:"OBSERVABILITY_TRACE_RETENTION_DAYS", def:"7", desc:"How long to keep trace data" },
+    { name:"ENABLE_METRICS", def:"false", desc:"Expose Prometheus metrics at /metrics/prometheus" },
+    { name:"METRICS_BUFFER_ENABLED", def:"true", desc:"Batch metric writes (reduces DB pressure)" },
+    { name:"METRICS_BUFFER_FLUSH_INTERVAL", def:"60", desc:"Flush buffered metrics every N seconds" },
+    { name:"METRICS_ROLLUP_ENABLED", def:"true", desc:"Aggregate raw metrics into hourly summaries" },
+    { name:"METRICS_RETENTION_DAYS", def:"7", desc:"Delete raw metrics older than N days" },
+    { name:"METRICS_ROLLUP_RETENTION_DAYS", def:"365", desc:"Keep hourly rollups for N days" }
+  ]},
+  { title:"HTTP Client & Resilience", icon:"\uD83C\uDF10", color:"var(--accent-cyan)", desc:"Outbound HTTP settings for federation, health checks, and upstream requests.", vars:[
+    { name:"HTTPX_MAX_CONNECTIONS", def:"200", desc:"Connection pool size (10-1000)" },
+    { name:"HTTPX_MAX_KEEPALIVE_CONNECTIONS", def:"100", desc:"Keep-alive connections (1-500)" },
+    { name:"HTTPX_CONNECT_TIMEOUT", def:"5", desc:"TCP connect timeout (seconds)" },
+    { name:"HTTPX_READ_TIMEOUT", def:"120", desc:"Response read timeout (seconds)" },
+    { name:"HTTPX_HTTP2_ENABLED", def:"false", desc:"Enable HTTP/2 for upstream requests" },
+    { name:"RETRY_MAX_ATTEMPTS", def:"3", desc:"Max retry attempts for failed requests" },
+    { name:"RETRY_BASE_DELAY", def:"1.0", desc:"Initial retry delay (seconds)" },
+    { name:"RETRY_MAX_DELAY", def:"30.0", desc:"Maximum backoff delay (seconds)" },
+    { name:"RETRY_JITTER_MAX", def:"1.0", desc:"Random jitter added to delays" }
+  ]},
+  { title:"Compression", icon:"\uD83D\uDCE4", color:"var(--accent-yellow)", desc:"Response compression (SSE-aware, skips streaming).", vars:[
+    { name:"COMPRESSION_ENABLED", def:"true", desc:"Enable Brotli/Zstd/GZip compression" },
+    { name:"COMPRESSION_MINIMUM_SIZE", def:"500", desc:"Min response bytes to compress" },
+    { name:"COMPRESSION_GZIP_LEVEL", def:"4", desc:"GZip compression level (1-9)" },
+    { name:"COMPRESSION_BROTLI_QUALITY", def:"4", desc:"Brotli quality (0-11)" },
+    { name:"COMPRESSION_ZSTD_LEVEL", def:"3", desc:"Zstandard level (1-22)" }
+  ]},
+  { title:"Deployment & Runtime", icon:"\uD83D\uDE80", color:"var(--accent-orange)", desc:"HTTP server, workers, dev mode, and container settings.", vars:[
+    { name:"HTTP_SERVER", def:"uvicorn", desc:"HTTP server: uvicorn or granian" },
+    { name:"GUNICORN_WORKERS", def:"(2*CPU+1)", desc:"Worker processes (auto-calculated)" },
+    { name:"GUNICORN_TIMEOUT", def:"120", desc:"Worker timeout (seconds)" },
+    { name:"RELOAD", def:"false", desc:"Auto-reload on file changes" },
+    { name:"DEV_MODE", def:"false", desc:"Relaxed security + verbose logging" },
+    { name:"DEBUG", def:"false", desc:"Debug mode (stack traces in responses)" },
+    { name:"SKIP_SSL_VERIFY", def:"false", desc:"Disable TLS verification for upstream" },
+    { name:"HEALTH_CHECK_INTERVAL", def:"60", desc:"Server health check interval (seconds)" },
+    { name:"HEALTH_CHECK_TIMEOUT", def:"10", desc:"Health check timeout (seconds)" }
+  ]}
+];
+
+/* ================================================================
+   RENDER: Configuration view
+   ================================================================ */
+var configContainer = document.getElementById('config-categories');
+var configSearch = document.getElementById('config-search');
+
+function renderConfig() {
+  var query = configSearch.value.toLowerCase();
+  clearChildren(configContainer);
+
+  CONFIG_CATEGORIES.forEach(function(cat) {
+    var filteredVars = cat.vars;
+    if (query) {
+      filteredVars = cat.vars.filter(function(v) {
+        return (v.name + ' ' + v.desc + ' ' + v.def).toLowerCase().indexOf(query) !== -1;
+      });
+      if (filteredVars.length === 0) return;
+    }
+
+    var isOpen = query.length > 0;
+    var catEl = el('div', { className: 'config-category' + (isOpen ? ' open' : '') });
+
+    var header = el('div', { className:'config-category-header' }, [
+      el('div', { className:'config-category-title' }, [
+        el('span', { textContent: cat.icon }),
+        el('span', { textContent: cat.title, style:{color:cat.color} }),
+        el('span', { className:'config-category-count', textContent: filteredVars.length })
+      ]),
+      el('span', { className:'config-category-chevron', textContent:'\u25B6' })
+    ]);
+
+    header.addEventListener('click', function() {
+      catEl.classList.toggle('open');
+    });
+
+    var body = el('div', { className:'config-category-body' });
+    if (cat.desc) {
+      body.appendChild(el('p', { textContent: cat.desc,
+        style:{ color:'var(--text-muted)', fontSize:'0.8rem', marginBottom:'0.75rem' } }));
+    }
+
+    filteredVars.forEach(function(v) {
+      var cls = 'config-var';
+      if (v.req) cls += ' config-var-required';
+      if (v.sec) cls += ' config-var-security';
+      body.appendChild(el('div', { className: cls }, [
+        el('span', { className:'config-var-name', textContent: v.name }),
+        el('span', { className:'config-var-default', textContent: v.def, title: v.def }),
+        el('span', { className:'config-var-desc', textContent: v.desc })
+      ]));
+    });
+
+    catEl.appendChild(header);
+    catEl.appendChild(body);
+    configContainer.appendChild(catEl);
+  });
+
+  if (configContainer.children.length === 0) {
+    configContainer.appendChild(el('div', { className:'empty-state' }, [
+      el('p', { textContent:'No configuration variables match your search.' })
+    ]));
+  }
+}
+
+configSearch.addEventListener('input', renderConfig);
+renderConfig();
 
 /* ================================================================
    INIT
