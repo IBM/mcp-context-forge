@@ -8670,7 +8670,7 @@ validation-sidecar-bench-setup: validation-sidecar-build ## Prepare the Rust UDS
 
 validation-sidecar-run: validation-sidecar-build ## Run the Rust UDS validation sidecar with configurable UDS path
 	@echo "🧪 Starting validation sidecar..."
-	@tools_rust/validation_sidecar/target/release/contextforge_validation_sidecar --uds-path "$${VALIDATION_SIDECAR_UDS:-/tmp/contextforge-validation-sidecar.sock}"
+	@tools_rust/validation_sidecar/target/release/contextforge_validation_sidecar --uds-path "$${EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS:-$${XDG_RUNTIME_DIR:-$$HOME/.local/state/contextforge}/validation-sidecar.sock}"
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
 	@echo "🦀 Building Rust documentation..."

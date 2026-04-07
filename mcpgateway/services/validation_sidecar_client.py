@@ -10,6 +10,7 @@ Validation sidecar client for framed Unix domain socket requests.
 import asyncio
 import json
 import logging
+import socket
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -267,6 +268,62 @@ class ValidationSidecarClient:
         self._next_index = 0
         self._request_metadata_cache: dict[tuple[int, tuple[str, ...]], bytes] = {}
 
+    def validate_configuration_sync(
+        self,
+        *,
+        max_param_length: int,
+        dangerous_patterns: Sequence[str],
+    ) -> None:
+        """Synchronously verify sidecar reachability and regex compatibility at startup.
+
+        Args:
+            max_param_length: Maximum allowed string length.
+            dangerous_patterns: Regex patterns to compile in the sidecar.
+
+        Raises:
+            ValidationSidecarProtocolError: If the response frame is malformed.
+            ValidationSidecarTimeoutError: If the sidecar does not respond in time.
+            ValidationSidecarTransportError: If the socket cannot be reached.
+            ValueError: If the sidecar rejects the configured regex patterns.
+        """
+        metadata = json.dumps(
+            {
+                "raw_body_len": 2,
+                "max_param_length": max_param_length,
+                "dangerous_patterns": tuple(dangerous_patterns),
+                "healthcheck": True,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        frame = encode_frame(METADATA_PREFIX.pack(len(metadata)) + metadata + b"{}")
+
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client_socket:
+                client_socket.settimeout(self._timeout_seconds)
+                client_socket.connect(self._uds_path)
+                client_socket.sendall(frame)
+                prefix = self._recv_exact(client_socket, FRAME_PREFIX.size)
+                length = FRAME_PREFIX.unpack(prefix)[0]
+                if length > MAX_FRAME_SIZE:
+                    raise ValidationSidecarProtocolError(f"Frame payload exceeds maximum size of {MAX_FRAME_SIZE} bytes")
+                payload = self._recv_exact(client_socket, length)
+        except socket.timeout as exc:
+            raise ValidationSidecarTimeoutError(f"Validation sidecar operation timed out after {self._timeout_seconds} seconds") from exc
+        except OSError as exc:
+            raise ValidationSidecarTransportError(f"Failed to connect to validation sidecar at {self._uds_path}: {exc}") from exc
+
+        response = ValidationSidecarResponse.from_json_bytes(payload)
+        if response.ok:
+            return
+        if response.error_type == "invalid_pattern":
+            raise ValueError(f"Validation sidecar requires Rust-compatible regex patterns; {response.detail}")
+        raise ValidationSidecarValidationError(
+            response.detail or "Validation sidecar rejected the request body",
+            key=response.key,
+            error_type=response.error_type,
+            detail=response.detail,
+        )
+
     async def __aenter__(self) -> "ValidationSidecarClient":
         """Enter an async context manager for the client.
 
@@ -514,3 +571,24 @@ class ValidationSidecarClient:
             raise ValidationSidecarProtocolError(f"Frame payload exceeds maximum size of {MAX_FRAME_SIZE} bytes")
         payload = await asyncio.wait_for(reader.readexactly(length), timeout=self._timeout_seconds)
         return decode_frame(prefix + payload)
+
+    def _recv_exact(self, client_socket: socket.socket, expected_length: int) -> bytes:
+        """Receive exactly the requested number of bytes from a blocking socket.
+
+        Args:
+            client_socket: Connected Unix domain socket.
+            expected_length: Number of bytes to read.
+
+        Returns:
+            The received byte sequence.
+
+        Raises:
+            ValidationSidecarProtocolError: If the socket closes before the full frame arrives.
+        """
+        chunks = bytearray()
+        while len(chunks) < expected_length:
+            chunk = client_socket.recv(expected_length - len(chunks))
+            if not chunk:
+                raise ValidationSidecarProtocolError("Malformed sidecar response: incomplete frame")
+            chunks.extend(chunk)
+        return bytes(chunks)

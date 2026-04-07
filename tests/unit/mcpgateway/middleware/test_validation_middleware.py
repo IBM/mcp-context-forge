@@ -513,8 +513,8 @@ class TestValidationMiddleware:
             assert exc_info.value.status_code == 503
 
     @pytest.mark.asyncio
-    async def test_sidecar_invalid_json_verdict_maps_to_422(self):
-        """Test sidecar invalid-json validation verdicts map to HTTP 422 responses."""
+    async def test_sidecar_invalid_json_verdict_is_ignored_for_python_parity(self):
+        """Test sidecar invalid-json verdicts are ignored to preserve Python-path parity."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_middleware_enabled = True
@@ -538,11 +538,39 @@ class TestValidationMiddleware:
             )
             middleware._validation_sidecar_client = fake_client
 
+            await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
+
+    @pytest.mark.asyncio
+    async def test_sidecar_max_depth_verdict_preserves_specific_error_detail(self):
+        """Test sidecar max-depth verdicts map to the existing explicit depth error detail."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_middleware_enabled = True
+            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            fake_client = MagicMock()
+            fake_client.validate_json_body = AsyncMock(
+                side_effect=ValidationSidecarValidationError(
+                    "JSON payload exceeds maximum supported nesting depth",
+                    key="payload",
+                    error_type="max_depth",
+                    detail="JSON payload exceeds maximum supported nesting depth",
+                )
+            )
+            middleware._validation_sidecar_client = fake_client
+
             with pytest.raises(HTTPException) as exc_info:
                 await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
 
             assert exc_info.value.status_code == 422
-            assert "failed validation" in exc_info.value.detail
+            assert exc_info.value.detail == "JSON payload exceeds maximum supported nesting depth"
 
     @pytest.mark.asyncio
     async def test_sidecar_malformed_response_maps_to_503(self):
@@ -621,6 +649,57 @@ class TestValidationMiddleware:
                 await middleware._validate_json_body_with_sidecar(b'{"name":"safe"}')
 
             assert exc_info.value.status_code == 503
+
+    def test_sidecar_rejects_invalid_sidecar_regex_configuration_during_initialization(self):
+        """Test sidecar mode rejects regex configuration using the sidecar's own validation path."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_middleware_enabled = True
+            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.experimental_rust_validation_sidecar_uds = "/tmp/contextforge-validation-sidecar.sock"
+            mock_settings.experimental_rust_validation_sidecar_timeout_seconds = 30.0
+            mock_settings.experimental_rust_validation_sidecar_pool_size = 8
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"(?#sidecar-only-invalid)pattern"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            with patch(
+                "mcpgateway.middleware.validation_middleware.ValidationSidecarClient.validate_configuration_sync",
+                side_effect=ValidationSidecarValidationError(
+                    "dangerous pattern regex is not supported by Rust regex: unsupported",
+                    key="dangerous_patterns",
+                    error_type="invalid_pattern",
+                    detail="dangerous pattern regex is not supported by Rust regex: unsupported",
+                ),
+            ):
+                with pytest.raises(ValueError, match="Rust-compatible regex"):
+                    ValidationMiddleware(app=None)
+
+    def test_sidecar_requires_reachable_sidecar_during_initialization(self):
+        """Test sidecar mode fails initialization when the sidecar is unavailable."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_middleware_enabled = True
+            mock_settings.experimental_rust_validation_sidecar_enabled = True
+            mock_settings.experimental_rust_validation_sidecar_uds = "/tmp/contextforge-validation-sidecar.sock"
+            mock_settings.experimental_rust_validation_sidecar_timeout_seconds = 30.0
+            mock_settings.experimental_rust_validation_sidecar_pool_size = 8
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            with patch(
+                "mcpgateway.middleware.validation_middleware.ValidationSidecarClient.validate_configuration_sync",
+                side_effect=ValidationSidecarTransportError("Failed to connect to validation sidecar"),
+            ):
+                with pytest.raises(ValidationSidecarTransportError, match="Failed to connect"):
+                    ValidationMiddleware(app=None)
 
     def test_validate_resource_path_traversal(self):
         """Test resource path validation for traversal."""

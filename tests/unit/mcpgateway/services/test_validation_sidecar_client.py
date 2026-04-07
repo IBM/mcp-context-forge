@@ -28,6 +28,8 @@ from mcpgateway.services.validation_sidecar_client import (
     encode_frame,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
 
 async def _read_framed_payload(reader: asyncio.StreamReader) -> bytes:
     """Read one length-prefixed payload from a test sidecar connection."""
@@ -158,6 +160,30 @@ def test_sidecar_pool_size_must_be_positive() -> None:
     """The sidecar pool size must reject zero or negative values."""
     with pytest.raises(ValidationError):
         Settings(experimental_rust_validation_sidecar_pool_size=0, _env_file=None)
+
+
+def test_sidecar_operator_surfaces_are_consistent() -> None:
+    """Operator-facing config surfaces should describe the current sidecar rollout accurately."""
+    values_yaml = (REPO_ROOT / "charts" / "mcp-stack" / "values.yaml").read_text()
+    values_schema = (REPO_ROOT / "charts" / "mcp-stack" / "values.schema.json").read_text()
+    env_example = (REPO_ROOT / ".env.example").read_text()
+    input_validation_doc = (REPO_ROOT / "docs" / "docs" / "best-practices" / "input-validation.md").read_text()
+    makefile = (REPO_ROOT / "Makefile").read_text()
+
+    assert "EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED" not in values_yaml
+    assert "EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED" not in values_schema
+    assert 'EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE: "8"' in values_yaml
+    assert "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE" in values_schema
+    assert "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE=8" in env_example
+    assert "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE=8" in input_validation_doc
+    assert "make validation-sidecar-run" in input_validation_doc
+    assert "/tmp/contextforge-validation-sidecar.sock" not in env_example
+    assert "/tmp/contextforge-validation-sidecar.sock" not in input_validation_doc
+    assert "/tmp/contextforge-validation-sidecar.sock" not in makefile
+    assert "private directory" in input_validation_doc
+    assert "0600" in input_validation_doc
+    assert "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS" in makefile
+    assert "${VALIDATION_SIDECAR_UDS:-" not in makefile
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="Unix domain sockets are not supported on Windows.")
@@ -337,4 +363,40 @@ async def test_client_retries_connect_time_failures(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(client, "_read_frame", fake_read_frame)
 
     await client.validate_json_body(b"{}", max_param_length=10, dangerous_patterns=[])
+    assert open_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_client_retries_when_a_reused_connection_breaks_mid_request(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A broken pooled connection should be dropped and retried on a fresh socket."""
+    client = ValidationSidecarClient(uds_path=str(tmp_path / "sidecar.sock"), timeout_seconds=0.1, pool_size=1)
+    open_calls = 0
+    response_queue = [b'{"ok":true}', b'{"ok":true}']
+    broken_writer: _FakeWriter | None = None
+
+    async def fake_open_unix_connection(path: str):
+        """Return a new fake connection each time the pool reconnects."""
+        nonlocal open_calls, broken_writer
+        open_calls += 1
+        writer = _FakeWriter()
+        if broken_writer is None:
+            broken_writer = writer
+        return SimpleNamespace(), writer
+
+    async def fake_write_frame(writer: _FakeWriter, frame: bytes) -> None:
+        """Break the reused pooled connection on the second request."""
+        if writer is broken_writer and len(response_queue) == 1:
+            raise BrokenPipeError("stale pooled connection")
+
+    async def fake_read_frame(reader: object) -> bytes:
+        """Return successful responses for the surviving connection attempts."""
+        return response_queue.pop(0)
+
+    monkeypatch.setattr("mcpgateway.services.validation_sidecar_client.asyncio.open_unix_connection", fake_open_unix_connection)
+    monkeypatch.setattr(client, "_write_frame", fake_write_frame)
+    monkeypatch.setattr(client, "_read_frame", fake_read_frame)
+
+    await client.validate_json_body(b'{"first":true}', max_param_length=10, dangerous_patterns=[])
+    await client.validate_json_body(b'{"second":true}', max_param_length=10, dangerous_patterns=[])
+
     assert open_calls == 2

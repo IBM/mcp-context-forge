@@ -481,9 +481,6 @@
             "EXPERIMENTAL_VALIDATE_IO": {
               "type": "string"
             },
-            "EXPERIMENTAL_RUST_VALIDATION_MIDDLEWARE_ENABLED": {
-              "type": "string"
-            },
             "FEDERATION_TIMEOUT": {
               "type": "string",
               "description": "HTTP timeout in seconds for gateway and MCP server requests (health checks, tool invocations)",
@@ -1357,6 +1354,9 @@
               "type": "string"
             },
             "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS": {
+              "type": "string"
+            },
+            "EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE": {
               "type": "string"
             },
             "VALIDATION_MIDDLEWARE_ENABLED": {

@@ -18,9 +18,7 @@ struct Cli {
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let config = ServerConfig {
-        uds_path: cli.uds_path,
-    };
+    let config = ServerConfig::new(cli.uds_path);
 
     if let Err(error) = run(config).await {
         eprintln!("contextforge-validation-sidecar failed: {error}");
@@ -35,9 +33,7 @@ mod tests {
 
     #[test]
     fn cli_requires_uds_path() {
-        let result = Cli::try_parse_from([
-            "contextforge-validation-sidecar",
-        ]);
+        let result = Cli::try_parse_from(["contextforge-validation-sidecar"]);
 
         assert!(result.is_err());
     }

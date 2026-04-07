@@ -8,7 +8,6 @@ authors = ["Mihai Criveti"]
 description = "Experimental Rust UDS validation sidecar for ContextForge"
 
 [dependencies]
-base64 = "0.22.1"
 clap = { version = "4.5.60", features = ["derive", "env"] }
 regex = "1.12.2"
 serde = { version = "1.0.228", features = ["derive"] }

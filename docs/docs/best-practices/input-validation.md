@@ -19,9 +19,15 @@ ContextForge provides comprehensive input validation and output sanitization to 
 EXPERIMENTAL_VALIDATE_IO=true
 
 # Optional: enable the UDS validation sidecar after `make validation-sidecar-build`
+# and start it with `make validation-sidecar-run`
+# Use a private directory for the socket path in production. The sidecar
+# creates the socket with mode 0600, but the parent directory should also be
+# service-owned instead of a shared world-writable path. The sidecar must
+# already be running before the gateway starts with the feature flag enabled.
 EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED=false
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=/tmp/contextforge-validation-sidecar.sock
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=~/.local/state/contextforge/validation-sidecar.sock
 EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS=30.0
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE=8
 
 # Enable validation middleware (default: false)
 VALIDATION_MIDDLEWARE_ENABLED=true
@@ -57,12 +63,16 @@ EXPERIMENTAL_VALIDATE_IO=false  # Disabled in production
 #### Optional UDS Validation Sidecar
 ```bash
 make validation-sidecar-build
+make validation-sidecar-run
 EXPERIMENTAL_RUST_VALIDATION_SIDECAR_ENABLED=true
-EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=/tmp/contextforge-validation-sidecar.sock
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_UDS=~/.local/state/contextforge/validation-sidecar.sock
 EXPERIMENTAL_RUST_VALIDATION_SIDECAR_TIMEOUT_SECONDS=30.0
+EXPERIMENTAL_RUST_VALIDATION_SIDECAR_POOL_SIZE=8
 ```
 
-This mode routes JSON body validation to the external Rust sidecar over a Unix domain socket. When enabled, the sidecar is authoritative and malformed/unavailable sidecar responses fail closed instead of falling back to Python validation.
+This mode routes JSON body validation to the external Rust sidecar over a Unix domain socket. When enabled, the sidecar is authoritative and the gateway performs a startup validation check against the configured socket. If the sidecar is unavailable or the configured regex patterns are not supported by Rust regex, startup fails instead of deferring the error to live requests. Use a private directory for the socket path in production; the sidecar creates the socket with mode `0600`, but the parent directory should also be service-owned.
+
+The current sidecar runtime also enforces a built-in idle connection timeout of 5 seconds and a maximum of 256 concurrent active sidecar connections. These limits are fixed in the current implementation.
 
 #### Phase 1: Log-Only Mode (Dev/Staging)
 ```bash

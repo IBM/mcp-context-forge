@@ -20,6 +20,7 @@ import pytest
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
+from mcpgateway.services.validation_sidecar_client import ValidationSidecarTransportError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SIDECAR_MANIFEST = REPO_ROOT / "tools_rust" / "validation_sidecar" / "Cargo.toml"
@@ -92,6 +93,18 @@ def _configure_sidecar_settings(monkeypatch: pytest.MonkeyPatch, uds_path: str, 
     monkeypatch.setattr(settings, "environment", "production")
 
 
+def _configure_python_settings(monkeypatch: pytest.MonkeyPatch, dangerous_patterns: list[str]) -> None:
+    monkeypatch.setattr(settings, "experimental_validate_io", True)
+    monkeypatch.setattr(settings, "validation_middleware_enabled", True)
+    monkeypatch.setattr(settings, "experimental_rust_validation_sidecar_enabled", False)
+    monkeypatch.setattr(settings, "validation_strict", True)
+    monkeypatch.setattr(settings, "sanitize_output", False)
+    monkeypatch.setattr(settings, "allowed_roots", [])
+    monkeypatch.setattr(settings, "max_param_length", 64)
+    monkeypatch.setattr(settings, "dangerous_patterns", dangerous_patterns)
+    monkeypatch.setattr(settings, "environment", "production")
+
+
 @pytest.fixture(scope="module")
 def running_validation_sidecar() -> str:
     subprocess.run(["cargo", "build", "--manifest-path", str(SIDECAR_MANIFEST)], check=True, cwd=REPO_ROOT)
@@ -135,26 +148,86 @@ async def test_validation_sidecar_integration_returns_validation_verdict(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_validation_sidecar_integration_returns_503_when_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_validation_sidecar_integration_requires_reachable_sidecar_at_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     _configure_sidecar_settings(monkeypatch, "/tmp/validation-sidecar-missing.sock", [r"[;&|`$(){}\[\]<>]"])
-    middleware = ValidationMiddleware(app=None)
-
-    with pytest.raises(HTTPException) as exc_info:
-        await middleware._validate_request(_JSONBodyRequest(b'{"prompt":"safe"}'))
-
-    assert exc_info.value.status_code == 503
+    with pytest.raises(ValidationSidecarTransportError, match="Failed to connect"):
+        ValidationMiddleware(app=None)
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_validation_sidecar_integration_surfaces_invalid_regex_as_503(
+async def test_validation_sidecar_integration_ignores_invalid_json_for_python_parity(
+    monkeypatch: pytest.MonkeyPatch,
+    running_validation_sidecar: str,
+) -> None:
+    _configure_sidecar_settings(monkeypatch, running_validation_sidecar, [r"[;&|`$(){}\[\]<>]", r"\.\.[\\/]", r"[\x00-\x1f\x7f-\x9f]"])
+    middleware = ValidationMiddleware(app=None)
+
+    await middleware._validate_request(_JSONBodyRequest(b'{"prompt":'))
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_validation_sidecar_integration_preserves_max_depth_error_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    running_validation_sidecar: str,
+) -> None:
+    _configure_sidecar_settings(monkeypatch, running_validation_sidecar, [r"[;&|`$(){}\[\]<>]", r"\.\.[\\/]", r"[\x00-\x1f\x7f-\x9f]"])
+    middleware = ValidationMiddleware(app=None)
+
+    payload = b"[" * 1026 + b"0" + b"]" * 1026
+
+    with pytest.raises(HTTPException) as exc_info:
+        await middleware._validate_request(_JSONBodyRequest(payload))
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "JSON payload exceeds maximum supported nesting depth"
+
+
+@pytest.mark.integration
+def test_validation_sidecar_integration_rejects_invalid_regex_at_initialization(
     monkeypatch: pytest.MonkeyPatch,
     running_validation_sidecar: str,
 ) -> None:
     _configure_sidecar_settings(monkeypatch, running_validation_sidecar, [r"(?<=unsafe)pattern"])
-    middleware = ValidationMiddleware(app=None)
+    with pytest.raises(ValueError, match="Rust-compatible regex"):
+        ValidationMiddleware(app=None)
 
-    with pytest.raises(HTTPException) as exc_info:
-        await middleware._validate_request(_JSONBodyRequest(b'{"prompt":"unsafepattern"}'))
 
-    assert exc_info.value.status_code == 503
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_validation_sidecar_matches_python_verdicts_for_representative_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    running_validation_sidecar: str,
+) -> None:
+    dangerous_patterns = [r"[;&|`$(){}\[\]<>]", r"\.\.[\\/]", r"[\x00-\x1f\x7f-\x9f]"]
+    payloads = [
+        b'{"name":"safe","nested":{"description":"still safe"}}',
+        b'{"prompt":"<script>alert(1)</script>"}',
+        json.dumps({"outer": {"inner": "a" * 2048}}).encode("utf-8"),
+        json.dumps(["<script>alert(1)</script>"]).encode("utf-8"),
+        json.dumps({"emoji": "é" * 65}).encode("utf-8"),
+        b'{"prompt":',
+    ]
+
+    _configure_python_settings(monkeypatch, dangerous_patterns)
+    python_middleware = ValidationMiddleware(app=None)
+
+    _configure_sidecar_settings(monkeypatch, running_validation_sidecar, dangerous_patterns)
+    sidecar_middleware = ValidationMiddleware(app=None)
+
+    for payload in payloads:
+        python_error: tuple[int, str] | None = None
+        sidecar_error: tuple[int, str] | None = None
+
+        try:
+            await python_middleware._validate_request(_JSONBodyRequest(payload))
+        except HTTPException as exc:
+            python_error = (exc.status_code, exc.detail)
+
+        try:
+            await sidecar_middleware._validate_request(_JSONBodyRequest(payload))
+        except HTTPException as exc:
+            sidecar_error = (exc.status_code, exc.detail)
+
+        assert sidecar_error == python_error

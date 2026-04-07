@@ -103,6 +103,15 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                     timeout_seconds=float(getattr(settings, "experimental_rust_validation_sidecar_timeout_seconds", 30.0)),
                     pool_size=int(getattr(settings, "experimental_rust_validation_sidecar_pool_size", 8)),
                 )
+                try:
+                    self._validation_sidecar_client.validate_configuration_sync(
+                        max_param_length=settings.max_param_length,
+                        dangerous_patterns=self.dangerous_pattern_strings,
+                    )
+                except ValidationSidecarValidationError as exc:
+                    if exc.error_type == "invalid_pattern":
+                        raise ValueError(f"Validation sidecar requires Rust-compatible regex patterns; {exc.detail}") from exc
+                    raise
 
     async def dispatch(self, request: Request, call_next):
         """Process request with validation and response sanitization.
@@ -264,6 +273,8 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 dangerous_patterns=self.dangerous_pattern_strings,
             )
         except ValidationSidecarValidationError as exc:
+            if exc.error_type == "invalid_json":
+                return
             self._raise_validation_failure(exc.key or "payload", exc.error_type or "validation")
         except ValidationSidecarProtocolError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -333,6 +344,9 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 logger.warning("Parameter %s contains dangerous characters", key)
                 return
             raise HTTPException(status_code=422, detail=f"Parameter {key} contains dangerous characters")
+
+        if error_type == "max_depth":
+            raise HTTPException(status_code=422, detail="JSON payload exceeds maximum supported nesting depth")
 
         raise HTTPException(status_code=422, detail=f"Parameter {key} failed validation")
 

@@ -128,14 +128,16 @@ pub fn encode_request_payload(request: &ValidationRequest) -> Result<Vec<u8>, Pr
     Ok(payload)
 }
 
-pub fn decode_request_payload(payload: &[u8]) -> Result<ValidationRequest, ProtocolError> {
+pub fn decode_request_payload(mut payload: Vec<u8>) -> Result<ValidationRequest, ProtocolError> {
     if payload.len() < METADATA_PREFIX_LEN {
         return Err(ProtocolError::ShortFrame);
     }
 
-    let metadata_len =
-        u32::from_be_bytes(payload[..METADATA_PREFIX_LEN].try_into().expect("prefix length"))
-            as usize;
+    let metadata_len = u32::from_be_bytes(
+        payload[..METADATA_PREFIX_LEN]
+            .try_into()
+            .expect("prefix length"),
+    ) as usize;
     let metadata_start = METADATA_PREFIX_LEN;
     let metadata_end = metadata_start + metadata_len;
     if metadata_end > payload.len() {
@@ -147,7 +149,8 @@ pub fn decode_request_payload(payload: &[u8]) -> Result<ValidationRequest, Proto
 
     let envelope: ValidationRequestEnvelope =
         serde_json::from_slice(&payload[metadata_start..metadata_end])?;
-    envelope.into_request(payload[metadata_end..].to_vec())
+    let raw_body = payload.split_off(metadata_end);
+    envelope.into_request(raw_body)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,15 +233,6 @@ pub fn decode_frame(frame: &[u8]) -> Result<Vec<u8>, ProtocolError> {
     Ok(payload.to_vec())
 }
 
-pub fn encode_json_frame<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
-    encode_frame(&serde_json::to_vec(value)?)
-}
-
-pub fn decode_json_frame<T: DeserializeOwned>(frame: &[u8]) -> Result<T, ProtocolError> {
-    let payload = decode_frame(frame)?;
-    Ok(serde_json::from_slice(&payload)?)
-}
-
 pub async fn read_frame<R>(reader: &mut R) -> Result<Vec<u8>, ProtocolError>
 where
     R: AsyncRead + Unpin,
@@ -262,6 +256,15 @@ where
     let framed = encode_frame(payload)?;
     writer.write_all(&framed).await?;
     Ok(())
+}
+
+pub fn encode_json_frame<T: Serialize>(value: &T) -> Result<Vec<u8>, ProtocolError> {
+    encode_frame(&serde_json::to_vec(value)?)
+}
+
+pub fn decode_json_frame<T: DeserializeOwned>(frame: &[u8]) -> Result<T, ProtocolError> {
+    let payload = decode_frame(frame)?;
+    Ok(serde_json::from_slice(&payload)?)
 }
 
 pub async fn write_json_frame<W, T>(writer: &mut W, value: &T) -> Result<(), ProtocolError>
@@ -351,7 +354,7 @@ mod tests {
             ValidationRequest::from_raw_body(br#"{"hello":"world"}"#, 32, &default_patterns())
                 .expect("request");
         let encoded = encode_request_payload(&request).expect("payload");
-        let round_trip = decode_request_payload(&encoded).expect("into request");
+        let round_trip = decode_request_payload(encoded).expect("into request");
 
         assert_eq!(round_trip.raw_body, br#"{"hello":"world"}"#);
         assert_eq!(round_trip.dangerous_patterns, default_patterns());
