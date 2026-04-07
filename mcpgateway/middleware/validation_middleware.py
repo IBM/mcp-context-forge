@@ -72,9 +72,16 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         self.dangerous_pattern_strings = list(settings.dangerous_patterns)
         self.dangerous_patterns = [re.compile(pattern) for pattern in settings.dangerous_patterns]
         self._rust_validator = None
+        self._rust_validate_http_request = None
+        self._rust_sanitize_response_body = None
+        self._rust_validate_resource_path = None
 
         if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
             self._rust_validator = self._build_rust_validator()
+            if self._rust_validator is not None:
+                self._rust_validate_http_request = self._rust_validator.validate_http_request
+                self._rust_sanitize_response_body = self._rust_validator.sanitize_response_body
+                self._rust_validate_resource_path = self._rust_validator.validate_resource_path
 
     async def dispatch(self, request: Request, call_next):
         """Process request with validation and response sanitization.
@@ -134,18 +141,14 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         for key, value in request.query_params.items():
             parameters_to_validate.append((key, value))
 
-        is_json_body = request.headers.get("content-type", "").startswith("application/json")
+        content_type = request.headers.get("content-type", "")
         body = b""
-        if is_json_body:
+        if content_type.startswith("application/json"):
             body = await request.body()
 
-        rust_request_failed = False
-        if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
+        if self._rust_validate_http_request is not None:
             try:
-                result = self._validate_request_with_rust(
-                    parameters_to_validate,
-                    body if is_json_body and body else None,
-                )
+                result = self._validate_request_with_rust(parameters_to_validate, content_type, body)
                 if result is not None:
                     key, error_type = result
                     self._raise_validation_failure(key, error_type)
@@ -154,29 +157,23 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 pass
             except HTTPException:
                 raise
-            except Exception:
-                rust_request_failed = True
+            except Exception as exc:
+                logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
 
         if parameters_to_validate:
-            if rust_request_failed:
-                result = self._validate_parameters_with_python(parameters_to_validate)
-                if result is not None:
-                    key, error_type = result
-                    self._raise_validation_failure(key, error_type)
-            else:
-                self._validate_parameters(parameters_to_validate)
+            result = self._validate_parameters_with_python(parameters_to_validate)
+            if result is not None:
+                key, error_type = result
+                self._raise_validation_failure(key, error_type)
 
-        if is_json_body:
+        if content_type.startswith("application/json"):
             try:
                 if body:
                     data = orjson.loads(body)
-                    if rust_request_failed:
-                        result = self._validate_json_data_with_python(data)
-                        if result is not None:
-                            key, error_type = result
-                            self._raise_validation_failure(key, error_type)
-                    else:
-                        self._validate_json_data(data)
+                    result = self._validate_json_data_with_python(data)
+                    if result is not None:
+                        key, error_type = result
+                        self._raise_validation_failure(key, error_type)
             except orjson.JSONDecodeError:
                 pass  # Let other middleware handle JSON errors
 
@@ -289,25 +286,22 @@ class ValidationMiddleware(BaseHTTPMiddleware):
     def _validate_request_with_rust(
         self,
         parameters: list[tuple[str, str]],
-        body: bytes | None,
+        content_type: str,
+        body: bytes,
     ) -> tuple[str, str] | None:
-        """Validate request parameters and optional JSON body in one Rust call."""
+        """Validate the middleware request path via the Rust engine."""
         try:
-            if self._rust_validator is None:
-                self._rust_validator = self._build_rust_validator()
-                if self._rust_validator is None:
-                    raise RuntimeError("rust validator unavailable")
+            if self._rust_validate_http_request is None:
+                raise RuntimeError("rust validator unavailable")
 
-            return self._rust_validator.validate_request_parts(parameters, body)
+            return self._rust_validate_http_request(parameters, content_type, body if body else None)
         except ValueError as exc:
             if "maximum supported nesting depth" in str(exc):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             if "Request body contains invalid JSON:" in str(exc):
                 raise orjson.JSONDecodeError("invalid json", b"", 0) from exc
-            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             raise
-        except Exception as exc:
-            logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
+        except Exception:
             raise
 
     def _validate_json_data_with_rust(self, data: Any) -> tuple[str, str] | None:
@@ -424,12 +418,15 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         """
         if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
             try:
-                if self._rust_validator is None:
+                if self._rust_validate_resource_path is None:
                     self._rust_validator = self._build_rust_validator()
                     if self._rust_validator is None:
                         return self._validate_resource_path_with_python(path)
+                    self._rust_validate_http_request = self._rust_validator.validate_http_request
+                    self._rust_sanitize_response_body = self._rust_validator.sanitize_response_body
+                    self._rust_validate_resource_path = self._rust_validator.validate_resource_path
 
-                return self._rust_validator.validate_resource_path(path)
+                return self._rust_validate_resource_path(path)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception as exc:
@@ -476,13 +473,17 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         try:
             body = response.body
             if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
-                if self._rust_validator is None:
+                if self._rust_sanitize_response_body is None:
                     self._rust_validator = self._build_rust_validator()
+                    if self._rust_validator is not None:
+                        self._rust_validate_http_request = self._rust_validator.validate_http_request
+                        self._rust_sanitize_response_body = self._rust_validator.sanitize_response_body
+                        self._rust_validate_resource_path = self._rust_validator.validate_resource_path
 
-                if self._rust_validator is not None:
+                if self._rust_sanitize_response_body is not None:
                     if isinstance(body, str):
                         body = body.encode("utf-8", errors="replace")
-                    response.body = self._rust_validator.sanitize_response_body(body)
+                    response.body = self._rust_sanitize_response_body(body)
                 else:
                     response.body = self._sanitize_response_body_with_python(body)
             else:

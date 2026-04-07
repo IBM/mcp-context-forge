@@ -241,8 +241,8 @@ class TestValidationMiddleware:
             await middleware._validate_request(DummyRequest())
 
     @pytest.mark.asyncio
-    async def test_validate_request_uses_split_rust_request_when_enabled(self):
-        """Test request validation uses one split-parts Rust call."""
+    async def test_validate_request_uses_rust_http_request_when_enabled(self):
+        """Test request validation uses one Rust HTTP request call."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.experimental_rust_validation_middleware_enabled = True
@@ -255,7 +255,7 @@ class TestValidationMiddleware:
 
             rust_module = MagicMock()
             rust_validator = MagicMock()
-            rust_validator.validate_request_parts.return_value = None
+            rust_validator.validate_http_request.return_value = None
             rust_module.Validator.return_value = rust_validator
 
             with patch("mcpgateway.middleware.validation_middleware._RUST_VALIDATION_MODULE", None):
@@ -272,7 +272,7 @@ class TestValidationMiddleware:
 
             await middleware._validate_request(DummyRequest())
 
-            rust_validator.validate_request_parts.assert_called_once_with([], b'{"name":"safe"}')
+            rust_validator.validate_http_request.assert_called_once_with([], "application/json", b'{"name":"safe"}')
 
     @pytest.mark.asyncio
     async def test_validate_request_rust_bytes_extension_falls_back_to_python_validation(self):
@@ -289,8 +289,9 @@ class TestValidationMiddleware:
 
             middleware = ValidationMiddleware(app=None)
             rust_validator = MagicMock()
-            rust_validator.validate_request_parts.side_effect = RuntimeError("boom")
+            rust_validator.validate_http_request.side_effect = RuntimeError("boom")
             middleware._rust_validator = rust_validator
+            middleware._rust_validate_http_request = rust_validator.validate_http_request
 
             class DummyRequest:
                 path_params = {}
@@ -321,8 +322,9 @@ class TestValidationMiddleware:
 
             middleware = ValidationMiddleware(app=None)
             rust_validator = MagicMock()
-            rust_validator.validate_request_parts.return_value = None
+            rust_validator.validate_http_request.return_value = None
             middleware._rust_validator = rust_validator
+            middleware._rust_validate_http_request = rust_validator.validate_http_request
 
             class DummyRequest:
                 path_params = {"id": 123}
@@ -334,8 +336,9 @@ class TestValidationMiddleware:
 
             await middleware._validate_request(DummyRequest())
 
-            rust_validator.validate_request_parts.assert_called_once_with(
+            rust_validator.validate_http_request.assert_called_once_with(
                 [("id", "123"), ("q", "safe")],
+                "application/json",
                 b'{"name":"safe"}',
             )
 

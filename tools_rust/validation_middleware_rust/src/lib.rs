@@ -540,6 +540,28 @@ impl CompiledValidator {
         validate_json_bytes_streaming(raw_body, self)
     }
 
+    #[pyo3(signature = (parameters, content_type, raw_body=None))]
+    fn validate_http_request(
+        &self,
+        parameters: Vec<(String, String)>,
+        content_type: &str,
+        raw_body: Option<&[u8]>,
+    ) -> PyResult<Option<(String, String)>> {
+        if let Some(result) = self.validate_parameters(parameters) {
+            return Ok(Some(result));
+        }
+
+        if content_type.starts_with("application/json") {
+            if let Some(body) = raw_body {
+                if !body.is_empty() {
+                    return self.validate_json_bytes(body);
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     #[pyo3(signature = (parameters, raw_body=None))]
     fn validate_request_parts(
         &self,
@@ -804,6 +826,22 @@ mod tests {
             result,
             Some(("query".to_owned(), "dangerous_pattern".to_owned()))
         );
+    }
+
+    #[test]
+    fn validate_http_request_skips_non_json_body_validation() {
+        let validator =
+            compile_validator(32, vec![r"[;&|`$(){}\[\]<>]".to_owned()], Vec::new(), 1024).unwrap();
+
+        let result = validator
+            .validate_http_request(
+                vec![("query".to_owned(), "safe".to_owned())],
+                "text/plain",
+                Some(br#"<script>"#),
+            )
+            .unwrap();
+
+        assert!(result.is_none());
     }
 
     #[test]
