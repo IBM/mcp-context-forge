@@ -74,6 +74,12 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
             captured["follow_redirects"] = follow_redirects
             return FakeStreamContext(content=content)
 
+    async def mock_validate_server_id(match, path, scope, receive, send):
+        """Mock validation that returns the server_id without database checks."""
+        if match:
+            return match.group("server_id")
+        return None
+    
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_timeout_seconds", 17)
     monkeypatch.setattr(
@@ -90,6 +96,7 @@ async def test_post_requests_proxy_to_rust_runtime_and_forward_internal_server_h
             "scoped_server_id": "server-scope-1",
         },
     )
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy._validate_server_id", mock_validate_server_id)
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", AsyncMock(return_value=FakeClient()))
 
     fallback = AsyncMock()
@@ -349,8 +356,15 @@ async def test_get_requests_proxy_to_rust_runtime(monkeypatch):
             captured["follow_redirects"] = follow_redirects
             return FakeStreamContext()
 
+    async def mock_validate_server_id(match, path, scope, receive, send):
+        """Mock validation that returns the server_id without database checks."""
+        if match:
+            return match.group("server_id")
+        return None
+    
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_timeout_seconds", 17)
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy._validate_server_id", mock_validate_server_id)
     monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.get_http_client", AsyncMock(return_value=FakeClient()))
 
     fallback = AsyncMock()
@@ -697,3 +711,141 @@ async def test_runtime_failure_returns_jsonrpc_bad_gateway(monkeypatch):
     assert body["error"]["code"] == -32000
     assert body["error"]["message"] == "Experimental Rust MCP runtime unavailable"
     assert body["error"]["data"] == "See server logs"
+
+
+
+@pytest.mark.asyncio
+async def test_validate_server_id_returns_404_when_server_not_found(monkeypatch):
+    """_validate_server_id should return 404 when server doesn't exist in database."""
+    from unittest.mock import MagicMock
+    
+    # Mock database session that returns None (server not found)
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_filter = MagicMock()
+    mock_filter.first.return_value = None
+    mock_query.filter.return_value = mock_filter
+    mock_db.query.return_value = mock_query
+    
+    mock_session_local = MagicMock()
+    mock_session_local.return_value.__enter__.return_value = mock_db
+    mock_session_local.return_value.__exit__.return_value = None
+    
+    monkeypatch.setattr("mcpgateway.db.SessionLocal", mock_session_local)
+    
+    events = []
+    async def send(message):
+        events.append(message)
+    
+    scope = {"type": "http", "method": "POST"}
+    receive = _make_receive(b"")
+    
+    # Create a match object for a non-existent server
+    import re
+    match = re.match(r"/servers/(?P<server_id>[^/]+)/mcp", "/servers/nonexistent-server/mcp")
+    
+    result = await proxy_mod._validate_server_id(match, "/servers/nonexistent-server/mcp", scope, receive, send)
+    
+    assert result is proxy_mod._REJECT
+    assert len(events) == 2
+    assert events[0]["type"] == "http.response.start"
+    assert events[0]["status"] == 404
+    assert b"Server not found" in events[1]["body"]
+
+
+@pytest.mark.asyncio
+async def test_validate_server_id_returns_503_on_database_error(monkeypatch):
+    """_validate_server_id should return 503 when database query fails."""
+    from unittest.mock import MagicMock
+    
+    # Mock database session that raises an exception
+    mock_session_local = MagicMock()
+    mock_session_local.return_value.__enter__.side_effect = Exception("Database connection failed")
+    
+    monkeypatch.setattr("mcpgateway.db.SessionLocal", mock_session_local)
+    
+    events = []
+    async def send(message):
+        events.append(message)
+    
+    scope = {"type": "http", "method": "POST"}
+    receive = _make_receive(b"")
+    
+    # Create a match object
+    import re
+    match = re.match(r"/servers/(?P<server_id>[^/]+)/mcp", "/servers/test-server/mcp")
+    
+    result = await proxy_mod._validate_server_id(match, "/servers/test-server/mcp", scope, receive, send)
+    
+    assert result is proxy_mod._REJECT
+    assert len(events) == 2
+    assert events[0]["type"] == "http.response.start"
+    assert events[0]["status"] == 503
+    assert b"Service unavailable" in events[1]["body"]
+
+
+@pytest.mark.asyncio
+async def test_validate_server_id_rejects_malformed_server_scoped_paths(monkeypatch):
+    """_validate_server_id should reject server-scoped paths with unparseable server IDs."""
+    events = []
+    async def send(message):
+        events.append(message)
+    
+    scope = {"type": "http", "method": "POST"}
+    receive = _make_receive(b"")
+    
+    # No match (None) but path looks server-scoped (defense-in-depth)
+    result = await proxy_mod._validate_server_id(None, "/servers//mcp", scope, receive, send)
+    
+    assert result is proxy_mod._REJECT
+    assert len(events) == 2
+    assert events[0]["type"] == "http.response.start"
+    assert events[0]["status"] == 404
+    assert b"Invalid server identifier" in events[1]["body"]
+
+
+@pytest.mark.asyncio
+async def test_handle_streamable_http_rejects_invalid_server_id(monkeypatch):
+    """handle_streamable_http should reject requests when server validation fails."""
+    from unittest.mock import MagicMock
+    
+    # Mock database to return None (server not found)
+    mock_db = MagicMock()
+    mock_query = MagicMock()
+    mock_filter = MagicMock()
+    mock_filter.first.return_value = None
+    mock_query.filter.return_value = mock_filter
+    mock_db.query.return_value = mock_query
+    
+    mock_session_local = MagicMock()
+    mock_session_local.return_value.__enter__.return_value = mock_db
+    mock_session_local.return_value.__exit__.return_value = None
+    
+    monkeypatch.setattr("mcpgateway.db.SessionLocal", mock_session_local)
+    monkeypatch.setattr("mcpgateway.transports.rust_mcp_runtime_proxy.settings.experimental_rust_mcp_runtime_url", "http://127.0.0.1:8787")
+    
+    fallback = AsyncMock()
+    proxy = RustMCPRuntimeProxy(fallback)
+    events = []
+    
+    async def send(message):
+        events.append(message)
+    
+    await proxy.handle_streamable_http(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "modified_path": "/servers/invalid-server-id/mcp",
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json")],
+        },
+        _make_receive(b'{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'),
+        send,
+    )
+    
+    # Should not fall back to Python, should reject with 404
+    fallback.assert_not_awaited()
+    assert len(events) == 2
+    assert events[0]["status"] == 404
+    assert b"Server not found" in events[1]["body"]
