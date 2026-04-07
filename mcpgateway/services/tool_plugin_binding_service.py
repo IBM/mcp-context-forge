@@ -11,6 +11,7 @@ Handles upsert, retrieval, and deletion of per-tool per-tenant plugin policy bin
 # Standard
 import logging
 from typing import List, Optional
+import uuid
 
 # Third-Party
 from sqlalchemy.orm import Session
@@ -95,18 +96,16 @@ class ToolPluginBindingService:
         results: List[ToolPluginBindingResponse] = []
         now = utc_now()
 
+        # Prefetch all existing bindings for the requested teams in a single query
+        # rather than issuing one SELECT per (team_id, tool_name, plugin_id) triple.
+        team_ids = list(request.teams.keys())
+        existing_rows = db.query(ToolPluginBinding).filter(ToolPluginBinding.team_id.in_(team_ids)).all()
+        existing_map: dict = {(b.team_id, b.tool_name, b.plugin_id): b for b in existing_rows}
+
         for team_id, team_policies in request.teams.items():
             for policy in team_policies.policies:
                 for tool_name in policy.tool_names:
-                    existing = (
-                        db.query(ToolPluginBinding)
-                        .filter(
-                            ToolPluginBinding.team_id == team_id,
-                            ToolPluginBinding.tool_name == tool_name,
-                            ToolPluginBinding.plugin_id == policy.plugin_id.value,
-                        )
-                        .first()
-                    )
+                    existing = existing_map.get((team_id, tool_name, policy.plugin_id.value))
 
                     if existing:
                         # Upsert — update mutable fields only
@@ -115,7 +114,6 @@ class ToolPluginBindingService:
                         existing.config = policy.config
                         existing.updated_at = now
                         existing.updated_by = caller_email
-                        db.flush()
                         results.append(self._to_response(existing))
                         logger.debug(
                             "Updated tool plugin binding id=%s team=%s tool=%s plugin=%s",
@@ -126,6 +124,7 @@ class ToolPluginBindingService:
                         )
                     else:
                         new_binding = ToolPluginBinding(
+                            id=uuid.uuid4().hex,
                             team_id=team_id,
                             tool_name=tool_name,
                             plugin_id=policy.plugin_id.value,
@@ -138,7 +137,6 @@ class ToolPluginBindingService:
                             updated_by=caller_email,
                         )
                         db.add(new_binding)
-                        db.flush()
                         results.append(self._to_response(new_binding))
                         logger.debug(
                             "Created tool plugin binding id=%s team=%s tool=%s plugin=%s",
@@ -148,6 +146,7 @@ class ToolPluginBindingService:
                             policy.plugin_id.value,
                         )
 
+        db.flush()  # single flush for all inserts/updates
         return results
 
     # ------------------------------------------------------------------
@@ -199,6 +198,6 @@ class ToolPluginBindingService:
             raise ToolPluginBindingNotFoundError(f"Tool plugin binding '{binding_id}' not found")
         response = self._to_response(binding)
         db.delete(binding)
-        db.flush()
+        db.flush()  # flush so the DELETE is sent before the caller's commit
         logger.debug("Deleted tool plugin binding id=%s", binding_id)
         return response
