@@ -1,0 +1,170 @@
+<!-- Container Scanner Partial Template -->
+<div class="p-6">
+    <div class="mb-6">
+      <h2 class="text-2xl font-bold text-gray-900 dark:text-white">Container Scanner</h2>
+      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Recent container image scan results from the CVE scanner pipeline.</p>
+    </div>
+  
+    {% if results %}
+    <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-800">
+          <tr>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider w-6"></th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Scan Time</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Image</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Scanner</th>
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Status</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Critical</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">High</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Medium</th>
+            <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Low</th>
+            <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Duration</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+          {% for result in results %}
+          <tbody x-data="{ open: false }" class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+            <!-- Summary row -->
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer" @click="open = !open">
+              <td class="px-4 py-3 text-gray-400 text-xs select-none">
+                <span x-text="open ? '▾' : '▸'"></span>
+              </td>
+              <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                {{ result.scan_time.strftime('%Y-%m-%d %H:%M:%S') if result.scan_time else '—' }}
+              </td>
+              <td class="px-4 py-3 text-sm font-mono text-gray-900 dark:text-white max-w-xs truncate" title="{{ result.image_ref }}">
+                {{ result.image_ref }}
+                {% if result.image_digest and result.image_digest != result.image_ref %}
+                <div class="text-xs text-gray-400 truncate" title="{{ result.image_digest }}">{{ result.image_digest }}</div>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                {{ result.scanners }}
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap">
+                {% if result.scan_error %}
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                  Error
+                </span>
+                {% elif result.blocked %}
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                  Blocked
+                </span>
+                {% else %}
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                  Allowed
+                </span>
+                {% endif %}
+                {% if result.reason %}
+                <div class="text-xs text-gray-400 mt-0.5" title="{{ result.reason }}">{{ result.reason | truncate(40) }}</div>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-center text-sm font-semibold">
+                {% if result.summary.critical_count > 0 %}
+                <span class="text-red-600 dark:text-red-400">{{ result.summary.critical_count }}</span>
+                {% else %}
+                <span class="text-gray-400">0</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-center text-sm font-semibold">
+                {% if result.summary.high_count > 0 %}
+                <span class="text-orange-500 dark:text-orange-400">{{ result.summary.high_count }}</span>
+                {% else %}
+                <span class="text-gray-400">0</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-center text-sm font-semibold">
+                {% if result.summary.medium_count > 0 %}
+                <span class="text-yellow-500 dark:text-yellow-400">{{ result.summary.medium_count }}</span>
+                {% else %}
+                <span class="text-gray-400">0</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-center text-sm text-gray-600 dark:text-gray-300">
+                {{ result.summary.low_count }}
+              </td>
+              <td class="px-4 py-3 text-right text-sm text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                {{ result.duration_ms }} ms
+              </td>
+            </tr>
+  
+            <!-- Vulnerability detail row -->
+            <tr x-show="open" x-cloak>
+              <td colspan="10" class="px-6 py-4 bg-gray-50 dark:bg-gray-800">
+                {% if result.scan_error %}
+                <p class="text-sm text-yellow-700 dark:text-yellow-300">
+                  <span class="font-semibold">Scan error:</span> {{ result.scan_error }}
+                </p>
+                {% elif result.vulnerabilities %}
+                <table class="min-w-full text-xs divide-y divide-gray-200 dark:divide-gray-700">
+                  <thead>
+                    <tr class="text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                      <th class="py-2 pr-4 text-left font-semibold">CVE</th>
+                      <th class="py-2 pr-4 text-left font-semibold">Severity</th>
+                      <th class="py-2 pr-4 text-left font-semibold">Package</th>
+                      <th class="py-2 pr-4 text-left font-semibold">Installed</th>
+                      <th class="py-2 pr-4 text-left font-semibold">Fixed Version</th>
+                      <th class="py-2 text-left font-semibold">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                    {% for v in result.vulnerabilities %}
+                    <tr class="hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <td class="py-1.5 pr-4 font-mono text-blue-600 dark:text-blue-400 whitespace-nowrap">{{ v.cve_id }}</td>
+                      <td class="py-1.5 pr-4 whitespace-nowrap">
+                        {% if v.severity == 'CRITICAL' %}
+                        <span class="font-semibold text-red-600 dark:text-red-400">CRITICAL</span>
+                        {% elif v.severity == 'HIGH' %}
+                        <span class="font-semibold text-orange-500 dark:text-orange-400">HIGH</span>
+                        {% elif v.severity == 'MEDIUM' %}
+                        <span class="font-semibold text-yellow-500 dark:text-yellow-400">MEDIUM</span>
+                        {% elif v.severity == 'LOW' %}
+                        <span class="text-gray-500 dark:text-gray-400">LOW</span>
+                        {% else %}
+                        <span class="text-gray-400">{{ v.severity }}</span>
+                        {% endif %}
+                      </td>
+                      <td class="py-1.5 pr-4 font-mono whitespace-nowrap">{{ v.package_name }}</td>
+                      <td class="py-1.5 pr-4 font-mono whitespace-nowrap text-gray-600 dark:text-gray-300">{{ v.installed_version }}</td>
+                      <td class="py-1.5 pr-4 font-mono whitespace-nowrap">
+                        {% if v.fixed_version %}
+                        <span class="text-green-600 dark:text-green-400">{{ v.fixed_version }}</span>
+                        {% else %}
+                        <span class="text-gray-400 italic">no fix available</span>
+                        {% endif %}
+                      </td>
+                      <td class="py-1.5 text-gray-600 dark:text-gray-300 max-w-sm truncate" title="{{ v.description or '' }}">
+                        {{ v.description or '—' }}
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+                {% else %}
+                <p class="text-sm text-gray-500 dark:text-gray-400 italic">No vulnerabilities found.</p>
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-3 text-xs text-gray-400">Showing {{ results | length }} result(s). Results are stored in memory and reset on gateway restart.</p>
+  
+    {% else %}
+    <div class="flex flex-col items-center justify-center py-16 text-center">
+      <div class="text-5xl mb-4">🔒</div>
+      <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">No scan results yet</h3>
+      <p class="text-sm text-gray-500 dark:text-gray-400 max-w-md">
+        Container scan results will appear here after images are scanned.
+        Register a server with a container image reference to trigger a scan.
+      </p>
+      <p class="mt-4 text-xs text-gray-400 dark:text-gray-500">
+        Ensure <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">PLUGINS_ENABLED=true</code> and the container scanner plugin is configured.
+      </p>
+    </div>
+    {% endif %}
+  </div>
+  
