@@ -950,9 +950,11 @@ class TestGetAuthContextNoRedis:
     @pytest.mark.asyncio
     async def test_l1_miss_no_redis_returns_none(self, auth_cache):
         """get_auth_context returns None when L1 misses and Redis is unavailable."""
-        result = await auth_cache.get_auth_context("u@test.com", "jti")
-        assert result is None
-        assert auth_cache._miss_count > 0
+        # Mock _get_redis_client to return None (Redis unavailable)
+        with patch.object(auth_cache, '_get_redis_client', return_value=None):
+            result = await auth_cache.get_auth_context("u@test.com", "jti")
+            assert result is None
+            assert auth_cache._miss_count > 0
 
 
 class TestInvalidateUserNoRedis:

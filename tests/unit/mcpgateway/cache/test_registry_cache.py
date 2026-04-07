@@ -401,6 +401,7 @@ class TestRegistryCache:
     async def test_get_redis_client_available(self, monkeypatch):
         cache = RegistryCache()
         fake_redis = MagicMock()
+        fake_redis.ping = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
 
         client = await cache._get_redis_client()
