@@ -315,3 +315,169 @@ async def test_circuit_breaker_half_open_state():
         assert result is not None
         assert cache._redis_circuit_open is False
         assert cache._redis_failure_count == 0
+
+
+
+
+@pytest.mark.asyncio
+async def test_get_redis_client_ping_failure():
+    """Test Redis client returns None when ping fails (covers lines 351-353)."""
+    cache = RegistryCache()
+    cache._redis_checked = False
+    cache._redis_available = True
+    
+    # Mock Redis client with failing ping
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(side_effect=Exception("Connection refused"))
+    
+    with patch('mcpgateway.utils.redis_client.get_redis_client', return_value=mock_redis):
+        result = await cache._get_redis_client()
+        
+        assert result is None
+        assert cache._redis_available is False
+        # _redis_checked is NOT set when ping fails in the try block
+
+
+@pytest.mark.asyncio
+async def test_get_redis_client_unavailable_no_client():
+    """Test Redis client returns None when get_redis_client returns None (covers lines 356-360)."""
+    cache = RegistryCache()
+    cache._redis_checked = False
+    cache._redis_available = False
+    
+    with patch('mcpgateway.utils.redis_client.get_redis_client', return_value=None):
+        result = await cache._get_redis_client()
+        
+        assert result is None
+        assert cache._redis_checked is True
+        assert cache._redis_available is False
+
+
+@pytest.mark.asyncio
+async def test_redis_operation_half_open_recovery():
+    """Test circuit breaker half-open state allows one operation (covers lines 261-266)."""
+    cache = RegistryCache()
+    
+    # Set circuit to open state
+    cache._redis_circuit_open = True
+    cache._redis_last_failure_time = time.time() - 31  # Past the timeout
+    cache._redis_circuit_open_duration = 30.0
+    cache._redis_failure_count = 3
+    
+    # Mock successful operation that accepts redis_client arg
+    async def successful_op(redis_client):
+        return "success"
+    
+    # Mock Redis client
+    mock_redis = AsyncMock()
+    
+    with patch.object(cache, '_get_redis_client', return_value=mock_redis):
+        # Should enter half-open state and succeed
+        result = await cache._redis_operation_with_timeout(successful_op, "test_op")
+        
+        assert result == "success"
+        assert cache._redis_circuit_open is False
+        assert cache._redis_failure_count == 0
+
+
+
+
+@pytest.mark.asyncio
+async def test_circuit_breaker_half_open_direct():
+    """Direct test of half-open circuit breaker state (lines 261-266)."""
+    cache = RegistryCache()
+    
+    # Set circuit to open with expired timeout
+    cache._redis_circuit_open = True
+    cache._redis_last_failure_time = time.time() - 31
+    cache._redis_circuit_open_duration = 30.0
+    
+    # Create a simple async operation
+    call_count = 0
+    async def test_operation(redis_client):
+        nonlocal call_count
+        call_count += 1
+        return "result"
+    
+    # Mock Redis client
+    mock_redis = AsyncMock()
+    with patch.object(cache, '_get_redis_client', return_value=mock_redis):
+        result = await cache._redis_operation_with_timeout(test_operation, "test")
+        
+        # Verify half-open state was entered and circuit closed
+        assert result == "result"
+        assert call_count == 1
+        assert cache._redis_circuit_open is False
+
+
+
+
+@pytest.mark.asyncio
+async def test_redis_operation_circuit_open_skip():
+    """Test that operations are skipped when circuit is open (line 261-262)."""
+    cache = RegistryCache()
+    
+    # Set circuit to open state (within timeout window)
+    cache._redis_circuit_open = True
+    cache._redis_last_failure_time = time.time() - 5  # Only 5s ago
+    cache._redis_circuit_open_duration = 30.0
+    
+    # Create operation that should not be called
+    call_count = 0
+    async def should_not_run(redis_client):
+        nonlocal call_count
+        call_count += 1
+        return "should not happen"
+    
+    # Should skip operation and return None
+    result = await cache._redis_operation_with_timeout(should_not_run, "test")
+    
+    assert result is None
+    assert call_count == 0  # Operation was not called
+    assert cache._redis_circuit_open is True  # Circuit still open
+
+
+
+
+@pytest.mark.asyncio
+async def test_get_redis_client_exception_handling():
+    """Test Redis client exception handling (covers lines 362-367 including line 309)."""
+    cache = RegistryCache()
+    cache._redis_checked = False
+    cache._redis_available = True
+    
+    # Mock get_redis_client to raise an exception
+    with patch('mcpgateway.utils.redis_client.get_redis_client', side_effect=Exception("Connection error")):
+        result = await cache._get_redis_client()
+        
+        assert result is None
+        assert cache._redis_checked is True
+        assert cache._redis_available is False
+
+
+
+
+@pytest.mark.asyncio
+async def test_redis_operation_non_timeout_exception():
+    """Test that non-timeout exceptions are handled properly (covers line 303-310 including 309)."""
+    cache = RegistryCache()
+    cache._redis_failure_count = 0
+    cache._redis_failure_threshold = 3
+    
+    # Create operation that raises a non-timeout exception
+    async def failing_operation(redis_client):
+        raise ValueError("Non-timeout error")
+    
+    mock_redis = AsyncMock()
+    with patch.object(cache, '_get_redis_client', return_value=mock_redis):
+        result = await cache._redis_operation_with_timeout(failing_operation, "test_op")
+        
+        assert result is None
+        assert cache._redis_failure_count == 1
+        
+        # Trigger more failures to open circuit
+        await cache._redis_operation_with_timeout(failing_operation, "test_op")
+        await cache._redis_operation_with_timeout(failing_operation, "test_op")
+        
+        assert cache._redis_failure_count >= 3
+        assert cache._redis_circuit_open is True
