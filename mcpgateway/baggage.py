@@ -16,7 +16,7 @@ This module provides secure header-to-baggage conversion with:
 # Standard
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from urllib.parse import quote, unquote
 
 # First-Party
@@ -79,15 +79,11 @@ class HeaderMapping:
         """
         # Validate header name (reuse existing regex)
         if not ALLOWED_HEADERS_REGEX.match(self.header_name):
-            raise BaggageConfigError(
-                f"Invalid header name '{self.header_name}' - must start with letter and contain only alphanumeric characters and hyphens"
-            )
+            raise BaggageConfigError(f"Invalid header name '{self.header_name}' - must start with letter and contain only alphanumeric characters and hyphens")
 
         # Validate baggage key (W3C spec: alphanumeric + dots, underscores, hyphens)
         if not BAGGAGE_KEY_REGEX.match(self.baggage_key):
-            raise BaggageConfigError(
-                f"Invalid baggage key '{self.baggage_key}' - must start with letter and contain only alphanumeric, dots, underscores, hyphens"
-            )
+            raise BaggageConfigError(f"Invalid baggage key '{self.baggage_key}' - must start with letter and contain only alphanumeric, dots, underscores, hyphens")
 
         if len(self.baggage_key) > MAX_BAGGAGE_KEY_LENGTH:
             raise BaggageConfigError(f"Baggage key too long: {self.baggage_key} (max {MAX_BAGGAGE_KEY_LENGTH} chars)")
@@ -188,6 +184,7 @@ class BaggageConfig:
             )
 
         # Parse header mappings from JSON
+        # Third-Party
         import orjson
 
         try:
@@ -219,9 +216,7 @@ class BaggageConfig:
             # Check for case-insensitive duplicate headers
             header_lower = header_name.lower()
             if header_lower in seen_headers:
-                raise BaggageConfigError(
-                    f"Duplicate header mapping (case-insensitive): '{header_name}' conflicts with '{seen_headers[header_lower]}'"
-                )
+                raise BaggageConfigError(f"Duplicate header mapping (case-insensitive): '{header_name}' conflicts with '{seen_headers[header_lower]}'")
 
             # Check for duplicate baggage keys
             if baggage_key in seen_keys:
@@ -233,9 +228,7 @@ class BaggageConfig:
             seen_keys.add(baggage_key)
 
         if len(mappings) > settings.otel_baggage_max_items:
-            raise BaggageConfigError(
-                f"Too many header mappings: {len(mappings)} (max {settings.otel_baggage_max_items})"
-            )
+            raise BaggageConfigError(f"Too many header mappings: {len(mappings)} (max {settings.otel_baggage_max_items})")
 
         logger.info(f"Loaded {len(mappings)} baggage header mappings")
 
@@ -297,9 +290,7 @@ def extract_baggage_from_headers(
         # Check item limit
         if len(baggage) >= config.max_items:
             if config.log_rejected:
-                logger.warning(
-                    f"Baggage item limit reached ({config.max_items}), dropping header '{mapping.header_name}'"
-                )
+                logger.warning(f"Baggage item limit reached ({config.max_items}), dropping header '{mapping.header_name}'")
             break
 
         # Sanitize value (reuse existing security function)
@@ -308,24 +299,18 @@ def extract_baggage_from_headers(
 
             if not sanitized_value:
                 if config.log_sanitization:
-                    logger.warning(
-                        f"Header '{mapping.header_name}' value became empty after sanitization, skipping"
-                    )
+                    logger.warning(f"Header '{mapping.header_name}' value became empty after sanitization, skipping")
                 continue
 
             # Check if sanitization changed the value
             if config.log_sanitization and sanitized_value != header_value:
-                logger.info(
-                    f"Sanitized header '{mapping.header_name}' value (length: {len(header_value)} -> {len(sanitized_value)})"
-                )
+                logger.info(f"Sanitized header '{mapping.header_name}' value (length: {len(header_value)} -> {len(sanitized_value)})")
 
             # Check size limit
             entry_size = len(mapping.baggage_key) + len(sanitized_value) + 2  # key=value overhead
             if total_size + entry_size > config.max_size_bytes:
                 if config.log_rejected:
-                    logger.warning(
-                        f"Baggage size limit reached ({config.max_size_bytes} bytes), dropping header '{mapping.header_name}'"
-                    )
+                    logger.warning(f"Baggage size limit reached ({config.max_size_bytes} bytes), dropping header '{mapping.header_name}'")
                 break
 
             baggage[mapping.baggage_key] = sanitized_value

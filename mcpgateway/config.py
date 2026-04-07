@@ -1908,10 +1908,7 @@ class Settings(BaseSettings):
     )
     otel_baggage_header_mappings: str = Field(
         default="[]",
-        description=(
-            "JSON array of header-to-baggage mappings. "
-            'Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'
-        ),
+        description=("JSON array of header-to-baggage mappings. " 'Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'),
     )
     otel_baggage_propagate_to_external: bool = Field(
         default=False,

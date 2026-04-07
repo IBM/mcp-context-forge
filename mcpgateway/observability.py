@@ -21,7 +21,6 @@ from urllib.parse import urlparse
 OTEL_AVAILABLE = False
 try:
     # Third-Party
-    from opentelemetry import baggage as otel_baggage
     from opentelemetry import trace
     from opentelemetry.propagate import extract as otel_extract
     from opentelemetry.propagate import inject as otel_inject
@@ -30,9 +29,16 @@ try:
     from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
     from opentelemetry.trace import SpanKind, Status, StatusCode
 
+    try:
+        # Third-Party
+        from opentelemetry import baggage as otel_baggage
+    except ImportError:
+        otel_baggage = None
+
     OTEL_AVAILABLE = True
 except ImportError:
     # OpenTelemetry not installed - set to None for graceful degradation
+    otel_baggage = None
     trace = None
     otel_extract = None
     otel_inject = None
@@ -754,7 +760,6 @@ class OpenTelemetryRequestMiddleware:
             if span is not None:
                 for key, value in span_attributes.items():
                     if value is not None:
-                        set_span_attribute(span, key, value)
                         set_span_attribute(span, key, value)
 
                 # Inject baggage as span attributes so request-root spans retain
