@@ -897,7 +897,7 @@ class TestRustPIIDetectorSpecific:
             )
         )
 
-        with pytest.raises(ValueError, match="maximum supported size"):
+        with pytest.raises(RuntimeError, match="maximum supported size"):
             detector.detect("123456789")
 
 

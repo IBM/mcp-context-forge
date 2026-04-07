@@ -12,7 +12,7 @@ import asyncio
 import os
 import time
 from typing import Any, Dict
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Third-Party
 import pytest
@@ -3158,12 +3158,28 @@ async def test_rust_fast_path_falls_back_to_legacy_signature():
     if plugin._rust_engine is None:
         pytest.skip("Rust engine not active")
 
-    mock_engine = MagicMock()
-    mock_engine.check.side_effect = [
-        TypeError("check() takes 5 positional arguments but 6 were given"),
-        (True, {}, {"limited": False}),
-    ]
-    plugin._rust_engine = mock_engine
+    legacy_calls = []
+
+    def legacy_check(user, tenant, entity, now_unix, include_retry_after):
+        legacy_calls.append((user, tenant, entity, now_unix, include_retry_after))
+        return (True, {}, {"limited": False})
+
+    class FakeEngine:
+        def check(self, user, tenant, entity, now_unix, include_retry_after, trace_context):
+            from mcpgateway.observability import call_rust_with_trace_context_compat  # noqa: PLC0415
+
+            return call_rust_with_trace_context_compat(
+                legacy_check,
+                user,
+                tenant,
+                entity,
+                now_unix,
+                include_retry_after,
+                trace_context=trace_context,
+                legacy_key="rate_limiter.check",
+            )
+
+    plugin._rust_engine = FakeEngine()
 
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="alice"))
     payload = ToolPreInvokePayload(name="search", arguments={})
@@ -3172,7 +3188,8 @@ async def test_rust_fast_path_falls_back_to_legacy_signature():
         result = await plugin.tool_pre_invoke(payload, ctx)
 
     assert result.violation is None
-    assert len(mock_engine.check.call_args_list[1][0]) == 5
+    assert len(legacy_calls) == 1
+    assert len(legacy_calls[0]) == 5
 
 
 @_skip_no_rust
