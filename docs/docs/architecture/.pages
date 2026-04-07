@@ -1,5 +1,6 @@
 nav:
   - Overview: index.md
+  - Interactive Explorer: explorer.md
   - Roadmap: roadmap.md
   - Performance Architecture: performance-architecture.md
   - Rust MCP Runtime: rust-mcp-runtime.md
