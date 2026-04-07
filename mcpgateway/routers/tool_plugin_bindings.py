@@ -75,6 +75,17 @@ async def upsert_tool_plugin_bindings(
     """
     try:
         caller_email: str = current_user_ctx["email"]
+        is_admin: bool = current_user_ctx.get("is_admin", False)
+        user_teams: list = current_user_ctx.get("teams", []) or []
+
+        if not is_admin:
+            unauthorized = [tid for tid in request.teams if tid not in user_teams]
+            if unauthorized:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Not authorized to configure bindings for team(s): {', '.join(unauthorized)}",
+                )
+
         bindings = _service.upsert_bindings(db, request, caller_email=caller_email)
         return ToolPluginBindingListResponse(bindings=bindings, total=len(bindings))
     except ValueError as exc:

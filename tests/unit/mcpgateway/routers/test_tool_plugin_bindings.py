@@ -247,6 +247,55 @@ class TestToolPluginBindingsRouter:
                     db=db_session,
                 )
 
+    @pytest.mark.asyncio
+    async def test_upsert_non_admin_own_team_succeeds(self, db_session):
+        """Non-admin with membership in the target team can create bindings."""
+        non_admin_ctx = {
+            "email": "member@example.com",
+            "full_name": "Team Member",
+            "is_admin": False,
+            "teams": ["team-a"],
+            "db": db_session,
+            "permissions": ["tools.manage_plugins"],
+        }
+        result = await upsert_tool_plugin_bindings(
+            request=_simple_request(),
+            current_user_ctx=non_admin_ctx,
+            db=db_session,
+        )
+        assert result.total == 1
+        assert result.bindings[0].team_id == "team-a"
+
+    @pytest.mark.asyncio
+    async def test_upsert_non_admin_foreign_team_raises_403(self, db_session):
+        """Non-admin cannot create bindings for a team they don't belong to."""
+        non_admin_ctx = {
+            "email": "outsider@example.com",
+            "full_name": "Outsider",
+            "is_admin": False,
+            "teams": ["team-b"],
+            "db": db_session,
+            "permissions": ["tools.manage_plugins"],
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            await upsert_tool_plugin_bindings(
+                request=_simple_request(),  # targets team-a
+                current_user_ctx=non_admin_ctx,
+                db=db_session,
+            )
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail == "Not authorized to configure bindings for team(s): team-a"
+
+    @pytest.mark.asyncio
+    async def test_upsert_admin_can_target_any_team(self, user_ctx, db_session):
+        """Platform admin (is_admin=True) bypasses team membership check."""
+        result = await upsert_tool_plugin_bindings(
+            request=_two_team_request(),
+            current_user_ctx=user_ctx,  # is_admin=True, no explicit team list
+            db=db_session,
+        )
+        assert result.total == 2
+
     # ------------------------------------------------------------------
     # GET / — list_tool_plugin_bindings
     # ------------------------------------------------------------------
