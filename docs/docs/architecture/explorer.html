@@ -1,0 +1,2807 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ContextForge Architecture Explorer</title>
+<style>
+/* ============================================================
+   CSS CUSTOM PROPERTIES & RESET
+   ============================================================ */
+:root {
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #111827;
+  --bg-card: #1a1f35;
+  --bg-card-hover: #222845;
+  --bg-overlay: rgba(10, 14, 26, 0.95);
+
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-accent: #38bdf8;
+
+  --accent-blue: #38bdf8;
+  --accent-purple: #a78bfa;
+  --accent-green: #34d399;
+  --accent-orange: #fb923c;
+  --accent-pink: #f472b6;
+  --accent-red: #f87171;
+  --accent-cyan: #22d3ee;
+  --accent-yellow: #fbbf24;
+
+  --glow-blue: 0 0 20px rgba(56, 189, 248, 0.3);
+  --glow-purple: 0 0 20px rgba(167, 139, 250, 0.3);
+  --glow-green: 0 0 20px rgba(52, 211, 153, 0.3);
+
+  --border-subtle: rgba(148, 163, 184, 0.1);
+  --border-accent: rgba(56, 189, 248, 0.3);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.6;
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+/* ============================================================
+   BACKGROUND ANIMATION
+   ============================================================ */
+#bg-canvas {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+/* ============================================================
+   NAVIGATION
+   ============================================================ */
+nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  background: rgba(10, 14, 26, 0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 2rem;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.nav-brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  white-space: nowrap;
+  letter-spacing: -0.02em;
+}
+
+.nav-links {
+  display: flex;
+  gap: 0.25rem;
+  list-style: none;
+  flex: 1;
+}
+
+.nav-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: var(--transition);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nav-links a:hover,
+.nav-links a.active {
+  color: var(--text-primary);
+  background: rgba(56, 189, 248, 0.1);
+}
+
+.nav-links a.active {
+  color: var(--accent-blue);
+  background: rgba(56, 189, 248, 0.15);
+}
+
+.nav-search {
+  position: relative;
+}
+
+.nav-search input {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  padding: 0.4rem 0.8rem 0.4rem 2rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  width: 200px;
+  transition: var(--transition);
+  outline: none;
+  font-family: var(--font-sans);
+}
+
+.nav-search input:focus {
+  border-color: var(--accent-blue);
+  width: 280px;
+  background: rgba(255,255,255,0.08);
+}
+
+.nav-search::before {
+  content: "\1F50D";
+  position: absolute;
+  left: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.75rem;
+  opacity: 0.5;
+}
+
+/* ============================================================
+   MAIN CONTENT
+   ============================================================ */
+main {
+  position: relative;
+  z-index: 1;
+  padding-top: 64px;
+}
+
+.view {
+  display: none;
+  min-height: calc(100vh - 64px);
+  padding: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+  animation: fadeIn 0.4s ease;
+}
+
+.view.active { display: block; }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================================
+   HERO / OVERVIEW
+   ============================================================ */
+.hero {
+  text-align: center;
+  padding: 3rem 0 2rem;
+}
+
+.hero h1 {
+  font-size: 3rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple), var(--accent-pink));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.03em;
+  margin-bottom: 0.75rem;
+}
+
+.hero p {
+  color: var(--text-secondary);
+  font-size: 1.15rem;
+  max-width: 700px;
+  margin: 0 auto 2rem;
+}
+
+.stats-bar {
+  display: flex;
+  justify-content: center;
+  gap: 2.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 3rem;
+}
+
+.stat {
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 2rem;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 0.2rem;
+}
+
+/* ============================================================
+   ARCHITECTURE LAYERS DIAGRAM
+   ============================================================ */
+.layers-diagram {
+  position: relative;
+  max-width: 1100px;
+  margin: 0 auto 3rem;
+}
+
+.layer {
+  position: relative;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 0.75rem;
+  cursor: pointer;
+  transition: var(--transition);
+  overflow: hidden;
+}
+
+.layer::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0;
+  width: 4px;
+  height: 100%;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.layer:hover {
+  border-color: var(--border-accent);
+  transform: translateX(4px);
+}
+
+.layer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.layer-name {
+  font-weight: 700;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.layer-name .icon {
+  font-size: 1.2rem;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.layer-badge {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.layer-desc {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.layer-components {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.layer-chip {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--text-secondary);
+  transition: var(--transition);
+  cursor: pointer;
+  font-family: var(--font-mono);
+}
+
+.layer-chip:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: var(--accent-blue);
+}
+
+/* Layer colors */
+.layer--client::before { background: var(--accent-cyan); }
+.layer--client .icon { background: rgba(34, 211, 238, 0.15); color: var(--accent-cyan); }
+.layer--client .layer-badge { background: rgba(34, 211, 238, 0.15); color: var(--accent-cyan); }
+
+.layer--transport::before { background: var(--accent-blue); }
+.layer--transport .icon { background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); }
+.layer--transport .layer-badge { background: rgba(56, 189, 248, 0.15); color: var(--accent-blue); }
+
+.layer--middleware::before { background: var(--accent-purple); }
+.layer--middleware .icon { background: rgba(167, 139, 250, 0.15); color: var(--accent-purple); }
+.layer--middleware .layer-badge { background: rgba(167, 139, 250, 0.15); color: var(--accent-purple); }
+
+.layer--router::before { background: var(--accent-green); }
+.layer--router .icon { background: rgba(52, 211, 153, 0.15); color: var(--accent-green); }
+.layer--router .layer-badge { background: rgba(52, 211, 153, 0.15); color: var(--accent-green); }
+
+.layer--service::before { background: var(--accent-orange); }
+.layer--service .icon { background: rgba(251, 146, 60, 0.15); color: var(--accent-orange); }
+.layer--service .layer-badge { background: rgba(251, 146, 60, 0.15); color: var(--accent-orange); }
+
+.layer--data::before { background: var(--accent-pink); }
+.layer--data .icon { background: rgba(244, 114, 182, 0.15); color: var(--accent-pink); }
+.layer--data .layer-badge { background: rgba(244, 114, 182, 0.15); color: var(--accent-pink); }
+
+.layer--plugin::before { background: var(--accent-yellow); }
+.layer--plugin .icon { background: rgba(251, 191, 36, 0.15); color: var(--accent-yellow); }
+.layer--plugin .layer-badge { background: rgba(251, 191, 36, 0.15); color: var(--accent-yellow); }
+
+/* Flow arrows between layers */
+.flow-arrow {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 1.2rem;
+  margin: -0.25rem 0;
+  opacity: 0.5;
+  animation: pulse-arrow 2s infinite;
+}
+
+@keyframes pulse-arrow {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.7; }
+}
+
+/* ============================================================
+   COMPONENT EXPLORER
+   ============================================================ */
+.explorer-controls {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.explorer-search {
+  flex: 1;
+  min-width: 250px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  outline: none;
+  transition: var(--transition);
+  font-family: var(--font-sans);
+}
+
+.explorer-search:focus {
+  border-color: var(--accent-blue);
+  box-shadow: var(--glow-blue);
+}
+
+.filter-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: var(--transition);
+  font-family: var(--font-sans);
+  white-space: nowrap;
+}
+
+.filter-btn:hover { border-color: var(--border-accent); color: var(--text-primary); }
+.filter-btn.active { background: rgba(56, 189, 248, 0.15); border-color: var(--accent-blue); color: var(--accent-blue); }
+
+.component-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.component-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  cursor: pointer;
+  transition: var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+
+.component-card::after {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--card-accent, var(--accent-blue)), transparent);
+  opacity: 0;
+  transition: var(--transition);
+}
+
+.component-card:hover {
+  border-color: var(--border-accent);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+
+.component-card:hover::after { opacity: 1; }
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.card-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.card-category {
+  font-size: 0.65rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.card-desc {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.5;
+}
+
+.card-path {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  background: rgba(0,0,0,0.3);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.75rem;
+}
+
+.card-tag {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* ============================================================
+   REQUEST FLOW VIEW
+   ============================================================ */
+.flow-container {
+  max-width: 900px;
+  margin: 2rem auto;
+}
+
+.flow-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.flow-subtitle {
+  text-align: center;
+  color: var(--text-secondary);
+  margin-bottom: 2rem;
+  font-size: 0.9rem;
+}
+
+.flow-timeline {
+  position: relative;
+  padding-left: 60px;
+}
+
+.flow-timeline::before {
+  content: "";
+  position: absolute;
+  left: 28px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(
+    to bottom,
+    var(--accent-cyan),
+    var(--accent-blue),
+    var(--accent-purple),
+    var(--accent-green),
+    var(--accent-orange),
+    var(--accent-pink)
+  );
+}
+
+.flow-step {
+  position: relative;
+  margin-bottom: 1.5rem;
+  opacity: 0;
+  transform: translateX(-20px);
+  animation: flow-step-in 0.5s ease forwards;
+}
+
+.flow-step:nth-child(1) { animation-delay: 0.1s; }
+.flow-step:nth-child(2) { animation-delay: 0.3s; }
+.flow-step:nth-child(3) { animation-delay: 0.5s; }
+.flow-step:nth-child(4) { animation-delay: 0.7s; }
+.flow-step:nth-child(5) { animation-delay: 0.9s; }
+.flow-step:nth-child(6) { animation-delay: 1.1s; }
+.flow-step:nth-child(7) { animation-delay: 1.3s; }
+.flow-step:nth-child(8) { animation-delay: 1.5s; }
+.flow-step:nth-child(9) { animation-delay: 1.7s; }
+.flow-step:nth-child(10) { animation-delay: 1.9s; }
+
+@keyframes flow-step-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.flow-dot {
+  position: absolute;
+  left: -38px;
+  top: 0.75rem;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 3px solid;
+  background: var(--bg-primary);
+  z-index: 1;
+}
+
+.flow-step-content {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  transition: var(--transition);
+}
+
+.flow-step-content:hover {
+  border-color: var(--border-accent);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+.flow-step-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.flow-step-title {
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 0.3rem;
+}
+
+.flow-step-desc {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.flow-step-code {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  background: rgba(0,0,0,0.3);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  margin-top: 0.5rem;
+  color: var(--accent-green);
+  overflow-x: auto;
+}
+
+/* Scenario selector */
+.scenario-selector {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.scenario-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  padding: 0.5rem 1.25rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: var(--transition);
+  font-family: var(--font-sans);
+}
+
+.scenario-btn:hover { border-color: var(--border-accent); color: var(--text-primary); }
+.scenario-btn.active { background: rgba(56, 189, 248, 0.15); border-color: var(--accent-blue); color: var(--accent-blue); }
+
+/* ============================================================
+   INTERACTIVE GRAPH VIEW
+   ============================================================ */
+#graph-svg {
+  width: 100%;
+  height: calc(100vh - 200px);
+  min-height: 500px;
+  background: radial-gradient(ellipse at center, rgba(56, 189, 248, 0.03) 0%, transparent 70%);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+}
+
+.graph-controls {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.graph-legend {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+/* Graph node tooltip */
+.graph-tooltip {
+  position: fixed;
+  background: var(--bg-card);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  font-size: 0.8rem;
+  pointer-events: none;
+  z-index: 200;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  max-width: 300px;
+  display: none;
+}
+
+.graph-tooltip .tt-name {
+  font-weight: 700;
+  font-family: var(--font-mono);
+  margin-bottom: 0.25rem;
+}
+
+.graph-tooltip .tt-type {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.graph-tooltip .tt-desc {
+  color: var(--text-secondary);
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+}
+
+/* ============================================================
+   SECURITY VIEW
+   ============================================================ */
+.security-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.25rem;
+  margin-top: 2rem;
+}
+
+.security-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  transition: var(--transition);
+}
+
+.security-card:hover {
+  border-color: var(--border-accent);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+}
+
+.security-card h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.security-card p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.security-list {
+  list-style: none;
+  margin-top: 0.5rem;
+}
+
+.security-list li {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  padding: 0.3rem 0;
+  padding-left: 1.2rem;
+  position: relative;
+}
+
+.security-list li::before {
+  content: "\2713";
+  position: absolute;
+  left: 0;
+  color: var(--accent-green);
+  font-weight: 700;
+}
+
+/* ============================================================
+   DETAIL PANEL (SLIDE-OUT)
+   ============================================================ */
+.detail-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 150;
+  opacity: 0;
+  pointer-events: none;
+  transition: var(--transition);
+}
+
+.detail-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.detail-panel {
+  position: fixed;
+  top: 0; right: 0;
+  width: min(600px, 90vw);
+  height: 100vh;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-subtle);
+  z-index: 151;
+  transform: translateX(100%);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow-y: auto;
+  padding: 2rem;
+}
+
+.detail-panel.open { transform: translateX(0); }
+
+.detail-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: rgba(255,255,255,0.1);
+  border: none;
+  color: var(--text-secondary);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+
+.detail-close:hover { background: rgba(255,255,255,0.2); color: var(--text-primary); }
+
+.detail-panel h2 {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-mono);
+}
+
+.detail-panel .detail-category {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+}
+
+.detail-panel .detail-desc {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.7;
+}
+
+.detail-section {
+  margin-bottom: 1.5rem;
+}
+
+.detail-section h3 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.75rem;
+}
+
+.detail-section ul {
+  list-style: none;
+}
+
+.detail-section li {
+  font-size: 0.85rem;
+  padding: 0.3rem 0;
+  color: var(--text-secondary);
+  padding-left: 1rem;
+  position: relative;
+}
+
+.detail-section li::before {
+  content: "\25B8";
+  position: absolute;
+  left: 0;
+  color: var(--accent-blue);
+}
+
+.detail-section code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  background: rgba(0,0,0,0.3);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  color: var(--accent-green);
+}
+
+/* ============================================================
+   SECTION TITLES
+   ============================================================ */
+.section-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 0.5rem;
+  letter-spacing: -0.02em;
+}
+
+.section-subtitle {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+  margin-bottom: 2rem;
+}
+
+/* ============================================================
+   DATABASE VIEW
+   ============================================================ */
+.db-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.25rem;
+}
+
+.db-group {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  transition: var(--transition);
+}
+
+.db-group:hover {
+  border-color: var(--border-accent);
+}
+
+.db-group h3 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.db-table {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  padding: 0.2rem 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.db-table:hover { color: var(--accent-blue); padding-left: 0.5rem; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 768px) {
+  nav { padding: 0 1rem; gap: 1rem; }
+  .nav-search { display: none; }
+  .hero h1 { font-size: 2rem; }
+  .stats-bar { gap: 1.5rem; }
+  .view { padding: 1rem; }
+  .component-grid { grid-template-columns: 1fr; }
+  .flow-timeline { padding-left: 40px; }
+  .flow-timeline::before { left: 18px; }
+  .flow-dot { left: -28px; }
+}
+
+/* ============================================================
+   SCROLLBAR
+   ============================================================ */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ============================================================
+   PLUGIN VIEW
+   ============================================================ */
+.plugin-arch {
+  max-width: 900px;
+  margin: 0 auto 2rem;
+}
+
+.plugin-layer {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  margin-bottom: 0.75rem;
+  transition: var(--transition);
+}
+
+.plugin-layer:hover { border-color: var(--border-accent); }
+
+.plugin-layer h3 {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.plugin-layer p {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+
+.hook-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.hook-item {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.4rem 0.6rem;
+  background: rgba(0,0,0,0.3);
+  border-radius: 6px;
+  color: var(--accent-purple);
+  border: 1px solid rgba(167, 139, 250, 0.15);
+}
+
+/* ============================================================
+   PRINT STYLES
+   ============================================================ */
+@media print {
+  nav, #bg-canvas, .nav-search { display: none; }
+  main { padding-top: 0; }
+  .view { display: block !important; page-break-before: always; }
+  body { background: white; color: black; }
+}
+</style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>
+
+<nav>
+  <div class="nav-brand">ContextForge</div>
+  <ul class="nav-links">
+    <li><a data-view="overview" class="active">Overview</a></li>
+    <li><a data-view="components">Components</a></li>
+    <li><a data-view="flow">Request Flow</a></li>
+    <li><a data-view="graph">Service Graph</a></li>
+    <li><a data-view="security">Security</a></li>
+    <li><a data-view="data">Data Layer</a></li>
+    <li><a data-view="plugins">Plugins</a></li>
+  </ul>
+  <div class="nav-search">
+    <input type="text" id="global-search" placeholder="Search components... (Ctrl+K)" autocomplete="off">
+  </div>
+</nav>
+
+<main>
+  <!-- ============================================================
+       OVERVIEW VIEW
+       ============================================================ -->
+  <div id="overview" class="view active">
+    <div class="hero">
+      <h1>ContextForge Architecture</h1>
+      <p>An open-source registry and proxy that federates MCP, A2A, and REST/gRPC APIs with centralized governance, discovery, and observability.</p>
+      <div class="stats-bar">
+        <div class="stat"><div class="stat-value">56</div><div class="stat-label">Services</div></div>
+        <div class="stat"><div class="stat-value">19</div><div class="stat-label">Routers</div></div>
+        <div class="stat"><div class="stat-value">15</div><div class="stat-label">Middleware</div></div>
+        <div class="stat"><div class="stat-value">6</div><div class="stat-label">Transports</div></div>
+        <div class="stat"><div class="stat-value">55</div><div class="stat-label">DB Models</div></div>
+        <div class="stat"><div class="stat-value">50</div><div class="stat-label">ADRs</div></div>
+      </div>
+    </div>
+
+    <div class="layers-diagram">
+      <div class="layer layer--client" data-layer="client">
+        <div class="layer-header">
+          <div class="layer-name"><span class="icon">&#x1F310;</span> Client Layer</div>
+          <span class="layer-badge">External</span>
+        </div>
+        <div class="layer-desc">Browsers, CLI tools, AI agents, and federated gateways connect through multiple protocols.</div>
+        <div class="layer-components">
+          <span class="layer-chip">Web Browsers</span>
+          <span class="layer-chip">Claude Code</span>
+          <span class="layer-chip">MCP Clients</span>
+          <span class="layer-chip">A2A Agents</span>
+          <span class="layer-chip">Federated Peers</span>
+          <span class="layer-chip">REST Clients</span>
+          <span class="layer-chip">gRPC Clients</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="layer layer--transport" data-layer="transport">
+        <div class="layer-header">
+          <div class="layer-name"><span class="icon">&#x26A1;</span> Transport Layer</div>
+          <span class="layer-badge">6 Protocols</span>
+        </div>
+        <div class="layer-desc">Multi-protocol ingress supporting all major MCP transports with protocol negotiation and translation.</div>
+        <div class="layer-components">
+          <span class="layer-chip">HTTP/JSON-RPC 2.0</span>
+          <span class="layer-chip">Server-Sent Events</span>
+          <span class="layer-chip">WebSocket</span>
+          <span class="layer-chip">Streamable HTTP</span>
+          <span class="layer-chip">STDIO</span>
+          <span class="layer-chip">gRPC</span>
+          <span class="layer-chip">Rust MCP Runtime</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="layer layer--middleware" data-layer="middleware">
+        <div class="layer-header">
+          <div class="layer-name"><span class="icon">&#x1F6E1;</span> Middleware Pipeline</div>
+          <span class="layer-badge">15 Components</span>
+        </div>
+        <div class="layer-desc">Ordered pipeline of cross-cutting concerns: authentication, authorization, logging, validation, and security headers.</div>
+        <div class="layer-components">
+          <span class="layer-chip">Auth Extraction</span>
+          <span class="layer-chip">HTTP Auth</span>
+          <span class="layer-chip">Token Scoping</span>
+          <span class="layer-chip">RBAC Enforcement</span>
+          <span class="layer-chip">Request Logging</span>
+          <span class="layer-chip">Observability</span>
+          <span class="layer-chip">Security Headers</span>
+          <span class="layer-chip">Correlation ID</span>
+          <span class="layer-chip">Compression</span>
+          <span class="layer-chip">Protocol Version</span>
+          <span class="layer-chip">Validation</span>
+          <span class="layer-chip">Token Usage</span>
+          <span class="layer-chip">DB Query Logging</span>
+          <span class="layer-chip">Request Context</span>
+          <span class="layer-chip">Path Filter</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="layer layer--router" data-layer="router">
+        <div class="layer-header">
+          <div class="layer-name"><span class="icon">&#x1F500;</span> Router Layer</div>
+          <span class="layer-badge">19 Routers</span>
+        </div>
+        <div class="layer-desc">HTTP endpoint definitions, each focused on a specific API domain: auth, MCP entities, admin, LLM, observability.</div>
+        <div class="layer-components">
+          <span class="layer-chip">Auth</span>
+          <span class="layer-chip">Email Auth</span>
+          <span class="layer-chip">OAuth</span>
+          <span class="layer-chip">SSO</span>
+          <span class="layer-chip">Tokens</span>
+          <span class="layer-chip">RBAC</span>
+          <span class="layer-chip">Teams</span>
+          <span class="layer-chip">LLM Chat</span>
+          <span class="layer-chip">LLM Admin</span>
+          <span class="layer-chip">LLM Config</span>
+          <span class="layer-chip">LLM Proxy</span>
+          <span class="layer-chip">Observability</span>
+          <span class="layer-chip">Log Search</span>
+          <span class="layer-chip">Metrics</span>
+          <span class="layer-chip">Cancellation</span>
+          <span class="layer-chip">Well-Known</span>
+          <span class="layer-chip">Server Well-Known</span>
+          <span class="layer-chip">Reverse Proxy</span>
+          <span class="layer-chip">ToolOps</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="layer layer--service" data-layer="service">
+        <div class="layer-header">
+          <div class="layer-name"><span class="icon">&#x2699;</span> Service Layer</div>
+          <span class="layer-badge">56 Services</span>
+        </div>
+        <div class="layer-desc">Business logic organized into single-responsibility services: MCP entities, auth, AI/agents, observability, and infrastructure.</div>
+        <div class="layer-components">
+          <span class="layer-chip">Tool Service</span>
+          <span class="layer-chip">Resource Service</span>
+          <span class="layer-chip">Prompt Service</span>
+          <span class="layer-chip">Server Service</span>
+          <span class="layer-chip">Gateway Service</span>
+          <span class="layer-chip">A2A Service</span>
+          <span class="layer-chip">Session Pool</span>
+          <span class="layer-chip">OAuth Manager</span>
+          <span class="layer-chip">SSO Service</span>
+          <span class="layer-chip">Team Management</span>
+          <span class="layer-chip">Encryption</span>
+          <span class="layer-chip">Observability</span>
+          <span class="layer-chip">Metrics Buffer</span>
+          <span class="layer-chip">Import/Export</span>
+          <span class="layer-chip">Plugin Service</span>
+          <span class="layer-chip">+42 more</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="layer layer--data" data-layer="data">
+        <div class="layer-header">
+          <div class="layer-name"><span class="icon">&#x1F4BE;</span> Data Layer</div>
+          <span class="layer-badge">3 Backends</span>
+        </div>
+        <div class="layer-desc">Persistent storage with SQLAlchemy ORM, pluggable cache backends, and session management.</div>
+        <div class="layer-components">
+          <span class="layer-chip">PostgreSQL</span>
+          <span class="layer-chip">SQLite</span>
+          <span class="layer-chip">Redis</span>
+          <span class="layer-chip">In-Memory Cache</span>
+          <span class="layer-chip">Alembic Migrations</span>
+          <span class="layer-chip">Connection Pooling</span>
+          <span class="layer-chip">55 ORM Models</span>
+          <span class="layer-chip">Session Registry</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow" style="margin: 0.5rem 0;">&#x21C5;</div>
+
+      <div class="layer layer--plugin" data-layer="plugin">
+        <div class="layer-header">
+          <div class="layer-name"><span class="icon">&#x1F9E9;</span> Plugin Framework</div>
+          <span class="layer-badge">Cross-Cutting</span>
+        </div>
+        <div class="layer-desc">Extensible plugin system with hooks into every layer: MCP operations, HTTP auth, policy enforcement, and agent integration. Supports in-process Python, remote MCP, gRPC, and STDIO transports.</div>
+        <div class="layer-components">
+          <span class="layer-chip">Tool Hooks</span>
+          <span class="layer-chip">Resource Hooks</span>
+          <span class="layer-chip">Prompt Hooks</span>
+          <span class="layer-chip">Agent Hooks</span>
+          <span class="layer-chip">HTTP Hooks</span>
+          <span class="layer-chip">Policy Hooks</span>
+          <span class="layer-chip">Plugin Registry</span>
+          <span class="layer-chip">Plugin Manager</span>
+          <span class="layer-chip">External: MCP</span>
+          <span class="layer-chip">External: gRPC</span>
+          <span class="layer-chip">External: Unix/STDIO</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       COMPONENTS VIEW
+       ============================================================ -->
+  <div id="components" class="view">
+    <h2 class="section-title">Component Explorer</h2>
+    <p class="section-subtitle">Browse all architecture components. Click any card for details.</p>
+
+    <div class="explorer-controls">
+      <input type="text" class="explorer-search" id="component-search" placeholder="Filter components by name, path, or description...">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="service">Services</button>
+      <button class="filter-btn" data-filter="router">Routers</button>
+      <button class="filter-btn" data-filter="middleware">Middleware</button>
+      <button class="filter-btn" data-filter="transport">Transports</button>
+      <button class="filter-btn" data-filter="cache">Cache</button>
+      <button class="filter-btn" data-filter="util">Utilities</button>
+    </div>
+
+    <div class="component-grid" id="component-grid"></div>
+  </div>
+
+  <!-- ============================================================
+       REQUEST FLOW VIEW
+       ============================================================ -->
+  <div id="flow" class="view">
+    <div class="flow-title">Request Lifecycle</div>
+    <div class="flow-subtitle">Trace how a request flows through the ContextForge architecture</div>
+
+    <div class="scenario-selector">
+      <button class="scenario-btn active" data-scenario="tool-invoke">Tool Invocation</button>
+      <button class="scenario-btn" data-scenario="auth-flow">Authentication</button>
+      <button class="scenario-btn" data-scenario="federation">Federation</button>
+    </div>
+
+    <div class="flow-container">
+      <div class="flow-timeline" id="flow-timeline"></div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       SERVICE GRAPH VIEW
+       ============================================================ -->
+  <div id="graph" class="view">
+    <h2 class="section-title">Service Dependency Graph</h2>
+    <p class="section-subtitle">Interactive force-directed graph of service relationships. Drag nodes to explore. Scroll to zoom.</p>
+
+    <div class="graph-controls">
+      <button class="filter-btn active" data-graph-filter="all">All</button>
+      <button class="filter-btn" data-graph-filter="mcp">MCP Core</button>
+      <button class="filter-btn" data-graph-filter="auth">Auth &amp; RBAC</button>
+      <button class="filter-btn" data-graph-filter="observability">Observability</button>
+      <button class="filter-btn" data-graph-filter="ai">AI &amp; Agents</button>
+      <div class="graph-legend">
+        <span class="legend-item"><span class="legend-dot" style="background:var(--accent-blue)"></span>MCP Core</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--accent-purple)"></span>Auth</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--accent-green)"></span>Observability</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--accent-orange)"></span>AI/Agents</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--accent-pink)"></span>Data</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--accent-cyan)"></span>Infrastructure</span>
+      </div>
+    </div>
+
+    <svg id="graph-svg"></svg>
+  </div>
+
+  <!-- ============================================================
+       SECURITY VIEW
+       ============================================================ -->
+  <div id="security" class="view">
+    <h2 class="section-title">Security Architecture</h2>
+    <p class="section-subtitle">Two-layer security model: Token Scoping (visibility) + RBAC (permissions)</p>
+
+    <div class="security-grid">
+      <div class="security-card">
+        <h3><span style="color:var(--accent-blue)">&#x1F511;</span> Authentication</h3>
+        <p>Multiple authentication strategies with secure defaults.</p>
+        <ul class="security-list">
+          <li>JWT tokens (HS256, RS256) with audience verification</li>
+          <li>Email/password with Argon2id hashing</li>
+          <li>OAuth 2.0 authorization code flow with PKCE</li>
+          <li>SSO/OIDC (Keycloak, Entra ID, Google, GitHub)</li>
+          <li>API tokens with granular scoping</li>
+          <li>Session-based persistence with DB authority</li>
+        </ul>
+      </div>
+
+      <div class="security-card">
+        <h3><span style="color:var(--accent-purple)">&#x1F6E1;</span> Token Scoping (Layer 1)</h3>
+        <p>Controls what resources a caller <strong>can see</strong>.</p>
+        <ul class="security-list">
+          <li>API tokens: JWT teams claim is sole authority</li>
+          <li>Session tokens: DB is authority, JWT only narrows</li>
+          <li>Missing teams key = public-only (secure default)</li>
+          <li>Admin bypass requires both teams: null + is_admin: true</li>
+          <li>Fail-closed on any ambiguity</li>
+        </ul>
+      </div>
+
+      <div class="security-card">
+        <h3><span style="color:var(--accent-green)">&#x1F512;</span> RBAC (Layer 2)</h3>
+        <p>Controls what actions a caller <strong>can do</strong>.</p>
+        <ul class="security-list">
+          <li>platform_admin &mdash; global wildcard access</li>
+          <li>team_admin &mdash; team management + read/execute</li>
+          <li>developer &mdash; tools read/execute, resources read</li>
+          <li>viewer &mdash; read-only access to team resources</li>
+          <li>Permission audit logging on all changes</li>
+        </ul>
+      </div>
+
+      <div class="security-card">
+        <h3><span style="color:var(--accent-orange)">&#x1F510;</span> Encryption &amp; Secrets</h3>
+        <p>Defense in depth for data at rest and in transit.</p>
+        <ul class="security-list">
+          <li>AES encryption for stored tokens and secrets</li>
+          <li>mTLS support for plugin-to-gateway communication</li>
+          <li>SSL/TLS context caching for performance</li>
+          <li>Argon2id password hashing (time=3, mem=64MB)</li>
+          <li>Secure cookie flags (httponly, secure, samesite)</li>
+        </ul>
+      </div>
+
+      <div class="security-card">
+        <h3><span style="color:var(--accent-pink)">&#x2705;</span> Input Validation</h3>
+        <p>Defense at system boundaries with layered validation.</p>
+        <ul class="security-list">
+          <li>Pydantic schema validation on all inputs</li>
+          <li>JSON-RPC 2.0 structure validation</li>
+          <li>Content type and size checking</li>
+          <li>Dangerous pattern detection (injection, XSS)</li>
+          <li>Jinja2 sandboxed template rendering</li>
+        </ul>
+      </div>
+
+      <div class="security-card">
+        <h3><span style="color:var(--accent-cyan)">&#x1F310;</span> HTTP Security</h3>
+        <p>Comprehensive response hardening and transport security.</p>
+        <ul class="security-list">
+          <li>HSTS with long max-age</li>
+          <li>Content Security Policy (CSP)</li>
+          <li>X-Frame-Options, X-Content-Type-Options</li>
+          <li>CORS with domain whitelisting</li>
+          <li>Referrer-Policy and XSS-Protection</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       DATA LAYER VIEW
+       ============================================================ -->
+  <div id="data" class="view">
+    <h2 class="section-title">Data Layer</h2>
+    <p class="section-subtitle">55 SQLAlchemy ORM models across authentication, MCP entities, observability, and configuration.</p>
+
+    <div class="db-groups" id="db-groups"></div>
+  </div>
+
+  <!-- ============================================================
+       PLUGINS VIEW
+       ============================================================ -->
+  <div id="plugins" class="view">
+    <h2 class="section-title">Plugin Architecture</h2>
+    <p class="section-subtitle">Extensible hook-based system with support for in-process Python, remote MCP, gRPC, and STDIO transports.</p>
+
+    <div class="plugin-arch">
+      <div class="plugin-layer" style="border-left: 3px solid var(--accent-yellow);">
+        <h3>Plugin Manager &amp; Registry</h3>
+        <p>Central lifecycle management: discovery, loading, validation, configuration, and health monitoring.</p>
+        <div class="layer-components">
+          <span class="layer-chip">framework/manager.py</span>
+          <span class="layer-chip">framework/registry.py</span>
+          <span class="layer-chip">framework/loader/</span>
+          <span class="layer-chip">framework/settings.py</span>
+          <span class="layer-chip">framework/validators.py</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="plugin-layer" style="border-left: 3px solid var(--accent-purple);">
+        <h3>Hook System</h3>
+        <p>Event-driven hooks into every MCP operation, HTTP request lifecycle, and policy evaluation.</p>
+        <div class="hook-grid">
+          <div class="hook-item">tool_pre_invoke</div>
+          <div class="hook-item">tool_post_invoke</div>
+          <div class="hook-item">resource_pre_fetch</div>
+          <div class="hook-item">resource_post_fetch</div>
+          <div class="hook-item">prompt_pre_fetch</div>
+          <div class="hook-item">prompt_post_fetch</div>
+          <div class="hook-item">agent_pre_invoke</div>
+          <div class="hook-item">agent_post_invoke</div>
+          <div class="hook-item">http_pre_request</div>
+          <div class="hook-item">http_auth_resolve</div>
+          <div class="hook-item">http_auth_check</div>
+          <div class="hook-item">http_post_request</div>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="plugin-layer" style="border-left: 3px solid var(--accent-blue);">
+        <h3>Plugin Transports</h3>
+        <p>Plugins can run in-process or communicate over network protocols for language-agnostic extensibility.</p>
+        <div class="layer-components">
+          <span class="layer-chip">In-Process (Python)</span>
+          <span class="layer-chip">Remote MCP Server</span>
+          <span class="layer-chip">gRPC (Protobuf)</span>
+          <span class="layer-chip">Unix Socket / STDIO</span>
+          <span class="layer-chip">Streamable HTTP</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="plugin-layer" style="border-left: 3px solid var(--accent-green);">
+        <h3>Execution Modes</h3>
+        <p>Fine-grained control over plugin behavior per-hook with four enforcement levels.</p>
+        <div class="layer-components" style="gap: 0.75rem;">
+          <span class="layer-chip" style="background:rgba(244,114,182,0.15); border-color:rgba(244,114,182,0.3); color:var(--accent-pink);"><b>enforce</b> &mdash; block on violations</span>
+          <span class="layer-chip" style="background:rgba(251,146,60,0.15); border-color:rgba(251,146,60,0.3); color:var(--accent-orange);"><b>enforce_ignore_error</b> &mdash; block violations, skip errors</span>
+          <span class="layer-chip" style="background:rgba(251,191,36,0.15); border-color:rgba(251,191,36,0.3); color:var(--accent-yellow);"><b>permissive</b> &mdash; log only</span>
+          <span class="layer-chip" style="background:rgba(100,116,139,0.15); border-color:rgba(100,116,139,0.3); color:var(--text-muted);"><b>disabled</b> &mdash; skip execution</span>
+        </div>
+      </div>
+
+      <div class="flow-arrow">&#x25BC;</div>
+
+      <div class="plugin-layer" style="border-left: 3px solid var(--accent-orange);">
+        <h3>Policy Engine</h3>
+        <p>Declarative policy evaluation with structured payloads, audit trails, and violation reporting.</p>
+        <div class="layer-components">
+          <span class="layer-chip">plugins/policy.py</span>
+          <span class="layer-chip">Structured Payloads</span>
+          <span class="layer-chip">Violation Reports</span>
+          <span class="layer-chip">Audit Integration</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Detail panel -->
+<div class="detail-overlay" id="detail-overlay"></div>
+<div class="detail-panel" id="detail-panel">
+  <button class="detail-close" id="detail-close">&times;</button>
+  <div id="detail-content"></div>
+</div>
+
+<!-- Tooltip -->
+<div class="graph-tooltip" id="graph-tooltip">
+  <div class="tt-name"></div>
+  <div class="tt-type"></div>
+  <div class="tt-desc"></div>
+</div>
+
+<script>
+/* ================================================================
+   DATA: All architecture components
+   ================================================================ */
+const COMPONENTS = [
+  // === SERVICES: MCP Core ===
+  { id:"tool_service", name:"Tool Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/tool_service.py",
+    desc:"Tool management, execution routing, versioning, federation. Core MCP primitive.",
+    tags:["mcp","tools","federation","versioning"], connections:["gateway_service","session_pool","metrics_buffer"] },
+  { id:"resource_service", name:"Resource Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/resource_service.py",
+    desc:"Resource management, URI templates, subscription tracking, content negotiation.",
+    tags:["mcp","resources","subscriptions"], connections:["session_pool","metrics_buffer"] },
+  { id:"prompt_service", name:"Prompt Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/prompt_service.py",
+    desc:"Prompt template management with Jinja2 rendering, argument validation, multimodal support.",
+    tags:["mcp","prompts","jinja2","multimodal"], connections:["metrics_buffer"] },
+  { id:"server_service", name:"Server Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/server_service.py",
+    desc:"MCP server registry, health checking, connection string management.",
+    tags:["mcp","servers","health"], connections:["gateway_service","session_pool"] },
+  { id:"gateway_service", name:"Gateway Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/gateway_service.py",
+    desc:"Gateway federation, peer discovery, cross-gateway tool resolution, health monitoring.",
+    tags:["mcp","federation","discovery","peers"], connections:["tool_service","server_service","http_client"] },
+  { id:"session_pool", name:"Session Pool", category:"service", group:"mcp",
+    path:"mcpgateway/services/mcp_session_pool.py",
+    desc:"MCP session lifecycle management, connection pooling, reconnection with backoff.",
+    tags:["mcp","sessions","pooling"], connections:["tool_service","resource_service"] },
+  { id:"completion_service", name:"Completion Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/completion_service.py",
+    desc:"Tool and resource completion/suggestion for client auto-complete.",
+    tags:["mcp","completion","autocomplete"], connections:["tool_service","resource_service"] },
+  { id:"root_service", name:"Root Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/root_service.py",
+    desc:"Root capability advertisement and MCP protocol negotiation.",
+    tags:["mcp","capabilities","protocol"], connections:[] },
+  { id:"elicitation_service", name:"Elicitation Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/elicitation_service.py",
+    desc:"Tool/resource discovery prompts and interactive suggestion flows.",
+    tags:["mcp","discovery","elicitation"], connections:["tool_service","resource_service"] },
+  { id:"cancellation_service", name:"Cancellation Service", category:"service", group:"mcp",
+    path:"mcpgateway/services/cancellation_service.py",
+    desc:"In-flight request cancellation with cooperative cancellation tokens.",
+    tags:["mcp","cancellation"], connections:[] },
+
+  // === SERVICES: Auth & Security ===
+  { id:"email_auth", name:"Email Auth Service", category:"service", group:"auth",
+    path:"mcpgateway/services/email_auth_service.py",
+    desc:"Email/password registration, login, verification, password reset with Argon2id.",
+    tags:["auth","email","passwords","argon2"], connections:["argon2_service","encryption_service"] },
+  { id:"sso_service", name:"SSO Service", category:"service", group:"auth",
+    path:"mcpgateway/services/sso_service.py",
+    desc:"SSO integration: Keycloak, Entra ID, Google, GitHub. OIDC discovery and token exchange.",
+    tags:["auth","sso","oidc","oauth"], connections:["oauth_manager"] },
+  { id:"oauth_manager", name:"OAuth Manager", category:"service", group:"auth",
+    path:"mcpgateway/services/oauth_manager.py",
+    desc:"OAuth 2.0 authorization code flow, token lifecycle, Dynamic Client Registration (RFC 7591).",
+    tags:["auth","oauth","tokens","dcr"], connections:["encryption_service","token_storage"] },
+  { id:"team_mgmt", name:"Team Management", category:"service", group:"auth",
+    path:"mcpgateway/services/team_management_service.py",
+    desc:"Multi-tenant team RBAC: creation, membership, role assignment, invitation workflows.",
+    tags:["auth","teams","rbac","multitenancy"], connections:["role_service","permission_service"] },
+  { id:"role_service", name:"Role Service", category:"service", group:"auth",
+    path:"mcpgateway/services/role_service.py",
+    desc:"Role definitions, built-in roles (platform_admin, team_admin, developer, viewer).",
+    tags:["auth","roles","rbac"], connections:["permission_service"] },
+  { id:"permission_service", name:"Permission Service", category:"service", group:"auth",
+    path:"mcpgateway/services/permission_service.py",
+    desc:"Permission checking engine with audit trail logging.",
+    tags:["auth","permissions","audit"], connections:[] },
+  { id:"encryption_service", name:"Encryption Service", category:"service", group:"auth",
+    path:"mcpgateway/services/encryption_service.py",
+    desc:"AES encryption/decryption for stored tokens, secrets, and sensitive configuration.",
+    tags:["security","encryption","aes"], connections:[] },
+  { id:"argon2_service", name:"Argon2 Service", category:"service", group:"auth",
+    path:"mcpgateway/services/argon2_service.py",
+    desc:"Argon2id password hashing with tuned parameters (time_cost=3, memory_cost=64MB).",
+    tags:["security","hashing","passwords"], connections:[] },
+  { id:"content_security", name:"Content Security", category:"service", group:"auth",
+    path:"mcpgateway/services/content_security.py",
+    desc:"Input sanitization, dangerous pattern detection, content type validation.",
+    tags:["security","validation","sanitization"], connections:[] },
+  { id:"token_storage", name:"Token Storage", category:"service", group:"auth",
+    path:"mcpgateway/services/token_storage_service.py",
+    desc:"Encrypted token persistence with Redis or database backends.",
+    tags:["auth","tokens","storage"], connections:["encryption_service"] },
+  { id:"token_validation", name:"Token Validation", category:"service", group:"auth",
+    path:"mcpgateway/services/token_validation_service.py",
+    desc:"JWT verification, API token validation, claim extraction.",
+    tags:["auth","jwt","validation"], connections:[] },
+  { id:"token_catalog", name:"Token Catalog", category:"service", group:"auth",
+    path:"mcpgateway/services/token_catalog_service.py",
+    desc:"Token catalog management for API key lifecycle and scoping.",
+    tags:["auth","tokens","catalog"], connections:["encryption_service"] },
+  { id:"dcr_service", name:"DCR Service", category:"service", group:"auth",
+    path:"mcpgateway/services/dcr_service.py",
+    desc:"Dynamic Client Registration per RFC 7591 for OAuth clients.",
+    tags:["auth","oauth","dcr","rfc7591"], connections:["oauth_manager"] },
+  { id:"security_logger", name:"Security Logger", category:"service", group:"auth",
+    path:"mcpgateway/services/security_logger.py",
+    desc:"Security event logging: auth failures, privilege escalation attempts, anomalies.",
+    tags:["security","logging","audit"], connections:[] },
+
+  // === SERVICES: AI & Agents ===
+  { id:"a2a_service", name:"A2A Service", category:"service", group:"ai",
+    path:"mcpgateway/services/a2a_service.py",
+    desc:"Agent-to-Agent protocol integration, agent registration, tool bridge, metrics.",
+    tags:["a2a","agents","federation"], connections:["tool_service","metrics_buffer"] },
+  { id:"llm_provider", name:"LLM Provider Service", category:"service", group:"ai",
+    path:"mcpgateway/services/llm_provider_service.py",
+    desc:"LLM provider configuration: model management, API key storage, routing.",
+    tags:["llm","providers","models"], connections:["encryption_service"] },
+  { id:"llm_proxy", name:"LLM Proxy Service", category:"service", group:"ai",
+    path:"mcpgateway/services/llm_proxy_service.py",
+    desc:"LLM request proxying with model routing and token tracking.",
+    tags:["llm","proxy","routing"], connections:["llm_provider"] },
+  { id:"chat_service", name:"Chat Service", category:"service", group:"ai",
+    path:"mcpgateway/services/mcp_client_chat_service.py",
+    desc:"Chat endpoint: message handling, context management, tool integration.",
+    tags:["chat","llm","messages"], connections:["tool_service","llm_proxy","session_pool"] },
+
+  // === SERVICES: Observability ===
+  { id:"observability_svc", name:"Observability Service", category:"service", group:"observability",
+    path:"mcpgateway/services/observability_service.py",
+    desc:"OpenTelemetry data collection: traces, spans, events, metrics export.",
+    tags:["otel","traces","spans","metrics"], connections:["metrics_buffer"] },
+  { id:"metrics_buffer", name:"Metrics Buffer", category:"service", group:"observability",
+    path:"mcpgateway/services/metrics_buffer_service.py",
+    desc:"Batched metrics ingestion with configurable flush intervals and buffer sizes.",
+    tags:["metrics","buffering","performance"], connections:["metrics_rollup"] },
+  { id:"metrics_query", name:"Metrics Query", category:"service", group:"observability",
+    path:"mcpgateway/services/metrics_query_service.py",
+    desc:"Metrics querying with time-range filtering, aggregation, and percentile calculation.",
+    tags:["metrics","querying","aggregation"], connections:[] },
+  { id:"metrics_rollup", name:"Metrics Rollup", category:"service", group:"observability",
+    path:"mcpgateway/services/metrics_rollup_service.py",
+    desc:"Hourly metrics rollup for long-term retention and dashboard performance.",
+    tags:["metrics","rollup","retention"], connections:[] },
+  { id:"performance_svc", name:"Performance Service", category:"service", group:"observability",
+    path:"mcpgateway/services/performance_service.py",
+    desc:"Performance snapshot collection, response time tracking, throughput analysis.",
+    tags:["performance","snapshots","analysis"], connections:[] },
+  { id:"structured_logger", name:"Structured Logger", category:"service", group:"observability",
+    path:"mcpgateway/services/structured_logger.py",
+    desc:"JSON structured logging with context enrichment and log level management.",
+    tags:["logging","json","structured"], connections:[] },
+  { id:"log_aggregator", name:"Log Aggregator", category:"service", group:"observability",
+    path:"mcpgateway/services/log_aggregator.py",
+    desc:"Log aggregation, filtering by level/source/time, and full-text search.",
+    tags:["logging","aggregation","search"], connections:["structured_logger"] },
+  { id:"system_stats", name:"System Stats", category:"service", group:"observability",
+    path:"mcpgateway/services/system_stats_service.py",
+    desc:"System statistics: CPU, memory, open connections, request rates.",
+    tags:["stats","system","monitoring"], connections:[] },
+  { id:"audit_trail", name:"Audit Trail", category:"service", group:"observability",
+    path:"mcpgateway/services/audit_trail_service.py",
+    desc:"Immutable audit trail for configuration changes and administrative actions.",
+    tags:["audit","compliance","trail"], connections:[] },
+
+  // === SERVICES: Infrastructure ===
+  { id:"export_service", name:"Export Service", category:"service", group:"infra",
+    path:"mcpgateway/services/export_service.py",
+    desc:"Configuration export in JSON/YAML with filtering, versioning, and diff support.",
+    tags:["config","export","json","yaml"], connections:["tool_service","resource_service","prompt_service"] },
+  { id:"import_service", name:"Import Service", category:"service", group:"infra",
+    path:"mcpgateway/services/import_service.py",
+    desc:"Configuration import with conflict resolution, dry-run, and rollback support.",
+    tags:["config","import","migration"], connections:["tool_service","resource_service","prompt_service"] },
+  { id:"http_client", name:"HTTP Client Service", category:"service", group:"infra",
+    path:"mcpgateway/services/http_client_service.py",
+    desc:"Shared HTTP client with connection pooling, retries, and circuit breaking.",
+    tags:["http","client","retries"], connections:[] },
+  { id:"grpc_service", name:"gRPC Service", category:"service", group:"infra",
+    path:"mcpgateway/services/grpc_service.py",
+    desc:"gRPC server configuration, service registration, and TLS management.",
+    tags:["grpc","protobuf","tls"], connections:[] },
+  { id:"notification_svc", name:"Notification Service", category:"service", group:"infra",
+    path:"mcpgateway/services/notification_service.py",
+    desc:"User notification management with read/unread tracking and delivery.",
+    tags:["notifications","users"], connections:[] },
+  { id:"tag_service", name:"Tag Service", category:"service", group:"infra",
+    path:"mcpgateway/services/tag_service.py",
+    desc:"Tag management for tools, resources, and prompts with filtering support.",
+    tags:["tags","filtering","organization"], connections:[] },
+  { id:"catalog_service", name:"Catalog Service", category:"service", group:"infra",
+    path:"mcpgateway/services/catalog_service.py",
+    desc:"MCP server catalog management and discovery.",
+    tags:["catalog","discovery","servers"], connections:["server_service"] },
+  { id:"support_bundle", name:"Support Bundle", category:"service", group:"infra",
+    path:"mcpgateway/services/support_bundle_service.py",
+    desc:"Diagnostic support bundle generation with config, logs, and system info.",
+    tags:["diagnostics","support","debugging"], connections:["system_stats","log_aggregator"] },
+  { id:"event_service", name:"Event Service", category:"service", group:"infra",
+    path:"mcpgateway/services/event_service.py",
+    desc:"Event tracking, notification dispatch, and webhook delivery.",
+    tags:["events","notifications","webhooks"], connections:[] },
+  { id:"email_notification", name:"Email Notification Service", category:"service", group:"infra",
+    path:"mcpgateway/services/email_notification_service.py",
+    desc:"Email notification delivery for alerts and user communication.",
+    tags:["email","notifications","alerts"], connections:["event_service"] },
+  { id:"logging_service", name:"Logging Service", category:"service", group:"observability",
+    path:"mcpgateway/services/logging_service.py",
+    desc:"Centralized logging management with level control and output routing.",
+    tags:["logging","management","levels"], connections:["structured_logger"] },
+  { id:"log_storage", name:"Log Storage Service", category:"service", group:"observability",
+    path:"mcpgateway/services/log_storage_service.py",
+    desc:"Log persistence to database with retention policies.",
+    tags:["logging","storage","retention"], connections:[] },
+  { id:"metrics_cleanup", name:"Metrics Cleanup Service", category:"service", group:"observability",
+    path:"mcpgateway/services/metrics_cleanup_service.py",
+    desc:"Metrics retention management and old data cleanup.",
+    tags:["metrics","cleanup","retention"], connections:["metrics_rollup"] },
+  { id:"metrics_prom", name:"Prometheus Metrics", category:"service", group:"observability",
+    path:"mcpgateway/services/metrics.py",
+    desc:"Prometheus metrics collection, counters, histograms, and gauges.",
+    tags:["prometheus","metrics","counters"], connections:[] },
+  { id:"performance_tracker", name:"Performance Tracker", category:"service", group:"observability",
+    path:"mcpgateway/services/performance_tracker.py",
+    desc:"Performance tracking helpers for response time and throughput measurement.",
+    tags:["performance","tracking","timing"], connections:["performance_svc"] },
+  { id:"personal_team", name:"Personal Team Service", category:"service", group:"auth",
+    path:"mcpgateway/services/personal_team_service.py",
+    desc:"Automatic personal team initialization for new users.",
+    tags:["teams","personal","onboarding"], connections:["team_mgmt"] },
+  { id:"plugin_service", name:"Plugin Service", category:"service", group:"infra",
+    path:"mcpgateway/services/plugin_service.py",
+    desc:"Plugin lifecycle management, registration, and configuration.",
+    tags:["plugins","lifecycle","config"], connections:[] },
+  { id:"server_classification", name:"Server Classification", category:"service", group:"mcp",
+    path:"mcpgateway/services/server_classification_service.py",
+    desc:"MCP server type classification and capability detection.",
+    tags:["servers","classification","capabilities"], connections:["server_service"] },
+  { id:"team_invitation", name:"Team Invitation Service", category:"service", group:"auth",
+    path:"mcpgateway/services/team_invitation_service.py",
+    desc:"Team invitation workflow: create, send, accept, expire.",
+    tags:["teams","invitations","workflow"], connections:["team_mgmt"] },
+
+  // === MIDDLEWARE ===
+  { id:"mw_auth", name:"Auth Middleware", category:"middleware", group:"auth",
+    path:"mcpgateway/middleware/auth_middleware.py",
+    desc:"Token extraction from headers (Bearer, Basic) and request context injection.",
+    tags:["auth","tokens","headers"], connections:["token_validation"] },
+  { id:"mw_http_auth", name:"HTTP Auth Middleware", category:"middleware", group:"auth",
+    path:"mcpgateway/middleware/http_auth_middleware.py",
+    desc:"HTTP authentication scheme handling and credential extraction.",
+    tags:["auth","http","schemes"], connections:["mw_auth"] },
+  { id:"mw_rbac", name:"RBAC Middleware", category:"middleware", group:"auth",
+    path:"mcpgateway/middleware/rbac.py",
+    desc:"Role-based access control enforcement on every request path.",
+    tags:["auth","rbac","permissions"], connections:["permission_service","role_service"] },
+  { id:"mw_token_scoping", name:"Token Scoping Middleware", category:"middleware", group:"auth",
+    path:"mcpgateway/middleware/token_scoping.py",
+    desc:"Token-based scope validation: team visibility, admin bypass, fail-closed defaults.",
+    tags:["auth","scoping","teams","visibility"], connections:["mw_auth"] },
+  { id:"mw_logging", name:"Request Logging Middleware", category:"middleware", group:"observability",
+    path:"mcpgateway/middleware/request_logging_middleware.py",
+    desc:"Comprehensive request/response logging with timing, status, and body capture.",
+    tags:["logging","requests","timing"], connections:["structured_logger"] },
+  { id:"mw_observability", name:"Observability Middleware", category:"middleware", group:"observability",
+    path:"mcpgateway/middleware/observability_middleware.py",
+    desc:"OpenTelemetry span creation, context propagation, and trace enrichment.",
+    tags:["otel","tracing","spans"], connections:["observability_svc"] },
+  { id:"mw_security_headers", name:"Security Headers", category:"middleware", group:"auth",
+    path:"mcpgateway/middleware/security_headers.py",
+    desc:"HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy.",
+    tags:["security","headers","hsts","csp"], connections:[] },
+  { id:"mw_correlation", name:"Correlation ID", category:"middleware", group:"observability",
+    path:"mcpgateway/middleware/correlation_id.py",
+    desc:"Generates and propagates unique request correlation IDs for tracing.",
+    tags:["correlation","tracing","request-id"], connections:[] },
+  { id:"mw_compression", name:"Compression", category:"middleware", group:"infra",
+    path:"mcpgateway/middleware/compression.py",
+    desc:"SSE-aware response compression with Brotli, Zstd, and GZip support.",
+    tags:["compression","brotli","zstd","gzip"], connections:[] },
+  { id:"mw_protocol", name:"Protocol Version", category:"middleware", group:"mcp",
+    path:"mcpgateway/middleware/protocol_version.py",
+    desc:"MCP protocol version detection, negotiation, and header injection.",
+    tags:["mcp","protocol","versioning"], connections:[] },
+  { id:"mw_validation", name:"Validation Middleware", category:"middleware", group:"mcp",
+    path:"mcpgateway/middleware/validation_middleware.py",
+    desc:"JSON schema validation for request bodies with detailed error responses.",
+    tags:["validation","json-schema","errors"], connections:[] },
+  { id:"mw_token_usage", name:"Token Usage", category:"middleware", group:"observability",
+    path:"mcpgateway/middleware/token_usage_middleware.py",
+    desc:"Tracks token usage patterns for analytics and rate limiting decisions.",
+    tags:["tokens","usage","analytics"], connections:["metrics_buffer"] },
+  { id:"mw_db_query", name:"DB Query Logging", category:"middleware", group:"observability",
+    path:"mcpgateway/middleware/db_query_logging.py",
+    desc:"SQL query logging with N+1 detection, slow query identification, and metrics.",
+    tags:["database","queries","n+1","slow-query"], connections:[] },
+  { id:"mw_request_ctx", name:"Request Context", category:"middleware", group:"infra",
+    path:"mcpgateway/middleware/request_context.py",
+    desc:"Thread-local request context management for dependency injection.",
+    tags:["context","request","threading"], connections:[] },
+  { id:"mw_path_filter", name:"Path Filter", category:"middleware", group:"infra",
+    path:"mcpgateway/middleware/path_filter.py",
+    desc:"URL path filtering and route matching for selective middleware application.",
+    tags:["routing","filtering","paths"], connections:[] },
+
+  // === TRANSPORTS ===
+  { id:"tp_sse", name:"SSE Transport", category:"transport", group:"mcp",
+    path:"mcpgateway/transports/sse_transport.py",
+    desc:"Server-Sent Events transport with keepalive, reconnection, and event streaming.",
+    tags:["sse","streaming","events"], connections:["session_pool"] },
+  { id:"tp_websocket", name:"WebSocket Transport", category:"transport", group:"mcp",
+    path:"mcpgateway/transports/websocket_transport.py",
+    desc:"Bidirectional WebSocket transport with ping/pong and message framing.",
+    tags:["websocket","bidirectional","realtime"], connections:["session_pool"] },
+  { id:"tp_stdio", name:"STDIO Transport", category:"transport", group:"mcp",
+    path:"mcpgateway/transports/stdio_transport.py",
+    desc:"Standard I/O transport for CLI integration and local server processes.",
+    tags:["stdio","cli","local"], connections:[] },
+  { id:"tp_streamable", name:"Streamable HTTP", category:"transport", group:"mcp",
+    path:"mcpgateway/transports/streamablehttp_transport.py",
+    desc:"Streamable HTTP transport: JSON-RPC over HTTP with session management.",
+    tags:["http","streaming","json-rpc"], connections:["session_pool"] },
+  { id:"tp_rust", name:"Rust MCP Runtime", category:"transport", group:"mcp",
+    path:"mcpgateway/transports/rust_mcp_runtime_proxy.py",
+    desc:"Rust MCP runtime sidecar integration with shadow/edge/full rollout modes.",
+    tags:["rust","sidecar","performance"], connections:["tp_streamable"] },
+  { id:"tp_redis", name:"Redis Event Store", category:"transport", group:"infra",
+    path:"mcpgateway/transports/redis_event_store.py",
+    desc:"Redis-backed event and session message store for distributed deployments.",
+    tags:["redis","events","distributed"], connections:[] },
+
+  // === CACHE ===
+  { id:"cache_session", name:"Session Registry", category:"cache", group:"infra",
+    path:"mcpgateway/cache/session_registry.py",
+    desc:"Session management cache with in-memory and Redis backends.",
+    tags:["sessions","cache","redis"], connections:["tp_redis"] },
+  { id:"cache_auth", name:"Auth Cache", category:"cache", group:"auth",
+    path:"mcpgateway/cache/auth_cache.py",
+    desc:"Authentication result caching with configurable TTL to reduce DB load.",
+    tags:["auth","cache","ttl"], connections:[] },
+  { id:"cache_registry", name:"Registry Cache", category:"cache", group:"mcp",
+    path:"mcpgateway/cache/registry_cache.py",
+    desc:"Tool/resource registry caching for fast lookup without DB round-trips.",
+    tags:["registry","cache","tools","resources"], connections:["tool_service","resource_service"] },
+  { id:"cache_admin", name:"Admin Stats Cache", category:"cache", group:"observability",
+    path:"mcpgateway/cache/admin_stats_cache.py",
+    desc:"Dashboard statistics caching for the admin UI.",
+    tags:["admin","stats","dashboard"], connections:[] },
+  { id:"cache_resource", name:"Resource Cache", category:"cache", group:"mcp",
+    path:"mcpgateway/cache/resource_cache.py",
+    desc:"Resource content caching with 10MB default limit.",
+    tags:["resources","content","cache"], connections:["resource_service"] },
+  { id:"cache_global_config", name:"Global Config Cache", category:"cache", group:"infra",
+    path:"mcpgateway/cache/global_config_cache.py",
+    desc:"Global configuration caching for fast access without DB queries.",
+    tags:["config","cache","global"], connections:[] },
+  { id:"cache_metrics", name:"Metrics Cache", category:"cache", group:"observability",
+    path:"mcpgateway/cache/metrics_cache.py",
+    desc:"Metrics data caching for dashboard and API performance.",
+    tags:["metrics","cache","dashboard"], connections:[] },
+  { id:"cache_tool_lookup", name:"Tool Lookup Cache", category:"cache", group:"mcp",
+    path:"mcpgateway/cache/tool_lookup_cache.py",
+    desc:"Fast tool lookup cache for name-to-tool resolution.",
+    tags:["tools","lookup","cache"], connections:["tool_service"] },
+  { id:"cache_a2a_stats", name:"A2A Stats Cache", category:"cache", group:"ai",
+    path:"mcpgateway/cache/a2a_stats_cache.py",
+    desc:"Agent-to-Agent statistics caching for dashboard metrics.",
+    tags:["a2a","stats","cache"], connections:["a2a_service"] },
+
+  // === ROUTERS ===
+  { id:"rt_auth", name:"Auth Router", category:"router", group:"auth",
+    path:"mcpgateway/routers/auth.py",
+    desc:"Basic authentication endpoints: login, token refresh.",
+    tags:["auth","login","endpoints"], connections:["email_auth"] },
+  { id:"rt_email_auth", name:"Email Auth Router", category:"router", group:"auth",
+    path:"mcpgateway/routers/email_auth.py",
+    desc:"Email registration, login, password reset, verification endpoints.",
+    tags:["auth","email","registration"], connections:["email_auth"] },
+  { id:"rt_oauth", name:"OAuth Router", category:"router", group:"auth",
+    path:"mcpgateway/routers/oauth_router.py",
+    desc:"OAuth 2.0 authorization code flow: /authorize, /token, /callback.",
+    tags:["oauth","authorization","tokens"], connections:["oauth_manager","sso_service"] },
+  { id:"rt_sso", name:"SSO Router", category:"router", group:"auth",
+    path:"mcpgateway/routers/sso.py",
+    desc:"SSO provider configuration and management endpoints.",
+    tags:["sso","providers","config"], connections:["sso_service"] },
+  { id:"rt_tokens", name:"Tokens Router", category:"router", group:"auth",
+    path:"mcpgateway/routers/tokens.py",
+    desc:"API token management: create, list, revoke, scope.",
+    tags:["tokens","api-keys","management"], connections:["token_catalog"] },
+  { id:"rt_rbac", name:"RBAC Router", category:"router", group:"auth",
+    path:"mcpgateway/routers/rbac.py",
+    desc:"RBAC configuration: roles, permissions, assignments.",
+    tags:["rbac","roles","permissions"], connections:["role_service","permission_service"] },
+  { id:"rt_teams", name:"Teams Router", category:"router", group:"auth",
+    path:"mcpgateway/routers/teams.py",
+    desc:"Team management: create, invite, join, membership, settings.",
+    tags:["teams","membership","invitations"], connections:["team_mgmt"] },
+  { id:"rt_llm_chat", name:"LLM Chat Router", category:"router", group:"ai",
+    path:"mcpgateway/routers/llmchat_router.py",
+    desc:"Chat completions endpoint compatible with OpenAI API format.",
+    tags:["llm","chat","completions","openai"], connections:["chat_service","llm_proxy"] },
+  { id:"rt_llm_admin", name:"LLM Admin Router", category:"router", group:"ai",
+    path:"mcpgateway/routers/llm_admin_router.py",
+    desc:"LLM provider administration: model configuration, API key management.",
+    tags:["llm","admin","providers"], connections:["llm_provider"] },
+  { id:"rt_llm_config", name:"LLM Config Router", category:"router", group:"ai",
+    path:"mcpgateway/routers/llm_config_router.py",
+    desc:"LLM provider and model management: CRUD operations for LLM configurations.",
+    tags:["llm","config","models","providers"], connections:["llm_provider"] },
+  { id:"rt_llm_proxy", name:"LLM Proxy Router", category:"router", group:"ai",
+    path:"mcpgateway/routers/llm_proxy_router.py",
+    desc:"OpenAI-compatible proxy endpoints that route requests to configured LLM providers.",
+    tags:["llm","proxy","openai","routing"], connections:["llm_proxy"] },
+  { id:"rt_observability", name:"Observability Router", category:"router", group:"observability",
+    path:"mcpgateway/routers/observability.py",
+    desc:"OpenTelemetry data endpoints: traces, spans, events, saved queries.",
+    tags:["otel","traces","endpoints"], connections:["observability_svc"] },
+  { id:"rt_logs", name:"Log Search Router", category:"router", group:"observability",
+    path:"mcpgateway/routers/log_search.py",
+    desc:"Real-time log search with filtering by level, source, time range.",
+    tags:["logs","search","filtering"], connections:["log_aggregator"] },
+  { id:"rt_metrics_maint", name:"Metrics Maintenance Router", category:"router", group:"observability",
+    path:"mcpgateway/routers/metrics_maintenance.py",
+    desc:"Admin endpoints for metrics cleanup and hourly rollup operations.",
+    tags:["metrics","cleanup","rollup","admin"], connections:["metrics_cleanup","metrics_rollup"] },
+  { id:"rt_cancellation", name:"Cancellation Router", category:"router", group:"mcp",
+    path:"mcpgateway/routers/cancellation_router.py",
+    desc:"Gateway-authoritative cancellation: cancel in-flight requests and check cancellation status.",
+    tags:["cancellation","requests","admin"], connections:["cancellation_service"] },
+  { id:"rt_wellknown", name:"Well-Known Router", category:"router", group:"mcp",
+    path:"mcpgateway/routers/well_known.py",
+    desc:"Standard .well-known MCP endpoints for protocol discovery.",
+    tags:["mcp","discovery","well-known"], connections:["root_service"] },
+  { id:"rt_server_wellknown", name:"Server Well-Known Router", category:"router", group:"mcp",
+    path:"mcpgateway/routers/server_well_known.py",
+    desc:"Virtual server .well-known endpoints: OAuth protected resource metadata (RFC 9728), robots.txt, security.txt.",
+    tags:["mcp","well-known","oauth","rfc9728"], connections:["root_service"] },
+  { id:"rt_proxy", name:"Reverse Proxy Router", category:"router", group:"mcp",
+    path:"mcpgateway/routers/reverse_proxy.py",
+    desc:"Request proxying for federated gateway forwarding.",
+    tags:["proxy","federation","forwarding"], connections:["gateway_service","http_client"] },
+  { id:"rt_toolops", name:"ToolOps Router", category:"router", group:"mcp",
+    path:"mcpgateway/routers/toolops_router.py",
+    desc:"Tool operations and testing framework endpoints.",
+    tags:["tools","testing","operations"], connections:["tool_service"] },
+
+  // === UTILITIES ===
+  { id:"ut_translate", name:"Protocol Translator", category:"util", group:"mcp",
+    path:"mcpgateway/translate.py",
+    desc:"Bridges STDIO MCP servers to HTTP/SSE. Enables any MCP server to be network-accessible.",
+    tags:["translate","stdio","sse","bridge"], connections:["tp_sse","tp_stdio"] },
+  { id:"ut_orjson", name:"orjson Response", category:"util", group:"infra",
+    path:"mcpgateway/utils/orjson_response.py",
+    desc:"High-performance JSON serialization using orjson (5-6x faster than stdlib).",
+    tags:["json","performance","serialization"], connections:[] },
+  { id:"ut_pagination", name:"Cursor Pagination", category:"util", group:"infra",
+    path:"mcpgateway/utils/pagination.py",
+    desc:"Cursor-based pagination for efficient large dataset traversal.",
+    tags:["pagination","cursor","performance"], connections:[] },
+  { id:"ut_retry", name:"Retry Manager", category:"util", group:"infra",
+    path:"mcpgateway/utils/retry_manager.py",
+    desc:"Configurable retry logic with exponential backoff and jitter.",
+    tags:["retry","backoff","resilience"], connections:[] },
+];
+
+/* ================================================================
+   DATA: Database model groups
+   ================================================================ */
+const DB_GROUPS = [
+  { name: "Authentication & Users", icon: "\uD83D\uDC64", color: "var(--accent-blue)",
+    tables: ["EmailUser","EmailAuthEvent","PasswordResetToken","PendingUserApproval"] },
+  { name: "Teams & Membership", icon: "\uD83D\uDC65", color: "var(--accent-purple)",
+    tables: ["EmailTeam","EmailTeamMember","EmailTeamMemberHistory","EmailTeamInvitation","EmailTeamJoinRequest"] },
+  { name: "RBAC & Permissions", icon: "\uD83D\uDD12", color: "var(--accent-green)",
+    tables: ["Role","UserRole","PermissionAuditLog"] },
+  { name: "OAuth & Tokens", icon: "\uD83D\uDD11", color: "var(--accent-orange)",
+    tables: ["OAuthToken","OAuthState","RegisteredOAuthClient","EmailApiToken","TokenUsageLog","TokenRevocation"] },
+  { name: "SSO Providers", icon: "\uD83C\uDF10", color: "var(--accent-cyan)",
+    tables: ["SSOProvider","SSOAuthSession"] },
+  { name: "MCP Entities", icon: "\u2699\uFE0F", color: "var(--accent-blue)",
+    tables: ["Tool","Resource","ResourceSubscription","Prompt","Server","Gateway","A2AAgent","GrpcService"] },
+  { name: "Metrics (Per-Entity)", icon: "\uD83D\uDCCA", color: "var(--accent-green)",
+    tables: ["ToolMetric","ResourceMetric","ServerMetric","PromptMetric","A2AAgentMetric"] },
+  { name: "Metrics (Hourly Rollup)", icon: "\u23F0", color: "var(--accent-yellow)",
+    tables: ["ToolMetricsHourly","ResourceMetricsHourly","ServerMetricsHourly","PromptMetricsHourly","A2AAgentMetricsHourly"] },
+  { name: "Observability", icon: "\uD83D\uDD2D", color: "var(--accent-purple)",
+    tables: ["ObservabilityTrace","ObservabilitySpan","ObservabilityEvent","ObservabilityMetric","ObservabilitySavedQuery"] },
+  { name: "Performance", icon: "\u26A1", color: "var(--accent-orange)",
+    tables: ["PerformanceSnapshot","PerformanceAggregate","PerformanceMetric"] },
+  { name: "Logging & Security", icon: "\uD83D\uDEE1\uFE0F", color: "var(--accent-red)",
+    tables: ["StructuredLogEntry","SecurityEvent","AuditTrail"] },
+  { name: "Configuration & Sessions", icon: "\u2699\uFE0F", color: "var(--accent-cyan)",
+    tables: ["GlobalConfig","ToolOpsTestCases","SessionRecord","SessionMessageRecord","LLMProvider","LLMModel"] },
+];
+
+/* ================================================================
+   DATA: Request flow scenarios
+   ================================================================ */
+const FLOW_SCENARIOS = {
+  "tool-invoke": {
+    title: "Tool Invocation via MCP",
+    steps: [
+      { label: "Client", color: "var(--accent-cyan)", title: "Client sends tools/call",
+        desc: "An MCP client sends a JSON-RPC 2.0 request to invoke a tool, including the tool name and arguments.",
+        code: '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"search","arguments":{"q":"hello"}},"id":1}' },
+      { label: "Transport", color: "var(--accent-blue)", title: "Transport receives & frames",
+        desc: "The request arrives over SSE, WebSocket, or Streamable HTTP. The transport layer parses the JSON-RPC envelope and creates a session context.",
+        code: "transports/streamablehttp_transport.py -> parse_jsonrpc()" },
+      { label: "Middleware", color: "var(--accent-purple)", title: "Authentication & token extraction",
+        desc: "Auth middleware extracts the Bearer token, validates the JWT signature, and injects the authenticated user into the request context.",
+        code: "middleware/auth_middleware.py -> extract_token() -> verify_jwt()" },
+      { label: "Middleware", color: "var(--accent-purple)", title: "Token scoping & RBAC",
+        desc: "Token scoping determines team visibility. RBAC middleware checks the user has tools.execute permission for the target tool's team.",
+        code: "middleware/token_scoping.py -> middleware/rbac.py" },
+      { label: "Router", color: "var(--accent-green)", title: "Route to main.py handler",
+        desc: "The JSON-RPC method is dispatched to the tools/call handler in main.py, which validates parameters.",
+        code: "main.py -> handle_tools_call()" },
+      { label: "Plugin", color: "var(--accent-yellow)", title: "Plugin pre-invoke hooks",
+        desc: "The plugin framework fires tool_pre_invoke hooks. Plugins can modify arguments, add context, or block the call.",
+        code: "plugins/framework/hooks/tools.py -> fire_pre_invoke()" },
+      { label: "Service", color: "var(--accent-orange)", title: "Tool Service executes",
+        desc: "Tool Service resolves the tool (local or federated), opens a session to the backend MCP server, and forwards the invocation.",
+        code: "services/tool_service.py -> invoke_tool()" },
+      { label: "Plugin", color: "var(--accent-yellow)", title: "Plugin post-invoke hooks",
+        desc: "Post-invoke hooks fire with the result. Plugins can transform, filter, or log the response.",
+        code: "plugins/framework/hooks/tools.py -> fire_post_invoke()" },
+      { label: "Observability", color: "var(--accent-green)", title: "Metrics & logging",
+        desc: "Metrics buffer records latency, status, and token usage. Structured logs capture the full request lifecycle.",
+        code: "services/metrics_buffer_service.py -> record()" },
+      { label: "Response", color: "var(--accent-cyan)", title: "JSON-RPC response returned",
+        desc: "The result is serialized via orjson and returned through the transport layer to the client.",
+        code: '{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"..."}]},"id":1}' },
+    ]
+  },
+  "auth-flow": {
+    title: "OAuth 2.0 Authentication Flow",
+    steps: [
+      { label: "Client", color: "var(--accent-cyan)", title: "User clicks Login with SSO",
+        desc: "The client redirects the user to the OAuth authorization endpoint with client_id, redirect_uri, and scope.",
+        code: "GET /oauth/authorize?client_id=...&redirect_uri=...&scope=mcp" },
+      { label: "Router", color: "var(--accent-green)", title: "OAuth Router initiates flow",
+        desc: "The OAuth router validates the client registration, generates a state parameter, and builds the SSO redirect URL.",
+        code: "routers/oauth_router.py -> authorize()" },
+      { label: "SSO", color: "var(--accent-purple)", title: "SSO Provider authentication",
+        desc: "User authenticates with the external IdP (Keycloak, Entra ID, Google, etc.) and consents to scopes.",
+        code: "Redirect to IdP -> User authenticates -> Redirect back" },
+      { label: "Router", color: "var(--accent-green)", title: "Callback & code exchange",
+        desc: "The callback endpoint receives the authorization code, validates the state, and exchanges it for tokens.",
+        code: "routers/oauth_router.py -> callback()" },
+      { label: "Service", color: "var(--accent-orange)", title: "Token validation & creation",
+        desc: "SSO service validates the IdP token, extracts claims, creates/updates the local user, and generates a session JWT.",
+        code: "services/sso_service.py -> validate_and_create_session()" },
+      { label: "Service", color: "var(--accent-orange)", title: "Team membership resolution",
+        desc: "Team management resolves the user's team memberships and roles for the JWT teams claim.",
+        code: "services/team_management_service.py -> resolve_teams()" },
+      { label: "Data", color: "var(--accent-pink)", title: "Session persisted",
+        desc: "The session record and encrypted tokens are stored in the database for session management.",
+        code: "OAuthToken, SSOAuthSession -> db commit" },
+      { label: "Response", color: "var(--accent-cyan)", title: "JWT returned to client",
+        desc: "A signed JWT with user claims, team memberships, and permissions is returned. Secure cookies are set.",
+        code: "Set-Cookie: session=eyJ...; HttpOnly; Secure; SameSite=Strict" },
+    ]
+  },
+  "federation": {
+    title: "Federated Tool Discovery & Execution",
+    steps: [
+      { label: "Client", color: "var(--accent-cyan)", title: "Client requests tools/list",
+        desc: "A client lists available tools. The gateway aggregates local and federated tools.",
+        code: '{"jsonrpc":"2.0","method":"tools/list","id":1}' },
+      { label: "Service", color: "var(--accent-orange)", title: "Local tool registry lookup",
+        desc: "Tool Service first queries the local database for registered tools matching the user's team scope.",
+        code: "services/tool_service.py -> list_tools(teams=user_teams)" },
+      { label: "Service", color: "var(--accent-orange)", title: "Gateway federation fanout",
+        desc: "Gateway Service queries all registered federated peers in parallel for their tool catalogs.",
+        code: "services/gateway_service.py -> discover_federated_tools()" },
+      { label: "Cache", color: "var(--accent-pink)", title: "Registry cache check",
+        desc: "The registry cache is checked first. Federated results are cached with TTL to avoid repeated network calls.",
+        code: "cache/registry_cache.py -> get_or_fetch()" },
+      { label: "Middleware", color: "var(--accent-purple)", title: "Team scoping applied",
+        desc: "Results are filtered through token scoping: users only see tools in their teams or public tools.",
+        code: "middleware/token_scoping.py -> filter_by_teams()" },
+      { label: "Response", color: "var(--accent-cyan)", title: "Merged tool list returned",
+        desc: "Local and federated tools are merged, deduplicated, and returned with source metadata.",
+        code: '{"jsonrpc":"2.0","result":{"tools":[...local, ...federated]},"id":1}' },
+      { label: "Client", color: "var(--accent-cyan)", title: "Client invokes federated tool",
+        desc: "The client invokes a tool that lives on a remote peer gateway.",
+        code: '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"remote/analyze"},"id":2}' },
+      { label: "Service", color: "var(--accent-orange)", title: "Proxy to remote gateway",
+        desc: "Tool Service detects the tool is federated and proxies the request to the owning gateway via the reverse proxy router.",
+        code: "routers/reverse_proxy.py -> forward_to_peer()" },
+      { label: "Response", color: "var(--accent-cyan)", title: "Federated result returned",
+        desc: "The remote gateway executes the tool and returns the result, which is forwarded back to the client transparently.",
+        code: "Result proxied back with source attribution" },
+    ]
+  }
+};
+
+/* ================================================================
+   DATA: Graph nodes and edges for the force-directed graph
+   ================================================================ */
+const GRAPH_NODES = COMPONENTS.map(function(c) {
+  return { id: c.id, name: c.name, group: c.group, category: c.category };
+});
+
+const GRAPH_EDGES = [];
+COMPONENTS.forEach(function(c) {
+  (c.connections || []).forEach(function(target) {
+    if (COMPONENTS.find(function(t) { return t.id === target; })) {
+      GRAPH_EDGES.push({ source: c.id, target: target });
+    }
+  });
+});
+
+const GROUP_COLORS = {
+  mcp: "#38bdf8",
+  auth: "#a78bfa",  // pragma: allowlist secret
+  observability: "#34d399",
+  ai: "#fb923c",
+  data: "#f472b6",
+  infra: "#22d3ee"
+};
+
+const CATEGORY_COLORS = {
+  service: "#fb923c",
+  middleware: "#a78bfa",
+  transport: "#38bdf8",
+  router: "#34d399",
+  cache: "#f472b6",
+  util: "#22d3ee"
+};
+
+/* ================================================================
+   NAVIGATION
+   ================================================================ */
+var navLinks = document.querySelectorAll('.nav-links a');
+var views = document.querySelectorAll('.view');
+
+function switchView(viewId) {
+  views.forEach(function(v) { v.classList.remove('active'); });
+  navLinks.forEach(function(a) { a.classList.remove('active'); });
+  var view = document.getElementById(viewId);
+  if (view) {
+    view.classList.add('active');
+    var link = document.querySelector('[data-view="' + viewId + '"]');
+    if (link) link.classList.add('active');
+    if (viewId === 'graph') initGraph();
+    if (viewId === 'flow') renderFlow('tool-invoke');
+  }
+}
+
+navLinks.forEach(function(a) {
+  a.addEventListener('click', function() { switchView(a.dataset.view); });
+});
+
+/* ================================================================
+   BACKGROUND PARTICLES
+   ================================================================ */
+(function initParticles() {
+  var canvas = document.getElementById('bg-canvas');
+  var ctx = canvas.getContext('2d');
+  var particles = [];
+  var w, h;
+
+  function resize() {
+    w = canvas.width = window.innerWidth;
+    h = canvas.height = window.innerHeight;
+  }
+
+  function createParticles() {
+    particles = [];
+    var count = Math.min(80, Math.floor((w * h) / 20000));
+    for (var i = 0; i < count; i++) {
+      particles.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: (Math.random() - 0.5) * 0.3,
+        r: Math.random() * 1.5 + 0.5,
+        a: Math.random() * 0.5 + 0.1
+      });
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, w, h);
+    for (var p = 0; p < particles.length; p++) {
+      var pt = particles[p];
+      pt.x += pt.vx; pt.y += pt.vy;
+      if (pt.x < 0) pt.x = w; if (pt.x > w) pt.x = 0;
+      if (pt.y < 0) pt.y = h; if (pt.y > h) pt.y = 0;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(56, 189, 248, ' + pt.a + ')';
+      ctx.fill();
+    }
+
+    for (var i = 0; i < particles.length; i++) {
+      for (var j = i + 1; j < particles.length; j++) {
+        var dx = particles[i].x - particles[j].x;
+        var dy = particles[i].y - particles[j].y;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 120) {
+          ctx.beginPath();
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.strokeStyle = 'rgba(56, 189, 248, ' + (0.08 * (1 - dist / 120)) + ')';
+          ctx.stroke();
+        }
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+
+  resize();
+  createParticles();
+  draw();
+  window.addEventListener('resize', function() { resize(); createParticles(); });
+})();
+
+/* ================================================================
+   SAFE DOM HELPERS (no innerHTML - all content from static data)
+   ================================================================ */
+function clearChildren(el) {
+  while (el.firstChild) el.removeChild(el.firstChild);
+}
+
+function el(tag, attrs, children) {
+  var node = document.createElement(tag);
+  if (attrs) {
+    Object.keys(attrs).forEach(function(key) {
+      if (key === 'textContent') { node.textContent = attrs[key]; }
+      else if (key === 'style' && typeof attrs[key] === 'object') {
+        Object.keys(attrs[key]).forEach(function(s) { node.style[s] = attrs[key][s]; });
+      }
+      else if (key.indexOf('on') === 0) { node.addEventListener(key.slice(2), attrs[key]); }
+      else if (key === 'className') { node.className = attrs[key]; }
+      else if (key === 'dataset') {
+        Object.keys(attrs[key]).forEach(function(d) { node.dataset[d] = attrs[key][d]; });
+      }
+      else { node.setAttribute(key, attrs[key]); }
+    });
+  }
+  if (children) {
+    if (!Array.isArray(children)) children = [children];
+    children.forEach(function(c) {
+      if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+      else if (c) node.appendChild(c);
+    });
+  }
+  return node;
+}
+
+/* ================================================================
+   COMPONENT EXPLORER
+   ================================================================ */
+var componentGrid = document.getElementById('component-grid');
+var componentSearch = document.getElementById('component-search');
+var filterBtns = document.querySelectorAll('.filter-btn[data-filter]');
+var currentFilter = 'all';
+
+function renderComponents() {
+  var query = componentSearch.value.toLowerCase();
+  var filtered = COMPONENTS.filter(function(c) {
+    if (currentFilter !== 'all' && c.category !== currentFilter) return false;
+    if (query) {
+      var searchable = (c.name + ' ' + c.desc + ' ' + c.path + ' ' + c.tags.join(' ')).toLowerCase();
+      return searchable.indexOf(query) !== -1;
+    }
+    return true;
+  });
+
+  clearChildren(componentGrid);
+
+  if (filtered.length === 0) {
+    var empty = el('div', { className: 'empty-state', style: { gridColumn: '1 / -1' } }, [
+      el('div', { className: 'empty-icon', textContent: '\uD83D\uDD0D' }),
+      el('p', { textContent: 'No components match your search.' })
+    ]);
+    componentGrid.appendChild(empty);
+    return;
+  }
+
+  filtered.forEach(function(c) {
+    var color = CATEGORY_COLORS[c.category] || 'var(--accent-blue)';
+    var card = el('div', {
+      className: 'component-card',
+      dataset: { id: c.id },
+      style: { '--card-accent': color },
+      onclick: function() { openDetail(c.id); }
+    }, [
+      el('div', { className: 'card-header' }, [
+        el('div', { className: 'card-title', textContent: c.name }),
+        el('span', {
+          className: 'card-category',
+          textContent: c.category,
+          style: { background: color + '22', color: color }
+        })
+      ]),
+      el('div', { className: 'card-desc', textContent: c.desc }),
+      el('div', { className: 'card-path', textContent: c.path }),
+      el('div', { className: 'card-tags' },
+        c.tags.map(function(t) { return el('span', { className: 'card-tag', textContent: t }); })
+      )
+    ]);
+    componentGrid.appendChild(card);
+  });
+}
+
+filterBtns.forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    filterBtns.forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    renderComponents();
+  });
+});
+
+componentSearch.addEventListener('input', renderComponents);
+renderComponents();
+
+/* ================================================================
+   DETAIL PANEL
+   ================================================================ */
+var detailOverlay = document.getElementById('detail-overlay');
+var detailPanel = document.getElementById('detail-panel');
+var detailContent = document.getElementById('detail-content');
+var detailClose = document.getElementById('detail-close');
+
+function openDetail(id) {
+  var comp = COMPONENTS.find(function(c) { return c.id === id; });
+  if (!comp) return;
+
+  var color = CATEGORY_COLORS[comp.category] || 'var(--accent-blue)';
+  clearChildren(detailContent);
+
+  detailContent.appendChild(el('span', {
+    className: 'detail-category',
+    textContent: comp.category + ' / ' + comp.group,
+    style: { background: color + '22', color: color }
+  }));
+  detailContent.appendChild(el('h2', { textContent: comp.name }));
+  detailContent.appendChild(el('div', { className: 'detail-desc', textContent: comp.desc }));
+
+  // File path
+  var pathSection = el('div', { className: 'detail-section' }, [
+    el('h3', { textContent: 'File Path' }),
+    el('code', { textContent: comp.path })
+  ]);
+  detailContent.appendChild(pathSection);
+
+  // Tags
+  var tagSection = el('div', { className: 'detail-section' }, [
+    el('h3', { textContent: 'Tags' }),
+    el('div', { className: 'card-tags' },
+      comp.tags.map(function(t) { return el('span', { className: 'card-tag', textContent: t }); })
+    )
+  ]);
+  detailContent.appendChild(tagSection);
+
+  // Dependencies
+  var connections = (comp.connections || []).map(function(cid) {
+    return COMPONENTS.find(function(c) { return c.id === cid; });
+  }).filter(Boolean);
+
+  if (connections.length > 0) {
+    var depSection = el('div', { className: 'detail-section' }, [
+      el('h3', { textContent: 'Depends On' }),
+      el('ul', {},
+        connections.map(function(target) {
+          return el('li', {}, [
+            el('code', { textContent: target.name }),
+            document.createTextNode(' \u2014 ' + target.desc.split('.')[0])
+          ]);
+        })
+      )
+    ]);
+    detailContent.appendChild(depSection);
+  }
+
+  // Used by
+  var dependents = COMPONENTS.filter(function(c) {
+    return (c.connections || []).indexOf(id) !== -1;
+  });
+
+  if (dependents.length > 0) {
+    var usedBySection = el('div', { className: 'detail-section' }, [
+      el('h3', { textContent: 'Used By' }),
+      el('ul', {},
+        dependents.map(function(c) {
+          return el('li', {}, [
+            el('code', { textContent: c.name }),
+            document.createTextNode(' \u2014 ' + c.desc.split('.')[0])
+          ]);
+        })
+      )
+    ]);
+    detailContent.appendChild(usedBySection);
+  }
+
+  detailOverlay.classList.add('open');
+  detailPanel.classList.add('open');
+}
+
+function closeDetail() {
+  detailOverlay.classList.remove('open');
+  detailPanel.classList.remove('open');
+}
+
+detailClose.addEventListener('click', closeDetail);
+detailOverlay.addEventListener('click', closeDetail);
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeDetail();
+});
+
+/* ================================================================
+   REQUEST FLOW
+   ================================================================ */
+var flowTimeline = document.getElementById('flow-timeline');
+var scenarioBtns = document.querySelectorAll('.scenario-btn');
+
+function renderFlow(scenarioId) {
+  var scenario = FLOW_SCENARIOS[scenarioId];
+  if (!scenario) return;
+
+  scenarioBtns.forEach(function(b) {
+    b.classList.toggle('active', b.dataset.scenario === scenarioId);
+  });
+
+  clearChildren(flowTimeline);
+
+  scenario.steps.forEach(function(step, i) {
+    var stepEl = el('div', {
+      className: 'flow-step',
+      style: { animationDelay: (i * 0.15) + 's' }
+    }, [
+      el('div', { className: 'flow-dot', style: { borderColor: step.color } }),
+      el('div', { className: 'flow-step-content' }, [
+        el('div', { className: 'flow-step-label', textContent: step.label, style: { color: step.color } }),
+        el('div', { className: 'flow-step-title', textContent: step.title }),
+        el('div', { className: 'flow-step-desc', textContent: step.desc }),
+        el('div', { className: 'flow-step-code', textContent: step.code })
+      ])
+    ]);
+    flowTimeline.appendChild(stepEl);
+  });
+}
+
+scenarioBtns.forEach(function(btn) {
+  btn.addEventListener('click', function() { renderFlow(btn.dataset.scenario); });
+});
+
+/* ================================================================
+   DATABASE VIEW
+   ================================================================ */
+var dbGroupsEl = document.getElementById('db-groups');
+DB_GROUPS.forEach(function(g) {
+  var group = el('div', { className: 'db-group' }, [
+    el('h3', {}, [
+      el('span', { textContent: g.icon }),
+      el('span', { textContent: g.name, style: { color: g.color } })
+    ])
+  ].concat(
+    g.tables.map(function(t) {
+      return el('div', { className: 'db-table', textContent: t });
+    })
+  ));
+  dbGroupsEl.appendChild(group);
+});
+
+/* ================================================================
+   FORCE-DIRECTED GRAPH (Vanilla JS SVG - no dependencies)
+   ================================================================ */
+var graphInitialized = false;
+
+function initGraph() {
+  if (graphInitialized) return;
+  graphInitialized = true;
+
+  var svg = document.getElementById('graph-svg');
+  var rect = svg.getBoundingClientRect();
+  var width = rect.width || 1200;
+  var height = rect.height || 600;
+
+  svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+
+  var tooltip = document.getElementById('graph-tooltip');
+  var ttName = tooltip.querySelector('.tt-name');
+  var ttType = tooltip.querySelector('.tt-type');
+  var ttDesc = tooltip.querySelector('.tt-desc');
+
+  var nodes = GRAPH_NODES.map(function(n, i) {
+    var angle = (i / GRAPH_NODES.length) * Math.PI * 2;
+    var radius = Math.min(width, height) * 0.35;
+    return {
+      id: n.id, name: n.name, group: n.group, category: n.category,
+      x: width / 2 + Math.cos(angle) * radius * (0.5 + Math.random() * 0.5),
+      y: height / 2 + Math.sin(angle) * radius * (0.5 + Math.random() * 0.5),
+      vx: 0, vy: 0,
+      radius: n.category === 'service' ? 8 : 6
+    };
+  });
+
+  var nodeMap = {};
+  nodes.forEach(function(n) { nodeMap[n.id] = n; });
+
+  var edges = GRAPH_EDGES.filter(function(e) {
+    return nodeMap[e.source] && nodeMap[e.target];
+  });
+
+  var ns = 'http://www.w3.org/2000/svg';
+
+  // Defs for glow filter
+  var defs = document.createElementNS(ns, 'defs');
+  var filter = document.createElementNS(ns, 'filter');
+  filter.setAttribute('id', 'glow');
+  filter.setAttribute('x', '-50%'); filter.setAttribute('y', '-50%');
+  filter.setAttribute('width', '200%'); filter.setAttribute('height', '200%');
+  var blur = document.createElementNS(ns, 'feGaussianBlur');
+  blur.setAttribute('stdDeviation', '3');
+  blur.setAttribute('result', 'coloredBlur');
+  var merge = document.createElementNS(ns, 'feMerge');
+  var m1 = document.createElementNS(ns, 'feMergeNode'); m1.setAttribute('in', 'coloredBlur');
+  var m2 = document.createElementNS(ns, 'feMergeNode'); m2.setAttribute('in', 'SourceGraphic');
+  merge.appendChild(m1); merge.appendChild(m2);
+  filter.appendChild(blur); filter.appendChild(merge);
+  defs.appendChild(filter);
+  svg.appendChild(defs);
+
+  var edgeGroup = document.createElementNS(ns, 'g');
+  svg.appendChild(edgeGroup);
+
+  var edgeElements = edges.map(function(e) {
+    var line = document.createElementNS(ns, 'line');
+    line.setAttribute('stroke', 'rgba(148, 163, 184, 0.15)');
+    line.setAttribute('stroke-width', '1');
+    edgeGroup.appendChild(line);
+    return { el: line, source: e.source, target: e.target };
+  });
+
+  var nodeGroup = document.createElementNS(ns, 'g');
+  svg.appendChild(nodeGroup);
+
+  var nodeElements = nodes.map(function(n) {
+    var g = document.createElementNS(ns, 'g');
+    g.style.cursor = 'pointer';
+
+    var circle = document.createElementNS(ns, 'circle');
+    circle.setAttribute('r', n.radius);
+    circle.setAttribute('fill', GROUP_COLORS[n.group] || '#38bdf8');
+    circle.setAttribute('opacity', '0.85');
+    circle.setAttribute('filter', 'url(#glow)');
+    g.appendChild(circle);
+
+    var text = document.createElementNS(ns, 'text');
+    text.textContent = n.name.replace(' Service', '').replace(' Middleware', '').replace(' Router', '');
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('dy', n.radius + 14);
+    text.setAttribute('fill', '#94a3b8');
+    text.setAttribute('font-size', '9');
+    text.setAttribute('font-family', 'Inter, system-ui, sans-serif');
+    g.appendChild(text);
+
+    g.addEventListener('mouseenter', function(ev) {
+      circle.setAttribute('r', n.radius * 1.5);
+      circle.setAttribute('opacity', '1');
+      var comp = COMPONENTS.find(function(c) { return c.id === n.id; });
+      if (comp) {
+        ttName.textContent = comp.name;
+        ttType.textContent = comp.category + ' / ' + comp.group;
+        ttDesc.textContent = comp.desc;
+        tooltip.style.display = 'block';
+        tooltip.style.left = ev.clientX + 15 + 'px';
+        tooltip.style.top = ev.clientY + 15 + 'px';
+      }
+      edgeElements.forEach(function(ee) {
+        if (ee.source === n.id || ee.target === n.id) {
+          ee.el.setAttribute('stroke', GROUP_COLORS[n.group] || '#38bdf8');
+          ee.el.setAttribute('stroke-width', '2');
+          ee.el.setAttribute('stroke-opacity', '0.6');
+        }
+      });
+    });
+
+    g.addEventListener('mouseleave', function() {
+      circle.setAttribute('r', n.radius);
+      circle.setAttribute('opacity', '0.85');
+      tooltip.style.display = 'none';
+      edgeElements.forEach(function(ee) {
+        ee.el.setAttribute('stroke', 'rgba(148, 163, 184, 0.15)');
+        ee.el.setAttribute('stroke-width', '1');
+        ee.el.removeAttribute('stroke-opacity');
+      });
+    });
+
+    g.addEventListener('click', function() { openDetail(n.id); });
+
+    nodeGroup.appendChild(g);
+    return { el: g, node: n, circle: circle };
+  });
+
+  // Drag handling
+  var dragNode = null;
+  var dragOffset = { x: 0, y: 0 };
+
+  function svgCoords(ev) {
+    var pt = svg.createSVGPoint();
+    pt.x = ev.clientX; pt.y = ev.clientY;
+    var ctm = svg.getScreenCTM().inverse();
+    return pt.matrixTransform(ctm);
+  }
+
+  svg.addEventListener('mousedown', function(ev) {
+    var coords = svgCoords(ev);
+    nodes.forEach(function(n) {
+      var dx = coords.x - n.x, dy = coords.y - n.y;
+      if (Math.sqrt(dx*dx + dy*dy) < n.radius * 2) {
+        dragNode = n;
+        dragOffset = { x: dx, y: dy };
+        n.fx = n.x; n.fy = n.y;
+      }
+    });
+  });
+
+  svg.addEventListener('mousemove', function(ev) {
+    if (!dragNode) return;
+    var coords = svgCoords(ev);
+    dragNode.fx = coords.x - dragOffset.x;
+    dragNode.fy = coords.y - dragOffset.y;
+    dragNode.x = dragNode.fx;
+    dragNode.y = dragNode.fy;
+    tooltip.style.left = ev.clientX + 15 + 'px';
+    tooltip.style.top = ev.clientY + 15 + 'px';
+  });
+
+  svg.addEventListener('mouseup', function() {
+    if (dragNode) { delete dragNode.fx; delete dragNode.fy; }
+    dragNode = null;
+  });
+
+  // Zoom
+  var scale = 1;
+  svg.addEventListener('wheel', function(ev) {
+    ev.preventDefault();
+    var delta = ev.deltaY > 0 ? 0.95 : 1.05;
+    scale *= delta;
+    scale = Math.max(0.3, Math.min(3, scale));
+    nodeGroup.setAttribute('transform', 'scale(' + scale + ')');
+    edgeGroup.setAttribute('transform', 'scale(' + scale + ')');
+  }, { passive: false });
+
+  // Force simulation
+  function simulate() {
+    var alpha = 0.3;
+    var repulsion = 800;
+    var attraction = 0.005;
+    var centerX = width / 2, centerY = height / 2;
+
+    for (var i = 0; i < nodes.length; i++) {
+      for (var j = i + 1; j < nodes.length; j++) {
+        var dx = nodes[j].x - nodes[i].x;
+        var dy = nodes[j].y - nodes[i].y;
+        var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        var force = repulsion / (dist * dist);
+        var fx = (dx / dist) * force;
+        var fy = (dy / dist) * force;
+        if (nodes[i].fx === undefined) { nodes[i].vx -= fx * alpha; nodes[i].vy -= fy * alpha; }
+        if (nodes[j].fx === undefined) { nodes[j].vx += fx * alpha; nodes[j].vy += fy * alpha; }
+      }
+    }
+
+    edges.forEach(function(e) {
+      var s = nodeMap[e.source], t = nodeMap[e.target];
+      if (!s || !t) return;
+      var dx = t.x - s.x, dy = t.y - s.y;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var force = (dist - 100) * attraction;
+      var fx = (dx / dist) * force;
+      var fy = (dy / dist) * force;
+      if (s.fx === undefined) { s.vx += fx; s.vy += fy; }
+      if (t.fx === undefined) { t.vx -= fx; t.vy -= fy; }
+    });
+
+    nodes.forEach(function(n) {
+      if (n.fx === undefined) {
+        n.vx += (centerX - n.x) * 0.001;
+        n.vy += (centerY - n.y) * 0.001;
+      }
+    });
+
+    nodes.forEach(function(n) {
+      if (n.fx !== undefined) { n.x = n.fx; n.y = n.fy; return; }
+      n.vx *= 0.9; n.vy *= 0.9;
+      n.x += n.vx; n.y += n.vy;
+      n.x = Math.max(20, Math.min(width - 20, n.x));
+      n.y = Math.max(20, Math.min(height - 20, n.y));
+    });
+
+    nodeElements.forEach(function(ne) {
+      ne.el.setAttribute('transform', 'translate(' + ne.node.x + ',' + ne.node.y + ')');
+    });
+
+    edgeElements.forEach(function(ee) {
+      var s = nodeMap[ee.source], t = nodeMap[ee.target];
+      ee.el.setAttribute('x1', s.x); ee.el.setAttribute('y1', s.y);
+      ee.el.setAttribute('x2', t.x); ee.el.setAttribute('y2', t.y);
+    });
+
+    requestAnimationFrame(simulate);
+  }
+
+  simulate();
+
+  // Graph filter buttons
+  document.querySelectorAll('[data-graph-filter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('[data-graph-filter]').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      var filterVal = btn.dataset.graphFilter;
+
+      nodeElements.forEach(function(ne) {
+        var show = filterVal === 'all' || ne.node.group === filterVal;
+        ne.el.style.opacity = show ? 1 : 0.1;
+      });
+
+      edgeElements.forEach(function(ee) {
+        var s = nodeMap[ee.source], t = nodeMap[ee.target];
+        var show = filterVal === 'all' || s.group === filterVal || t.group === filterVal;
+        ee.el.style.opacity = show ? 1 : 0.03;
+      });
+    });
+  });
+}
+
+/* ================================================================
+   GLOBAL SEARCH (Ctrl+K)
+   ================================================================ */
+var globalSearch = document.getElementById('global-search');
+
+document.addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+    e.preventDefault();
+    globalSearch.focus();
+  }
+});
+
+globalSearch.addEventListener('input', function() {
+  var q = globalSearch.value.toLowerCase();
+  if (q.length >= 2) {
+    switchView('components');
+    componentSearch.value = q;
+    renderComponents();
+  }
+});
+
+/* ================================================================
+   LAYER CLICK -> COMPONENT FILTER
+   ================================================================ */
+document.querySelectorAll('.layer[data-layer]').forEach(function(layer) {
+  layer.addEventListener('click', function() {
+    var layerType = layer.dataset.layer;
+    var categoryMap = {
+      transport: 'transport', middleware: 'middleware',
+      router: 'router', service: 'service', data: 'cache', plugin: 'service'
+    };
+    var cat = categoryMap[layerType];
+    if (cat) {
+      switchView('components');
+      filterBtns.forEach(function(b) {
+        b.classList.toggle('active', b.dataset.filter === cat);
+      });
+      currentFilter = cat;
+      componentSearch.value = '';
+      renderComponents();
+    }
+  });
+});
+
+/* ================================================================
+   INIT
+   ================================================================ */
+renderFlow('tool-invoke');
+</script>
+</body>
+</html>
