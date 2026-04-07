@@ -178,6 +178,72 @@ class TestObservability:
             "parent_span_id": None,
         }
 
+    def test_get_active_parent_span_id_returns_none_without_valid_span(self):
+        """Parent span lookup should fail closed for missing or invalid spans."""
+        with patch("mcpgateway.observability.OTEL_AVAILABLE", True), patch("mcpgateway.observability.trace") as mock_trace:
+            mock_trace.get_current_span.return_value = None
+            assert observability.get_active_parent_span_id() is None
+
+            invalid_span = MagicMock()
+            invalid_span.get_span_context.return_value = MagicMock(is_valid=False)
+            mock_trace.get_current_span.return_value = invalid_span
+            assert observability.get_active_parent_span_id() is None
+
+    def test_get_active_parent_span_id_returns_none_when_span_lookup_raises(self):
+        """Span lookup errors should be swallowed and logged at debug."""
+        with (
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace") as mock_trace,
+            patch("mcpgateway.observability.logger") as mock_logger,
+        ):
+            mock_trace.get_current_span.side_effect = RuntimeError("boom")
+            assert observability.get_active_parent_span_id() is None
+            mock_logger.debug.assert_called_once()
+
+    def test_build_rust_plugin_trace_context_tolerates_context_inspection_failure(self):
+        """Context attribute access failures should still fall back to live state."""
+
+        class ExplodingContext:
+            @property
+            def global_context(self):
+                raise RuntimeError("bad context")
+
+        with (
+            patch("mcpgateway.observability.get_active_traceparent", return_value="00-ffffffffffffffffffffffffffffffff-1111111111111111-01"),
+            patch("mcpgateway.observability.get_active_parent_span_id", return_value="1111111111111111"),
+            patch("mcpgateway.services.observability_service.current_trace_id", MagicMock(get=MagicMock(return_value="trace-live"))),
+            patch("mcpgateway.observability.logger") as mock_logger,
+        ):
+            result = observability.build_rust_plugin_trace_context(ExplodingContext())
+
+        assert result == {
+            "traceparent": "00-ffffffffffffffffffffffffffffffff-1111111111111111-01",
+            "trace_id": "trace-live",
+            "parent_span_id": "1111111111111111",
+        }
+        mock_logger.debug.assert_called()
+
+    def test_build_rust_plugin_trace_context_tolerates_trace_id_lookup_failure(self):
+        """Trace-id lookup import/runtime failures should degrade to None."""
+        context = MagicMock()
+        context.global_context = MagicMock()
+        context.global_context.metadata = {}
+
+        with (
+            patch("mcpgateway.observability.get_active_traceparent", return_value=None),
+            patch("mcpgateway.observability.get_active_parent_span_id", return_value=None),
+            patch("mcpgateway.observability.logger") as mock_logger,
+            patch("mcpgateway.services.observability_service.current_trace_id", MagicMock(get=MagicMock(side_effect=RuntimeError("boom")))),
+        ):
+            result = observability.build_rust_plugin_trace_context(context)
+
+        assert result == {
+            "traceparent": None,
+            "trace_id": None,
+            "parent_span_id": None,
+        }
+        mock_logger.debug.assert_called()
+
     def test_call_rust_with_trace_context_compat_falls_back_for_legacy_wheels(self):
         """Legacy Rust wheels without the new trace argument should still be callable."""
         calls = []
@@ -193,6 +259,26 @@ class TestObservability:
             "payload",
             trace_context={"traceparent": "tp"},
             legacy_key="test-legacy",
+        )
+
+        assert result == "ok"
+        assert calls == [("payload", {"traceparent": "tp"}), ("payload",)]
+
+    def test_call_rust_with_trace_context_compat_falls_back_for_keyword_legacy_errors(self):
+        """Legacy keyword-signature mismatches should also retry without trace context."""
+        calls = []
+
+        def legacy_func(*args):
+            calls.append(args)
+            if len(calls) == 1:
+                raise TypeError("legacy_func() takes no keyword arguments")
+            return "ok"
+
+        result = observability.call_rust_with_trace_context_compat(
+            legacy_func,
+            "payload",
+            trace_context={"traceparent": "tp"},
+            legacy_key="test-legacy-keyword",
         )
 
         assert result == "ok"

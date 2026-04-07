@@ -31,7 +31,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.plugins.framework.hooks.tools import ToolHookType
-from mcpgateway.plugins.framework.models import PluginResult
+from mcpgateway.plugins.framework.models import GlobalContext, PluginResult
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     _decrypt_tool_header_value,
@@ -7069,6 +7069,27 @@ class TestRustMcpExecutionPlan:
             "parent_span_id": "bbbbbbbbbbbbbbbb",
             "runtime": "python",
         }
+
+    def test_build_rust_tool_hook_global_context_updates_existing_server_id(self, tool_service):
+        """Existing plugin global context should inherit the provided server_id."""
+        plugin_global_context = GlobalContext(request_id="req-1", server_id=None, tenant_id=None, user=None)
+
+        with patch(
+            "mcpgateway.services.tool_service.build_rust_plugin_trace_context",
+            return_value={"traceparent": None, "trace_id": None, "parent_span_id": None},
+        ):
+            context = tool_service._build_rust_tool_hook_global_context(
+                app_user_email="alice@example.com",
+                server_id="srv-2",
+                tool_gateway_id="gw-2",
+                plugin_global_context=plugin_global_context,
+                tool_payload=None,
+                gateway_payload=None,
+            )
+
+        assert context is plugin_global_context
+        assert context.server_id == "srv-2"
+        assert context.user == "alice@example.com"
 
     @pytest.mark.asyncio
     async def test_list_server_mcp_tool_definitions_public_only_and_output_schema(self, tool_service):
