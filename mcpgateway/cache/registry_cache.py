@@ -472,6 +472,7 @@ class RegistryCache:
                 keys_to_delete = []
 
                 async def scan_keys():
+                    """Scan Redis keys matching pattern."""
                     keys = []
                     async for key in redis.scan_iter(match=pattern):
                         keys.append(key)
