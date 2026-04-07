@@ -142,11 +142,10 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         rust_request_failed = False
         if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
             try:
-                serialized_request = self._serialize_request_for_rust_validation(
+                result = self._validate_request_with_rust(
                     parameters_to_validate,
                     body if is_json_body and body else None,
                 )
-                result = self._validate_request_with_rust(serialized_request)
                 if result is not None:
                     key, error_type = result
                     self._raise_validation_failure(key, error_type)
@@ -287,25 +286,19 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             logger.warning("Rust validation extension unavailable or failed; falling back to Python validation: %s", exc)
             return self._validate_parameters_with_python(parameters)
 
-    def _serialize_request_for_rust_validation(
+    def _validate_request_with_rust(
         self,
         parameters: list[tuple[str, str]],
         body: bytes | None,
-    ) -> bytes:
-        """Serialize request parameters and optional JSON body for one Rust call."""
-        serialized = orjson.dumps({"parameters": parameters})
-        body_bytes = body if body else b"null"
-        return serialized[:-1] + b',"body":' + body_bytes + b"}"
-
-    def _validate_request_with_rust(self, serialized_request: bytes) -> tuple[str, str] | None:
-        """Validate serialized request bytes with the Rust extension."""
+    ) -> tuple[str, str] | None:
+        """Validate request parameters and optional JSON body in one Rust call."""
         try:
             if self._rust_validator is None:
                 self._rust_validator = self._build_rust_validator()
                 if self._rust_validator is None:
                     raise RuntimeError("rust validator unavailable")
 
-            return self._rust_validator.validate_request_bytes(serialized_request)
+            return self._rust_validator.validate_request_parts(parameters, body)
         except ValueError as exc:
             if "maximum supported nesting depth" in str(exc):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc

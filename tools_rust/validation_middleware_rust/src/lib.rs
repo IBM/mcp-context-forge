@@ -345,109 +345,6 @@ impl<'a> ValueSeed<'a> {
     }
 }
 
-struct RequestSeed<'a> {
-    validator: &'a CompiledValidator,
-}
-
-struct RequestVisitor<'a> {
-    validator: &'a CompiledValidator,
-}
-
-struct ParametersSeed<'a> {
-    validator: &'a CompiledValidator,
-}
-
-struct ParametersVisitor<'a> {
-    validator: &'a CompiledValidator,
-}
-
-impl<'de, 'a> DeserializeSeed<'de> for RequestSeed<'a> {
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        deserializer.deserialize_map(RequestVisitor {
-            validator: self.validator,
-        })
-    }
-}
-
-impl<'de, 'a> Visitor<'de> for RequestVisitor<'a> {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a serialized validation request")
-    }
-
-    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        while let Some(key) = map.next_key::<String>()? {
-            match key.as_str() {
-                "parameters" => {
-                    map.next_value_seed(ParametersSeed {
-                        validator: self.validator,
-                    })?;
-                }
-                "body" => {
-                    map.next_value_seed(ValueSeed {
-                        validator: self.validator,
-                        depth: 0,
-                        key_context: None,
-                        list_item_context: false,
-                    })?;
-                }
-                _ => {
-                    map.next_value::<de::IgnoredAny>()?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl<'de, 'a> DeserializeSeed<'de> for ParametersSeed<'a> {
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        deserializer.deserialize_seq(ParametersVisitor {
-            validator: self.validator,
-        })
-    }
-}
-
-impl<'de, 'a> Visitor<'de> for ParametersVisitor<'a> {
-    type Value = ();
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a sequence of request parameters")
-    }
-
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        while let Some((key, value)) = seq.next_element::<(String, String)>()? {
-            if let Some(result) = validate_string(&value, self.validator) {
-                let error_type = match result {
-                    ValidationFailure::MaxLength => "max_length".to_owned(),
-                    ValidationFailure::DangerousPattern => "dangerous_pattern".to_owned(),
-                };
-                return Err(stream_stop_error(StreamStop::Failure(key, error_type)));
-            }
-        }
-
-        Ok(())
-    }
-}
-
 fn validate_json_bytes_streaming(
     raw_body: &[u8],
     validator: &CompiledValidator,
@@ -464,30 +361,6 @@ fn validate_json_bytes_streaming(
     })
     .deserialize(deserializer)
     {
-        Ok(()) => Ok(None),
-        Err(error) => match parse_stream_stop(error) {
-            StreamStop::Failure(key, error_type) => Ok(Some((key, error_type))),
-            StreamStop::MaxDepth => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "JSON payload exceeds maximum supported nesting depth",
-            )),
-            StreamStop::InvalidJson(message) => {
-                Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Request body contains invalid JSON: {message}"
-                )))
-            }
-        },
-    }
-}
-
-fn validate_request_bytes_streaming(
-    raw_body: &[u8],
-    validator: &CompiledValidator,
-) -> PyResult<Option<(String, String)>> {
-    let mut deserializer = serde_json::Deserializer::from_slice(raw_body);
-    deserializer.disable_recursion_limit();
-    let deserializer = serde_stacker::Deserializer::new(&mut deserializer);
-
-    match (RequestSeed { validator }).deserialize(deserializer) {
         Ok(()) => Ok(None),
         Err(error) => match parse_stream_stop(error) {
             StreamStop::Failure(key, error_type) => Ok(Some((key, error_type))),
@@ -667,12 +540,8 @@ impl CompiledValidator {
         validate_json_bytes_streaming(raw_body, self)
     }
 
-    fn validate_request_bytes(&self, raw_body: &[u8]) -> PyResult<Option<(String, String)>> {
-        validate_request_bytes_streaming(raw_body, self)
-    }
-
     #[pyo3(signature = (parameters, raw_body=None))]
-    fn validate_request(
+    fn validate_request_parts(
         &self,
         parameters: Vec<(String, String)>,
         raw_body: Option<&[u8]>,
@@ -925,7 +794,7 @@ mod tests {
         };
 
         let result = validator
-            .validate_request(
+            .validate_request_parts(
                 vec![("query".to_owned(), "<script>".to_owned())],
                 Some(br#"{"name":"safe"}"#),
             )
@@ -938,7 +807,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_request_bytes_checks_parameters_and_body() {
+    fn validate_request_parts_checks_parameters_and_body() {
         let validator = compile_validator(
             32,
             vec![
@@ -952,8 +821,9 @@ mod tests {
         .unwrap();
 
         let result = validator
-            .validate_request_bytes(
-                br#"{"parameters":[["query","safe"]],"body":{"name":"<script>"}}"#,
+            .validate_request_parts(
+                vec![("query".to_owned(), "safe".to_owned())],
+                Some(br#"{"name":"<script>"}"#),
             )
             .unwrap();
 
