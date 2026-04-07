@@ -3311,6 +3311,7 @@ class ToolService(BaseService):
         Returns:
             GlobalContext primed with the same metadata the Python invoke path exposes.
         """
+        del tool_gateway_id
         if plugin_global_context:
             hook_global_context = plugin_global_context
             if server_id and isinstance(server_id, str):
