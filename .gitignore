@@ -279,6 +279,7 @@ jwt/
 
 # Static assets (downloaded during container build)
 mcpgateway/static/vendor/
+mcpgateway/static/app/
 public/
 
 # Export & SBOM files
