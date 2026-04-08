@@ -149,6 +149,7 @@ class PromptTarget:
     name: str
     required_arguments: dict[str, str]
 
+
 # Shared state (populated on test_start)
 _server_id: str = ""
 _tool_names: list[str] = []
@@ -747,12 +748,12 @@ class MCPToolCallerUser(BaseMCPUser):
             return
         tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
         name_lower = tool.lower()
-        if "time" in name_lower:
+        if "convert" in name_lower:
+            args = {"time": "2025-01-01T00:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"}
+        elif "time" in name_lower:
             args = {"timezone": random.choice(TIMEZONES)}
         elif "echo" in name_lower:
             args = {"message": "perf-test"}
-        elif "convert" in name_lower:
-            args = {"time": "2025-01-01T00:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"}
         else:
             args = {}
         self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [rapid]")
