@@ -300,8 +300,16 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             if "Request body contains invalid JSON:" in str(exc):
                 raise orjson.JSONDecodeError("invalid json", "", 0) from exc
             raise
-        except Exception:
-            raise
+
+    def _refresh_rust_validator_handles(self) -> bool:
+        """Populate cached Rust callables from the current validator instance."""
+        if self._rust_validator is None:
+            return False
+
+        self._rust_validate_http_request = self._rust_validator.validate_http_request
+        self._rust_sanitize_response_body = self._rust_validator.sanitize_response_body
+        self._rust_validate_resource_path = self._rust_validator.validate_resource_path
+        return True
 
     def _validate_json_data_with_rust(self, data: Any) -> tuple[str, str] | None:
         """Validate JSON data with the Rust extension, falling back to Python on extension failures."""
@@ -385,12 +393,10 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
             try:
                 if self._rust_validate_resource_path is None:
-                    self._rust_validator = self._build_rust_validator()
-                    if self._rust_validator is None:
+                    if not self._refresh_rust_validator_handles():
+                        self._rust_validator = self._build_rust_validator()
+                    if not self._refresh_rust_validator_handles():
                         return self._validate_resource_path_with_python(path)
-                    self._rust_validate_http_request = self._rust_validator.validate_http_request
-                    self._rust_sanitize_response_body = self._rust_validator.sanitize_response_body
-                    self._rust_validate_resource_path = self._rust_validator.validate_resource_path
 
                 return self._rust_validate_resource_path(path)
             except ValueError as exc:
@@ -440,11 +446,9 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             body = response.body
             if getattr(settings, "experimental_rust_validation_middleware_enabled", False) is True:
                 if self._rust_sanitize_response_body is None:
-                    self._rust_validator = self._build_rust_validator()
-                    if self._rust_validator is not None:
-                        self._rust_validate_http_request = self._rust_validator.validate_http_request
-                        self._rust_sanitize_response_body = self._rust_validator.sanitize_response_body
-                        self._rust_validate_resource_path = self._rust_validator.validate_resource_path
+                    if not self._refresh_rust_validator_handles():
+                        self._rust_validator = self._build_rust_validator()
+                        self._refresh_rust_validator_handles()
 
                 if self._rust_sanitize_response_body is not None:
                     if isinstance(body, str):
