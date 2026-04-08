@@ -55,11 +55,10 @@ jobs:
       # -----------------------------------------------------------
       # 1️⃣  Node.js Setup
       # -----------------------------------------------------------
-      - name: 📦  Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: '20'
-          cache: npm
+      - name: 📦  Verify Node.js is available on the runner
+        run: |
+          node --version
+          npm --version
 
       # -----------------------------------------------------------
       # 2️⃣  Upgrade npm to minimum required version

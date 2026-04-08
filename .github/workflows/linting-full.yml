@@ -46,10 +46,10 @@ jobs:
             mcp-servers/go/fast-time-server/go.sum
             mcp-servers/go/slow-time-server/go.sum
 
-      - name: Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: "22"
+      - name: Verify Node.js is available on the runner
+        run: |
+          node --version
+          npm --version
 
       - name: Set up Helm
         uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
