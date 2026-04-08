@@ -379,24 +379,28 @@ pub struct ScenarioSummary {
 
 mod lib_parts;
 
-pub use lib_parts::reporting::regenerate_reports;
-pub use lib_parts::runtime::run_benchmark;
-pub use lib_parts::scenario_loading::{discover_scenarios, repo_root};
+pub use lib_parts::catalog::{
+    benchmark_catalog, benchmark_request_names, resolve_requests_from_workload,
+};
+pub use lib_parts::reporting::{
+    build_comparison_report, build_run_summary, collect_endpoint_metrics, regenerate_reports,
+    write_goose_stats_csv,
+};
+pub use lib_parts::runtime::{build_goose_command, detect_runtime, run_benchmark, scenario_env};
+pub use lib_parts::scenario_loading::{
+    discover_scenarios, load_suite, repo_root, resolve_profile_path, scenario_root,
+    validate_scenario,
+};
 
-#[cfg(test)]
-use lib_parts::scenario_loading::load_suite;
 #[cfg(test)]
 use lib_parts::{
     benchmark_token,
     benchmark_token_command,
-    build_goose_command,
-    build_comparison_report,
     determine_scenario_success,
     ensure_benchmark_image,
     has_endpoint_failures,
     run_command_streaming,
     write_compose_override,
-    write_goose_stats_csv,
     yaml_strings,
 };
 

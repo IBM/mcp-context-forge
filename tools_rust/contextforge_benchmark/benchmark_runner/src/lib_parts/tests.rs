@@ -212,12 +212,9 @@ fn resolves_new_uncharted_surface_suites() {
 #[test]
 fn benchmark_scenarios_cover_locust_workload_families() {
     let root = fixture_repo_root();
-    let scenarios_dir = root.join("tools_rust/contextforge_benchmark/assets/scenarios");
-    let stems: std::collections::BTreeSet<String> = std::fs::read_dir(&scenarios_dir)
-        .unwrap()
-        .filter_map(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .filter_map(|name| name.strip_suffix(".toml").map(str::to_string))
+    let scenario_names = discover_scenarios(root).unwrap();
+    let stems: std::collections::BTreeSet<String> = scenario_names
+        .iter()
         .map(|name| name.trim_end_matches("-300").to_string())
         .collect();
 
@@ -236,6 +233,12 @@ fn benchmark_scenarios_cover_locust_workload_families() {
         "spin-detector",
     ] {
         assert!(stems.contains(required), "missing benchmark scenario suite `{required}`");
+    }
+
+    for suite in scenario_names {
+        load_suite(root, &suite, false).unwrap_or_else(|error| {
+            panic!("failed to load suite `{suite}`: {error}");
+        });
     }
 }
 

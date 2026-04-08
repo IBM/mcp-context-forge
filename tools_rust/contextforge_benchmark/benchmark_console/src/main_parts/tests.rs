@@ -109,7 +109,67 @@ fn selection_summary_tracks_toggle_state_and_inputs() {
         assert_eq!(summary.suite_label, "rest-discovery-300");
         assert_eq!(summary.run_mode_label, "all-scenarios");
         assert_eq!(summary.clean_label, "yes");
-        assert_eq!(summary.extra_args_label, "--profile brief");
+    assert_eq!(summary.extra_args_label, "--profile brief");
+}
+
+#[test]
+fn build_command_uses_run_all_only_for_run_and_smoke() {
+        let scenarios = vec![SuiteSummary {
+            file_stem: "rest-discovery-300".to_string(),
+            suite_name: "benchmark-rest-discovery".to_string(),
+            description: "Exercises discovery endpoints.".to_string(),
+        }];
+
+        let mut run_app = App::new(scenarios.clone());
+        run_app.all = true;
+        let run_command = build_command(&run_app, Path::new(".")).unwrap();
+        assert!(run_command.args.iter().any(|arg| arg == "run-all"));
+        assert_eq!(
+            run_command
+                .args
+                .iter()
+                .filter(|arg: &&String| arg.as_str() == "--scenario")
+                .count(),
+            0
+        );
+
+        let mut validate_app = App::new(scenarios.clone());
+        validate_app.all = true;
+        validate_app.set_action_index(
+            Action::ALL
+                .iter()
+                .position(|action| *action == Action::Validate)
+                .unwrap(),
+        );
+        let validate_command = build_command(&validate_app, Path::new(".")).unwrap();
+        assert!(validate_command.args.iter().any(|arg| arg == "validate"));
+        assert_eq!(
+            validate_command
+                .args
+                .iter()
+                .filter(|arg: &&String| arg.as_str() == "--scenario")
+                .count(),
+            1
+        );
+
+        let mut runtime_app = App::new(scenarios);
+        runtime_app.all = true;
+        runtime_app.set_action_index(
+            Action::ALL
+                .iter()
+                .position(|action| *action == Action::CheckRuntime)
+                .unwrap(),
+        );
+        let runtime_command = build_command(&runtime_app, Path::new(".")).unwrap();
+        assert!(runtime_command.args.iter().any(|arg| arg == "check-runtime"));
+        assert_eq!(
+            runtime_command
+                .args
+                .iter()
+                .filter(|arg: &&String| arg.as_str() == "--scenario")
+                .count(),
+            1
+        );
     }
 
 #[test]

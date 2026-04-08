@@ -19,7 +19,7 @@ use crate::lib_parts::{
 };
 use crate::lib_parts::scenario_loading::{discover_scenarios, load_suite};
 
-pub(crate) fn detect_runtime() -> Result<RuntimeChoice> {
+pub fn detect_runtime() -> Result<RuntimeChoice> {
     let preferred = std::env::var("CONTAINER_RUNTIME").unwrap_or_else(|_| "docker".to_string());
     let candidates = if preferred == "podman" {
         vec![
@@ -174,7 +174,7 @@ fn target_host(load: &LoadConfig) -> String {
     }
 }
 
-pub(crate) fn scenario_env(
+pub fn scenario_env(
     root: &Path,
     scenario: &ResolvedScenario,
 ) -> Result<BTreeMap<String, String>> {

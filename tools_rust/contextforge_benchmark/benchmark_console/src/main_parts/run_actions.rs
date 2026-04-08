@@ -1,3 +1,12 @@
+use std::env;
+use std::io::Stdout;
+use std::path::Path;
+
+use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
+
+use crate::{Action, AppResult, LogSource};
+
 pub(crate) fn launch_action(
     app: &mut App,
     root: &Path,
@@ -43,36 +52,19 @@ pub(crate) fn build_command(app: &App, _root: &Path) -> AppResult<CommandSpec> {
     match action {
         Action::List => args.push("list".to_string()),
         Action::Run | Action::Validate | Action::Smoke | Action::CheckRuntime => {
-            args.push(
-                match action {
-                    Action::Run | Action::Smoke => {
-                        if app.all && action.supports_all() {
-                            "run-all"
-                        } else {
-                            "run"
-                        }
-                    }
-                    Action::Validate => "validate",
-                    Action::CheckRuntime => "check-runtime",
-                    _ => unreachable!(),
-                }
-                .to_string(),
-            );
-            if !app.all || !action.supports_all() || !matches!(action, Action::Run | Action::Smoke)
-            {
+            let uses_run_all = app.all && matches!(action, Action::Run | Action::Smoke);
+            args.push(match action {
+                Action::Run | Action::Smoke if uses_run_all => "run-all".to_string(),
+                Action::Run | Action::Smoke => "run".to_string(),
+                Action::Validate => "validate".to_string(),
+                Action::CheckRuntime => "check-runtime".to_string(),
+                _ => unreachable!(),
+            });
+            if !uses_run_all {
                 args.push("--scenario".to_string());
                 args.push(app.scenario().to_string());
             }
             match action {
-                Action::Smoke | Action::Validate | Action::CheckRuntime
-                    if app.all && matches!(action, Action::Validate | Action::CheckRuntime) =>
-                {
-                    args.push("--scenario".to_string());
-                    args.push(app.scenario().to_string());
-                    if matches!(action, Action::Smoke) {
-                        args.push("--smoke".to_string());
-                    }
-                }
                 Action::Smoke => args.push("--smoke".to_string()),
                 _ => {}
             }
@@ -111,5 +103,5 @@ pub(crate) fn build_command(app: &App, _root: &Path) -> AppResult<CommandSpec> {
         )],
     })
 }
-use crate::*;
+
 use crate::main_parts::*;
