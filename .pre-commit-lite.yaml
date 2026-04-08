@@ -358,13 +358,6 @@ repos:
         exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate)/.*\.py$|^tests/e2e/mcp_test_helpers\.py$
         args: [--pytest-test-first] # `test_.*\.py`
 
-  # - repo: https://github.com/pycqa/flake8
-  #   rev: 7.2.0
-  #   hooks:
-  #     - id: flake8
-  #       name: 🐍 Flake8 - Python Linter
-  #       description: Tool for style guide enforcement.
-
   # - repo: https://github.com/pycqa/bandit
   #   rev: 1.8.3
   #   hooks:

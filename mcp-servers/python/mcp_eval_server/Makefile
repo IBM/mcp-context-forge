@@ -40,7 +40,7 @@ format: ## Format code with black and isort
 	isort .
 
 lint: ## Run linting checks
-	flake8 mcp_eval_server tests
+	ruff check mcp_eval_server tests
 	mypy mcp_eval_server
 
 # Testing

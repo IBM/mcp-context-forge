@@ -102,14 +102,11 @@ dev = [
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.7",
-    "darglint>=1.8.1",
     "detect-secrets @ git+https://github.com/ibm/detect-secrets.git@076672a9a01abdfc7ecee2e7d14f08cdccb73976", # equates to Tag "0.13.1+ibm.64.dss"
     "diff-cover>=9.0.0",
-    "dlint>=0.16.0",
     "dodgy>=0.2.1",
     "faker>=20.0.0",
     "fawltydeps>=0.20.0",
-    "flake8>=7.3.0",
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.140.3",
     "interrogate>=1.7.0",
@@ -410,7 +407,7 @@ target-version = "py311"
 # Also "D1" for docstring present checks.
 # "PL" enables Pylint rules natively in ruff (replaces pylint for these checks).
 # TODO: Enable "I" for import sorting as a separate PR.
-select = ["E3", "E4", "E7", "E9", "F", "D1", "PL"]
+select = ["E3", "E4", "E7", "E9", "F", "D1", "D417", "PL"]
 ignore = [
     # ---- Rules already disabled in .pylintrc (intentionally relaxed) ----
     "PLR0904",  # too-many-public-methods  (pylint R0904)
@@ -443,13 +440,13 @@ preview = true
 
 # Ignore D1 (docstring checks) in tests and other non-production code
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["D1"]
-"scripts/**/*.py" = ["D1"]
-"mcp-servers/**/*.py" = ["D1"]
-".github/**/*.py" = ["D1"]
-"migration_add_annotations.py" = ["D1"]
-"playwright.config.py" = ["D1"]
-"run_mutmut.py" = ["D1"]
+"tests/**/*.py" = ["D1", "D417"]
+"scripts/**/*.py" = ["D1", "D417"]
+"mcp-servers/**/*.py" = ["D1", "D417"]
+".github/**/*.py" = ["D1", "D417"]
+"migration_add_annotations.py" = ["D1", "D417"]
+"playwright.config.py" = ["D1", "D417"]
+"run_mutmut.py" = ["D1", "D417"]
 
 [tool.ruff.lint.pylint]
 # Match thresholds from .pylintrc [DESIGN] and [REFACTORING] sections
@@ -693,9 +690,7 @@ ignore_unused = [
   "code2flow",
   "cookiecutter",
   "coverage",
-  "darglint",
   "diff-cover",
-  "flake8",
   "fawltydeps",
   "gprof2dot",
   "gunicorn",

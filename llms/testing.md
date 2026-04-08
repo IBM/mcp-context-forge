@@ -39,13 +39,13 @@ Testing: Quick Guide for LLMs
 
 **Code Quality & Security**
 - Formatting & hooks: `make autoflake isort black pre-commit`
-- Static analysis: `make pylint flake8`
+- Static analysis: `make pylint ruff`
 - Full lint suite (includes web linters after one-time setup): `make lint` and `make lint-web` (install web linters once if needed)
 - Additional checks (varies by repo config): `make bandit interrogate verify check-manifest`
 
 **Pull Request Readiness (recommended)**
 - One-liner sequence before opening a PR:
-  - `make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint verify`
+  - `make doctest test htmlcov smoketest lint-web bandit interrogate pylint verify`
 
 **Writing Tests**
 - Use pytest; async tests should use `@pytest.mark.asyncio`.

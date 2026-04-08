@@ -3413,7 +3413,6 @@ images:
 # help: black                - Reformat code with black (CHECK=1 for dry-run)
 # help: autoflake            - Remove unused imports / variables with autoflake
 # help: isort                - Organise & sort imports with isort (CHECK=1 for dry-run)
-# help: flake8               - PEP-8 style & logical errors
 # help: pylint               - Pylint static analysis
 # help: markdownlint         - Lint Markdown files with markdownlint (requires markdownlint-cli)
 # help: mypy                 - Static type-checking with mypy
@@ -3447,7 +3446,6 @@ images:
 # help: linting-python-fixit         - Run Fixit Python linter (modernization suggestions)
 # help: linting-python-xenon         - Run Xenon complexity threshold checks
 # help: linting-python-refurb        - Run Refurb Python modernization linter
-# help: linting-python-darglint      - Run Darglint docstring checks
 # help: linting-docs-codespell       - Spell-check repository text with codespell
 # help: linting-docs-markdown-links  - Check Markdown links (default: README.md)
 # help: linting-web-depcheck         - Check unused/missing Node.js dependencies
@@ -3476,12 +3474,12 @@ ifneq ($(filter lint lint-quick lint-fix lint-smart,$(MAKECMDGOALS)),)
 endif
 
 # List of individual lint targets
-LINTERS := isort flake8 pylint mypy bandit pydocstyle pycodestyle \
+LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 	ruff ty pyright radon pyroma pyrefly spellcheck \
 		pytype check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
-FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
+FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 	pycodestyle ruff pyright vulture markdownlint
 
 .PHONY: lint $(LINTERS) black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
@@ -3492,7 +3490,7 @@ FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
 	lint-actionlint lint-chart-testing lint-helm-unittest lint-commitlint \
 	linting-python-env \
 	linting-workflow-actionlint linting-workflow-zizmor linting-workflow-reviewdog linting-workflow-commitlint \
-	linting-python-fixit linting-python-xenon linting-python-refurb linting-python-darglint \
+	linting-python-fixit linting-python-xenon linting-python-refurb \
 	linting-docs-codespell linting-docs-markdown-links linting-web-depcheck \
 	linting-helm-lint linting-helm-chart-testing linting-helm-unittest \
 	linting-go-gosec linting-go-govulncheck \
@@ -3649,7 +3647,6 @@ LINT_CODESPELL_TARGET ?= .
 LINT_CODESPELL_SKIP ?= ./.git,./.venv,./coverage,./docs/docs/coverage,./uv.lock,./package-lock.json,./docs/docs/design/images/*
 LINT_MARKDOWN_LINKS_TARGET ?= README.md
 LINT_DEPCHECK_TARGET ?= .
-LINT_DARGLINT_TARGET ?= mcpgateway
 LINT_CHECKOV_TARGET ?= .
 LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
 LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
@@ -3719,14 +3716,6 @@ linting-python-refurb:               ## 🧼  Refurb modernization checks
 	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check refurb mypy pydantic
 	@"$(LINT_PY_VENV)/bin/refurb" "$(LINT_REFURB_TARGET)"
 
-.PHONY: linting-python-darglint
-linting-python-darglint:             ## 📚  Darglint docstring validation
-	@echo "📚 darglint scan of $(LINT_DARGLINT_TARGET)..."
-	@$(MAKE) --no-print-directory linting-python-env
-	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check darglint
-	@while IFS= read -r -d '' file; do \
-		"$(LINT_PY_VENV)/bin/darglint" "$$file"; \
-	done < <(find "$(LINT_DARGLINT_TARGET)" -name '*.py' -not -path '*/__pycache__/*' -print0)
 
 .PHONY: linting-docs-codespell
 linting-docs-codespell:              ## 🔤  Spell-check repository text
@@ -3908,12 +3897,11 @@ isort-check:
 	$(call deprecated_target,isort-check,make isort CHECK=1,1.2.0)
 	@$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)"
 
-flake8:                             ## 🐍  flake8 checks
-	@echo "🐍 flake8 $(TARGET)..." && $(VENV_DIR)/bin/flake8 $(TARGET)
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
 	@uv run pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
+
 
 markdownlint:					    ## 📖  Markdown linting
 	@# Install markdownlint-cli2 if not present
@@ -4285,7 +4273,7 @@ lint-count-errors:						## 📊 Count linting errors by tool
 	@echo "" >> $(DOCS_DIR)/reports/error-count.md
 	@echo "| Tool | Errors | Warnings |" >> $(DOCS_DIR)/reports/error-count.md
 	@echo "|------|--------|----------|" >> $(DOCS_DIR)/reports/error-count.md
-	@for tool in flake8 pylint mypy bandit ruff; do \
+	@for tool in pylint mypy bandit ruff; do \
 		echo "🔍 Checking $$tool errors..."; \
 		errors=0; warnings=0; \
 		if $(MAKE) --no-print-directory $$tool TARGET="$(TARGET)" 2>&1 | tee /tmp/$$tool.log >/dev/null; then \
@@ -7387,7 +7375,7 @@ test-full: coverage test-js test-ui-report
 # help: security-fix        - Auto-fix security issues where possible (pyupgrade, etc.)
 # help: semgrep             - Static analysis for security patterns
 # help: dodgy               - Check for suspicious code patterns (passwords, keys)
-# help: dlint               - Best practices linter for Python
+
 # help: pyupgrade           - Upgrade Python syntax to newer versions
 # help: interrogate         - Check docstring coverage
 # help: prospector          - Comprehensive Python code analysis
@@ -7402,7 +7390,7 @@ test-full: coverage test-js test-ui-report
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit devskim sri-verify
+SECURITY_TOOLS := semgrep dodgy interrogate prospector pip-audit devskim sri-verify
 
 .PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
 
@@ -7442,12 +7430,6 @@ dodgy:                              ## 🔐 Suspicious code patterns
 		uv pip install -q dodgy && \
 		$(VENV_DIR)/bin/dodgy $(TARGET) || true"
 
-dlint:                              ## 📏 Python best practices
-	@echo "📏  dlint - checking Python best practices..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv pip install -q dlint && \
-		$(VENV_DIR)/bin/python -m flake8 --select=DUO mcpgateway"
 
 pyupgrade:                          ## ⬆️  Upgrade Python syntax
 	@echo "⬆️  pyupgrade - checking for syntax upgrade opportunities..."
@@ -7484,7 +7466,7 @@ pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 # =============================================================================
 # help: 🔄 ASYNC CODE TESTING & PERFORMANCE PROFILING
 # help: async-test           - Run comprehensive async safety tests with debug mode
-# help: async-lint           - Run async-aware linting (ruff, flake8, mypy with coroutine warnings)
+# help: async-lint           - Run async-aware linting (ruff, mypy with coroutine warnings)
 # help: async-monitor        - Start aiomonitor for live async debugging (WebUI + console)
 # help: async-debug          - Run async tests with PYTHONASYNCIODEBUG=1 and debug mode
 # help: async-benchmark      - Run async performance benchmarks and generate reports
@@ -7516,9 +7498,6 @@ async-lint:
 	@$(VENV_DIR)/bin/ruff check mcpgateway/ tests/ \
 		--select=F,E,B,ASYNC \
 		--output-format=github
-	@$(VENV_DIR)/bin/flake8 mcpgateway/ tests/ \
-		--extend-select=B,ASYNC \
-		--max-line-length=100
 	@$(VENV_DIR)/bin/mypy mcpgateway/ \
 		--warn-unused-coroutine \
 		--strict

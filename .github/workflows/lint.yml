@@ -44,9 +44,6 @@ jobs:
       matrix:
         target: [mcpgateway, plugins]
         tool:
-          - id: flake8
-            setup: pip install flake8
-            cmd: "flake8 $TARGET"
           - id: ruff
             setup: pip install ruff
             cmd: "ruff check $TARGET"

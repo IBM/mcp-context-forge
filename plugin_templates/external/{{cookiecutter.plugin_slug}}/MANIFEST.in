@@ -26,9 +26,7 @@ include .env.make
 include .interrogaterc
 include .jshintrc
 include whitesource.config
-include .darglint
 include .dockerignore
-include .flake8
 include .htmlhintrc
 include .pycodestyle
 include .pylintrc

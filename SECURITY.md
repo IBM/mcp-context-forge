@@ -117,7 +117,7 @@ Our security toolchain includes **40+ different security and quality tools**, ea
 - **Rust Security**: cargo audit for Rust dependency vulnerability scanning, cargo clippy for Rust linting
 - **Shell Security**: shellcheck for shell script security and correctness linting
 - **Web & Frontend Security**: ESLint, HTMLHint, Stylelint, retire.js for known-vulnerable JS library detection, nodejsscan for JavaScript/Node.js security vulnerability scanning, npm audit for package vulnerabilities
-- **Code Quality & Best Practices**: Prospector comprehensive analysis, dlint for Python best practices, Interrogate for docstring coverage
+- **Code Quality & Best Practices**: Prospector comprehensive analysis, Interrogate for docstring coverage
 - **Code Modernization**: pyupgrade for syntax modernization to latest Python versions
 - **AI Content Integrity**: Pre-commit hooks preventing AI-generated artifacts (hallucinated citations, stock phrases, placeholder references, malformed code fences)
 - **Unicode & Trojan-Source Prevention**: texthooks for fixing smart quotes and ligatures, forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)
@@ -145,7 +145,6 @@ We believe that security should enhance rather than hinder the development proce
 - `make detect-secrets-scan` - Scan git structure for accidentally committed secrets
 - `make detect-secrets-audit` - Manually attest to detected secrets being or not being actual secrets
 - `make detect-secrets-hook` - Locally execute the equivalent command that the pre-commit hook will run
-- `make dlint` - Python security best practices enforcement
 - `make interrogate` - Ensure comprehensive docstring coverage
 - `make prospector` - Comprehensive code analysis combining multiple tools
 - `make pyupgrade` - Modernize Python syntax for security improvements
@@ -460,7 +459,6 @@ flowchart TD
     N --> N2[Semgrep - Semantic Patterns]
     N --> N3[Dodgy - Hardcoded Secrets]
     N --> N4[Gitleaks - Git History Secrets]
-    N --> N5[dlint - Best Practices]
     N --> N6[Prospector - Comprehensive Analysis]
     N --> N7[Interrogate - Docstring Coverage]
     N --> N8[DevSkim - Security Anti-patterns]
@@ -499,7 +497,7 @@ flowchart TD
     Q --> Q1[Multiple Linters]
     Q --> Q2[Static Analysis Tools]
 
-    Q1 --> Q1A[flake8 - PEP8 Compliance]
+    Q1 --> Q1A[ruff - PEP8 Compliance]
     Q1 --> Q1B[pylint - Code Quality]
     Q1 --> Q1C[pycodestyle - Style Guide]
     Q1 --> Q1D[pydocstyle - Documentation]
@@ -545,7 +543,6 @@ flowchart TD
     W --> W5[make semgrep - Semantic Analysis]
     W --> W6[make dodgy - Secret Detection]
     W --> W7[make gitleaks - Git History Scan]
-    W --> W8[make dlint - Best Practices]
     W --> W9[make interrogate - Docstring Coverage]
     W --> W10[make prospector - Comprehensive Analysis]
     W --> W11[make pyupgrade - Modernize Syntax]
