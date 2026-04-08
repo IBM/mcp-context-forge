@@ -12265,6 +12265,7 @@ if ADMIN_API_ENABLED:
 
     set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
+    app.include_router(app_spa_router)  #
 
     # Validate section-to-permission mapping consistency at startup
     validate_section_permissions(admin_router)
