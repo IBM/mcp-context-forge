@@ -379,6 +379,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
         # Content Security Policy with nonce-based approach (nonce already generated above)
+        # /app/* uses a strict CSP — the React SPA is fully bundled by Vite:
+        #   - no CDN imports, no eval, no inline scripts.
+        # All other routes keep the broader legacy CSP for the HTMX/Alpine UI.
+        is_spa_path = request.url.path == "/app" or request.url.path.startswith("/app/")
+        if is_spa_path:
+            csp_directives = [
+                "default-src 'self'",
+                # Vite bundles all JS locally; no CDN, no eval, no inline scripts.
+                "script-src 'self'",
+                # Tailwind v4 injects styles at runtime via a <style> tag — unsafe-inline
+                # is required until the project migrates to a nonce-based approach.
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data:",
+                "font-src 'self'",
+                # API calls go to the same origin only.
+                "connect-src 'self'",
+            ]
 
         # Determine the route-only path (strip root_path for path matching)
         path = request.url.path
