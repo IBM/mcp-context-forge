@@ -914,7 +914,6 @@ whitelist-regex = []
 color = true
 omit-covered-files = false
 
-
 # --------------------------------------------------------------------
 # Bandit security scanner configuration
 # --------------------------------------------------------------------
