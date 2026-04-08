@@ -6839,7 +6839,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             >
               Registered A2A Agents
             </h3>
-            <div class="overflow-x-auto">
+            <div id="agents-table-wrapper" class="overflow-x-auto">
               <!-- Table will be loaded via HTMX -->
               <div id="agents-table"
                    x-init="$el.setAttribute('hx-get', buildTableUrl('agents', '{{ root_path }}/admin/a2a/partial', {include_inactive: (document.getElementById('show-inactive-a2a-agents')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"

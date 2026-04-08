@@ -373,3 +373,166 @@ describe("Admin namespace wiring for row actions", () => {
     expect(window.Admin.handleToggleSubmit).toHaveBeenCalledWith(event, "a2a-agents");
   });
 });
+
+// ─── Integration: Menu positioning and viewport clamping ──────────────────────
+
+describe("Integration: Menu positioning with viewport boundaries", () => {
+  function createMenuWithTrigger(triggerRect, menuHeight = 200) {
+    const trigger = document.createElement("button");
+    trigger.getBoundingClientRect = vi.fn(() => triggerRect);
+
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    menu.style.width = "176px"; // w-44
+    menu.style.height = `${menuHeight}px`;
+
+    const item = document.createElement("button");
+    item.setAttribute("role", "menuitem");
+    menu.appendChild(item);
+
+    document.body.appendChild(menu);
+
+    // Mock getBoundingClientRect to return dynamic values based on position
+    const originalGetBoundingClientRect = menu.getBoundingClientRect.bind(menu);
+    menu.getBoundingClientRect = vi.fn(() => {
+      const rect = originalGetBoundingClientRect();
+      return {
+        width: 176,
+        height: menuHeight,
+        top: parseFloat(menu.style.top) || 0,
+        left: parseFloat(menu.style.left) || 0,
+        bottom: (parseFloat(menu.style.top) || 0) + menuHeight,
+        right: (parseFloat(menu.style.left) || 0) + 176,
+      };
+    });
+
+    return { trigger, menu, item };
+  }
+
+  beforeEach(() => {
+    // Mock viewport dimensions
+    Object.defineProperty(window, "innerWidth", { value: 1024, writable: true });
+    Object.defineProperty(window, "innerHeight", { value: 768, writable: true });
+  });
+
+  test("positions menu below trigger by default", () => {
+    const { trigger, menu } = createMenuWithTrigger({ bottom: 100, left: 50, top: 80, right: 70 });
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    component.openMenu();
+
+    expect(component.menuTop).toBe(104); // bottom + 4
+    expect(component.menuLeft).toBe(50);
+  });
+
+  test("clamps menu to left edge when overflowing right", () => {
+    // Trigger near right edge: left=900, menu width=176, viewport=1024
+    // Menu would end at 900+176=1076, which exceeds 1024
+    const { trigger, menu } = createMenuWithTrigger({ bottom: 100, left: 900, top: 80, right: 920 });
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    // Simulate menu being positioned initially
+    menu.style.top = "104px";
+    menu.style.left = "900px";
+
+    component.openMenu();
+
+    // After $nextTick, should clamp: max(8, 1024 - 176 - 8) = 840
+    expect(component.menuLeft).toBe(840);
+  });
+
+  test("flips menu upward when overflowing bottom", () => {
+    // Trigger near bottom: bottom=700, menu height=200, viewport=768
+    // Menu would end at 704+200=904, which exceeds 768
+    const { trigger, menu } = createMenuWithTrigger({ bottom: 700, left: 50, top: 680, right: 70 }, 200);
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    // Simulate menu being positioned initially
+    menu.style.top = "704px";
+    menu.style.left = "50px";
+
+    component.openMenu();
+
+    // Should flip upward: 680 - 200 - 4 = 476
+    expect(component.menuTop).toBe(476);
+  });
+
+  test("clamps menu to viewport when cannot flip upward", () => {
+    // Trigger near bottom with tall menu: bottom=700, menu height=300, viewport=768
+    // Menu would overflow (700+4+300=1004 > 768)
+    // Cannot flip upward fully (680-300-4=376, but menu is too tall)
+    // Should clamp to viewport bottom
+    const { trigger, menu } = createMenuWithTrigger({ bottom: 700, left: 50, top: 680, right: 70 }, 300);
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    // Simulate menu being positioned initially at bottom edge
+    menu.style.top = "704px";
+    menu.style.left = "50px";
+
+    component.openMenu();
+
+    // Menu overflows bottom (704+300=1004 > 768)
+    // Try flip: 680-300-4=376 (valid, so should flip)
+    expect(component.menuTop).toBe(376);
+  });
+
+  test("handles corner case: bottom-right edge", () => {
+    // Trigger at bottom-right corner
+    const { trigger, menu } = createMenuWithTrigger({ bottom: 700, left: 900, top: 680, right: 920 }, 200);
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    // Simulate menu being positioned initially
+    menu.style.top = "704px";
+    menu.style.left = "900px";
+
+    component.openMenu();
+
+    // Should adjust both: left=840, top=476 (flipped upward)
+    expect(component.menuLeft).toBe(840);
+    expect(component.menuTop).toBe(476);
+  });
+
+  test("respects minimum padding from viewport edges", () => {
+    // Trigger at extreme right: left=1020
+    const { trigger, menu } = createMenuWithTrigger({ bottom: 100, left: 1020, top: 80, right: 1040 });
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    // Simulate menu being positioned initially
+    menu.style.top = "104px";
+    menu.style.left = "1020px";
+
+    component.openMenu();
+
+    // Should maintain 8px padding: 1024 - 176 - 8 = 840
+    expect(component.menuLeft).toBe(840);
+  });
+
+  test("menu remains actionable after viewport clamping", () => {
+    const { trigger, menu, item } = createMenuWithTrigger({ bottom: 700, left: 900, top: 680, right: 920 }, 200);
+    const focusSpy = vi.spyOn(item, "focus");
+
+    const component = makeComponent();
+    component.$refs = { trigger, menu };
+
+    menu.style.top = "704px";
+    menu.style.left = "900px";
+
+    component.openMenu();
+
+    // Menu should be positioned and first item focused
+    expect(component.menuOpen).toBe(true);
+    expect(focusSpy).toHaveBeenCalled();
+  });
+});
