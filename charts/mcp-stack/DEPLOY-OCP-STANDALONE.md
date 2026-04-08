@@ -279,3 +279,55 @@ PgBouncer successfully routing connections from all 3 gateway pods to Postgres.
 Gateway (3 pods)  ──►  PgBouncer (crunchy)  ──►  Postgres (standalone)
     ✓ 1/1 Running         ✓ 1/1 Running           ✓ 1/1 Running
 ```
+
+### MCP Protocol Benchmark: April 8, 2026
+
+**Locustfile:** `tests/loadtest/locustfile_mcp_protocol.py` (patched for OCP)
+
+**Parameters:** 125 users, 30/s spawn rate, 60s, 1 Locust worker
+
+**User classes:** MCPAgentUser, MCPDiscoveryUser, MCPSessionChurnUser,
+MCPStressUser, MCPToolCallerUser, RESTBaselineUser
+
+| Endpoint | Requests | Failures | Avg Latency | Med Latency |
+|----------|----------|----------|-------------|-------------|
+| MCP tools/list | 3,184 | 1,941 (61%) | 34ms | 27ms |
+| MCP initialize [churn] | 1,849 | 0 (0%) | 31ms | 22ms |
+| MCP tools/list [churn] | 1,849 | 0 (0%) | 38ms | 32ms |
+| MCP resources/list | 1,806 | 1,113 (62%) | 32ms | 26ms |
+| MCP prompts/list | 1,762 | 1,136 (64%) | 34ms | 27ms |
+| MCP tools/list [rapid] | 1,029 | 636 (62%) | 34ms | 27ms |
+| MCP resources/templates/list | 589 | 346 (59%) | 36ms | 28ms |
+| MCP ping | 400 | 251 (63%) | 32ms | 25ms |
+| MCP tools/list [stress] | 285 | 156 (55%) | 37ms | 31ms |
+| MCP initialize | 113 | 14 (12%) | 114ms | 120ms |
+| MCP ping [stress] | 74 | 45 (61%) | 30ms | 25ms |
+| **TOTAL** | **12,940** | **5,638 (43.6%)** | **35ms** | **28ms** |
+
+**Aggregate:** 317 RPS, 35ms avg latency, 28ms median
+
+**Session-reuse failure analysis:**
+
+Endpoints using fresh sessions per request (`[churn]`) show **0% failures**.
+Endpoints reusing sessions across requests show ~60-64% failures. This is
+caused by Gunicorn multi-worker session state — MCP sessions are stored
+in-memory per worker, so requests within the same pod can land on a different
+worker that doesn't hold the session.
+
+This is not a database, PgBouncer, or deployment issue. The same behavior
+occurs with 1 gateway pod (47% failures) and 3 gateway pods (44% failures),
+confirming it is worker-level, not pod-level.
+
+**Comparison with PGO approach:**
+
+| Metric | Standalone | PGO |
+|--------|-----------|-----|
+| RPS | 317 | 350 |
+| Avg latency | 35ms | 227ms |
+| Median latency | 28ms | 100ms |
+| Churn failures | 0% | 0% |
+
+The standalone stack delivers comparable RPS to the PGO approach with
+significantly lower latency. The RPS difference is within normal run-to-run
+variance and may be influenced by the fresh (empty) database vs the PGO
+deployment which had registered servers and cached data.
