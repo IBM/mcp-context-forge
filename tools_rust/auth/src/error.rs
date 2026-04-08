@@ -12,6 +12,8 @@ pub enum SidecarError {
     BackendReadiness(String),
     #[error("http client error: {0}")]
     HttpClient(#[from] reqwest::Error),
+    #[error("grpc transport error: {0}")]
+    GrpcTransport(#[from] tonic::transport::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

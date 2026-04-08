@@ -5,7 +5,7 @@
 //! CLI and environment-backed configuration for the auth service.
 
 use clap::Parser;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Debug, Clone, Parser)]
 #[command(name = "contextforge-auth")]
@@ -31,6 +31,9 @@ pub struct AuthConfig {
     )]
     pub listen_http: String,
 
+    #[arg(long, env = "CONTEXTFORGE_AUTH_LISTEN_UDS")]
+    pub listen_uds: Option<PathBuf>,
+
     #[arg(
         long,
         env = "CONTEXTFORGE_AUTH_REQUEST_TIMEOUT_MS",
@@ -54,6 +57,13 @@ pub struct AuthConfig {
         default_value_t = false
     )]
     pub shadow_compare_direct_auth: bool,
+
+    #[arg(
+        long,
+        env = "CONTEXTFORGE_AUTH_BENCHMARK_ALLOW_IMMEDIATE",
+        default_value_t = false
+    )]
+    pub benchmark_allow_immediate: bool,
 
     #[arg(long, env = "CONTEXTFORGE_AUTH_LOG", default_value = "info")]
     pub log_filter: String,

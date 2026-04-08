@@ -29,6 +29,9 @@ pub struct RuntimeConfig {
     #[arg(long, env = "MCP_RUST_BACKEND_AUTHENTICATE_URL")]
     pub backend_authenticate_url: Option<String>,
 
+    #[arg(long, env = "MCP_RUST_BACKEND_AUTHENTICATE_UDS")]
+    pub backend_authenticate_uds: Option<PathBuf>,
+
     #[arg(long, env = "MCP_RUST_BACKEND_AUTH_HEALTH_URL")]
     pub backend_auth_health_url: Option<String>,
 

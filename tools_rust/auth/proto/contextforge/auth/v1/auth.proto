@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package contextforge.auth.v1;
+
+message AuthenticateRequest {
+  string method = 1;
+  string path = 2;
+  string query_string = 3;
+  optional string authorization = 4;
+  optional string cookie = 5;
+  optional string client_ip = 6;
+}
+
+message AuthContext {
+  optional string email = 1;
+  bool teams_admin_bypass = 2;
+  repeated string teams = 3;
+  optional string team_name = 4;
+  optional string team_id = 5;
+  optional string auth_method = 6;
+  optional bool permission_is_admin = 7;
+  bool is_admin = 8;
+  bool is_authenticated = 9;
+  optional string token_use = 10;
+  optional string jti = 11;
+  repeated string scoped_permissions = 12;
+  optional string scoped_server_id = 13;
+  optional string policy_inputs_json = 14;
+}
+
+message DenyResponse {
+  uint32 status = 1;
+  string detail = 2;
+  optional string code = 3;
+  optional string www_authenticate = 4;
+}
+
+message AuthenticateReply {
+  oneof outcome {
+    AuthContext auth_context = 1;
+    DenyResponse deny = 2;
+  }
+}
+
+service AuthService {
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateReply);
+}

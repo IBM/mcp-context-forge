@@ -13,6 +13,16 @@ pub struct AuthStatsSnapshot {
     pub authenticate_requests: u64,
     pub direct_auth_responses: u64,
     pub proxied_auth_responses: u64,
+    pub revocation_cache_hits: u64,
+    pub revocation_cache_misses: u64,
+    pub user_snapshot_cache_hits: u64,
+    pub user_snapshot_cache_misses: u64,
+    pub api_token_cache_hits: u64,
+    pub api_token_cache_misses: u64,
+    pub session_auth_snapshot_cache_hits: u64,
+    pub session_auth_snapshot_cache_misses: u64,
+    pub api_token_auth_snapshot_cache_hits: u64,
+    pub api_token_auth_snapshot_cache_misses: u64,
     pub backend_round_trips: u64,
     pub backend_round_trip_total_ms: u64,
     pub backend_round_trip_max_ms: u64,
@@ -26,6 +36,16 @@ pub struct AuthStats {
     authenticate_requests: AtomicU64,
     direct_auth_responses: AtomicU64,
     proxied_auth_responses: AtomicU64,
+    revocation_cache_hits: AtomicU64,
+    revocation_cache_misses: AtomicU64,
+    user_snapshot_cache_hits: AtomicU64,
+    user_snapshot_cache_misses: AtomicU64,
+    api_token_cache_hits: AtomicU64,
+    api_token_cache_misses: AtomicU64,
+    session_auth_snapshot_cache_hits: AtomicU64,
+    session_auth_snapshot_cache_misses: AtomicU64,
+    api_token_auth_snapshot_cache_hits: AtomicU64,
+    api_token_auth_snapshot_cache_misses: AtomicU64,
     backend_round_trips: AtomicU64,
     backend_round_trip_total_ms: AtomicU64,
     backend_round_trip_max_ms: AtomicU64,
@@ -40,6 +60,24 @@ impl AuthStats {
             authenticate_requests: self.authenticate_requests.load(Ordering::Relaxed),
             direct_auth_responses: self.direct_auth_responses.load(Ordering::Relaxed),
             proxied_auth_responses: self.proxied_auth_responses.load(Ordering::Relaxed),
+            revocation_cache_hits: self.revocation_cache_hits.load(Ordering::Relaxed),
+            revocation_cache_misses: self.revocation_cache_misses.load(Ordering::Relaxed),
+            user_snapshot_cache_hits: self.user_snapshot_cache_hits.load(Ordering::Relaxed),
+            user_snapshot_cache_misses: self.user_snapshot_cache_misses.load(Ordering::Relaxed),
+            api_token_cache_hits: self.api_token_cache_hits.load(Ordering::Relaxed),
+            api_token_cache_misses: self.api_token_cache_misses.load(Ordering::Relaxed),
+            session_auth_snapshot_cache_hits: self
+                .session_auth_snapshot_cache_hits
+                .load(Ordering::Relaxed),
+            session_auth_snapshot_cache_misses: self
+                .session_auth_snapshot_cache_misses
+                .load(Ordering::Relaxed),
+            api_token_auth_snapshot_cache_hits: self
+                .api_token_auth_snapshot_cache_hits
+                .load(Ordering::Relaxed),
+            api_token_auth_snapshot_cache_misses: self
+                .api_token_auth_snapshot_cache_misses
+                .load(Ordering::Relaxed),
             backend_round_trips: self.backend_round_trips.load(Ordering::Relaxed),
             backend_round_trip_total_ms: self.backend_round_trip_total_ms.load(Ordering::Relaxed),
             backend_round_trip_max_ms: self.backend_round_trip_max_ms.load(Ordering::Relaxed),
@@ -70,6 +108,52 @@ impl AuthStats {
 
     pub fn record_proxied_auth_response(&self) {
         self.proxied_auth_responses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_revocation_cache_hit(&self) {
+        self.revocation_cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_revocation_cache_miss(&self) {
+        self.revocation_cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_user_snapshot_cache_hit(&self) {
+        self.user_snapshot_cache_hits
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_user_snapshot_cache_miss(&self) {
+        self.user_snapshot_cache_misses
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_api_token_cache_hit(&self) {
+        self.api_token_cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_api_token_cache_miss(&self) {
+        self.api_token_cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_session_auth_snapshot_cache_hit(&self) {
+        self.session_auth_snapshot_cache_hits
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_session_auth_snapshot_cache_miss(&self) {
+        self.session_auth_snapshot_cache_misses
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_api_token_auth_snapshot_cache_hit(&self) {
+        self.api_token_auth_snapshot_cache_hits
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_api_token_auth_snapshot_cache_miss(&self) {
+        self.api_token_auth_snapshot_cache_misses
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn record_shadow_compare(&self, mismatch: bool) {

@@ -2835,6 +2835,26 @@ class TestMCPPathRewriteMiddleware:
         app_mock.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_rewrite_rust_public_mcp_skips_python_streamable_auth(self, monkeypatch):
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": "/servers/123/mcp", "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        monkeypatch.setattr("mcpgateway.main.version_module.should_mount_public_rust_transport", lambda: True)
+
+        async def _forbidden_streamable_http_auth(_scope, _receive, _send):
+            raise AssertionError("mounted public Rust MCP traffic must not use Python streamable_http_auth")
+
+        monkeypatch.setattr("mcpgateway.main.streamable_http_auth", _forbidden_streamable_http_auth)
+
+        await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["path"] == "/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
     async def test_dispatch_path_short_circuits(self):
         app_mock = AsyncMock()
         response = StarletteResponse("ok")

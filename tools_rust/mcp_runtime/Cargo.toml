@@ -16,8 +16,10 @@ async-stream = "0.3.6"
 axum = "0.8.8"
 base64 = "0.22.1"
 clap = { version = "4.5.60", features = ["derive", "env"] }
+contextforge_auth = { path = "../auth" }
 deadpool-postgres = "0.14.1"
 futures-util = "0.3.31"
+hyper-util = { version = "0.1.20", features = ["tokio"] }
 opentelemetry = "0.31.0"
 opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-client", "trace"] }
 opentelemetry_sdk = { version = "0.31.0", features = ["experimental_trace_batch_span_processor_with_async_runtime", "rt-tokio"] }
@@ -36,7 +38,8 @@ thiserror = "2.0.16"
 tokio = { version = "1.50.0", features = ["full"] }
 tokio-postgres = { version = "0.7.15", features = ["with-serde_json-1"] }
 tokio-postgres-rustls = "0.13.0"
-tonic = { version = "0.14.1", default-features = false }
+tonic = { version = "0.14.1", default-features = false, features = ["transport", "codegen", "router"] }
+tower = "0.5.2"
 tracing = "0.1.44"
 tracing-opentelemetry = "0.32.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
@@ -45,7 +48,7 @@ uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]
 async-trait = "0.1.89"
-contextforge_auth = { path = "../auth" }
 jsonwebtoken = "9.3.1"
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
 tokio = { version = "1.50.0", features = ["full"] }
+tokio-stream = { version = "0.1.17", features = ["net"] }

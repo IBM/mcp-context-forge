@@ -33,6 +33,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.security_logger import get_security_logger
+from mcpgateway import version as version_module
 
 logger = logging.getLogger(__name__)
 security_logger = get_security_logger()
@@ -42,6 +43,22 @@ security_logger = get_security_logger()
 # Only these trigger a hard JSON deny in the auth middleware; all other
 # 401/403s fall through to route-level auth for backwards compatibility.
 _HARD_DENY_DETAILS = frozenset({"Token has been revoked", "Account disabled", "Token validation failed"})
+
+
+def _is_public_rust_mcp_mount_request(request: Request) -> bool:
+    """Return whether this request targets the public Rust-mounted MCP path."""
+    if not version_module.should_mount_public_rust_transport():
+        return False
+
+    scope = getattr(request, "scope", {}) or {}
+    if not isinstance(scope, dict):
+        scope = {}
+    path = str(scope.get("modified_path") or scope.get("path") or request.url.path or "")
+    if path.startswith("/_internal/mcp"):
+        return False
+    if path in {"/mcp", "/mcp/"}:
+        return True
+    return path.startswith("/servers/") and path.endswith("/mcp")
 
 
 def _should_log_auth_success() -> bool:
@@ -135,6 +152,9 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         """
         # Skip for health checks and static files
         if should_skip_auth_context(request.url.path):
+            return await call_next(request)
+
+        if _is_public_rust_mcp_mount_request(request):
             return await call_next(request)
 
         # Try to extract token from multiple sources

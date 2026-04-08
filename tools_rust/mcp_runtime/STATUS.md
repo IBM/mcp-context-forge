@@ -148,6 +148,75 @@ should be treated as current engineering signals, not release targets.
   - `6045.2 RPS` on `MCP tools/call [rapid]`
   - `5` failures total
 
+### Local core-auth comparison snapshot
+
+Measured on April 8, 2026 with the direct auth-only Locust lane
+(`CoreAuthUser`, `session_jwt`, `20 users`, `10/s spawn`, `10s`) and the same
+local Postgres dataset.
+
+This run compares:
+
+- `Python core auth` via `/_internal/core/auth/authenticate`
+- `Rust auth sidecar` via the standalone Rust auth service
+- `No-auth ceiling` via the standalone Rust auth service in benchmark-immediate
+  mode
+
+The Rust and no-auth floor lanes are guarded by auth-service health deltas:
+the benchmark fails if either lane records any proxied auth responses.
+
+| Lane | Requests | Failures | RPS | Avg (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Python core auth | 4973 | 0 | 552.02 | 30.98 |
+| Rust auth sidecar | 48825 | 0 | 5422.96 | 0.37 |
+| No-auth ceiling | 50638 | 0 | 5625.16 | 0.27 |
+
+Interpretation:
+
+- The direct auth-only comparison is valid: the Rust lane stayed fully direct
+  with zero proxy fallback.
+- Rust auth is roughly `9.8x` higher throughput than Python auth on this
+  auth-only lane and over `80x` lower average latency.
+- The no-auth ceiling is close to the Rust lane, which means the remaining
+  auth-side latency is now a small fraction of the endpoint cost on this local
+  setup.
+
+### Current end-to-end MCP benchmark read
+
+The gateway-mounted end-to-end `MCPInitializeOnlyUser` comparison is now valid
+for the local Rust-auth path.
+
+Measured on April 8, 2026 with the mounted public MCP hosts:
+
+- `4445`: `Python auth + Rust MCP`
+- `4446`: `Rust auth + Rust MCP`
+- `4447`: `No-auth ceiling + Rust MCP`
+
+All three lanes used the same Locust profile:
+
+- `MCPInitializeOnlyUser`
+- `30 users`
+- `10/s spawn`
+- `30s`
+
+The mounted benchmark is accepted only when:
+
+- Rust auth `authenticate_requests` increases on the Rust-auth lane
+- Rust auth `proxied_auth_responses` remains `0`
+- Rust runtime `backend_auth_round_trips` increases on the Rust-auth lane
+- the no-auth ceiling lane traverses the same mounted `gateway -> rust runtime -> rust auth` shape
+
+| Lane | Requests | Failures | RPS | Avg (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Python auth + Rust MCP | 3143 | 0 | 108.45 | 66.45 |
+| Rust auth + Rust MCP | 3660 | 0 | 126.71 | 27.92 |
+| No-auth ceiling + Rust MCP | 3673 | 0 | 126.49 | 27.33 |
+
+Interpretation:
+
+- The mounted Rust-auth lane is now materially faster than the mounted Python-auth lane on this local auth-heavy initialize workload.
+- The Rust-auth lane is nearly identical to the no-auth ceiling lane, which means auth is no longer a meaningful share of the mounted path cost on this setup.
+- The estimated auth share of the mounted Rust-auth average latency is about `2.1%` relative to the no-auth ceiling lane.
+
 ### Current throughput read
 
 - short-run peak is much higher than sustained `5m` throughput

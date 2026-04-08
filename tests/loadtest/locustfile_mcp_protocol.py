@@ -58,7 +58,7 @@ import warnings
 # Third-Party
 from locust import between, constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
-from locust.runners import MasterRunner, WorkerRunner
+from locust.runners import WorkerRunner
 
 # =============================================================================
 # Configuration
@@ -148,6 +148,7 @@ class ServerTarget:
 class PromptTarget:
     name: str
     required_arguments: dict[str, str]
+
 
 # Shared state (populated on test_start)
 _server_id: str = ""
@@ -621,6 +622,36 @@ class BaseMCPUser(FastHttpUser):
     def on_start(self):
         self._assign_target()
         self._ensure_initialized()
+
+
+# =============================================================================
+# User 0: MCPInitializeOnlyUser — auth-heavy initialize-only lane
+# =============================================================================
+
+
+class MCPInitializeOnlyUser(BaseMCPUser):
+    """Forces a fresh initialize request on every task iteration."""
+
+    weight = 1
+    wait_time = between(0.1, 0.3)
+
+    def on_start(self):
+        self._assign_target()
+
+    @task
+    @tag("auth", "initialize")
+    def initialize_only(self):
+        self._mcp_session_id = None
+        self._initialized = False
+        self._mcp_request(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+                "clientInfo": {"name": "locust-initialize-only", "version": "1.0.0"},
+            },
+            "MCP initialize [auth-only]",
+        )
 
 
 # =============================================================================

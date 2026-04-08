@@ -1263,6 +1263,19 @@ def _current_mcp_runtime_mode() -> str:
     return version_module.current_mcp_runtime_mode()
 
 
+def _is_public_rust_mcp_mount_scope(scope) -> bool:
+    """Return whether an ASGI scope targets the public Rust-mounted MCP path."""
+    if not _should_mount_public_rust_transport():
+        return False
+
+    path = str(scope.get("modified_path") or scope.get("path") or "")
+    if path.startswith("/_internal/mcp"):
+        return False
+    if path in {"/mcp", "/mcp/"}:
+        return True
+    return path.startswith("/servers/") and path.endswith("/mcp")
+
+
 def _current_mcp_session_core_mode() -> str:
     """Return which session core currently owns MCP session metadata.
 
@@ -3007,10 +3020,12 @@ class MCPPathRewriteMiddleware:
             ...     asyncio.run(middleware._call_streamable_http(scope, receive, send))
             >>> app_mock.assert_called_once_with(scope, receive, send)
         """
-        # Auth check first
-        auth_ok = await streamable_http_auth(scope, receive, send)
-        if not auth_ok:
-            return
+        if not _is_public_rust_mcp_mount_scope(scope):
+            # Public MCP requests mounted on the Rust runtime are authenticated
+            # by Rust, not by the Python streamable HTTP auth layer.
+            auth_ok = await streamable_http_auth(scope, receive, send)
+            if not auth_ok:
+                return
 
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path

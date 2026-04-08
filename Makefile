@@ -2614,6 +2614,14 @@ MCP_AUTH_COMPARE_SPAWN_RATE ?= $(MCP_BENCHMARK_SPAWN_RATE)
 MCP_AUTH_COMPARE_RUN_TIME ?= $(MCP_BENCHMARK_RUN_TIME)
 MCP_AUTH_COMPARE_HTML_DIR ?= reports/core_auth_compare
 MCP_AUTH_COMPARE_CSV_DIR ?= reports/core_auth_compare
+CORE_AUTH_BENCH_PYTHON_HOST ?= http://localhost:4444
+CORE_AUTH_BENCH_RUST_HOST ?= http://localhost:8788
+CORE_AUTH_BENCH_LANE ?= session_jwt
+CORE_AUTH_BENCH_USERS ?= $(MCP_BENCHMARK_USERS)
+CORE_AUTH_BENCH_SPAWN_RATE ?= $(MCP_BENCHMARK_SPAWN_RATE)
+CORE_AUTH_BENCH_RUN_TIME ?= $(MCP_BENCHMARK_RUN_TIME)
+CORE_AUTH_BENCH_HTML_DIR ?= reports/core_auth_endpoint_compare
+CORE_AUTH_BENCH_CSV_DIR ?= reports/core_auth_endpoint_compare
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2654,6 +2662,7 @@ load-test-mcp-protocol-ui:                 ## MCP Streamable HTTP protocol test 
 # help: benchmark-mcp-mixed      - Quick mixed MCP benchmark against the testing stack
 # help: benchmark-mcp-tools      - Quick tools-only MCP benchmark against the testing stack
 # help: benchmark-mcp-auth-compare - Compare proxy auth vs direct Rust auth on the MCP path
+# help: benchmark-core-auth-endpoint-compare - Compare Python core auth vs Rust auth directly at the auth endpoint
 # help: benchmark-mcp-mixed-300  - Distributed 300-user mixed MCP benchmark
 # help: benchmark-mcp-tools-300  - Distributed 300-user tools-only MCP benchmark
 
@@ -2703,6 +2712,9 @@ benchmark-mcp-auth-compare:                ## Compare proxy auth vs direct Rust 
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		MCP_AUTH_COMPARE_PROXY_HOST=$(MCP_AUTH_COMPARE_PROXY_HOST) \
 		MCP_AUTH_COMPARE_DIRECT_HOST=$(MCP_AUTH_COMPARE_DIRECT_HOST) \
+		MCP_AUTH_COMPARE_STUB_HOST=$(MCP_AUTH_COMPARE_STUB_HOST) \
+		MCP_AUTH_COMPARE_RUST_AUTH_HEALTH_URL=$(MCP_AUTH_COMPARE_RUST_AUTH_HEALTH_URL) \
+		MCP_AUTH_COMPARE_STUB_AUTH_HEALTH_URL=$(MCP_AUTH_COMPARE_STUB_AUTH_HEALTH_URL) \
 		MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
 		MCP_PROTOCOL_LOCUSTFILE=$(MCP_PROTOCOL_LOCUSTFILE) \
 		MCP_AUTH_COMPARE_USERS=$(MCP_AUTH_COMPARE_USERS) \
@@ -2712,6 +2724,29 @@ benchmark-mcp-auth-compare:                ## Compare proxy auth vs direct Rust 
 		MCP_AUTH_COMPARE_CSV_DIR=$(MCP_AUTH_COMPARE_CSV_DIR) \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
 		bash tests/loadtest/run_core_auth_compare.sh'
+
+.PHONY: benchmark-core-auth-endpoint-compare
+benchmark-core-auth-endpoint-compare:      ## Compare Python core auth vs Rust auth directly at the auth endpoint
+	@echo "📊 Running direct core-auth endpoint benchmark..."
+	@echo "   Python host: $(CORE_AUTH_BENCH_PYTHON_HOST)"
+	@echo "   Rust host:   $(CORE_AUTH_BENCH_RUST_HOST)"
+	@echo "   Lane:        $(CORE_AUTH_BENCH_LANE)"
+	@echo "   Users: $(CORE_AUTH_BENCH_USERS), Spawn: $(CORE_AUTH_BENCH_SPAWN_RATE)/s, Duration: $(CORE_AUTH_BENCH_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		CORE_AUTH_BENCH_PYTHON_HOST=$(CORE_AUTH_BENCH_PYTHON_HOST) \
+		CORE_AUTH_BENCH_RUST_HOST=$(CORE_AUTH_BENCH_RUST_HOST) \
+		CORE_AUTH_BENCH_STUB_HOST=$(CORE_AUTH_BENCH_STUB_HOST) \
+		CORE_AUTH_BENCH_RUST_HEALTH_URL=$(CORE_AUTH_BENCH_RUST_HEALTH_URL) \
+		CORE_AUTH_BENCH_STUB_HEALTH_URL=$(CORE_AUTH_BENCH_STUB_HEALTH_URL) \
+		CORE_AUTH_BENCH_LANE=$(CORE_AUTH_BENCH_LANE) \
+		CORE_AUTH_BENCH_USERS=$(CORE_AUTH_BENCH_USERS) \
+		CORE_AUTH_BENCH_SPAWN_RATE=$(CORE_AUTH_BENCH_SPAWN_RATE) \
+		CORE_AUTH_BENCH_RUN_TIME=$(CORE_AUTH_BENCH_RUN_TIME) \
+		CORE_AUTH_BENCH_HTML_DIR=$(CORE_AUTH_BENCH_HTML_DIR) \
+		CORE_AUTH_BENCH_CSV_DIR=$(CORE_AUTH_BENCH_CSV_DIR) \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
+		bash tests/loadtest/run_core_auth_endpoint_compare.sh'
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter

@@ -9,17 +9,126 @@ use axum::{
 };
 use serde_json::{Map, Value, json};
 
-use crate::core_auth_policy;
+use crate::{core_auth_policy, types::AuthContext};
 
-pub(crate) fn normalize_auth_context(auth_context: Value) -> Result<Value, Response> {
+pub(crate) fn normalize_auth_context(auth_context: Value) -> Result<AuthContext, Response> {
     let Value::Object(mut auth_context) = auth_context else {
-        return Err(json_response_with_code(
-            StatusCode::BAD_GATEWAY,
-            "invalid_auth_context",
-            json!({"detail": "Auth service received invalid auth context"}),
-        ));
+        return Err(invalid_auth_context_response());
     };
 
+    normalize_teams(&mut auth_context)?;
+
+    let token_use = auth_context
+        .get("token_use")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let email = auth_context.get("email").and_then(Value::as_str);
+    let is_authenticated = auth_context
+        .get("is_authenticated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if token_use != "session" && is_authenticated && email.is_none_or(str::is_empty) {
+        return Err(invalid_auth_context_response());
+    }
+
+    if is_authenticated
+        && let Some(token_payload) = auth_context
+            .get("policy_inputs")
+            .and_then(Value::as_object)
+            .and_then(|policy_inputs| policy_inputs.get("token_payload"))
+        && let Some(token_email) = token_payload.as_object().and_then(|payload| {
+            payload
+                .get("sub")
+                .and_then(Value::as_str)
+                .or_else(|| payload.get("email").and_then(Value::as_str))
+        })
+        && email != Some(token_email)
+    {
+        return Err(invalid_auth_context_response());
+    }
+
+    let teams = extract_teams(auth_context.get("teams"))?;
+    let primary_team_id = teams.as_ref().and_then(|items| match items.as_slice() {
+        [single] => Some(single.clone()),
+        _ => None,
+    });
+    let team_id = primary_team_id.clone().filter(|_| token_use != "session");
+
+    let token_payload = auth_context
+        .get("policy_inputs")
+        .and_then(Value::as_object)
+        .and_then(|policy_inputs| policy_inputs.get("token_payload"))
+        .cloned();
+    let existing_scoped_permissions = auth_context
+        .get("scoped_permissions")
+        .and_then(Value::as_array)
+        .map(|permissions| {
+            permissions
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|permission| !permission.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let existing_scoped_server_id = auth_context
+        .get("scoped_server_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|server_id| !server_id.is_empty())
+        .map(str::to_string);
+
+    Ok(AuthContext {
+        email: email.map(str::to_string),
+        teams,
+        team_name: derive_team_name(
+            auth_context.get("policy_inputs").and_then(Value::as_object),
+            &token_use,
+            primary_team_id.as_deref(),
+        ),
+        team_id,
+        auth_method: if has_token_payload(
+            auth_context.get("policy_inputs").and_then(Value::as_object),
+        ) {
+            Some("jwt".to_string())
+        } else {
+            auth_context
+                .get("auth_method")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        },
+        permission_is_admin: Some(derive_permission_is_admin(
+            auth_context.get("policy_inputs").and_then(Value::as_object),
+            auth_context
+                .get("is_admin")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )),
+        is_admin: auth_context
+            .get("is_admin")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        is_authenticated,
+        token_use: auth_context
+            .get("token_use")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        jti: auth_context
+            .get("jti")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        scoped_permissions: derive_scoped_permissions(token_payload.as_ref())
+            .unwrap_or(existing_scoped_permissions),
+        scoped_server_id: derive_scoped_server_id(token_payload.as_ref())
+            .or(existing_scoped_server_id),
+        policy_inputs: auth_context.get("policy_inputs").cloned(),
+    })
+}
+
+fn normalize_teams(auth_context: &mut Map<String, Value>) -> Result<(), Response> {
     if let Some(teams) = auth_context.get("teams").cloned() {
         match teams {
             Value::Null => {
@@ -44,13 +153,7 @@ pub(crate) fn normalize_auth_context(auth_context: Value) -> Result<Value, Respo
                     Value::Array(normalized_teams.into_iter().map(Value::String).collect()),
                 );
             }
-            _ => {
-                return Err(json_response_with_code(
-                    StatusCode::BAD_GATEWAY,
-                    "invalid_auth_context",
-                    json!({"detail": "Auth service received invalid auth context"}),
-                ));
-            }
+            _ => return Err(invalid_auth_context_response()),
         }
     } else if !auth_context
         .get("is_admin")
@@ -65,37 +168,7 @@ pub(crate) fn normalize_auth_context(auth_context: Value) -> Result<Value, Respo
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let email = auth_context.get("email").and_then(Value::as_str);
-    let is_authenticated = auth_context
-        .get("is_authenticated")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if token_use != "session" && is_authenticated && email.is_none_or(str::is_empty) {
-        return Err(json_response_with_code(
-            StatusCode::BAD_GATEWAY,
-            "invalid_auth_context",
-            json!({"detail": "Auth service received invalid auth context"}),
-        ));
-    }
-    if is_authenticated
-        && let Some(token_payload) = auth_context
-            .get("policy_inputs")
-            .and_then(Value::as_object)
-            .and_then(|policy_inputs| policy_inputs.get("token_payload"))
-        && let Some(token_email) = token_payload.as_object().and_then(|payload| {
-            payload
-                .get("sub")
-                .and_then(Value::as_str)
-                .or_else(|| payload.get("email").and_then(Value::as_str))
-        })
-        && email != Some(token_email)
-    {
-        return Err(json_response_with_code(
-            StatusCode::BAD_GATEWAY,
-            "invalid_auth_context",
-            json!({"detail": "Auth service received invalid auth context"}),
-        ));
-    }
+
     if token_use != "session" {
         if let Some(policy_payload) = auth_context
             .get("policy_inputs")
@@ -111,8 +184,10 @@ pub(crate) fn normalize_auth_context(auth_context: Value) -> Result<Value, Respo
                 },
             );
         }
-    } else if let Some(policy_inputs) = auth_context.get("policy_inputs").and_then(Value::as_object)
-    {
+        return Ok(());
+    }
+
+    if let Some(policy_inputs) = auth_context.get("policy_inputs").and_then(Value::as_object) {
         let session_email = auth_context.get("email").and_then(Value::as_str);
         if session_email.is_none_or(str::is_empty) {
             auth_context.insert("teams".to_string(), Value::Array(Vec::new()));
@@ -124,27 +199,15 @@ pub(crate) fn normalize_auth_context(auth_context: Value) -> Result<Value, Respo
             auth_context.insert("teams".to_string(), Value::Null);
         } else if let Some(policy_payload) = policy_inputs.get("token_payload") {
             let db_teams = match policy_inputs.get("db_teams") {
-                Some(Value::Null) => {
-                    return Err(json_response_with_code(
-                        StatusCode::BAD_GATEWAY,
-                        "invalid_auth_context",
-                        json!({"detail": "Auth service received invalid auth context"}),
-                    ));
-                }
+                Some(Value::Null) => return Err(invalid_auth_context_response()),
                 Some(Value::Array(db_teams)) => Some(
                     db_teams
                         .iter()
                         .filter_map(Value::as_str)
-                        .map(std::string::ToString::to_string)
+                        .map(str::to_string)
                         .collect::<Vec<_>>(),
                 ),
-                _ => {
-                    return Err(json_response_with_code(
-                        StatusCode::BAD_GATEWAY,
-                        "invalid_auth_context",
-                        json!({"detail": "Auth service received invalid auth context"}),
-                    ));
-                }
+                _ => return Err(invalid_auth_context_response()),
             };
 
             let resolved_teams = core_auth_policy::resolve_session_teams(
@@ -162,82 +225,21 @@ pub(crate) fn normalize_auth_context(auth_context: Value) -> Result<Value, Respo
         }
     }
 
-    let token_use = auth_context
-        .get("token_use")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let team_id = auth_context
-        .get("teams")
-        .and_then(primary_team_id)
-        .filter(|_| token_use != "session");
-    if let Some(team_id) = team_id {
-        auth_context.insert("team_id".to_string(), Value::String(team_id));
-    } else if auth_context.contains_key("team_id") {
-        auth_context.insert("team_id".to_string(), Value::Null);
-    }
-
-    let normalized_teams = auth_context.get("teams");
-    let primary_team_id = normalized_teams.and_then(primary_team_id);
-    let team_name = derive_team_name(
-        auth_context.get("policy_inputs").and_then(Value::as_object),
-        &token_use,
-        primary_team_id.as_deref(),
-    );
-    if let Some(team_name) = team_name {
-        auth_context.insert("team_name".to_string(), Value::String(team_name));
-    } else if auth_context.contains_key("team_name") && primary_team_id.is_none() {
-        auth_context.insert("team_name".to_string(), Value::Null);
-    }
-
-    let token_payload = auth_context
-        .get("policy_inputs")
-        .and_then(Value::as_object)
-        .and_then(|policy_inputs| policy_inputs.get("token_payload"))
-        .cloned();
-
-    let scoped_permissions = derive_scoped_permissions(token_payload.as_ref());
-    if let Some(scoped_permissions) = scoped_permissions {
-        auth_context.insert(
-            "scoped_permissions".to_string(),
-            Value::Array(scoped_permissions.into_iter().map(Value::String).collect()),
-        );
-    }
-
-    let scoped_server_id = derive_scoped_server_id(token_payload.as_ref());
-    if let Some(scoped_server_id) = scoped_server_id {
-        auth_context.insert(
-            "scoped_server_id".to_string(),
-            Value::String(scoped_server_id),
-        );
-    }
-
-    let permission_is_admin = derive_permission_is_admin(
-        auth_context.get("policy_inputs").and_then(Value::as_object),
-        auth_context
-            .get("is_admin")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    );
-    auth_context.insert(
-        "permission_is_admin".to_string(),
-        Value::Bool(permission_is_admin),
-    );
-
-    if has_token_payload(auth_context.get("policy_inputs").and_then(Value::as_object)) {
-        auth_context.insert("auth_method".to_string(), Value::String("jwt".to_string()));
-    }
-
-    Ok(Value::Object(auth_context))
+    Ok(())
 }
 
-fn primary_team_id(teams: &Value) -> Option<String> {
+fn extract_teams(teams: Option<&Value>) -> Result<Option<Vec<String>>, Response> {
     match teams {
-        Value::Array(team_values) if team_values.len() == 1 => team_values
-            .first()
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        _ => None,
+        Some(Value::Null) => Ok(None),
+        Some(Value::Array(team_values)) => Ok(Some(
+            team_values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        )),
+        Some(_) => Err(invalid_auth_context_response()),
+        None => Ok(Some(Vec::new())),
     }
 }
 
@@ -327,6 +329,14 @@ fn has_token_payload(policy_inputs: Option<&Map<String, Value>>) -> bool {
     policy_inputs
         .and_then(|policy_inputs| policy_inputs.get("token_payload"))
         .is_some()
+}
+
+fn invalid_auth_context_response() -> Response {
+    json_response_with_code(
+        StatusCode::BAD_GATEWAY,
+        "invalid_auth_context",
+        json!({"detail": "Auth service received invalid auth context"}),
+    )
 }
 
 fn json_response(status: StatusCode, payload: Value) -> Response {

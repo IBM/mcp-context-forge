@@ -14,27 +14,23 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-import base64
 import logging
 import re
 from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
 import httpx
-import orjson
 from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
-from mcpgateway.transports.streamablehttp_transport import get_streamable_http_auth_context
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
 
 _SERVER_ID_RE = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp/?$")
 _CONTEXTFORGE_SERVER_ID_HEADER = "x-contextforge-server-id"
-_CONTEXTFORGE_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 _CONTEXTFORGE_AFFINITY_FORWARDED_HEADER = "x-contextforge-affinity-forwarded"
 _CLIENT_ERROR_DETAIL = "See server logs"
 _REQUEST_HOP_BY_HOP_HEADERS = frozenset({"host", "content-length", "connection", "transfer-encoding", "keep-alive"})
@@ -46,7 +42,6 @@ _INTERNAL_ONLY_REQUEST_HEADERS = frozenset(
         "x-mcp-session-id",
         "x-contextforge-mcp-runtime",
         _CONTEXTFORGE_SERVER_ID_HEADER,
-        _CONTEXTFORGE_AUTH_CONTEXT_HEADER,
         _CONTEXTFORGE_AFFINITY_FORWARDED_HEADER,
     }
 )
@@ -236,10 +231,6 @@ def _build_forward_headers(scope: Scope) -> list[tuple[str, str]]:
     if server_id:
         headers.append((_CONTEXTFORGE_SERVER_ID_HEADER, server_id))
 
-    auth_context = _build_forwarded_auth_context_header()
-    if auth_context is not None:
-        headers.append((_CONTEXTFORGE_AUTH_CONTEXT_HEADER, auth_context))
-
     client = scope.get("client")
     client_host = client[0] if isinstance(client, (tuple, list)) and client else None
     from_loopback = client_host in ("127.0.0.1", "::1")
@@ -254,17 +245,3 @@ def _build_forward_headers(scope: Scope) -> list[tuple[str, str]]:
         headers.append((_CONTEXTFORGE_AFFINITY_FORWARDED_HEADER, "rust"))
 
     return headers
-
-
-def _build_forwarded_auth_context_header() -> str | None:
-    """Serialize the authenticated MCP context for the trusted internal Python dispatcher.
-
-    Returns:
-        Base64url-encoded auth context for trusted internal forwarding, or ``None``
-        when no MCP auth context is available.
-    """
-    auth_context = get_streamable_http_auth_context()
-    if not auth_context:
-        return None
-    encoded = base64.urlsafe_b64encode(orjson.dumps(auth_context)).decode("ascii")
-    return encoded.rstrip("=")

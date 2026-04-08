@@ -11,11 +11,26 @@ use rustls::{
     pki_types::{CertificateDer, pem::PemObject},
 };
 use sha2::{Digest, Sha256};
-use std::{fs, str::FromStr, sync::Arc};
+use std::{collections::HashMap, fs, str::FromStr, sync::Arc};
 use tokio_postgres::config::SslMode;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tracing::{info, warn};
 use url::Url;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionAuthSnapshot {
+    pub revoked: bool,
+    pub user: Option<UserAuthSnapshot>,
+}
+
+#[async_trait]
+pub trait SessionAuthSnapshotChecker: Send + Sync {
+    async fn lookup_session_auth_snapshot(
+        &self,
+        jti: &str,
+        email: &str,
+    ) -> Result<SessionAuthSnapshot, String>;
+}
 
 #[async_trait]
 pub trait RevocationChecker: Send + Sync {
@@ -34,6 +49,22 @@ pub trait UserLookupChecker: Send + Sync {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserAuthSnapshot {
+    pub is_active: bool,
+    pub is_admin: bool,
+    pub team_ids: Vec<String>,
+    pub team_names: HashMap<String, String>,
+}
+
+#[async_trait]
+pub trait UserAuthSnapshotChecker: Send + Sync {
+    async fn lookup_user_auth_snapshot(
+        &self,
+        email: &str,
+    ) -> Result<Option<UserAuthSnapshot>, String>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiTokenLookupRecord {
     pub user_email: String,
     pub jti: String,
@@ -46,6 +77,21 @@ pub struct ApiTokenLookupRecord {
 #[async_trait]
 pub trait ApiTokenLookupChecker: Send + Sync {
     async fn lookup_api_token(&self, token: &str) -> Result<Option<ApiTokenLookupRecord>, String>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiTokenAuthSnapshot {
+    pub token: Option<ApiTokenLookupRecord>,
+    pub revoked: bool,
+    pub user: Option<UserAuthSnapshot>,
+}
+
+#[async_trait]
+pub trait ApiTokenAuthSnapshotChecker: Send + Sync {
+    async fn lookup_api_token_auth_snapshot(
+        &self,
+        token: &str,
+    ) -> Result<ApiTokenAuthSnapshot, String>;
 }
 
 #[derive(Debug, Default)]
@@ -69,12 +115,59 @@ impl UserLookupChecker for NoopUserLookupChecker {
 }
 
 #[derive(Debug, Default)]
+pub struct NoopUserAuthSnapshotChecker;
+
+#[async_trait]
+impl UserAuthSnapshotChecker for NoopUserAuthSnapshotChecker {
+    async fn lookup_user_auth_snapshot(
+        &self,
+        _email: &str,
+    ) -> Result<Option<UserAuthSnapshot>, String> {
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct NoopSessionAuthSnapshotChecker;
+
+#[async_trait]
+impl SessionAuthSnapshotChecker for NoopSessionAuthSnapshotChecker {
+    async fn lookup_session_auth_snapshot(
+        &self,
+        _jti: &str,
+        _email: &str,
+    ) -> Result<SessionAuthSnapshot, String> {
+        Ok(SessionAuthSnapshot {
+            revoked: false,
+            user: None,
+        })
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct NoopApiTokenLookupChecker;
 
 #[async_trait]
 impl ApiTokenLookupChecker for NoopApiTokenLookupChecker {
     async fn lookup_api_token(&self, _token: &str) -> Result<Option<ApiTokenLookupRecord>, String> {
         Ok(None)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct NoopApiTokenAuthSnapshotChecker;
+
+#[async_trait]
+impl ApiTokenAuthSnapshotChecker for NoopApiTokenAuthSnapshotChecker {
+    async fn lookup_api_token_auth_snapshot(
+        &self,
+        _token: &str,
+    ) -> Result<ApiTokenAuthSnapshot, String> {
+        Ok(ApiTokenAuthSnapshot {
+            token: None,
+            revoked: false,
+            user: None,
+        })
     }
 }
 
@@ -130,6 +223,126 @@ impl UserLookupChecker for PostgresUserLookupChecker {
 }
 
 #[derive(Clone)]
+struct PostgresUserAuthSnapshotChecker {
+    pool: Pool,
+}
+
+#[async_trait]
+impl UserAuthSnapshotChecker for PostgresUserAuthSnapshotChecker {
+    async fn lookup_user_auth_snapshot(
+        &self,
+        email: &str,
+    ) -> Result<Option<UserAuthSnapshot>, String> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|err| format!("failed to acquire auth DB connection: {err}"))?;
+        let row = client
+            .query_opt(
+                "SELECT is_active, is_admin FROM email_users WHERE email = $1 LIMIT 1",
+                &[&email],
+            )
+            .await
+            .map_err(|err| format!("failed to query email_users: {err}"))?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let team_rows = client
+            .query(
+                "SELECT etm.team_id, et.name \
+                 FROM email_team_members etm \
+                 JOIN email_teams et ON et.id = etm.team_id \
+                 WHERE etm.user_email = $1 \
+                   AND etm.is_active = TRUE \
+                   AND et.is_active = TRUE",
+                &[&email],
+            )
+            .await
+            .map_err(|err| format!("failed to query email_team_members: {err}"))?;
+
+        let mut team_ids = Vec::with_capacity(team_rows.len());
+        let mut team_names = HashMap::with_capacity(team_rows.len());
+        for team_row in team_rows {
+            let team_id = team_row.get::<_, String>(0);
+            let team_name = team_row.get::<_, String>(1);
+            team_ids.push(team_id.clone());
+            team_names.insert(team_id, team_name);
+        }
+
+        Ok(Some(UserAuthSnapshot {
+            is_active: row.get::<_, bool>(0),
+            is_admin: row.get::<_, bool>(1),
+            team_ids,
+            team_names,
+        }))
+    }
+}
+
+#[derive(Clone)]
+struct PostgresSessionAuthSnapshotChecker {
+    pool: Pool,
+}
+
+#[async_trait]
+impl SessionAuthSnapshotChecker for PostgresSessionAuthSnapshotChecker {
+    async fn lookup_session_auth_snapshot(
+        &self,
+        jti: &str,
+        email: &str,
+    ) -> Result<SessionAuthSnapshot, String> {
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|err| format!("failed to acquire auth DB connection: {err}"))?;
+        let row = client
+            .query_one(
+                "WITH identity_input AS (SELECT $1::text AS jti, $2::text AS email)
+                 SELECT
+                   EXISTS(SELECT 1 FROM token_revocations tr WHERE tr.jti = identity_input.jti) AS revoked,
+                   eu.is_active,
+                   eu.is_admin,
+                   COALESCE(array_agg(DISTINCT etm.team_id) FILTER (WHERE etm.team_id IS NOT NULL), ARRAY[]::text[]) AS team_ids,
+                   COALESCE(array_agg(DISTINCT et.name) FILTER (WHERE et.name IS NOT NULL), ARRAY[]::text[]) AS team_names
+                 FROM identity_input
+                 LEFT JOIN email_users eu ON eu.email = identity_input.email
+                 LEFT JOIN email_team_members etm
+                   ON etm.user_email = identity_input.email
+                  AND etm.is_active = TRUE
+                 LEFT JOIN email_teams et
+                   ON et.id = etm.team_id
+                  AND et.is_active = TRUE
+                 GROUP BY revoked, eu.is_active, eu.is_admin",
+                &[&jti, &email],
+            )
+            .await
+            .map_err(|err| format!("failed to query session auth snapshot: {err}"))?;
+
+        let revoked = row.get::<_, bool>(0);
+        let is_active = row.get::<_, Option<bool>>(1);
+        let is_admin = row.get::<_, Option<bool>>(2);
+        let team_ids = row.get::<_, Vec<String>>(3);
+        let team_names = row.get::<_, Vec<String>>(4);
+        let user = match (is_active, is_admin) {
+            (Some(is_active), Some(is_admin)) => Some(UserAuthSnapshot {
+                is_active,
+                is_admin,
+                team_names: team_ids
+                    .iter()
+                    .cloned()
+                    .zip(team_names.into_iter())
+                    .collect(),
+                team_ids,
+            }),
+            _ => None,
+        };
+        Ok(SessionAuthSnapshot { revoked, user })
+    }
+}
+
+#[derive(Clone)]
 struct PostgresApiTokenLookupChecker {
     pool: Pool,
 }
@@ -170,6 +383,109 @@ impl ApiTokenLookupChecker for PostgresApiTokenLookupChecker {
     }
 }
 
+#[derive(Clone)]
+struct PostgresApiTokenAuthSnapshotChecker {
+    pool: Pool,
+}
+
+#[async_trait]
+impl ApiTokenAuthSnapshotChecker for PostgresApiTokenAuthSnapshotChecker {
+    async fn lookup_api_token_auth_snapshot(
+        &self,
+        token: &str,
+    ) -> Result<ApiTokenAuthSnapshot, String> {
+        let token_hash = sha256_hex(token);
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|err| format!("failed to acquire auth DB connection: {err}"))?;
+        let row = client
+            .query_opt(
+                "WITH token_row AS (
+                    SELECT user_email, jti, team_id, server_id, resource_scopes, expires_at
+                    FROM email_api_tokens
+                    WHERE token_hash = $1 AND is_active = TRUE
+                    LIMIT 1
+                 )
+                 SELECT
+                    token_row.user_email,
+                    token_row.jti,
+                    token_row.team_id,
+                    token_row.server_id,
+                    COALESCE(token_row.resource_scopes, ARRAY[]::text[]) AS resource_scopes,
+                    token_row.expires_at,
+                    EXISTS(SELECT 1 FROM token_revocations tr WHERE tr.jti = token_row.jti) AS revoked,
+                    eu.is_active,
+                    eu.is_admin,
+                    COALESCE(array_agg(DISTINCT etm.team_id) FILTER (WHERE etm.team_id IS NOT NULL), ARRAY[]::text[]) AS team_ids,
+                    COALESCE(array_agg(DISTINCT et.name) FILTER (WHERE et.name IS NOT NULL), ARRAY[]::text[]) AS team_names
+                 FROM token_row
+                 LEFT JOIN email_users eu ON eu.email = token_row.user_email
+                 LEFT JOIN email_team_members etm
+                   ON etm.user_email = token_row.user_email
+                  AND etm.is_active = TRUE
+                 LEFT JOIN email_teams et
+                   ON et.id = etm.team_id
+                  AND et.is_active = TRUE
+                 GROUP BY
+                    token_row.user_email,
+                    token_row.jti,
+                    token_row.team_id,
+                    token_row.server_id,
+                    token_row.resource_scopes,
+                    token_row.expires_at,
+                    revoked,
+                    eu.is_active,
+                    eu.is_admin",
+                &[&token_hash],
+            )
+            .await
+            .map_err(|err| format!("failed to query api token auth snapshot: {err}"))?;
+
+        let Some(row) = row else {
+            return Ok(ApiTokenAuthSnapshot {
+                token: None,
+                revoked: false,
+                user: None,
+            });
+        };
+        let expires_at = row.get::<_, Option<std::time::SystemTime>>(5);
+        let expired =
+            expires_at.is_some_and(|expires_at| expires_at <= std::time::SystemTime::now());
+        let token = Some(ApiTokenLookupRecord {
+            user_email: row.get::<_, String>(0),
+            jti: row.get::<_, String>(1),
+            team_id: row.get::<_, Option<String>>(2),
+            server_id: row.get::<_, Option<String>>(3),
+            resource_scopes: row.get::<_, Vec<String>>(4),
+            expired,
+        });
+        let is_active = row.get::<_, Option<bool>>(7);
+        let is_admin = row.get::<_, Option<bool>>(8);
+        let team_ids = row.get::<_, Vec<String>>(9);
+        let team_names = row.get::<_, Vec<String>>(10);
+        let user = match (is_active, is_admin) {
+            (Some(is_active), Some(is_admin)) => Some(UserAuthSnapshot {
+                is_active,
+                is_admin,
+                team_names: team_ids
+                    .iter()
+                    .cloned()
+                    .zip(team_names.into_iter())
+                    .collect(),
+                team_ids,
+            }),
+            _ => None,
+        };
+        Ok(ApiTokenAuthSnapshot {
+            token,
+            revoked: row.get::<_, bool>(6),
+            user,
+        })
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 #[allow(clippy::struct_field_names)]
 struct PostgresTlsOptions {
@@ -181,7 +497,10 @@ struct PostgresTlsOptions {
 pub type DirectCheckers = (
     Arc<dyn RevocationChecker>,
     Arc<dyn UserLookupChecker>,
+    Arc<dyn UserAuthSnapshotChecker>,
     Arc<dyn ApiTokenLookupChecker>,
+    Arc<dyn SessionAuthSnapshotChecker>,
+    Arc<dyn ApiTokenAuthSnapshotChecker>,
 );
 
 pub fn build_direct_db_checkers(config: &AuthConfig) -> Result<DirectCheckers, SidecarError> {
@@ -189,7 +508,10 @@ pub fn build_direct_db_checkers(config: &AuthConfig) -> Result<DirectCheckers, S
         return Ok((
             Arc::new(NoopRevocationChecker),
             Arc::new(NoopUserLookupChecker),
+            Arc::new(NoopUserAuthSnapshotChecker),
             Arc::new(NoopApiTokenLookupChecker),
+            Arc::new(NoopSessionAuthSnapshotChecker),
+            Arc::new(NoopApiTokenAuthSnapshotChecker),
         ));
     };
 
@@ -198,7 +520,10 @@ pub fn build_direct_db_checkers(config: &AuthConfig) -> Result<DirectCheckers, S
         return Ok((
             Arc::new(NoopRevocationChecker),
             Arc::new(NoopUserLookupChecker),
+            Arc::new(NoopUserAuthSnapshotChecker),
             Arc::new(NoopApiTokenLookupChecker),
+            Arc::new(NoopSessionAuthSnapshotChecker),
+            Arc::new(NoopApiTokenAuthSnapshotChecker),
         ));
     }
 
@@ -206,7 +531,10 @@ pub fn build_direct_db_checkers(config: &AuthConfig) -> Result<DirectCheckers, S
     Ok((
         Arc::new(PostgresRevocationChecker { pool: pool.clone() }),
         Arc::new(PostgresUserLookupChecker { pool: pool.clone() }),
-        Arc::new(PostgresApiTokenLookupChecker { pool }),
+        Arc::new(PostgresUserAuthSnapshotChecker { pool: pool.clone() }),
+        Arc::new(PostgresApiTokenLookupChecker { pool: pool.clone() }),
+        Arc::new(PostgresSessionAuthSnapshotChecker { pool: pool.clone() }),
+        Arc::new(PostgresApiTokenAuthSnapshotChecker { pool }),
     ))
 }
 

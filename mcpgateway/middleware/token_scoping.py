@@ -33,6 +33,7 @@ from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
+from mcpgateway import version as version_module
 
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -66,6 +67,23 @@ _INTERNAL_MCP_RUNTIME_HEADER = "x-contextforge-mcp-runtime"
 _INTERNAL_MCP_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
 _INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
 _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
+
+
+def _is_public_rust_mcp_mount_request(request: Request) -> bool:
+    """Return whether this request targets the public Rust-mounted MCP path."""
+    if not version_module.should_mount_public_rust_transport():
+        return False
+
+    scope = getattr(request, "scope", {}) or {}
+    if not isinstance(scope, dict):
+        scope = {}
+    path = str(scope.get("modified_path") or scope.get("path") or request.url.path or "")
+    if path.startswith(_INTERNAL_MCP_PATH_PREFIX):
+        return False
+    if path in {"/mcp", "/mcp/"}:
+        return True
+    return path.startswith("/servers/") and path.endswith("/mcp")
+
 
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
@@ -1215,6 +1233,9 @@ class TokenScopingMiddleware:
 
             # Check exact root path separately
             if normalized_path == "/":
+                return await call_next(request)
+
+            if _is_public_rust_mcp_mount_request(request):
                 return await call_next(request)
 
             # Trusted internal Rust -> Python MCP dispatch already carries a

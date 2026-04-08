@@ -1,11 +1,15 @@
-
 use super::{
     ApiTokenLookupChecker, ApiTokenLookupRecord, AppState, AuthenticateRequest,
     INTERNAL_RUNTIME_AUTH_HEADER, JwtVerificationConfig, JwtVerifyError, RUNTIME_HEADER,
-    RUNTIME_NAME, RevocationChecker, UserLookupChecker, UserLookupRecord, build_router,
-    normalize_auth_context, proxy_authenticate, verify_backend_readiness, verify_jwt_token,
+    RUNTIME_NAME, RevocationChecker, UserAuthSnapshot, UserAuthSnapshotChecker, UserLookupChecker,
+    UserLookupRecord, build_router, normalize_auth_context, proxy_authenticate,
+    verify_backend_readiness, verify_jwt_token,
 };
 use crate::config::AuthConfig;
+use crate::db::{
+    ApiTokenAuthSnapshot, ApiTokenAuthSnapshotChecker, SessionAuthSnapshot,
+    SessionAuthSnapshotChecker,
+};
 use async_trait::async_trait;
 use axum::{
     Json, Router,
@@ -14,7 +18,40 @@ use axum::{
 };
 use jsonwebtoken::{EncodingKey, Header, encode};
 use serde_json::json;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
+
+fn canonical_auth_json(mut value: serde_json::Value) -> serde_json::Value {
+    let Some(object) = value.as_object_mut() else {
+        return value;
+    };
+    object.remove("policy_inputs");
+    for key in [
+        "auth_method",
+        "team_id",
+        "team_name",
+        "token_use",
+        "jti",
+        "scoped_server_id",
+    ] {
+        if object.get(key).is_some_and(serde_json::Value::is_null) {
+            object.remove(key);
+        }
+    }
+    if object
+        .get("scoped_permissions")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| items.is_empty())
+    {
+        object.remove("scoped_permissions");
+    }
+    value
+}
 
 async fn spawn_router(router: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -33,6 +70,7 @@ fn test_config(backend_authenticate_url: String) -> AuthConfig {
         backend_authenticate_url,
         backend_health_url: None,
         listen_http: "127.0.0.1:8788".to_string(),
+        listen_uds: None,
         request_timeout_ms: 30_000,
         db_pool_max_size: 8,
         experimental_direct_auth: true,
@@ -48,6 +86,7 @@ fn test_config(backend_authenticate_url: String) -> AuthConfig {
         require_jti: true,
         require_user_in_db: false,
         platform_admin_email: "admin@example.com".to_string(),
+        benchmark_allow_immediate: false,
     }
 }
 
@@ -86,6 +125,20 @@ impl UserLookupChecker for FixedUserLookupChecker {
     }
 }
 
+struct FixedUserAuthSnapshotChecker {
+    result: Result<Option<UserAuthSnapshot>, String>,
+}
+
+#[async_trait]
+impl UserAuthSnapshotChecker for FixedUserAuthSnapshotChecker {
+    async fn lookup_user_auth_snapshot(
+        &self,
+        _email: &str,
+    ) -> Result<Option<UserAuthSnapshot>, String> {
+        self.result.clone()
+    }
+}
+
 struct FixedApiTokenLookupChecker {
     result: Result<Option<ApiTokenLookupRecord>, String>,
 }
@@ -94,6 +147,93 @@ struct FixedApiTokenLookupChecker {
 impl ApiTokenLookupChecker for FixedApiTokenLookupChecker {
     async fn lookup_api_token(&self, _token: &str) -> Result<Option<ApiTokenLookupRecord>, String> {
         self.result.clone()
+    }
+}
+
+struct FixedSessionAuthSnapshotChecker {
+    result: Result<SessionAuthSnapshot, String>,
+}
+
+#[async_trait]
+impl SessionAuthSnapshotChecker for FixedSessionAuthSnapshotChecker {
+    async fn lookup_session_auth_snapshot(
+        &self,
+        _jti: &str,
+        _email: &str,
+    ) -> Result<SessionAuthSnapshot, String> {
+        self.result.clone()
+    }
+}
+
+struct CountingSessionAuthSnapshotChecker {
+    result: Result<SessionAuthSnapshot, String>,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl SessionAuthSnapshotChecker for CountingSessionAuthSnapshotChecker {
+    async fn lookup_session_auth_snapshot(
+        &self,
+        _jti: &str,
+        _email: &str,
+    ) -> Result<SessionAuthSnapshot, String> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        self.result.clone()
+    }
+}
+
+struct FixedApiTokenAuthSnapshotChecker {
+    result: Result<ApiTokenAuthSnapshot, String>,
+}
+
+#[async_trait]
+impl ApiTokenAuthSnapshotChecker for FixedApiTokenAuthSnapshotChecker {
+    async fn lookup_api_token_auth_snapshot(
+        &self,
+        _token: &str,
+    ) -> Result<ApiTokenAuthSnapshot, String> {
+        self.result.clone()
+    }
+}
+
+struct CountingRevocationChecker {
+    result: Result<bool, String>,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl RevocationChecker for CountingRevocationChecker {
+    async fn is_revoked(&self, _jti: &str) -> Result<bool, String> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        self.result.clone()
+    }
+}
+
+struct CountingUserAuthSnapshotChecker {
+    result: Result<Option<UserAuthSnapshot>, String>,
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl UserAuthSnapshotChecker for CountingUserAuthSnapshotChecker {
+    async fn lookup_user_auth_snapshot(
+        &self,
+        _email: &str,
+    ) -> Result<Option<UserAuthSnapshot>, String> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        self.result.clone()
+    }
+}
+
+fn user_snapshot(is_active: bool, is_admin: bool, team_ids: &[&str]) -> UserAuthSnapshot {
+    UserAuthSnapshot {
+        is_active,
+        is_admin,
+        team_ids: team_ids.iter().map(|team| (*team).to_string()).collect(),
+        team_names: team_ids
+            .iter()
+            .map(|team| ((*team).to_string(), format!("{team}-name")))
+            .collect(),
     }
 }
 
@@ -158,6 +298,66 @@ fn verify_jwt_token_rejects_invalid_audience() {
 }
 
 #[tokio::test]
+async fn proxy_authenticate_returns_benchmark_allow_immediate_response_without_backend_call() {
+    let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let called_clone = called.clone();
+    let backend = Router::new().route(
+        "/_internal/core/auth/authenticate",
+        post(move || {
+            let called = called_clone.clone();
+            async move {
+                called.store(true, std::sync::atomic::Ordering::Relaxed);
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": [],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }
+        }),
+    );
+    let backend_url = spawn_router(backend).await;
+    let mut config = test_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+    config.benchmark_allow_immediate = true;
+    let state = AppState::new(&config).expect("state");
+
+    let response = proxy_authenticate(
+        &state,
+        &AuthenticateRequest {
+            method: "POST".to_string(),
+            path: "/mcp".to_string(),
+            query_string: String::new(),
+            authorization: Some("Bearer benchmark".to_string()),
+            cookie: None,
+            client_ip: Some("198.51.100.77".to_string()),
+        },
+    )
+    .await
+    .expect("benchmark immediate auth response");
+
+    assert_eq!(
+        canonical_auth_json(serde_json::to_value(response.auth_context).expect("auth json")),
+        canonical_auth_json(json!({
+            "email": "admin@example.com",
+            "teams": null,
+            "team_name": null,
+            "auth_method": "benchmark_stub",
+            "permission_is_admin": true,
+            "is_authenticated": true,
+            "is_admin": true,
+            "token_use": "session",
+            "jti": "benchmark-immediate",
+        }))
+    );
+    assert!(
+        !called.load(std::sync::atomic::Ordering::Relaxed),
+        "backend should not be called for benchmark immediate auth"
+    );
+}
+
+#[tokio::test]
 async fn proxy_authenticate_rejects_non_session_jwt_without_principal_without_backend_call() {
     let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let called_clone = called.clone();
@@ -202,9 +402,8 @@ async fn proxy_authenticate_rejects_non_session_jwt_without_principal_without_ba
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -242,14 +441,14 @@ fn normalize_auth_context_filters_team_entries() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a", "team-b"],
             "permission_is_admin": false,
             "is_authenticated": true,
             "is_admin": false
-        })
+        }))
     );
 }
 
@@ -272,8 +471,8 @@ fn normalize_auth_context_recomputes_non_session_teams_from_policy_inputs() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a", "team-b"],
             "team_id": null,
@@ -287,7 +486,7 @@ fn normalize_auth_context_recomputes_non_session_teams_from_policy_inputs() {
                     "teams": ["team-a", {"id": "team-b"}, {"name": "skip"}]
                 }
             }
-        })
+        }))
     );
 }
 
@@ -311,8 +510,8 @@ fn normalize_auth_context_recomputes_session_teams_from_policy_inputs() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a"],
             "team_id": null,
@@ -327,7 +526,7 @@ fn normalize_auth_context_recomputes_session_teams_from_policy_inputs() {
                 },
                 "db_teams": ["team-a", "team-b"]
             }
-        })
+        }))
     );
 }
 
@@ -355,8 +554,8 @@ fn normalize_auth_context_uses_db_admin_bypass_for_session_tokens() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": null,
             "team_name": null,
@@ -375,7 +574,7 @@ fn normalize_auth_context_uses_db_admin_bypass_for_session_tokens() {
                     "team-a": "Alpha Team"
                 }
             }
-        })
+        }))
     );
 }
 
@@ -467,8 +666,8 @@ fn normalize_auth_context_session_missing_email_forces_public_only_scope() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": null,
             "teams": [],
             "team_name": null,
@@ -487,7 +686,7 @@ fn normalize_auth_context_session_missing_email_forces_public_only_scope() {
                     "team-a": "Alpha Team"
                 }
             }
-        })
+        }))
     );
 }
 
@@ -575,8 +774,8 @@ fn normalize_auth_context_sets_team_id_for_single_non_session_team() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a"],
             "team_id": "team-a",
@@ -594,7 +793,7 @@ fn normalize_auth_context_sets_team_id_for_single_non_session_team() {
                     }]
                 }
             }
-        })
+        }))
     );
 }
 
@@ -621,8 +820,8 @@ fn normalize_auth_context_prefers_preresolved_session_team_name() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a"],
             "team_name": "Alpha Team",
@@ -640,7 +839,7 @@ fn normalize_auth_context_prefers_preresolved_session_team_name() {
                     "team-a": "Alpha Team"
                 }
             }
-        })
+        }))
     );
 }
 
@@ -673,8 +872,8 @@ fn normalize_auth_context_recomputes_scoped_permissions_and_server_id() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a"],
             "team_id": "team-a",
@@ -699,7 +898,7 @@ fn normalize_auth_context_recomputes_scoped_permissions_and_server_id() {
                     }
                 }
             }
-        })
+        }))
     );
 }
 
@@ -736,14 +935,14 @@ fn normalize_auth_context_applies_secure_default_for_non_admin_null_teams() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": [],
             "permission_is_admin": false,
             "is_authenticated": true,
             "is_admin": false
-        })
+        }))
     );
 }
 
@@ -757,14 +956,14 @@ fn normalize_auth_context_applies_secure_default_for_non_admin_missing_teams() {
     .expect("normalized auth context");
 
     assert_eq!(
-        normalized,
-        json!({
+        canonical_auth_json(serde_json::to_value(normalized).expect("normalized json")),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": [],
             "permission_is_admin": false,
             "is_authenticated": true,
             "is_admin": false
-        })
+        }))
     );
 }
 
@@ -801,7 +1000,8 @@ async fn proxy_authenticate_passes_through_backend_response() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: std::collections::HashMap::new(),
+            authorization: None,
+            cookie: None,
             client_ip: None,
         },
     )
@@ -809,15 +1009,17 @@ async fn proxy_authenticate_passes_through_backend_response() {
     .expect("proxy authenticate");
 
     assert_eq!(
-        response.auth_context,
-        json!({
+        canonical_auth_json(
+            serde_json::to_value(response.auth_context).expect("auth context json")
+        ),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a"],
             "team_id": "team-a",
             "permission_is_admin": false,
             "is_authenticated": true,
             "is_admin": false
-        })
+        }))
     );
 
     let captured_headers = captured_headers
@@ -889,7 +1091,8 @@ async fn proxy_authenticate_updates_auth_stats() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: std::collections::HashMap::new(),
+            authorization: None,
+            cookie: None,
             client_ip: None,
         },
     )
@@ -946,7 +1149,8 @@ async fn proxy_authenticate_normalizes_known_deny_detail_codes() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: std::collections::HashMap::new(),
+            authorization: None,
+            cookie: None,
             client_ip: None,
         },
     )
@@ -985,7 +1189,8 @@ async fn proxy_authenticate_normalizes_token_validation_failure_code() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: std::collections::HashMap::new(),
+            authorization: None,
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1034,9 +1239,8 @@ async fn proxy_authenticate_rejects_empty_bearer_credentials_without_backend_cal
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), "Bearer".to_string())]
-                .into_iter()
-                .collect(),
+            authorization: Some("Bearer".to_string()),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1076,9 +1280,8 @@ async fn proxy_authenticate_rejects_empty_bearer_credentials_case_insensitively(
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), "bearer ".to_string())]
-                .into_iter()
-                .collect(),
+            authorization: Some("bearer ".to_string()),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1127,12 +1330,8 @@ async fn proxy_authenticate_rejects_invalid_bearer_jwt_without_backend_call() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [(
-                "authorization".to_string(),
-                "Bearer definitely-not-a-jwt".to_string(),
-            )]
-            .into_iter()
-            .collect(),
+            authorization: Some("Bearer definitely-not-a-jwt".to_string()),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1206,9 +1405,8 @@ async fn proxy_authenticate_rejects_revoked_bearer_jwt_without_backend_call() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1284,9 +1482,8 @@ async fn proxy_authenticate_fails_secure_when_revocation_check_errors_without_ba
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1342,6 +1539,7 @@ async fn proxy_authenticate_rejects_missing_user_when_require_user_in_db_is_enab
         &config,
         Arc::new(FixedRevocationChecker { result: Ok(false) }),
         Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+        Arc::new(FixedUserAuthSnapshotChecker { result: Ok(None) }),
         Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
     )
     .expect("state");
@@ -1365,9 +1563,8 @@ async fn proxy_authenticate_rejects_missing_user_when_require_user_in_db_is_enab
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1418,6 +1615,9 @@ async fn proxy_authenticate_rejects_disabled_user_without_backend_call() {
                 is_admin: false,
             })),
         }),
+        Arc::new(FixedUserAuthSnapshotChecker {
+            result: Ok(Some(user_snapshot(false, false, &[]))),
+        }),
         Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
     )
     .expect("state");
@@ -1441,9 +1641,8 @@ async fn proxy_authenticate_rejects_disabled_user_without_backend_call() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1494,6 +1693,9 @@ async fn proxy_authenticate_returns_direct_public_only_jwt_auth_context_without_
                 is_admin: false,
             })),
         }),
+        Arc::new(FixedUserAuthSnapshotChecker {
+            result: Ok(Some(user_snapshot(true, false, &[]))),
+        }),
         Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
     )
     .expect("state");
@@ -1517,9 +1719,8 @@ async fn proxy_authenticate_returns_direct_public_only_jwt_auth_context_without_
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1527,14 +1728,17 @@ async fn proxy_authenticate_returns_direct_public_only_jwt_auth_context_without_
     .expect("direct public-only jwt auth context");
 
     assert_eq!(
-        response.auth_context,
-        json!({
+        canonical_auth_json(
+            serde_json::to_value(response.auth_context).expect("auth context json")
+        ),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": [],
             "permission_is_admin": false,
             "auth_method": "jwt",
             "is_authenticated": true,
             "is_admin": false,
+            "jti": "jwt-123",
             "token_use": null,
             "policy_inputs": {
                 "token_payload": {
@@ -1544,9 +1748,10 @@ async fn proxy_authenticate_returns_direct_public_only_jwt_auth_context_without_
                     "iss": "mcpgateway",
                     "exp": 4_102_444_800i64
                 },
-                "db_user_is_admin": false
+                "db_user_is_admin": false,
+                "team_names": {}
             }
-        })
+        }))
     );
     assert!(
         !called.load(std::sync::atomic::Ordering::Relaxed),
@@ -1585,6 +1790,9 @@ async fn proxy_authenticate_returns_direct_team_scoped_jwt_auth_context_without_
                 is_admin: false,
             })),
         }),
+        Arc::new(FixedUserAuthSnapshotChecker {
+            result: Ok(Some(user_snapshot(true, false, &["team-a"]))),
+        }),
         Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
     )
     .expect("state");
@@ -1616,9 +1824,8 @@ async fn proxy_authenticate_returns_direct_team_scoped_jwt_auth_context_without_
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1626,16 +1833,19 @@ async fn proxy_authenticate_returns_direct_team_scoped_jwt_auth_context_without_
     .expect("direct team-scoped jwt auth context");
 
     assert_eq!(
-        response.auth_context,
-        json!({
+        canonical_auth_json(
+            serde_json::to_value(response.auth_context).expect("auth context json")
+        ),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a"],
             "team_id": "team-a",
-            "team_name": "Alpha Team",
+            "team_name": "team-a-name",
             "permission_is_admin": false,
             "auth_method": "jwt",
             "is_authenticated": true,
             "is_admin": false,
+            "jti": "jwt-123",
             "token_use": null,
             "scoped_permissions": ["tools.execute", "resources.read"],
             "scoped_server_id": "server-123",
@@ -1655,9 +1865,12 @@ async fn proxy_authenticate_returns_direct_team_scoped_jwt_auth_context_without_
                         "server_id": "server-123"
                     }
                 },
-                "db_user_is_admin": false
+                "db_user_is_admin": false,
+                "team_names": {
+                    "team-a": "team-a-name"
+                }
             }
-        })
+        }))
     );
     assert!(
         !called.load(std::sync::atomic::Ordering::Relaxed),
@@ -1688,11 +1901,25 @@ async fn proxy_authenticate_returns_direct_platform_admin_bootstrap_auth_context
         }),
     );
     let backend_url = spawn_router(backend).await;
-    let state = AppState::with_checkers(
+    let state = AppState::with_snapshot_checkers(
         &test_config(format!("{backend_url}/_internal/core/auth/authenticate")),
         Arc::new(FixedRevocationChecker { result: Ok(false) }),
         Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+        Arc::new(FixedUserAuthSnapshotChecker { result: Ok(None) }),
         Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
+        Arc::new(FixedSessionAuthSnapshotChecker {
+            result: Ok(SessionAuthSnapshot {
+                revoked: false,
+                user: None,
+            }),
+        }),
+        Arc::new(FixedApiTokenAuthSnapshotChecker {
+            result: Ok(ApiTokenAuthSnapshot {
+                token: None,
+                revoked: false,
+                user: None,
+            }),
+        }),
     )
     .expect("state");
 
@@ -1717,9 +1944,8 @@ async fn proxy_authenticate_returns_direct_platform_admin_bootstrap_auth_context
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1727,14 +1953,17 @@ async fn proxy_authenticate_returns_direct_platform_admin_bootstrap_auth_context
     .expect("direct platform admin bootstrap auth context");
 
     assert_eq!(
-        response.auth_context,
-        json!({
+        canonical_auth_json(
+            serde_json::to_value(response.auth_context).expect("auth context json")
+        ),
+        canonical_auth_json(json!({
             "email": "admin@example.com",
             "teams": null,
             "permission_is_admin": true,
             "auth_method": "jwt",
             "is_authenticated": true,
             "is_admin": true,
+            "jti": "jwt-123",
             "token_use": null,
             "policy_inputs": {
                 "token_payload": {
@@ -1746,13 +1975,233 @@ async fn proxy_authenticate_returns_direct_platform_admin_bootstrap_auth_context
                     "is_admin": true,
                     "teams": null
                 },
-                "db_user_is_admin": false
+                "db_user_is_admin": true,
+                "team_names": null
             }
-        })
+        }))
     );
     assert!(
         !called.load(std::sync::atomic::Ordering::Relaxed),
         "backend should not be called for direct platform-admin bootstrap auth"
+    );
+}
+
+#[tokio::test]
+async fn proxy_authenticate_returns_direct_session_auth_context_without_backend_call() {
+    let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let called_clone = called.clone();
+    let backend = Router::new().route(
+        "/_internal/core/auth/authenticate",
+        post(move || {
+            let called = called_clone.clone();
+            async move {
+                called.store(true, std::sync::atomic::Ordering::Relaxed);
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": ["unexpected-team"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }
+        }),
+    );
+    let backend_url = spawn_router(backend).await;
+    let state = AppState::with_snapshot_checkers(
+        &test_config(format!("{backend_url}/_internal/core/auth/authenticate")),
+        Arc::new(FixedRevocationChecker { result: Ok(false) }),
+        Arc::new(FixedUserLookupChecker {
+            result: Ok(Some(UserLookupRecord {
+                is_active: true,
+                is_admin: false,
+            })),
+        }),
+        Arc::new(FixedUserAuthSnapshotChecker {
+            result: Ok(Some(user_snapshot(true, false, &["team-a", "team-b"]))),
+        }),
+        Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
+        Arc::new(FixedSessionAuthSnapshotChecker {
+            result: Ok(SessionAuthSnapshot {
+                revoked: false,
+                user: Some(user_snapshot(true, false, &["team-a", "team-b"])),
+            }),
+        }),
+        Arc::new(FixedApiTokenAuthSnapshotChecker {
+            result: Ok(ApiTokenAuthSnapshot {
+                token: None,
+                revoked: false,
+                user: None,
+            }),
+        }),
+    )
+    .expect("state");
+
+    let token = encode(
+        &Header::default(),
+        &json!({
+            "sub": "trusted@example.com",
+            "jti": "jwt-123",
+            "aud": "mcpgateway-api",
+            "iss": "mcpgateway",
+            "exp": 4_102_444_800i64,
+            "token_use": "session",
+            "teams": ["team-a"]
+        }),
+        &EncodingKey::from_secret(b"this-is-a-long-test-secret-key-32chars"),
+    )
+    .expect("encode jwt");
+
+    let response = proxy_authenticate(
+        &state,
+        &AuthenticateRequest {
+            method: "GET".to_string(),
+            path: "/mcp".to_string(),
+            query_string: String::new(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
+            client_ip: None,
+        },
+    )
+    .await
+    .expect("direct session auth context");
+
+    assert_eq!(
+        canonical_auth_json(
+            serde_json::to_value(response.auth_context).expect("auth context json")
+        ),
+        canonical_auth_json(json!({
+            "email": "trusted@example.com",
+            "teams": ["team-a"],
+            "team_name": "team-a-name",
+            "permission_is_admin": false,
+            "auth_method": "jwt",
+            "is_authenticated": true,
+            "is_admin": false,
+            "jti": "jwt-123",
+            "token_use": "session",
+            "policy_inputs": {
+                "token_payload": {
+                    "sub": "trusted@example.com",
+                    "jti": "jwt-123",
+                    "aud": "mcpgateway-api",
+                    "iss": "mcpgateway",
+                    "exp": 4_102_444_800i64,
+                    "token_use": "session",
+                    "teams": ["team-a"]
+                },
+                "db_user_is_admin": false,
+                "db_teams": ["team-a", "team-b"],
+                "team_names": {
+                    "team-a": "team-a-name",
+                    "team-b": "team-b-name"
+                }
+            }
+        }))
+    );
+    assert!(
+        !called.load(std::sync::atomic::Ordering::Relaxed),
+        "backend should not be called for direct session auth"
+    );
+}
+
+#[tokio::test]
+async fn proxy_authenticate_caches_direct_session_auth_dependencies() {
+    let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let called_clone = called.clone();
+    let backend = Router::new().route(
+        "/_internal/core/auth/authenticate",
+        post(move || {
+            let called = called_clone.clone();
+            async move {
+                called.store(true, std::sync::atomic::Ordering::Relaxed);
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": ["unexpected-team"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }
+        }),
+    );
+    let backend_url = spawn_router(backend).await;
+    let snapshot_calls = Arc::new(AtomicUsize::new(0));
+    let state = AppState::with_snapshot_checkers(
+        &test_config(format!("{backend_url}/_internal/core/auth/authenticate")),
+        Arc::new(CountingRevocationChecker {
+            result: Ok(false),
+            calls: Arc::new(AtomicUsize::new(0)),
+        }),
+        Arc::new(FixedUserLookupChecker {
+            result: Ok(Some(UserLookupRecord {
+                is_active: true,
+                is_admin: false,
+            })),
+        }),
+        Arc::new(CountingUserAuthSnapshotChecker {
+            result: Ok(Some(user_snapshot(true, false, &["team-a", "team-b"]))),
+            calls: Arc::new(AtomicUsize::new(0)),
+        }),
+        Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
+        Arc::new(CountingSessionAuthSnapshotChecker {
+            result: Ok(SessionAuthSnapshot {
+                revoked: false,
+                user: Some(user_snapshot(true, false, &["team-a", "team-b"])),
+            }),
+            calls: snapshot_calls.clone(),
+        }),
+        Arc::new(FixedApiTokenAuthSnapshotChecker {
+            result: Ok(ApiTokenAuthSnapshot {
+                token: None,
+                revoked: false,
+                user: None,
+            }),
+        }),
+    )
+    .expect("state");
+
+    let token = encode(
+        &Header::default(),
+        &json!({
+            "sub": "trusted@example.com",
+            "jti": "jwt-123",
+            "aud": "mcpgateway-api",
+            "iss": "mcpgateway",
+            "exp": 4_102_444_800i64,
+            "token_use": "session",
+            "teams": ["team-a"]
+        }),
+        &EncodingKey::from_secret(b"this-is-a-long-test-secret-key-32chars"),
+    )
+    .expect("encode jwt");
+
+    for _ in 0..2 {
+        let response = proxy_authenticate(
+            &state,
+            &AuthenticateRequest {
+                method: "GET".to_string(),
+                path: "/mcp".to_string(),
+                query_string: String::new(),
+                authorization: Some(format!("Bearer {token}")),
+                cookie: None,
+                client_ip: None,
+            },
+        )
+        .await
+        .expect("direct session auth context");
+
+        assert_eq!(
+            response.auth_context.teams,
+            Some(vec!["team-a".to_string()])
+        );
+    }
+
+    assert_eq!(snapshot_calls.load(Ordering::Relaxed), 1);
+    assert!(
+        !called.load(std::sync::atomic::Ordering::Relaxed),
+        "backend should not be called for direct session auth"
     );
 }
 
@@ -1778,7 +2227,7 @@ async fn proxy_authenticate_returns_direct_api_token_auth_context_without_backen
         }),
     );
     let backend_url = spawn_router(backend).await;
-    let state = AppState::with_checkers(
+    let state = AppState::with_snapshot_checkers(
         &test_config(format!("{backend_url}/_internal/core/auth/authenticate")),
         Arc::new(FixedRevocationChecker { result: Ok(false) }),
         Arc::new(FixedUserLookupChecker {
@@ -1786,6 +2235,9 @@ async fn proxy_authenticate_returns_direct_api_token_auth_context_without_backen
                 is_active: true,
                 is_admin: false,
             })),
+        }),
+        Arc::new(FixedUserAuthSnapshotChecker {
+            result: Ok(Some(user_snapshot(true, false, &["team-a"]))),
         }),
         Arc::new(FixedApiTokenLookupChecker {
             result: Ok(Some(ApiTokenLookupRecord {
@@ -1797,6 +2249,29 @@ async fn proxy_authenticate_returns_direct_api_token_auth_context_without_backen
                 expired: false,
             })),
         }),
+        Arc::new(FixedSessionAuthSnapshotChecker {
+            result: Ok(SessionAuthSnapshot {
+                revoked: false,
+                user: None,
+            }),
+        }),
+        Arc::new(FixedApiTokenAuthSnapshotChecker {
+            result: Ok(ApiTokenAuthSnapshot {
+                token: Some(ApiTokenLookupRecord {
+                    user_email: "trusted@example.com".to_string(),
+                    jti: "api-token-jti-123".to_string(),
+                    team_id: Some("team-a".to_string()),
+                    server_id: Some("server-123".to_string()),
+                    resource_scopes: vec![
+                        "tools.execute".to_string(),
+                        "resources.read".to_string(),
+                    ],
+                    expired: false,
+                }),
+                revoked: false,
+                user: Some(user_snapshot(true, false, &["team-a"])),
+            }),
+        }),
     )
     .expect("state");
 
@@ -1806,12 +2281,8 @@ async fn proxy_authenticate_returns_direct_api_token_auth_context_without_backen
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [(
-                "authorization".to_string(),
-                "Bearer opaque-api-token".to_string(),
-            )]
-            .into_iter()
-            .collect(),
+            authorization: Some("Bearer opaque-api-token".to_string()),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1819,8 +2290,10 @@ async fn proxy_authenticate_returns_direct_api_token_auth_context_without_backen
     .expect("direct api token auth context");
 
     assert_eq!(
-        response.auth_context,
-        json!({
+        canonical_auth_json(
+            serde_json::to_value(response.auth_context).expect("auth context json")
+        ),
+        canonical_auth_json(json!({
             "email": "trusted@example.com",
             "teams": ["team-a"],
             "team_id": "team-a",
@@ -1832,7 +2305,7 @@ async fn proxy_authenticate_returns_direct_api_token_auth_context_without_backen
             "jti": "api-token-jti-123",
             "scoped_permissions": ["tools.execute", "resources.read"],
             "scoped_server_id": "server-123"
-        })
+        }))
     );
     assert!(
         !called.load(std::sync::atomic::Ordering::Relaxed),
@@ -1862,10 +2335,11 @@ async fn proxy_authenticate_rejects_expired_api_token_with_distinct_code_without
         }),
     );
     let backend_url = spawn_router(backend).await;
-    let state = AppState::with_checkers(
+    let state = AppState::with_snapshot_checkers(
         &test_config(format!("{backend_url}/_internal/core/auth/authenticate")),
         Arc::new(FixedRevocationChecker { result: Ok(false) }),
         Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+        Arc::new(FixedUserAuthSnapshotChecker { result: Ok(None) }),
         Arc::new(FixedApiTokenLookupChecker {
             result: Ok(Some(ApiTokenLookupRecord {
                 user_email: "trusted@example.com".to_string(),
@@ -1876,6 +2350,26 @@ async fn proxy_authenticate_rejects_expired_api_token_with_distinct_code_without
                 expired: true,
             })),
         }),
+        Arc::new(FixedSessionAuthSnapshotChecker {
+            result: Ok(SessionAuthSnapshot {
+                revoked: false,
+                user: None,
+            }),
+        }),
+        Arc::new(FixedApiTokenAuthSnapshotChecker {
+            result: Ok(ApiTokenAuthSnapshot {
+                token: Some(ApiTokenLookupRecord {
+                    user_email: "trusted@example.com".to_string(),
+                    jti: "api-token-jti-123".to_string(),
+                    team_id: Some("team-a".to_string()),
+                    server_id: None,
+                    resource_scopes: Vec::new(),
+                    expired: true,
+                }),
+                revoked: false,
+                user: None,
+            }),
+        }),
     )
     .expect("state");
 
@@ -1885,12 +2379,8 @@ async fn proxy_authenticate_rejects_expired_api_token_with_distinct_code_without
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [(
-                "authorization".to_string(),
-                "Bearer opaque-api-token".to_string(),
-            )]
-            .into_iter()
-            .collect(),
+            authorization: Some("Bearer opaque-api-token".to_string()),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1932,10 +2422,11 @@ async fn proxy_authenticate_rejects_revoked_api_token_with_distinct_code_without
         }),
     );
     let backend_url = spawn_router(backend).await;
-    let state = AppState::with_checkers(
+    let state = AppState::with_snapshot_checkers(
         &test_config(format!("{backend_url}/_internal/core/auth/authenticate")),
         Arc::new(FixedRevocationChecker { result: Ok(true) }),
         Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+        Arc::new(FixedUserAuthSnapshotChecker { result: Ok(None) }),
         Arc::new(FixedApiTokenLookupChecker {
             result: Ok(Some(ApiTokenLookupRecord {
                 user_email: "trusted@example.com".to_string(),
@@ -1946,6 +2437,26 @@ async fn proxy_authenticate_rejects_revoked_api_token_with_distinct_code_without
                 expired: false,
             })),
         }),
+        Arc::new(FixedSessionAuthSnapshotChecker {
+            result: Ok(SessionAuthSnapshot {
+                revoked: false,
+                user: None,
+            }),
+        }),
+        Arc::new(FixedApiTokenAuthSnapshotChecker {
+            result: Ok(ApiTokenAuthSnapshot {
+                token: Some(ApiTokenLookupRecord {
+                    user_email: "trusted@example.com".to_string(),
+                    jti: "api-token-jti-123".to_string(),
+                    team_id: Some("team-a".to_string()),
+                    server_id: None,
+                    resource_scopes: Vec::new(),
+                    expired: false,
+                }),
+                revoked: true,
+                user: None,
+            }),
+        }),
     )
     .expect("state");
 
@@ -1955,12 +2466,8 @@ async fn proxy_authenticate_rejects_revoked_api_token_with_distinct_code_without
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [(
-                "authorization".to_string(),
-                "Bearer opaque-api-token".to_string(),
-            )]
-            .into_iter()
-            .collect(),
+            authorization: Some("Bearer opaque-api-token".to_string()),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -1998,7 +2505,7 @@ async fn proxy_authenticate_records_shadow_compare_mismatch_for_direct_auth() {
     let backend_url = spawn_router(backend).await;
     let mut config = test_config(format!("{backend_url}/_internal/core/auth/authenticate"));
     config.shadow_compare_direct_auth = true;
-    let state = AppState::with_checkers(
+    let state = AppState::with_snapshot_checkers(
         &config,
         Arc::new(FixedRevocationChecker { result: Ok(false) }),
         Arc::new(FixedUserLookupChecker {
@@ -2007,7 +2514,23 @@ async fn proxy_authenticate_records_shadow_compare_mismatch_for_direct_auth() {
                 is_admin: false,
             })),
         }),
+        Arc::new(FixedUserAuthSnapshotChecker {
+            result: Ok(Some(user_snapshot(true, false, &[]))),
+        }),
         Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
+        Arc::new(FixedSessionAuthSnapshotChecker {
+            result: Ok(SessionAuthSnapshot {
+                revoked: false,
+                user: Some(user_snapshot(true, false, &[])),
+            }),
+        }),
+        Arc::new(FixedApiTokenAuthSnapshotChecker {
+            result: Ok(ApiTokenAuthSnapshot {
+                token: None,
+                revoked: false,
+                user: None,
+            }),
+        }),
     )
     .expect("state");
 
@@ -2030,9 +2553,8 @@ async fn proxy_authenticate_records_shadow_compare_mismatch_for_direct_auth() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: [("authorization".to_string(), format!("Bearer {token}"))]
-                .into_iter()
-                .collect(),
+            authorization: Some(format!("Bearer {token}")),
+            cookie: None,
             client_ip: None,
         },
     )
@@ -2073,7 +2595,8 @@ async fn proxy_authenticate_preserves_unknown_deny_details_without_code() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: std::collections::HashMap::new(),
+            authorization: None,
+            cookie: None,
             client_ip: None,
         },
     )
@@ -2102,7 +2625,8 @@ async fn proxy_authenticate_assigns_code_to_backend_transport_failure() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: std::collections::HashMap::new(),
+            authorization: None,
+            cookie: None,
             client_ip: None,
         },
     )
@@ -2139,7 +2663,8 @@ async fn proxy_authenticate_assigns_code_to_backend_decode_failure() {
             method: "GET".to_string(),
             path: "/mcp".to_string(),
             query_string: String::new(),
-            headers: std::collections::HashMap::new(),
+            authorization: None,
+            cookie: None,
             client_ip: None,
         },
     )
@@ -2172,6 +2697,7 @@ async fn verify_backend_readiness_accepts_healthy_backend() {
             .to_string(),
         backend_health_url: Some(format!("{backend_url}/healthz")),
         listen_http: "127.0.0.1:8788".to_string(),
+        listen_uds: None,
         request_timeout_ms: 30_000,
         db_pool_max_size: 8,
         experimental_direct_auth: false,
@@ -2187,6 +2713,7 @@ async fn verify_backend_readiness_accepts_healthy_backend() {
         require_jti: true,
         require_user_in_db: false,
         platform_admin_email: "admin@example.com".to_string(),
+        benchmark_allow_immediate: false,
     })
     .expect("state");
 
@@ -2214,6 +2741,7 @@ async fn verify_backend_readiness_rejects_unhealthy_backend() {
             .to_string(),
         backend_health_url: Some(format!("{backend_url}/healthz")),
         listen_http: "127.0.0.1:8788".to_string(),
+        listen_uds: None,
         request_timeout_ms: 30_000,
         db_pool_max_size: 8,
         experimental_direct_auth: false,
@@ -2229,6 +2757,7 @@ async fn verify_backend_readiness_rejects_unhealthy_backend() {
         require_jti: true,
         require_user_in_db: false,
         platform_admin_email: "admin@example.com".to_string(),
+        benchmark_allow_immediate: false,
     })
     .expect("state");
 

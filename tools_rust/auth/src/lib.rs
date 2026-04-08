@@ -4,6 +4,10 @@
 
 //! Experimental core-owned Rust auth service.
 
+pub mod rpc {
+    tonic::include_proto!("contextforge.auth.v1");
+}
+
 pub mod config;
 pub mod core_auth_policy;
 
@@ -18,14 +22,16 @@ mod stats;
 mod types;
 
 pub use db::{
-    ApiTokenLookupChecker, ApiTokenLookupRecord, RevocationChecker, UserLookupChecker,
-    UserLookupRecord,
+    ApiTokenLookupChecker, ApiTokenLookupRecord, RevocationChecker, UserAuthSnapshot,
+    UserAuthSnapshotChecker, UserLookupChecker, UserLookupRecord,
 };
 pub use error::SidecarError;
 pub use jwt::{JwtVerificationConfig, JwtVerifyError, verify_jwt_token};
 pub use server::{build_router, run};
 pub use state::AppState;
-pub use types::{AuthenticateRequest, AuthenticateResponse, HealthResponse};
+pub use types::{
+    AuthContext, AuthenticateRequest, AuthenticateResponse, DenyResponse, HealthResponse,
+};
 
 #[cfg(test)]
 pub(crate) use flow::{
