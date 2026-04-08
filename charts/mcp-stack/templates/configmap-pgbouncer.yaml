@@ -41,7 +41,4 @@ data:
     ; Admin access
     admin_users = {{ .Values.postgres.credentials.user | default "admin" }}
     stats_users = {{ .Values.postgres.credentials.user | default "admin" }}
-
-  userlist.txt: |
-    "{{ .Values.postgres.credentials.user | default "admin" }}" "{{ .Values.postgres.credentials.password | default "" }}"
 {{- end }}

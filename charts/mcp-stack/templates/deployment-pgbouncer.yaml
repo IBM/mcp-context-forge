@@ -169,9 +169,10 @@ spec:
             - name: pgbouncer-config
               mountPath: /etc/pgbouncer/pgbouncer.ini
               subPath: pgbouncer.ini
-            - name: pgbouncer-config
+            - name: pgbouncer-auth
               mountPath: /etc/pgbouncer/userlist.txt
               subPath: userlist.txt
+              readOnly: true
           {{- end }}
 
           # Resource limits
@@ -183,5 +184,8 @@ spec:
         - name: pgbouncer-config
           configMap:
             name: {{ include "mcp-stack.fullname" . }}-pgbouncer-config
+        - name: pgbouncer-auth
+          secret:
+            secretName: {{ include "mcp-stack.fullname" . }}-pgbouncer-auth
       {{- end }}
 {{- end }}
