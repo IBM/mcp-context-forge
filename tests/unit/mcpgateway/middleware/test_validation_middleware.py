@@ -301,6 +301,61 @@ class TestValidationMiddleware:
             rust_validator.validate_http_request.assert_called_once_with([], "application/json", b'{"name":"safe"}')
 
     @pytest.mark.asyncio
+    async def test_validate_request_with_rust_result_raises_http_422(self):
+        """Test Rust request results map back to middleware HTTP errors."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validate_http_request = MagicMock(return_value=("name", "dangerous_pattern"))
+
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return b'{"name":"safe"}'
+
+            with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
+                await middleware._validate_request(DummyRequest())
+
+            assert exc_info.value.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_validate_request_with_rust_invalid_json_defers_to_later_middleware(self):
+        """Test Rust JSON decode failures are ignored here like the Python path."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validate_http_request = MagicMock(side_effect=orjson.JSONDecodeError("invalid json", "", 0))
+
+            class DummyRequest:
+                path_params = {}
+                query_params = {}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return b"{"
+
+            await middleware._validate_request(DummyRequest())
+
+    @pytest.mark.asyncio
     async def test_validate_request_with_rust_rejects_bad_params_before_reading_json_body(self):
         """Test Rust-backed param validation short-circuits before JSON body reads."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -696,6 +751,116 @@ class TestValidationMiddleware:
 
             rust_validator.validate_parameters.assert_called_once_with([("id", "123"), ("q", "safe")])
 
+    def test_validate_parameters_with_python_returns_max_length(self):
+        """Test Python parameter batch validation reports max-length failures."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 5
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            assert middleware._validate_parameters_with_python([("name", "toolong")]) == ("name", "max_length")
+
+    def test_validate_parameters_with_rust_falls_back_when_validator_build_fails(self):
+        """Test Rust parameter batch validation falls back when no validator can be built."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validator = None
+
+            with patch.object(middleware, "_build_rust_validator", return_value=None):
+                assert middleware._validate_parameters_with_rust([("id", "<script>")]) == ("id", "dangerous_pattern")
+
+    def test_validate_parameters_with_rust_reraises_http_exception(self):
+        """Test Rust parameter batch validation does not swallow HTTPException."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.validate_parameters.side_effect = HTTPException(status_code=422, detail="bad")
+            middleware._rust_validator = rust_validator
+
+            with pytest.raises(HTTPException, match="bad"):
+                middleware._validate_parameters_with_rust([("id", "safe")])
+
+    def test_validate_request_with_rust_raises_when_validator_handle_missing(self):
+        """Test the direct Rust request helper fails fast if the handle is unavailable."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validate_http_request = None
+
+            with pytest.raises(RuntimeError, match="rust validator unavailable"):
+                middleware._validate_request_with_rust([], "application/json", b"{}")
+
+    def test_validate_request_with_rust_reraises_unmapped_value_errors(self):
+        """Test the direct Rust request helper re-raises unexpected ValueError cases."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validate_http_request = MagicMock(side_effect=ValueError("boom"))
+
+            with pytest.raises(ValueError, match="boom"):
+                middleware._validate_request_with_rust([], "application/json", b"{}")
+
+    def test_refresh_rust_validator_handles_returns_false_without_validator(self):
+        """Test cached Rust callable refresh returns false when no validator exists."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validator = None
+
+            assert middleware._refresh_rust_validator_handles() is False
+
     def test_validate_resource_path_uses_rust_extension_when_enabled(self):
         """Test resource path validation uses the Rust extension when explicitly enabled."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -714,6 +879,39 @@ class TestValidationMiddleware:
 
             assert middleware.validate_resource_path("/safe/path") == "/safe/path"
             rust_validator.validate_resource_path.assert_called_once_with("/safe/path")
+
+    def test_validate_resource_path_falls_back_to_python_when_rust_handles_unavailable(self):
+        """Test resource path validation falls back to Python if Rust handles stay unavailable."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 10
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validator = None
+
+            with patch.object(middleware, "_build_rust_validator", return_value=None):
+                assert middleware.validate_resource_path("relative/file.txt").endswith("relative/file.txt")
+
+    def test_validate_resource_path_rust_failure_falls_back_to_python(self):
+        """Test resource path validation falls back to Python when Rust raises unexpectedly."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 10
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validate_resource_path = MagicMock(side_effect=RuntimeError("boom"))
+
+            assert middleware.validate_resource_path("relative/file.txt").endswith("relative/file.txt")
 
     @pytest.mark.asyncio
     async def test_sanitize_response_uses_rust_extension_when_enabled(self):
@@ -739,6 +937,56 @@ class TestValidationMiddleware:
             assert sanitized.body == b"HelloWorld"
             rust_validator.sanitize_response_body.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_sanitize_response_builds_rust_handles_and_encodes_str_body(self):
+        """Test response sanitization rebuilds Rust handles and encodes str bodies."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.sanitize_response_body.return_value = b"sanitized"
+            middleware._rust_validator = None
+            middleware._rust_sanitize_response_body = None
+
+            with patch.object(middleware, "_build_rust_validator", return_value=rust_validator):
+                response = Response(content="Hello")
+                response.body = "Hello"  # exercise the explicit str -> bytes path
+                sanitized = await middleware._sanitize_response(response)
+
+            assert sanitized.body == b"sanitized"
+            rust_validator.sanitize_response_body.assert_called_once_with(b"Hello")
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_falls_back_to_python_when_rust_handles_missing(self):
+        """Test response sanitization uses Python when no Rust sanitizer is available."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 10
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            middleware._rust_validator = None
+            middleware._rust_sanitize_response_body = None
+
+            with patch.object(middleware, "_build_rust_validator", return_value=None):
+                response = Response(content=b"Hello\x00World")
+                sanitized = await middleware._sanitize_response(response)
+
+            assert sanitized.body == b"HelloWorld"
+
     def test_validate_json_data_rust_extension_falls_back_to_python_validation(self):
         """Test Rust mode falls back to Python validation when the extension cannot be loaded."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -758,6 +1006,64 @@ class TestValidationMiddleware:
                 with pytest.raises(HTTPException, match="contains dangerous characters") as exc_info:
                     middleware._validate_json_data({"name": "<script>"})
             assert exc_info.value.status_code == 422
+
+    def test_validate_json_data_with_rust_falls_back_after_non_depth_value_error(self):
+        """Test Rust JSON validation falls back to Python for non-depth ValueError cases."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.validate_json_data.side_effect = ValueError("boom")
+            middleware._rust_validator = rust_validator
+
+            assert middleware._validate_json_data_with_rust({"name": "<script>"}) == ("name", "dangerous_pattern")
+
+    def test_validate_json_data_with_rust_falls_back_after_generic_exception(self):
+        """Test Rust JSON validation falls back to Python for generic exceptions."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = [r"<script"]
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.validate_json_data.side_effect = RuntimeError("boom")
+            middleware._rust_validator = rust_validator
+
+            assert middleware._validate_json_data_with_rust({"name": "<script>"}) == ("name", "dangerous_pattern")
+
+    def test_validate_json_data_with_rust_reraises_http_exception(self):
+        """Test Rust JSON validation preserves HTTPException without fallback."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.experimental_rust_validation_middleware_enabled = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+            rust_validator = MagicMock()
+            rust_validator.validate_json_data.side_effect = HTTPException(status_code=422, detail="bad")
+            middleware._rust_validator = rust_validator
+
+            with pytest.raises(HTTPException, match="bad"):
+                middleware._validate_json_data_with_rust({"name": "safe"})
 
     def test_validate_json_data_rust_extension_respects_warn_only_mode(self):
         """Test Rust mode preserves warn-only behavior outside production."""
@@ -819,6 +1125,100 @@ class TestValidationMiddleware:
 
             with pytest.raises(HTTPException, match="exceeds maximum supported nesting depth") as exc_info:
                 middleware._validate_json_data({"name": "safe"})
+
+            assert exc_info.value.status_code == 422
+
+    def test_validate_json_data_with_python_enforces_depth_limit(self):
+        """Test Python JSON validation enforces the explicit depth guard."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            with pytest.raises(HTTPException, match="maximum supported nesting depth"):
+                middleware._validate_json_data_with_python({}, depth=1025)
+
+    def test_validate_json_data_with_python_returns_nested_dict_failure(self):
+        """Test Python JSON validation returns nested dict failures."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 5
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            assert middleware._validate_json_data_with_python({"outer": {"name": "toolong"}}) == ("name", "max_length")
+
+    def test_validate_json_data_with_python_returns_list_string_failure(self):
+        """Test Python JSON validation returns direct list-item failures."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 5
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            assert middleware._validate_json_data_with_python(["toolong"]) == ("list_item", "max_length")
+
+    def test_validate_json_data_with_python_returns_nested_list_failure(self):
+        """Test Python JSON validation returns failures found inside nested lists."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 5
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            assert middleware._validate_json_data_with_python([{"name": "toolong"}]) == ("name", "max_length")
+
+    def test_raise_validation_failure_warns_for_max_length_in_development(self):
+        """Test warn-only max-length failures do not raise outside production."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = False
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 5
+            mock_settings.environment = "development"
+
+            middleware = ValidationMiddleware(app=None)
+
+            assert middleware._raise_validation_failure("name", "max_length") is None
+
+    def test_raise_validation_failure_uses_generic_message_for_unknown_errors(self):
+        """Test unknown validation error types map to the generic HTTP 422 message."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 5
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            with pytest.raises(HTTPException, match="failed validation") as exc_info:
+                middleware._raise_validation_failure("name", "other")
 
             assert exc_info.value.status_code == 422
 

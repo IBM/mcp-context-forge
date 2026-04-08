@@ -9,4 +9,6 @@ requires-python = ">=3.11"
 
 [tool.maturin]
 module-name = "validation_middleware_rust"
+python-source = "python"
 bindings = "pyo3"
+features = ["pyo3/extension-module"]

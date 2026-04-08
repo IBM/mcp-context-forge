@@ -6,11 +6,16 @@ license = "Apache-2.0"
 
 [lib]
 name = "validation_middleware_rust"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "stub_gen"
+path = "src/bin/stub_gen.rs"
 
 [dependencies]
 once_cell = "1.21.3"
 pyo3 = { version = "0.27.1", features = ["abi3-py311"] }
+pyo3-stub-gen = "0.19"
 regex = "1.12.2"
 serde = "1.0.228"
 serde_json = { version = "1.0.149", features = ["unbounded_depth"] }

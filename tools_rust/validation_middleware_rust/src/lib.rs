@@ -1,5 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
+use pyo3_stub_gen::define_stub_info_gatherer;
+use pyo3_stub_gen::derive::*;
 use regex::Regex;
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use std::fmt;
@@ -7,8 +9,9 @@ use std::path::{Component, Path, PathBuf};
 
 const MAX_JSON_DEPTH: usize = 1024;
 
+#[gen_stub_pyclass]
 #[pyclass(name = "Validator")]
-struct CompiledValidator {
+pub struct CompiledValidator {
     max_param_length: usize,
     matcher: DangerousPatternMatcher,
     allowed_roots: Vec<PathBuf>,
@@ -572,6 +575,7 @@ fn validate_resource_path_impl(path: &str, validator: &CompiledValidator) -> PyR
     Ok(resolved_path.to_string_lossy().into_owned())
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl CompiledValidator {
     #[new]
@@ -594,7 +598,10 @@ impl CompiledValidator {
         walk_json_like(data.py(), data, self)
     }
 
-    fn validate_json_bytes(&self, raw_body: &[u8]) -> PyResult<Option<(String, String)>> {
+    fn validate_json_bytes(
+        &self,
+        #[gen_stub(override_type(type_repr = "bytes"))] raw_body: &[u8],
+    ) -> PyResult<Option<(String, String)>> {
         validate_json_bytes_streaming(raw_body, self)
     }
 
@@ -603,7 +610,7 @@ impl CompiledValidator {
         &self,
         parameters: Vec<(String, String)>,
         content_type: &str,
-        raw_body: Option<&[u8]>,
+        #[gen_stub(override_type(type_repr = "bytes | None"))] raw_body: Option<&[u8]>,
     ) -> PyResult<Option<(String, String)>> {
         if let Some(result) = self.validate_parameters(parameters) {
             return Ok(Some(result));
@@ -633,11 +640,16 @@ impl CompiledValidator {
         validate_resource_path_impl(path, self)
     }
 
-    fn sanitize_response_body(&self, body: &[u8]) -> Vec<u8> {
+    #[gen_stub(override_return_type(type_repr = "bytes"))]
+    fn sanitize_response_body(
+        &self,
+        #[gen_stub(override_type(type_repr = "bytes"))] body: &[u8],
+    ) -> Vec<u8> {
         sanitize_response_body_bytes(body)
     }
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 fn validate_json_data(
     data: &Bound<'_, PyAny>,
@@ -654,6 +666,8 @@ fn validation_middleware_rust(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(validate_json_data, module)?)?;
     Ok(())
 }
+
+define_stub_info_gatherer!(stub_info);
 
 #[cfg(test)]
 mod tests {
@@ -818,6 +832,7 @@ mod tests {
     #[test]
     fn validate_resource_path_accepts_configured_roots() {
         let tempdir = tempfile::tempdir().unwrap();
+        let allowed_root = tempdir.path().canonicalize().unwrap();
         let validator = CompiledValidator {
             max_param_length: 32,
             matcher: DangerousPatternMatcher {
@@ -826,14 +841,14 @@ mod tests {
                 control_characters: false,
                 fallback_pattern: None,
             },
-            allowed_roots: vec![tempdir.path().to_path_buf()],
+            allowed_roots: vec![allowed_root.clone()],
             max_path_depth: 1024,
         };
 
         let candidate = tempdir.path().join("file.txt");
         let result = validate_resource_path_impl(candidate.to_str().unwrap(), &validator).unwrap();
 
-        assert!(result.starts_with(tempdir.path().to_str().unwrap()));
+        assert!(result.starts_with(allowed_root.to_str().unwrap()));
     }
 
     #[cfg(unix)]
@@ -857,7 +872,9 @@ mod tests {
             max_path_depth: 1024,
         };
 
-        let err = validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator).unwrap_err();
+        let err =
+            validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator)
+                .unwrap_err();
         Python::initialize();
         Python::attach(|py| {
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
@@ -887,7 +904,9 @@ mod tests {
             max_path_depth: 1024,
         };
 
-        let err = validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator).unwrap_err();
+        let err =
+            validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator)
+                .unwrap_err();
         Python::initialize();
         Python::attach(|py| {
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
@@ -918,7 +937,9 @@ mod tests {
             max_path_depth: 1024,
         };
 
-        let err = validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator).unwrap_err();
+        let err =
+            validate_resource_path_impl(link_path.join("file.txt").to_str().unwrap(), &validator)
+                .unwrap_err();
         Python::initialize();
         Python::attach(|py| {
             assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
