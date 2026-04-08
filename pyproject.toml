@@ -52,7 +52,9 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "alembic>=1.18.4",
+    "aiosqlite>=0.22.1",
     "argon2-cffi>=25.1.0",
+    "asyncpg>=0.31.0",
     "cryptography>=46.0.5",
     "fastapi>=0.135.1",
     "filelock>=3.25.2",
@@ -233,16 +235,6 @@ observability = [
 # Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
 granian = [
     "granian[pname,uvloop,reload]>=2.7.2",
-]
-
-# Async SQLite Driver (optional)
-aiosqlite = [
-    "aiosqlite>=0.22.1",
-]
-
-# Async PostgreSQL driver (optional)
-asyncpg = [
-    "asyncpg>=0.31.0",
 ]
 
 # Profiling tools (optional) - for debugging memory leaks and performance issues

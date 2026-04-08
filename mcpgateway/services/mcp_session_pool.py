@@ -933,10 +933,16 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # No valid session in pool - try to create one or wait
         try:
             # Use semaphore with timeout to limit concurrent sessions
+            sem_value = semaphore._value if hasattr(semaphore, "_value") else "?"
+            logger.warning("📥 acquire: url=%s pool_queue_size=%d sem_value=%s waiting to acquire slot...", sanitize_url_for_logging(url), pool.qsize(), sem_value)
             acquired = await asyncio.wait_for(semaphore.acquire(), timeout=self._acquire_timeout)
             if not acquired:
                 raise asyncio.TimeoutError("Failed to acquire session slot")
         except asyncio.TimeoutError:
+            active_count = len(self._active.get(pool_key, set()))
+            logger.error("❌ Session acquire TIMEOUT — url=%s sem_value=%s active_sessions=%d pool_queue=%d acquire_timeout=%s",
+                sanitize_url_for_logging(url), semaphore._value if hasattr(semaphore, "_value") else "?",
+                active_count, pool.qsize(), self._acquire_timeout)
             raise asyncio.TimeoutError(f"Timeout waiting for available session for {sanitize_url_for_logging(url)}") from None
 
         # Create new session (semaphore acquired)
@@ -1047,6 +1053,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # eviction sees recent activity.
             self._pool_last_used[pool_key] = time.time()
             self._active.get(pool_key, set()).discard(pooled)
+            active_count = len(self._active.get(pool_key, set()))
+            logger.warning("📤 release: pool_key=%s active=%d discard=%s", pool_key[1:4], active_count, discard)
 
         # Discard broken sessions instead of recycling them
         if discard:

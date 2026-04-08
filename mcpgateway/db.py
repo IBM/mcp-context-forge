@@ -22,11 +22,11 @@ Examples:
 """
 
 # Standard
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 import logging
 import os
-from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
 
 # Third-Party
@@ -557,6 +557,142 @@ class ResilientSession(Session):
 # allowing continued access to attributes without re-querying the database.
 # This is essential when commits happen during read operations (e.g., to release transactions).
 SessionLocal = sessionmaker(class_=ResilientSession, autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+
+
+# ---------------------------------------------------------------------------
+# Async SQLAlchemy infrastructure for hot-path tool calls
+# ---------------------------------------------------------------------------
+# The async engine uses asyncpg (PostgreSQL) or aiosqlite (SQLite) for
+# non-blocking DB operations in async FastAPI handlers, allowing concurrent
+# tool invocations to proceed without blocking the event loop.
+# ---------------------------------------------------------------------------
+# Third-Party
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine, AsyncSession, create_async_engine
+
+
+def _build_async_engine() -> AsyncEngine:
+    """Build async engine from the same DATABASE_URL.
+
+    Uses the same pool settings and connect_args as the sync engine,
+    but with async-compatible driver (asyncpg for PostgreSQL, aiosqlite for SQLite).
+
+    Returns:
+        AsyncEngine: Configured async engine.
+    """
+    async_url_str = settings.database_url
+
+    # For SQLite, use aiosqlite async driver
+    if backend == "sqlite":
+        async_url_str = settings.database_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+        async_connect_args = {}
+        # SQLite: use modest pool settings
+        sqlite_pool_size = min(settings.db_pool_size, 50)
+        sqlite_max_overflow = min(settings.db_max_overflow, 20)
+        return create_async_engine(
+            async_url_str,
+            pool_pre_ping=True,
+            pool_size=sqlite_pool_size,
+            max_overflow=sqlite_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            connect_args=async_connect_args,
+            echo=_sqlalchemy_echo,
+        )
+
+    # For PostgreSQL, use asyncpg async driver
+    if backend == "postgresql":
+        # Replace psycopg with asyncpg
+        async_url_str = settings.database_url.replace("psycopg://", "asyncpg://", 1)
+        async_url_str = async_url_str.replace("postgresql+psycopg://", "postgresql+asyncpg://", 1)
+        # asyncpg doesn't accept psycopg/libpq connect_args — filter to only what it supports
+        ASYNCPG_ACCEPTED_KEYS = {"server_settings"}
+        async_connect_args = {k: v for k, v in connect_args.items() if k in ASYNCPG_ACCEPTED_KEYS}
+        # Determine pool configuration
+        is_pgbouncer = "pgbouncer" in settings.database_url.lower()
+        use_null_pool = settings.db_pool_class == "null" or (settings.db_pool_class == "auto" and is_pgbouncer)
+        pool_pre_ping = not use_null_pool and not is_pgbouncer
+
+        # asyncpg prepared statement caching: disabled when PgBouncer is in
+        # transaction pooling mode (causes prepared statement errors).
+        # Safe to keep caching for direct PostgreSQL connections.
+        if is_pgbouncer:
+            async_connect_args["statement_cache_size"] = 0
+
+        if use_null_pool:
+            return create_async_engine(
+                async_url_str,
+                connect_args=async_connect_args,
+                echo=_sqlalchemy_echo,
+            )
+
+        return create_async_engine(
+            async_url_str,
+            pool_pre_ping=pool_pre_ping,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            connect_args=async_connect_args,
+            echo=_sqlalchemy_echo,
+        )
+
+    raise ValueError(f"Unsupported database backend for async engine: '{backend}'. Only 'postgresql' and 'sqlite' are supported.")
+
+
+async_engine = _build_async_engine()
+AsyncSessionLocal = async_sessionmaker(
+    class_=AsyncSession,
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=async_engine,
+)
+
+async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    """Yield an async database session for use in async FastAPI handlers.
+
+    Usage:
+        async with get_async_session() as db:
+            result = await db.execute(select(DbTool).where(...))
+
+    Yields:
+        AsyncSession: An async SQLAlchemy session.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+@asynccontextmanager
+async def async_fresh_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Context manager that provides a fresh async session for writes.
+
+    Similar to fresh_db_session() but returns an AsyncSession for use
+    in async contexts where you need to write (e.g., observability spans).
+
+    Usage:
+        async with async_fresh_db_session() as db:
+            await db.execute(...)
+            await db.commit()
+
+    Yields:
+        AsyncSession: A new async database session.
+    """
+    session = AsyncSessionLocal()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+logger.info("Async SQLAlchemy engine initialized (%s)", "asyncpg" if backend == "postgresql" else "aiosqlite")
 
 
 @event.listens_for(ResilientSession, "after_transaction_end")

@@ -43,6 +43,7 @@ from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
@@ -53,6 +54,7 @@ from mcpgateway.common.models import ToolResult
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import AsyncSessionLocal
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, server_tool_association
@@ -3025,7 +3027,7 @@ class ToolService(BaseService):
                 gateway_payload = cached_payload.get("gateway")
 
         if not tool_payload:
-            tools = self._load_invocable_tools(db, name, server_id=server_id)
+            tools = await self._load_invocable_tools(db, name, server_id=server_id)
             tool_selected_from_server_scope = bool(server_id)
 
             if not tools:
@@ -3411,11 +3413,15 @@ class ToolService(BaseService):
             False,
         )
 
-    def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
+    async def _load_invocable_tools(self, db: Session, name: str, server_id: Optional[str] = None) -> List[DbTool]:
         """Load candidate tools for invocation, narrowing to a virtual server when possible.
 
+        Uses async SQLAlchemy when available for non-blocking database access
+        during tool invocation hot path. Falls back to sync session when
+        async engine is not initialized.
+
         Args:
-            db: Active database session.
+            db: Active database session (sync, kept for API compatibility).
             name: Tool name to resolve.
             server_id: Optional virtual server identifier used to constrain results.
 
@@ -3425,7 +3431,10 @@ class ToolService(BaseService):
         query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)
         if server_id:
             query = query.join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
-        return db.execute(query).scalars().all()
+
+        async with AsyncSessionLocal() as async_db:
+            result = await async_db.execute(query)
+            return list(result.scalars().all())
 
     # ------------------------------------------------------------------
     # Retry helpers (used by invoke_tool)
@@ -3613,7 +3622,8 @@ class ToolService(BaseService):
 
         if gateway_id_from_header:
             # Look up gateway to check if it's in direct_proxy mode
-            gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
+            async with AsyncSessionLocal() as async_db:
+                gateway = (await async_db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header))).scalar_one_or_none()
             if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                 # SECURITY: Check gateway access before allowing direct proxy
                 # This prevents RBAC bypass where any authenticated user could invoke tools
@@ -3676,7 +3686,7 @@ class ToolService(BaseService):
             # Use a single query to avoid a race between separate enabled/inactive lookups.
             # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
             # tool names across teams without crashing on MultipleResultsFound.
-            tools = self._load_invocable_tools(db, name, server_id=server_id)
+            tools = await self._load_invocable_tools(db, name, server_id=server_id)
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
@@ -3752,12 +3762,12 @@ class ToolService(BaseService):
                     logger.warning(f"Tool '{name}' has no ID in payload, cannot verify server membership")
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                server_match = db.execute(
-                    select(server_tool_association.c.tool_id).where(
-                        server_tool_association.c.server_id == server_id,
-                        server_tool_association.c.tool_id == tool_id_for_check,
-                    )
-                ).first()
+                server_match_query = select(server_tool_association.c.tool_id).where(
+                    server_tool_association.c.server_id == server_id,
+                    server_tool_association.c.tool_id == tool_id_for_check,
+                )
+                async with AsyncSessionLocal() as async_db:
+                    server_match = (await async_db.execute(server_match_query)).first()
                 if not server_match:
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
@@ -3926,7 +3936,8 @@ class ToolService(BaseService):
 
             # Query for the A2A agent
             agent_query = select(DbA2AAgent).where(DbA2AAgent.id == a2a_agent_id)
-            a2a_agent = db.execute(agent_query).scalar_one_or_none()
+            async with AsyncSessionLocal() as async_db:
+                a2a_agent = (await async_db.execute(agent_query)).scalar_one_or_none()
 
             if not a2a_agent:
                 raise ToolNotFoundError(f"A2A agent not found for tool '{name}' (agent ID: {a2a_agent_id})")
@@ -4612,69 +4623,93 @@ class ToolService(BaseService):
                                 # but lose distributed trace propagation to upstream servers.
                                 # Determine transport type based on current transport setting
                                 pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
-                                async with pool.session(
-                                    url=server_url,
-                                    headers=headers,
-                                    transport_type=pool_transport_type,
-                                    httpx_client_factory=get_httpx_client_factory,
-                                    user_identity=app_user_email,
-                                    gateway_id=gateway_id_str,
-                                ) as pooled:
-                                    with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                # Pooled path — wrap in try/finally to catch cleanup errors
+                                try:
+                                    async with pool.session(
+                                        url=server_url,
+                                        headers=headers,
+                                        transport_type=pool_transport_type,
+                                        httpx_client_factory=get_httpx_client_factory,
+                                        user_identity=app_user_email,
+                                        gateway_id=gateway_id_str,
+                                    ) as pooled:
+                                        with anyio.fail_after(effective_timeout):
+                                            tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                except BaseException as cleanup_exc:
+                                    # If the exception happened AFTER tool_call_result was set,
+                                    # it's a cleanup error (ClosedResourceError from MCP SDK
+                                    # background session task). Log it but don't fail the call.
+                                    if tool_call_result is not None:
+                                        logger.warning(
+                                            "⚠️ MCP session cleanup error (tool result already received): %s: %s",
+                                            type(cleanup_exc).__name__,
+                                            cleanup_exc,
+                                        )
+                                    else:
+                                        raise
                             else:
                                 # Fallback to per-call sessions when pool disabled or not initialized
-                                with create_span(
-                                    "mcp.client.call",
-                                    {
-                                        "mcp.tool.name": tool_name_original,
-                                        "contextforge.tool.id": tool_id,
-                                        "contextforge.gateway_id": tool_gateway_id,
-                                        "contextforge.runtime": "python",
-                                        "contextforge.transport": "streamablehttp",
-                                        "network.protocol.name": "mcp",
-                                        "server.address": urlparse(server_url).hostname,
-                                        "server.port": urlparse(server_url).port,
-                                        "url.path": urlparse(server_url).path or "/",
-                                        "url.full": server_url_sanitized,
-                                    },
-                                ):
-                                    # Non-pooled path: safe to add per-request headers.
-                                    # Inject within the active client span so an upstream service
-                                    # can attach beneath this span when it extracts traceparent.
-                                    request_headers = inject_trace_context_headers(headers)
-                                    if correlation_id and request_headers:
-                                        request_headers["X-Correlation-ID"] = correlation_id
-                                    async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
-                                        read_stream,
-                                        write_stream,
-                                        _get_session_id,
+                                try:
+                                    with create_span(
+                                        "mcp.client.call",
+                                        {
+                                            "mcp.tool.name": tool_name_original,
+                                            "contextforge.tool.id": tool_id,
+                                            "contextforge.gateway_id": tool_gateway_id,
+                                            "contextforge.runtime": "python",
+                                            "contextforge.transport": "streamablehttp",
+                                            "network.protocol.name": "mcp",
+                                            "server.address": urlparse(server_url).hostname,
+                                            "server.port": urlparse(server_url).port,
+                                            "url.path": urlparse(server_url).path or "/",
+                                            "url.full": server_url_sanitized,
+                                        },
                                     ):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                                                await session.initialize()
-                                            with create_span(
-                                                "mcp.client.request",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                },
-                                            ):
-                                                with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
-                                            with create_span(
-                                                "mcp.client.response",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                                },
-                                            ):
-                                                pass
+                                        # Non-pooled path: safe to add per-request headers.
+                                        # Inject within the active client span so an upstream service
+                                        # can attach beneath this span when it extracts traceparent.
+                                        request_headers = inject_trace_context_headers(headers)
+                                        if correlation_id and request_headers:
+                                            request_headers["X-Correlation-ID"] = correlation_id
+                                        async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
+                                            read_stream,
+                                            write_stream,
+                                            _get_session_id,
+                                        ):
+                                            async with ClientSession(read_stream, write_stream) as session:
+                                                with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
+                                                    await session.initialize()
+                                                with create_span(
+                                                    "mcp.client.request",
+                                                    {
+                                                        "mcp.tool.name": tool_name_original,
+                                                        "contextforge.tool.id": tool_id,
+                                                        "contextforge.gateway_id": tool_gateway_id,
+                                                        "contextforge.runtime": "python",
+                                                    },
+                                                ):
+                                                    with anyio.fail_after(effective_timeout):
+                                                        tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                                with create_span(
+                                                    "mcp.client.response",
+                                                    {
+                                                        "mcp.tool.name": tool_name_original,
+                                                        "contextforge.tool.id": tool_id,
+                                                        "contextforge.gateway_id": tool_gateway_id,
+                                                        "contextforge.runtime": "python",
+                                                        "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
+                                                    },
+                                                ):
+                                                    pass
+                                except BaseException as cleanup_exc:
+                                    if tool_call_result is not None:
+                                        logger.warning(
+                                            "⚠️ MCP session cleanup error (tool result already received): %s: %s",
+                                            type(cleanup_exc).__name__,
+                                            cleanup_exc,
+                                        )
+                                    else:
+                                        raise
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -4775,10 +4810,10 @@ class ToolService(BaseService):
                         if is_direct_proxy:
                             tool_result = tool_call_result
                             success = not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False)
-                            logger.debug(f"Direct proxy mode: using tool result as-is: {tool_result}")
+                            logger.debug("Direct proxy mode: using tool result as-is: %s", tool_result)
                         else:
                             dump = tool_call_result.model_dump(by_alias=True, mode="json")
-                            logger.debug(f"Tool call result dump: {dump}")
+                            logger.debug("Tool call result dump: %s", dump)
                             content = dump.get("content", [])
                             # Accept both alias and pythonic names for structured content
                             structured = dump.get("structuredContent") or dump.get("structured_content")
@@ -4789,7 +4824,10 @@ class ToolService(BaseService):
                                 is_err = getattr(tool_call_result, "isError", False)
                             tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                             success = not is_err
-                            logger.debug(f"Final tool_result: {tool_result}")
+                            logger.debug("Final tool_result: %s", tool_result)
+                            # DEBUG: Log is_error status to understand why "invocation failed" fires
+                            if is_err:
+                                logger.error("🚨 tool_call_result.is_error=True! content=%s", content)
 
                 elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
                     # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())
@@ -4966,6 +5004,7 @@ class ToolService(BaseService):
 
                 return tool_result
             except (PluginError, PluginViolationError):
+                logger.error("🔍 PluginError/PluginViolationError for tool=%s", name)
                 raise
             except ToolTimeoutError as e:
                 # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke.
@@ -4994,6 +5033,8 @@ class ToolService(BaseService):
                     )
                 raise
             except BaseException as e:
+                # DEBUG: Log that we actually enter the exception handler
+                logger.error("🔍 ENTERED except BaseException for tool=%s, type=%s", name, type(e).__name__)
                 # Extract root cause from ExceptionGroup (Python 3.11+)
                 # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
                 root_cause = e
@@ -5001,6 +5042,20 @@ class ToolService(BaseService):
                     while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                         root_cause = root_cause.exceptions[0]
                 error_message = str(root_cause)
+                logger.error("🔍 root_cause type=%s message=%s", type(root_cause).__name__, error_message[:500])
+
+                # DEBUG: Log full exception context for tool call failures
+                import traceback  # noqa: E402
+                tb = traceback.format_exception(type(e), e, e.__traceback__)
+                logger.error(
+                    "🔍 TOOL CALL EXCEPTION — tool=%s error_type=%s error=%s is_error_group=%s\n%s",
+                    name,
+                    type(root_cause).__name__,
+                    error_message[:500],
+                    isinstance(e, BaseExceptionGroup),
+                    "".join(tb[-15:]),  # Last 15 frames (focus on root cause)
+                )
+
                 # Set span error status
                 if span:
                     set_span_error(span, error_message)
@@ -5125,7 +5180,7 @@ class ToolService(BaseService):
                     )
                 else:
                     structured_logger.error(
-                        f"Tool '{name}' invocation failed",
+                        f"Tool '{name}' invocation failed dz 3",
                         error=Exception(error_message) if error_message else None,
                         user_id=app_user_email,
                         resource_type="tool",

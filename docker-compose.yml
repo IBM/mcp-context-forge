@@ -217,11 +217,12 @@ services:
       - SSRF_ALLOW_LOCALHOST=${SSRF_ALLOW_LOCALHOST:-true}
       - SSRF_ALLOW_PRIVATE_NETWORKS=${SSRF_ALLOW_PRIVATE_NETWORKS:-true}
       - SSRF_DNS_FAIL_CLOSED=${SSRF_DNS_FAIL_CLOSED:-false}
-      # Database connection: Via PgBouncer (default) or direct PostgreSQL
-      # PgBouncer provides connection pooling for better performance under high concurrency
-      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp}
-      # Direct PostgreSQL connection (bypass PgBouncer - increase DB_POOL_SIZE if using):
-      # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      # Database connection: Direct PostgreSQL (bypass PgBouncer for benchmark)
+      # PgBouncer can cause session discard with transaction pooling mode
+      # Direct connection preserves sessions for better performance
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp}
+      # Via PgBouncer (uncomment for production high-concurrency):
+      # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
       - SQLALCHEMY_ECHO=false
@@ -469,7 +470,7 @@ services:
       - DB_POOL_SIZE=20                # Pool size per worker
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
+      - DB_POOL_RECYCLE=1800           # Recycle connections every 30min (direct PostgreSQL, no PgBouncer timeout)
       # ═══════════════════════════════════════════════════════════════════════════
       # Database Startup Resilience (prevents crash-loop on DB outage)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -566,11 +567,11 @@ services:
       #   4. Keep MAX_PER_KEY low (10-20) unless global caps are configured
       #
       - MCP_SESSION_POOL_ENABLED=${MCP_SESSION_POOL_ENABLED:-true}  # Session pooling (broken sessions are now evicted on error)
-      - MCP_SESSION_POOL_MAX_PER_KEY=10            # Max sessions per (URL, identity, transport) - use 10-20 unless global caps configured
-      - MCP_SESSION_POOL_TTL=300.0                 # Session TTL in seconds (default: 300)
-      - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0  # Idle time before health check (default: 60)
-      - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60.0     # Timeout waiting for session slot (default: 30)
-      - MCP_SESSION_POOL_CREATE_TIMEOUT=30.0       # Timeout creating new session (default: 30)
+      - MCP_SESSION_POOL_MAX_PER_KEY=100           # Max sessions per (URL, identity, transport) - increased for benchmark load
+      - MCP_SESSION_POOL_TTL=600.0                 # Session TTL in seconds (default: 300) - longer for benchmark
+      - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=120.0  # Idle time before health check (default: 60)
+      - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=15.0     # Timeout waiting for session slot (default: 30)
+      - MCP_SESSION_POOL_CREATE_TIMEOUT=10.0       # Timeout creating new session (default: 30)
       - MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD=5  # Failures before circuit opens
       - MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET=60.0   # Seconds before circuit resets
       - MCP_SESSION_POOL_IDLE_EVICTION=600.0      # Evict idle pool keys after (default: 600)
@@ -676,13 +677,13 @@ services:
         soft: 65535
         hard: 65535
 
-    depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
-      pgbouncer:
-        condition: service_healthy   # ▶ wait for connection pooler
+    depends_on:          # Default stack: Direct PostgreSQL + Redis
+      postgres:
+        condition: service_healthy   # ▶ wait for PostgreSQL
       redis:
         condition: service_started
-      # Direct PostgreSQL (uncomment if bypassing PgBouncer):
-      # postgres:
+      # PgBouncer (uncomment for production high-concurrency):
+      # pgbouncer:
       #   condition: service_healthy
       # migration:
       #   condition: service_completed_successfully
@@ -801,13 +802,14 @@ services:
         hard: 8192
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
-    # Performance tuning for high-load testing (3000 sustained users)
-    # WITH PgBouncer (default): 800 connections provides headroom for 700 pool + system overhead
-    # DIRECT connection mode: increase to 4000 for (3 replicas × 16 workers × 80 pool)
+    # Performance tuning for high-load testing
+    # Direct PostgreSQL: sized for workers × pool + async engine overhead
+    # Default: 3 workers × (20 pool + 10 overflow) = 90, plus async (~10) + system (~10) = ~110
+    # For larger loads: increase DB_POOL_SIZE and adjust accordingly
     command:
       - "postgres"
       - "-c"
-      - "max_connections=800"     # Must exceed PgBouncer MAX_DB_CONNECTIONS (700) + overhead
+      - "max_connections=300"     # Sized for direct connections (workers × pool + async + headroom)
       - "-c"
       - "shared_buffers=512MB"
       - "-c"
@@ -919,73 +921,76 @@ services:
           memory: 2G
 
   # ──────────────────────────────────────────────────────────────────────
-  # PgBouncer - Connection Pooler for PostgreSQL
+  # PgBouncer - Connection Pooler for PostgreSQL (DISABLED for benchmark)
+  # PgBouncer transaction pooling mode causes session discard on each
+  # transaction end, which adds overhead for benchmark workloads.
+  # Re-enable by uncommenting and switching gateway DATABASE_URL to pgbouncer:6432
   # Reduces connection overhead, improves throughput under high concurrency.
   # Enable by switching gateway DATABASE_URL to use pgbouncer:6432 instead of postgres:5432
   # ──────────────────────────────────────────────────────────────────────
-  pgbouncer:
-    image: edoburu/pgbouncer:latest
-    restart: unless-stopped
-    networks: [mcpnet]
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    ports:
-      - "6432:6432"    # PgBouncer port (optional external access)
-    environment:
-      # Connection to upstream PostgreSQL
-      - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-      # PgBouncer listen port (default would be 5432, using 6432 to distinguish from PostgreSQL)
-      - LISTEN_PORT=6432
-      # Pool mode: transaction (recommended), session, or statement
-      # transaction: connection returned after each transaction (best for web apps)
-      - POOL_MODE=transaction
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Connection Pool Tuning for 3000 Sustained Users
-      # PgBouncer handles connection multiplexing - many app connections share fewer DB connections
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Client-side limits (from gateway workers via SQLAlchemy)
-      - MAX_CLIENT_CONN=5000           # Max app connections; must exceed (replicas × workers × pool)
-      - DEFAULT_POOL_SIZE=600          # Shared DB connections; sized for ~70 concurrent tx × 8x headroom
-      - MIN_POOL_SIZE=100              # Pre-warmed connections for instant response to load spikes
-      - RESERVE_POOL_SIZE=150          # Emergency pool for burst traffic beyond DEFAULT_POOL_SIZE
-      - RESERVE_POOL_TIMEOUT=2         # Seconds before tapping reserve pool
-      # Server-side limits (to PostgreSQL)
-      - MAX_DB_CONNECTIONS=700         # Max connections to PostgreSQL; must be < PG max_connections
-      - MAX_USER_CONNECTIONS=700       # Per-user limit; typically equals MAX_DB_CONNECTIONS
-      # Connection lifecycle
-      - SERVER_LIFETIME=3600           # Recycle server connections after 1 hour (prevents stale state)
-      - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
-      # Timeout settings
-      - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (4x IDLE_TRANSACTION_TIMEOUT; DB_POOL_RECYCLE=60 is half this, ensuring proactive recycle before PgBouncer closes them)
-      - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
-      # Transaction cleanup - critical for avoiding idle-in-transaction buildup
-      # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
-      # can stick unless the reset query clears them; DISCARD ALL is safest.
-      - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
-      - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
-      # Authentication
-      - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 256M
-        reservations:
-          cpus: '0.5'
-          memory: 128M
+  # pgbouncer:
+  #   image: edoburu/pgbouncer:latest
+  #   restart: unless-stopped
+  #   networks: [mcpnet]
+  #   ulimits:
+  #     nofile:
+  #       soft: 65536
+  #       hard: 65536
+  #   ports:
+  #     - "6432:6432"    # PgBouncer port (optional external access)
+  #   environment:
+  #     # Connection to upstream PostgreSQL
+  #     - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+  #     # PgBouncer listen port (default would be 5432, using 6432 to distinguish from PostgreSQL)
+  #     - LISTEN_PORT=6432
+  #     # Pool mode: transaction (recommended), session, or statement
+  #     # transaction: connection returned after each transaction (best for web apps)
+  #     - POOL_MODE=transaction
+  #     # ═══════════════════════════════════════════════════════════════════════════
+  #     # Connection Pool Tuning for 3000 Sustained Users
+  #     # PgBouncer handles connection multiplexing - many app connections share fewer DB connections
+  #     # ═══════════════════════════════════════════════════════════════════════════
+  #     # Client-side limits (from gateway workers via SQLAlchemy)
+  #     - MAX_CLIENT_CONN=5000           # Max app connections; must exceed (replicas × workers × pool)
+  #     - DEFAULT_POOL_SIZE=600          # Shared DB connections; sized for ~70 concurrent tx × 8x headroom
+  #     - MIN_POOL_SIZE=100              # Pre-warmed connections for instant response to load spikes
+  #     - RESERVE_POOL_SIZE=150          # Emergency pool for burst traffic beyond DEFAULT_POOL_SIZE
+  #     - RESERVE_POOL_TIMEOUT=2         # Seconds before tapping reserve pool
+  #     # Server-side limits (to PostgreSQL)
+  #     - MAX_DB_CONNECTIONS=700         # Max connections to PostgreSQL; must be < PG max_connections
+  #     - MAX_USER_CONNECTIONS=700       # Per-user limit; typically equals MAX_DB_CONNECTIONS
+  #     # Connection lifecycle
+  #     - SERVER_LIFETIME=3600           # Recycle server connections after 1 hour (prevents stale state)
+  #     - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
+  #     # Timeout settings
+  #     - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
+  #     - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (4x IDLE_TRANSACTION_TIMEOUT; DB_POOL_RECYCLE=60 is half this, ensuring proactive recycle before PgBouncer closes them)
+  #     - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
+  #     # Transaction cleanup - critical for avoiding idle-in-transaction buildup
+  #     # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
+  #     # can stick unless the reset query clears them; DISCARD ALL is safest.
+  #     - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
+  #     - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
+  #     - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
+  #     # Authentication
+  #     - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 10s
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '1'
+  #         memory: 256M
+  #       reservations:
+  #         cpus: '0.5'
+  #         memory: 128M
 
   # migration:
   #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
@@ -1080,21 +1085,21 @@ services:
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
-  # Prometheus PgBouncer Exporter - Connection pool metrics
-  # Metrics: active/waiting clients, server connections, pool stats
+  # Prometheus PgBouncer Exporter (DISABLED - PgBouncer disabled)
+  # Connection pool metrics - re-enable with PgBouncer
   # ──────────────────────────────────────────────────────────────────────
-  pgbouncer_exporter:
-    image: prometheuscommunity/pgbouncer-exporter:latest
-    restart: unless-stopped
-    networks: [mcpnet]
-    ports:
-      - "${PGBOUNCER_EXPORTER_PORT:-9127}:9127"    # http://localhost:${PGBOUNCER_EXPORTER_PORT:-9127}/metrics
-    environment:
-      - PGBOUNCER_EXPORTER_CONNECTION_STRING=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/pgbouncer?sslmode=disable
-    depends_on:
-      pgbouncer:
-        condition: service_healthy
-    profiles: ["monitoring"]
+  # pgbouncer_exporter:
+  #   image: prometheuscommunity/pgbouncer-exporter:latest
+  #   restart: unless-stopped
+  #   networks: [mcpnet]
+  #   ports:
+  #     - "${PGBOUNCER_EXPORTER_PORT:-9127}:9127"    # http://localhost:${PGBOUNCER_EXPORTER_PORT:-9127}/metrics
+  #   environment:
+  #     - PGBOUNCER_EXPORTER_CONNECTION_STRING=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/pgbouncer?sslmode=disable
+  #   depends_on:
+  #     pgbouncer:
+  #       condition: service_healthy
+  #   profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
   # Prometheus Nginx Exporter - Proxy metrics
