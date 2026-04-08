@@ -459,7 +459,6 @@ flowchart TD
     N --> N2[Semgrep - Semantic Patterns]
     N --> N3[Dodgy - Hardcoded Secrets]
     N --> N4[Gitleaks - Git History Secrets]
-
     N --> N6[Prospector - Comprehensive Analysis]
     N --> N7[Interrogate - Docstring Coverage]
     N --> N8[DevSkim - Security Anti-patterns]
