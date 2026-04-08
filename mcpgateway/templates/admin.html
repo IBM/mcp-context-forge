@@ -7890,27 +7890,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 {% for root in roots %}
                 <tr>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div class="relative" 
-                         x-data="{
-                           menuOpen: false,
-                           menuTop: 0,
-                           menuLeft: 0,
-                           openMenu() {
-                             const rect = $refs.trigger.getBoundingClientRect();
-                             this.menuTop = rect.bottom + 4;
-                             this.menuLeft = rect.left;
-                             this.menuOpen = true;
-                             $nextTick(() => $refs.menu.querySelector('[role=menuitem]')?.focus());
-                           },
-                           navigate(dir) {
-                             const items = [...$refs.menu.querySelectorAll('[role=menuitem]')];
-                             const idx = items.indexOf(document.activeElement);
-                             items[(idx + dir + items.length) % items.length]?.focus();
-                           }
-                         }"
+                    <div class="relative"
+                         x-data="Admin.overflowMenu('roots-table-wrapper')"
                          @click.away="menuOpen = false"
-                         @keydown.escape="menuOpen = false; $refs.trigger.focus()"
-                         x-effect="const main = document.querySelector('main[data-scroll-container]'); if (main) main.style.overflow = menuOpen ? 'hidden' : ''; const wrapper = document.getElementById('roots-table-wrapper'); if (wrapper) wrapper.style.overflow = menuOpen ? 'hidden' : ''">
+                         @keydown.escape="menuOpen = false; $refs.trigger.focus()">
                       <button
                         type="button"
                         x-ref="trigger"

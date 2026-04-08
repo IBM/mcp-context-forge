@@ -22,27 +22,10 @@
       {% set can_modify = is_admin or prompt.owner_email == current_user_email or prompt.ownerEmail == current_user_email or (prompt.visibility == 'team' and prompt.teamId and user_team_roles.get(prompt.teamId|string) == 'owner') or (prompt.visibility == 'team' and prompt.team_id and user_team_roles.get(prompt.team_id|string) == 'owner') %}
       <tr data-enabled="{{ prompt.enabled|lower }}" data-owner-email="{{ prompt.ownerEmail or prompt.owner_email }}" data-team-id="{{ prompt.teamId or prompt.team_id or '' }}" data-visibility="{{ prompt.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                <div class="relative" 
-                     x-data="{
-                       menuOpen: false,
-                       menuTop: 0,
-                       menuLeft: 0,
-                       openMenu() {
-                         const rect = $refs.trigger.getBoundingClientRect();
-                         this.menuTop = rect.bottom + 4;
-                         this.menuLeft = rect.left;
-                         this.menuOpen = true;
-                         $nextTick(() => $refs.menu.querySelector('[role=menuitem]')?.focus());
-                       },
-                       navigate(dir) {
-                         const items = [...$refs.menu.querySelectorAll('[role=menuitem]')];
-                         const idx = items.indexOf(document.activeElement);
-                         items[(idx + dir + items.length) % items.length]?.focus();
-                       }
-                     }"
-                     @click.away="menuOpen = false"
-                     @keydown.escape="menuOpen = false; $refs.trigger.focus()"
-                     x-effect="const main = document.querySelector('main[data-scroll-container]'); if (main) main.style.overflow = menuOpen ? 'hidden' : ''; const wrapper = document.getElementById('prompts-table-wrapper'); if (wrapper) wrapper.style.overflow = menuOpen ? 'hidden' : ''">
+                <div class="relative"
+                     x-data="Admin.overflowMenu('prompts-table-wrapper')"
+               @click.away="menuOpen = false"
+               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
                   <button
                     type="button"
                     x-ref="trigger"
@@ -94,7 +77,7 @@
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">
-              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'prompts')">
+              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'prompts')">
                 <input type="hidden" name="activate" value="{{ 'false' if prompt.enabled else 'true' }}" />
                 <button
                   type="submit"

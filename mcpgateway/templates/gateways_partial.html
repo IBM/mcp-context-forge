@@ -21,27 +21,10 @@
       {% set can_modify = is_admin or gateway.ownerEmail == current_user_email or (gateway.visibility == 'team' and gateway.teamId and user_team_roles.get(gateway.teamId|string) == 'owner') %}
       <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}" data-owner-email="{{ gateway.ownerEmail }}" data-team-id="{{ gateway.teamId or '' }}" data-visibility="{{ gateway.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-          <div class="relative" 
-               x-data="{
-                 menuOpen: false,
-                 menuTop: 0,
-                 menuLeft: 0,
-                 openMenu() {
-                   const rect = $refs.trigger.getBoundingClientRect();
-                   this.menuTop = rect.bottom + 4;
-                   this.menuLeft = rect.left;
-                   this.menuOpen = true;
-                   $nextTick(() => $refs.menu.querySelector('[role=menuitem]')?.focus());
-                 },
-                 navigate(dir) {
-                   const items = [...$refs.menu.querySelectorAll('[role=menuitem]')];
-                   const idx = items.indexOf(document.activeElement);
-                   items[(idx + dir + items.length) % items.length]?.focus();
-                 }
-               }"
+          <div class="relative"
+               x-data="Admin.overflowMenu('gateways-table-wrapper')"
                @click.away="menuOpen = false"
-               @keydown.escape="menuOpen = false; $refs.trigger.focus()"
-               x-effect="const main = document.querySelector('main[data-scroll-container]'); if (main) main.style.overflow = menuOpen ? 'hidden' : ''; const wrapper = document.getElementById('gateways-table-wrapper'); if (wrapper) wrapper.style.overflow = menuOpen ? 'hidden' : ''">
+               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
             <!-- Three-dot trigger -->
             <button
               type="button"
@@ -66,8 +49,8 @@
               x-transition:leave="transition ease-in duration-75"
               x-transition:leave-start="opacity-100 scale-100"
               x-transition:leave-end="opacity-0 scale-95"
-              :class="`fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1 top-[${menuTop}px] left-[${menuLeft}px]`"
-              style="display:none"
+              class="fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
+              :style="`top: ${menuTop}px; left: ${menuLeft}px; display: ${menuOpen ? 'block' : 'none'}`"
               role="menu"
               @keydown.arrow-down.prevent="navigate(1)"
               @keydown.arrow-up.prevent="navigate(-1)"

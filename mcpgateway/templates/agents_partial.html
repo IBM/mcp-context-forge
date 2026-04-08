@@ -23,27 +23,10 @@
     {% set can_modify = is_admin or agent.ownerEmail == current_user_email or (agent.visibility == 'team' and agent.teamId and user_team_roles.get(agent.teamId|string) == 'owner') %}
       <tr data-enabled="{{ agent.enabled|lower }}" data-owner-email="{{ agent.ownerEmail }}" data-team-id="{{ agent.teamId or '' }}" data-visibility="{{ agent.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-      <div class="relative" 
-           x-data="{
-             menuOpen: false,
-             menuTop: 0,
-             menuLeft: 0,
-             openMenu() {
-               const rect = $refs.trigger.getBoundingClientRect();
-               this.menuTop = rect.bottom + 4;
-               this.menuLeft = rect.left;
-               this.menuOpen = true;
-               $nextTick(() => $refs.menu.querySelector('[role=menuitem]')?.focus());
-             },
-             navigate(dir) {
-               const items = [...$refs.menu.querySelectorAll('[role=menuitem]')];
-               const idx = items.indexOf(document.activeElement);
-               items[(idx + dir + items.length) % items.length]?.focus();
-             }
-           }"
-           @click.away="menuOpen = false"
-           @keydown.escape="menuOpen = false; $refs.trigger.focus()"
-           x-effect="const main = document.querySelector('main[data-scroll-container]'); if (main) main.style.overflow = menuOpen ? 'hidden' : ''; const wrapper = document.getElementById('agents-table-wrapper'); if (wrapper) wrapper.style.overflow = menuOpen ? 'hidden' : ''">
+      <div class="relative"
+           x-data="Admin.overflowMenu('agents-table-wrapper')"
+               @click.away="menuOpen = false"
+               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
             <button
               type="button"
               x-ref="trigger"
@@ -84,7 +67,7 @@
                 type="button"
                 role="menuitem"
                 tabindex="0"
-                @click="menuOpen = false; Admin.viewAgent({{ agent.id|tojson_attr }})"
+                @click="menuOpen = false; Admin.viewA2AAgent({{ agent.id|tojson_attr }})"
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >View</button>
               {% if can_modify %}
@@ -96,7 +79,7 @@
                 class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">
-              <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'a2a-agents')">
+              <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'a2a-agents')">
                 <input type="hidden" name="activate" value="{{ 'false' if agent.enabled else 'true' }}" />
                 <button
                   type="submit"

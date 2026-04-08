@@ -42,27 +42,10 @@
   {% set can_modify = is_admin or server.ownerEmail == current_user_email or (server.visibility == 'team' and server.teamId and user_team_roles.get(server.teamId|string) == 'owner') %}
   <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}" data-owner-email="{{ server.ownerEmail }}" data-team-id="{{ server.teamId or '' }}" data-visibility="{{ server.visibility }}">
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-      <div class="relative" 
-           x-data="{
-             menuOpen: false,
-             menuTop: 0,
-             menuLeft: 0,
-             openMenu() {
-               const rect = $refs.trigger.getBoundingClientRect();
-               this.menuTop = rect.bottom + 4;
-               this.menuLeft = rect.left;
-               this.menuOpen = true;
-               $nextTick(() => $refs.menu.querySelector('[role=menuitem]')?.focus());
-             },
-             navigate(dir) {
-               const items = [...$refs.menu.querySelectorAll('[role=menuitem]')];
-               const idx = items.indexOf(document.activeElement);
-               items[(idx + dir + items.length) % items.length]?.focus();
-             }
-           }"
-           @click.away="menuOpen = false"
-           @keydown.escape="menuOpen = false; $refs.trigger.focus()"
-           x-effect="const main = document.querySelector('main[data-scroll-container]'); if (main) main.style.overflow = menuOpen ? 'hidden' : ''; const wrapper = document.getElementById('servers-table-wrapper'); if (wrapper) wrapper.style.overflow = menuOpen ? 'hidden' : ''">
+      <div class="relative"
+           x-data="Admin.overflowMenu('servers-table-wrapper')"
+               @click.away="menuOpen = false"
+               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
         <button
           type="button"
           x-ref="trigger"
@@ -117,7 +100,7 @@
           >Export Config</button>
           {% if can_modify %}
           <hr class="border-gray-200 dark:border-gray-600 my-1">
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'servers')">
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'servers')">
             <input type="hidden" name="activate" value="{{ 'false' if server.enabled else 'true' }}" />
             <button
               type="submit"

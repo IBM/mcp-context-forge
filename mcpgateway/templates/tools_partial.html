@@ -24,27 +24,10 @@
       {% set can_modify = is_admin or tool.ownerEmail == current_user_email or (tool.visibility == 'team' and tool.teamId and user_team_roles.get(tool.teamId|string) == 'owner') %}
       <tr data-enabled="{{ tool.enabled|lower }}" data-owner-email="{{ tool.ownerEmail }}" data-team-id="{{ tool.teamId or '' }}" data-visibility="{{ tool.visibility }}">
         <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
-          <div class="relative" 
-               x-data="{
-                 menuOpen: false,
-                 menuTop: 0,
-                 menuLeft: 0,
-                 openMenu() {
-                   const rect = $refs.trigger.getBoundingClientRect();
-                   this.menuTop = rect.bottom + 4;
-                   this.menuLeft = rect.left;
-                   this.menuOpen = true;
-                   $nextTick(() => $refs.menu.querySelector('[role=menuitem]')?.focus());
-                 },
-                 navigate(dir) {
-                   const items = [...$refs.menu.querySelectorAll('[role=menuitem]')];
-                   const idx = items.indexOf(document.activeElement);
-                   items[(idx + dir + items.length) % items.length]?.focus();
-                 }
-               }"
+          <div class="relative"
+               x-data="Admin.overflowMenu('tools-table-wrapper')"
                @click.away="menuOpen = false"
-               @keydown.escape="menuOpen = false; $refs.trigger.focus()"
-               x-effect="const main = document.querySelector('main[data-scroll-container]'); if (main) main.style.overflow = menuOpen ? 'hidden' : ''; const wrapper = document.getElementById('tools-table-wrapper'); if (wrapper) wrapper.style.overflow = menuOpen ? 'hidden' : ''">
+               @keydown.escape="menuOpen = false; $refs.trigger.focus()">
             <button
               type="button"
               x-ref="trigger"
@@ -100,7 +83,7 @@
               >Edit</button>
               <hr class="border-gray-200 dark:border-gray-600 my-1">
               {% if tool.enabled %}
-              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
+              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'tools')">
                 <input type="hidden" name="activate" value="false" />
                 <button
                   type="submit"
