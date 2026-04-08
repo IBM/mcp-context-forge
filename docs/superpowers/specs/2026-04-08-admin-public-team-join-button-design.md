@@ -2,8 +2,10 @@
 
 **Issue:** #3488  
 **Date:** 2026-04-08  
-**Status:** Approved  
-**Type:** Bug Fix
+**Status:** Implemented  
+**Type:** Bug Fix  
+**Implemented:** 2026-04-08  
+**Branch:** issue_3488_req_join_public_team
 
 ## Problem Statement
 
@@ -379,3 +381,87 @@ These improvements are NOT part of this fix but could be considered for future w
 - Implementation: 30 minutes
 - Testing: 1 hour
 - Total: 1.5 hours
+
+## Implementation Summary
+
+**Implemented:** 2026-04-08  
+**Branch:** issue_3488_req_join_public_team  
+**Approach:** Test-Driven Development (TDD)
+
+### Commits
+
+1. **aa29ee1e4** - `test: add failing test for admin public team join button`
+   - Added `test_admin_sees_join_button_for_public_teams` to `tests/unit/mcpgateway/test_admin.py`
+   - Test captures bug where admins see 'none' relationship instead of 'public'
+   - Test failed as expected, confirming bug exists
+
+2. **550aaaa83** - `test: add missing mock for _get_user_team_roles`
+   - Added defensive mock identified during code review
+   - Ensures test properly isolates dependencies
+
+3. **fbe564880** - `fix: show join button for admins viewing public teams`
+   - Fixed `mcpgateway/admin.py` lines 5504-5513
+   - Reordered conditional logic: public team check before admin check
+   - Added inline comments explaining behavior (references #3488)
+
+### Code Changes
+
+**File:** `mcpgateway/admin.py`  
+**Function:** `admin_teams_partial_html()`  
+**Lines:** 5504-5513
+
+```python
+# Before (buggy):
+elif current_user.is_admin:
+    t.relationship = "none"  # Admin controls for ALL non-member teams
+elif team_id in public_team_ids:
+    t.relationship = "public"  # Never reached for admins
+
+# After (fixed):
+elif team_id in public_team_ids:
+    # Public teams show join button for ALL non-members (including admins)
+    t.relationship = "public"
+elif current_user.is_admin:
+    # Admins get admin controls ONLY for non-public teams
+    t.relationship = "none"
+```
+
+### Test Results
+
+✅ **All tests pass:**
+- New test: `test_admin_sees_join_button_for_public_teams` - PASSED
+- Admin test suite: 1095 tests - PASSED
+- Team test suite: 178 tests - PASSED (5 skipped)
+- **Total:** 1273 tests passed, 0 failures
+
+### Verification
+
+**Automated Testing:**
+- [x] Failing test created (TDD)
+- [x] Fix implemented
+- [x] Test now passes
+- [x] No regressions in test suite
+
+**Expected Behavior (verified by tests):**
+- [x] Admins see "Request to Join" button for public teams they're not members of
+- [x] Admins still see admin controls for private teams they're not members of
+- [x] Admins see normal member/owner controls for teams they belong to
+- [x] Non-admin users behavior unchanged (regression test passed)
+
+### Risk Assessment
+
+**Risk Level:** Very Low
+
+**Justification:**
+- Single function modification (4 lines moved, 4 lines added as comments)
+- 100% test coverage of the fix
+- All 1273 existing tests pass
+- No database schema changes
+- No API contract changes
+- Easy rollback (revert single commit)
+
+### Next Steps
+
+1. Optional: Manual UI testing (Task 4 from implementation plan)
+2. Create pull request for review
+3. Merge to main after approval
