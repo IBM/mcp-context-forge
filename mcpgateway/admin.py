@@ -20572,3 +20572,36 @@ async def get_performance_history(
     )
 
     return history.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# React SPA — /app catch-all
+#
+# Served on a SEPARATE router (no /admin prefix, no CSRF dependency) so that
+# /app/login and all other client-side routes are reachable at their intended
+# paths.  Auth is NOT enforced here: the HTML is public; access control is
+# handled by the React AuthGuard (client-side) and by each API endpoint
+# (server-side).  This follows the standard SPA deployment pattern.
+# ---------------------------------------------------------------------------
+
+app_spa_router = APIRouter(tags=["App UI"])
+
+
+@app_spa_router.get("/app", include_in_schema=False)
+@app_spa_router.get("/app/{path:path}", include_in_schema=False)
+async def app_spa(_request: Request) -> FileResponse:
+    """Serve the React SPA for all /app/* routes.
+
+    Returns:
+        FileResponse: The compiled React index.html
+
+    Raises:
+        HTTPException: 404 when the SPA has not been built yet
+    """
+    index = settings.static_dir / "app" / "index.html"
+    if not index.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="React UI not built. Run: cd client && npm run build",
+        )
+    return FileResponse(str(index))
