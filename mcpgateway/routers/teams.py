@@ -176,7 +176,14 @@ async def list_teams(
         next_cursor = None
         total = 0
 
-        if current_user_ctx.get("is_admin"):
+        # Check is_admin flag (Layer 1) and RBAC permissions (Layer 2)
+        has_admin_team_access = (
+            current_user_ctx.get("is_admin") or
+            "*" in current_user_ctx.get("permissions", []) or
+            "teams.*" in current_user_ctx.get("permissions", [])
+        )
+
+        if has_admin_team_access:
             # Use updated list_teams logic
             # If current request uses offset (skip), mapped to offset.
             # If cursor, mapped to cursor.
