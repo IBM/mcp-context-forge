@@ -205,6 +205,11 @@ def _get_or_create_observability_session() -> tuple[Session, bool]:
             - session: New SQLAlchemy session for observability
             - owned: Always True (caller must close it)
 
+    Note:
+        The tuple return pattern allows future optimization where callers could
+        optionally pass a session for reuse. Currently always returns (session, True)
+        but the "if owned:" guards in callers remain for forward compatibility.
+
     Examples:
         >>> obs_db, owned = _get_or_create_observability_session()  # doctest: +SKIP
         >>> assert owned is True  # doctest: +SKIP
@@ -309,8 +314,10 @@ class ObservabilityService:
             ...     user_email="user@example.com"
             ... )
         """
-        obs_db, owned = _get_or_create_observability_session()
+        obs_db = None
+        owned = False
         try:
+            obs_db, owned = _get_or_create_observability_session()
             # Use provided trace_id or generate new UUID
             if not trace_id:
                 trace_id = str(uuid.uuid4())
@@ -339,7 +346,7 @@ class ObservabilityService:
             logger.debug(f"Started trace {trace_id}: {name}")
             return trace_id
         finally:
-            if owned:
+            if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
@@ -377,8 +384,10 @@ class ObservabilityService:
             ...     http_status_code=200
             ... )
         """
-        obs_db, owned = _get_or_create_observability_session()
+        obs_db = None
+        owned = False
         try:
+            obs_db, owned = _get_or_create_observability_session()
             trace = obs_db.query(ObservabilityTrace).filter_by(trace_id=trace_id).first()
             if not trace:
                 logger.warning(f"Trace {trace_id} not found")
@@ -399,7 +408,7 @@ class ObservabilityService:
             self._safe_commit(obs_db, "end_trace")
             logger.debug(f"Ended trace {trace_id}: {status} ({duration_ms:.2f}ms)")
         finally:
-            if owned:
+            if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
@@ -607,9 +616,11 @@ class ObservabilityService:
             >>> with service.trace_span(trace_id, "database_query") as span_id:  # doctest: +SKIP
             ...     results = query_data()  # doctest: +SKIP
         """
-        obs_db, owned = _get_or_create_observability_session()
+        obs_db = None
+        owned = False
         span_id = None
         try:
+            obs_db, owned = _get_or_create_observability_session()
             span_id = self.start_span(
                 trace_id=trace_id,
                 name=name,
@@ -658,7 +669,7 @@ class ObservabilityService:
                     logger.warning(f"Failed to end span on error: {end_error}")
             raise
         finally:
-            if owned:
+            if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
@@ -707,10 +718,12 @@ class ObservabilityService:
         # Sanitize arguments (remove sensitive data)
         safe_args = {k: ("***REDACTED***" if any(sensitive in k.lower() for sensitive in ["password", "token", "key", "secret"]) else v) for k, v in arguments.items()}
 
-        obs_db, owned = _get_or_create_observability_session()
+        obs_db = None
+        owned = False
         span_id = None
         result_dict = {}
         try:
+            obs_db, owned = _get_or_create_observability_session()
             # Start tool invocation span
             span_id = self.start_span(
                 trace_id=trace_id,
@@ -772,7 +785,7 @@ class ObservabilityService:
                     logger.warning(f"Failed to end span on error: {end_error}")
             raise
         finally:
-            if owned:
+            if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
@@ -850,7 +863,7 @@ class ObservabilityService:
             # Commit failed - return 0
             return 0
         finally:
-            if owned:
+            if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
@@ -914,8 +927,10 @@ class ObservabilityService:
 
         # Store in span attributes if span_id provided
         if span_id:
-            obs_db, owned = _get_or_create_observability_session()
+            obs_db = None
+            owned = False
             try:
+                obs_db, owned = _get_or_create_observability_session()
                 span = obs_db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
                 if span:
                     attrs = span.attributes or {}
@@ -1069,10 +1084,12 @@ class ObservabilityService:
         if request_data:
             safe_data = {k: ("***REDACTED***" if any(sensitive in k.lower() for sensitive in ["password", "token", "key", "secret", "auth"]) else v) for k, v in request_data.items()}
 
-        obs_db, owned = _get_or_create_observability_session()
+        obs_db = None
+        owned = False
         span_id = None
         result_dict = {}
         try:
+            obs_db, owned = _get_or_create_observability_session()
             # Start A2A span
             span_id = self.start_span(
                 trace_id=trace_id,
@@ -1134,7 +1151,7 @@ class ObservabilityService:
                     logger.warning(f"Failed to end span on error: {end_error}")
             raise
         finally:
-            if owned:
+            if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
@@ -1288,8 +1305,10 @@ class ObservabilityService:
             ...     trace_id=trace_id  # doctest: +SKIP
             ... )  # doctest: +SKIP
         """
-        obs_db, owned = _get_or_create_observability_session()
+        obs_db = None
+        owned = False
         try:
+            obs_db, owned = _get_or_create_observability_session()
             metric = ObservabilityMetric(
                 name=name,
                 value=value,
@@ -1311,7 +1330,7 @@ class ObservabilityService:
             # Commit failed - return 0
             return 0
         finally:
-            if owned:
+            if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:
@@ -1700,8 +1719,10 @@ class ObservabilityService:
             >>> deleted = service.delete_old_traces(cutoff)  # doctest: +SKIP
             >>> print(f"Deleted {deleted} old traces")  # doctest: +SKIP
         """
-        obs_db, owned = _get_or_create_observability_session()
+        obs_db = None
+        owned = False
         try:
+            obs_db, owned = _get_or_create_observability_session()
             deleted = obs_db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time < before_time).delete()
             if self._safe_commit(obs_db, "delete_old_traces"):
                 logger.info(f"Deleted {deleted} traces older than {before_time}")
@@ -1709,7 +1730,7 @@ class ObservabilityService:
             # Commit failed - return 0
             return 0
         finally:
-            if owned:
+            if owned and obs_db is not None:
                 try:
                     obs_db.close()
                 except Exception as close_error:

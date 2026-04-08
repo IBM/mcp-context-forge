@@ -46,6 +46,39 @@ from mcpgateway.utils.trace_redaction import sanitize_trace_text
 logger = logging.getLogger(__name__)
 
 
+def sanitize_header_for_storage(value: Optional[str], max_length: int = 500) -> str:
+    """Sanitize header value for safe database storage.
+
+    Removes control characters and truncates to prevent:
+    - Log injection attacks (newlines, ANSI codes)
+    - DoS via large headers (10MB user-agent)
+    - Storage exhaustion
+
+    Args:
+        value: Header value to sanitize
+        max_length: Maximum length to truncate to (default: 500)
+
+    Returns:
+        Sanitized header value, truncated to max_length
+
+    Examples:
+        >>> sanitize_header_for_storage("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        >>> sanitize_header_for_storage("Evil\\x00\\nInjection")
+        'Evil Injection'
+        >>> sanitize_header_for_storage("A" * 1000, max_length=100)
+        'AAAAAAAAAA...'
+    """
+    if not value:
+        return "unknown"
+    # Remove control characters except space and tab
+    clean = "".join(c for c in value if c.isprintable() or c in " \t")
+    # Truncate to max length
+    if len(clean) > max_length:
+        return clean[:max_length]
+    return clean
+
+
 class ObservabilityMiddleware(BaseHTTPMiddleware):
     """Middleware for automatic HTTP request/response tracing.
 
@@ -95,10 +128,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         # Extract request context
         http_method = request.method
-        http_url = str(request.url)
+        http_url = sanitize_header_for_storage(str(request.url), max_length=2000)
         user_email = None
         ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
+        user_agent = sanitize_header_for_storage(request.headers.get("user-agent"), max_length=500)
 
         # Try to extract user from request state (set by auth middleware)
         if hasattr(request.state, "user") and hasattr(request.state.user, "email"):
