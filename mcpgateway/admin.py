@@ -5476,12 +5476,16 @@ async def admin_teams_partial_html(
         elif team_id in user_team_ids:
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
-        elif current_user.is_admin:
-            # Admins get admin controls for teams they're not members of
-            t.relationship = "none"  # Falls through to admin controls in template
         elif team_id in public_team_ids:
+            # Public teams show join button for ALL non-members (including admins)
+            # This ensures platform admins go through the normal join request workflow
+            # for public teams, respecting team ownership boundaries. Issue #3488
             t.relationship = "public"
             t.pending_request = pending_requests.get(team_id)
+        elif current_user.is_admin:
+            # Admins get admin controls ONLY for non-public teams they're not members of
+            # This allows emergency access to private teams for platform maintenance
+            t.relationship = "none"  # Falls through to admin controls in template
 
         enriched_data.append(t)
 
