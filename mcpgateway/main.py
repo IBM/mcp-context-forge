@@ -1819,6 +1819,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await elicitation_service.start()
             logger.info("Elicitation service initialized")
 
+        # Initialize tool call registry for elicitation routing
+        if settings.mcpgateway_elicitation_enabled:
+            # First-Party
+            from mcpgateway.cache.tool_call_registry import get_tool_call_registry  # pylint: disable=import-outside-toplevel
+
+            tool_call_registry = get_tool_call_registry()
+            await tool_call_registry.start()
+            logger.info("Tool call registry initialized")
+
         # Initialize metrics buffer service for batching metric writes
         if settings.metrics_buffer_enabled:
             # First-Party
@@ -1991,6 +2000,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             elicitation_service = get_elicitation_service()
             services_to_shutdown.insert(5, elicitation_service)
+
+        # Add tool call registry if elicitation is enabled
+        if settings.mcpgateway_elicitation_enabled:
+            # First-Party
+            from mcpgateway.cache.tool_call_registry import get_tool_call_registry  # pylint: disable=import-outside-toplevel
+
+            tool_call_registry = get_tool_call_registry()
+            services_to_shutdown.insert(6, tool_call_registry)
 
         # Add metrics buffer service if enabled (flush remaining metrics before shutdown)
         if settings.metrics_buffer_enabled:
@@ -11019,6 +11036,7 @@ app.include_router(export_import_router)
 
 # Tool plugin bindings router
 try:
+    # First-Party
     from mcpgateway.routers.tool_plugin_bindings import router as tool_plugin_bindings_router  # pylint: disable=import-outside-toplevel
 
     app.include_router(tool_plugin_bindings_router)

@@ -118,6 +118,34 @@ mcp_auth_cache_events_counter = Counter(
     ["outcome"],
 )
 
+# Elicitation Metrics
+elicitation_requests_total = Counter(
+    "elicitation_requests_total",
+    "Total number of elicitation requests created",
+)
+
+elicitation_completed_total = Counter(
+    "elicitation_completed_total",
+    "Total number of completed elicitations by action",
+    ["action"],  # accept, decline, cancel
+)
+
+elicitation_timeout_total = Counter(
+    "elicitation_timeout_total",
+    "Total number of elicitation timeouts",
+)
+
+elicitation_duration_seconds = _get_registry_collector("elicitation_duration_seconds")
+if elicitation_duration_seconds is None:
+    # Third-Party
+    from prometheus_client import Histogram
+
+    elicitation_duration_seconds = Histogram(
+        "elicitation_duration_seconds",
+        "Duration of elicitation requests in seconds",
+        buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+    )
+
 
 def setup_metrics(app):
     """

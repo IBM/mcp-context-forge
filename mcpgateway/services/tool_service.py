@@ -98,6 +98,8 @@ from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.trace_context import format_trace_team_scope
 from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
+from mcpgateway.cache.tool_call_registry import get_tool_call_registry
+from mcpgateway.services.elicitation_service import get_elicitation_service
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Cache import (lazy to avoid circular dependencies)
@@ -2889,6 +2891,9 @@ class ToolService(BaseService):
                 },
             ):
                 traced_headers = inject_trace_context_headers(headers)
+                # NOTE: Direct proxy mode does not support elicitation pass-through
+                # because it's a fast-path that bypasses normal tool lookup and session tracking.
+                # Elicitation requires downstream_session_id which is not available in this code path.
                 async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(read_stream, write_stream) as session:
                         with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
@@ -3116,6 +3121,7 @@ class ToolService(BaseService):
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
 
         # Resolve per-tool context_id for plugin manager (same pattern as invoke_tool)
+        # First-Party
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")
@@ -3536,6 +3542,160 @@ class ToolService(BaseService):
                 retry_attempt=retry_attempt + 1,
             )
 
+    async def _create_elicitation_callback_for_tool_invocation(
+        self,
+        tool_call_id: str,
+        downstream_session_id: Optional[str],
+    ):
+        """Create an elicitation callback for tool invocation.
+
+        This callback enables MCP servers to request user input during tool execution
+        by routing elicitation requests through the gateway to the originating client.
+
+        Phase 3 Implementation: Capability Enforcement
+        - Checks if elicitation is enabled globally
+        - Verifies downstream session exists
+        - Enforces client capability advertisement (returns -32601 if missing)
+        - Logs capability mismatches for debugging
+        - Returns clear error messages for all failure modes
+
+        Args:
+            tool_call_id: Unique identifier for this tool call
+            downstream_session_id: Session ID of the client that initiated the tool call
+
+        Returns:
+            Async callback function that handles elicitation requests.
+            Returns a callback that produces -32601 errors if capability checks fail.
+            Returns None only if elicitation is globally disabled or no session provided.
+
+        The callback:
+        1. Enforces client elicitation capability (Phase 3)
+        2. Uses ElicitationService to forward the request to the client
+        3. Returns the client's response (accept/decline/cancel) to the server
+        4. Returns -32601 error if client lacks capability
+        5. Returns other error codes for validation/timeout/internal errors
+        """
+        # Check if elicitation is enabled globally
+        if not settings.mcpgateway_elicitation_enabled:
+            logger.debug(f"Elicitation globally disabled for tool call {tool_call_id}")
+            return None
+
+        # Check if we have a downstream session
+        if not downstream_session_id:
+            logger.debug(f"No downstream session ID for tool call {tool_call_id}, elicitation unavailable")
+            return None
+
+        # Import session_registry from main (it's a global instance there)
+        from mcpgateway.main import session_registry
+
+        # Get service instances
+        elicitation_service = get_elicitation_service()
+        tool_call_registry = get_tool_call_registry()
+
+        # Phase 3: Check capability and create appropriate callback
+        has_capability = await session_registry.has_elicitation_capability(downstream_session_id)
+
+        if not has_capability:
+            # Phase 3: Log capability mismatch for debugging
+            logger.warning(
+                f"Elicitation capability check failed for session {downstream_session_id} "
+                f"(tool call {tool_call_id}). Client must advertise capabilities.elicitation "
+                f"during initialization to support elicitation requests."
+            )
+
+            # Phase 3: Return callback that produces -32601 error
+            async def capability_error_callback(context: Any, params: types.ElicitRequestParams):
+                """Return -32601 error when client lacks elicitation capability.
+
+                This callback is returned when the client session does not advertise
+                elicitation capability during initialization. Per MCP specification,
+                -32601 (Method not found) indicates the requested capability is not
+                available.
+
+                Args:
+                    context: RequestContext from MCP SDK (unused)
+                    params: ElicitRequestParams (unused, error returned immediately)
+
+                Returns:
+                    ErrorData with code -32601 and clear error message
+                """
+                error_msg = (
+                    f"Client session {downstream_session_id} does not support elicitation. "
+                    f"The client must advertise 'capabilities.elicitation' during initialization "
+                    f"to receive elicitation requests from MCP servers."
+                )
+                logger.info(f"Returning -32601 error for tool call {tool_call_id}: {error_msg}")
+                return types.ErrorData(code=-32601, message=error_msg)
+
+            return capability_error_callback
+
+        # Client has capability - return normal elicitation callback
+        async def elicitation_callback(context: Any, params: types.ElicitRequestParams):
+            """Handle elicitation request from upstream MCP server.
+
+            This callback is used when the client has advertised elicitation capability.
+            It forwards the elicitation request to the client and returns the response.
+
+            Args:
+                context: RequestContext from MCP SDK (unused, for signature compatibility)
+                params: ElicitRequestParams containing message and schema
+
+            Returns:
+                ElicitResult from the client containing action and optional content,
+                or ErrorData if the request fails
+
+            Error Codes:
+                -32601: Client lacks elicitation capability (handled by capability_error_callback)
+                -32602: Invalid parameters (schema validation failed)
+                -32000: Timeout waiting for client response
+                -32603: Internal error during elicitation processing
+            """
+            try:
+                # Extract message and schema from params
+                message = params.message
+                # Access schema field directly (params.schema is deprecated method)
+                requested_schema = params.model_dump().get("schema", {})
+
+                # Register the tool call mapping for elicitation routing
+                tool_call_registry.register_tool_call(tool_call_id, downstream_session_id)
+
+                logger.info(
+                    f"Elicitation request from tool call {tool_call_id} to session {downstream_session_id}: {message}"
+                )
+
+                # Forward elicitation to client via ElicitationService
+                # This will block until client responds or timeout occurs
+                result = await elicitation_service.create_elicitation(
+                    upstream_session_id=tool_call_id,  # Use tool_call_id as upstream identifier
+                    downstream_session_id=downstream_session_id,
+                    message=message,
+                    requested_schema=requested_schema,
+                )
+
+                # Convert from gateway ElicitResult to MCP SDK types.ElicitResult
+                # Cast content to match MCP SDK type expectations
+                content_dict: Optional[Dict[str, Any]] = None
+                if result.content:
+                    content_dict = dict(result.content)  # type: ignore
+
+                return types.ElicitResult(
+                    action=result.action,
+                    content=content_dict,  # type: ignore
+                )
+
+            except ValueError as e:
+                # Schema validation or concurrency limit error
+                logger.error(f"Elicitation validation error for tool call {tool_call_id}: {e}")
+                return types.ErrorData(code=-32602, message=f"Elicitation request invalid: {str(e)}")
+            except asyncio.TimeoutError:
+                logger.warning(f"Elicitation timeout for tool call {tool_call_id}")
+                return types.ErrorData(code=-32000, message="Elicitation request timed out")
+            except Exception as e:
+                logger.exception(f"Elicitation error for tool call {tool_call_id}: {e}")
+                return types.ErrorData(code=-32603, message=f"Elicitation request failed: {str(e)}")
+
+        return elicitation_callback
+
     async def invoke_tool(
         self,
         db: Session,
@@ -3551,6 +3711,7 @@ class ToolService(BaseService):
         meta_data: Optional[Dict[str, Any]] = None,
         skip_pre_invoke: bool = False,
         retry_attempt: int = 0,
+        downstream_session_id: Optional[str] = None,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -3575,6 +3736,9 @@ class ToolService(BaseService):
             skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
             retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
                 loop and compared against ``settings.max_tool_retries``.
+            downstream_session_id (Optional[str], optional): Session ID of the client that initiated
+                this tool call. Used for elicitation routing in multi-user deployments. If provided
+                and elicitation is enabled, the tool can request user input during execution.
 
         Returns:
             Tool invocation result.
@@ -4455,32 +4619,55 @@ class ToolService(BaseService):
                                     request_headers = inject_trace_context_headers(headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
-                                    async with sse_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as streams:
-                                        async with ClientSession(*streams) as session:
-                                            with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
-                                                await session.initialize()
-                                            with create_span(
-                                                "mcp.client.request",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                },
-                                            ):
-                                                with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
-                                            with create_span(
-                                                "mcp.client.response",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                                },
-                                            ):
-                                                pass
+
+                                    # Generate unique tool call ID for elicitation routing
+                                    tool_call_id = str(uuid.uuid4())
+
+                                    # Create elicitation callback if enabled and session available
+                                    elicitation_callback = await self._create_elicitation_callback_for_tool_invocation(
+                                        tool_call_id=tool_call_id,
+                                        downstream_session_id=downstream_session_id,
+                                    )
+
+                                    # Register tool call mapping before invocation
+                                    if elicitation_callback and downstream_session_id:
+                                        tool_call_registry = get_tool_call_registry()
+                                        tool_call_registry.register_tool_call(tool_call_id, downstream_session_id)
+
+                                    try:
+                                        async with sse_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as streams:
+                                            async with ClientSession(*streams, elicitation_callback=elicitation_callback) as session:
+                                                with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
+                                                    await session.initialize()
+                                                with create_span(
+                                                    "mcp.client.request",
+                                                    {
+                                                        "mcp.tool.name": tool_name_original,
+                                                        "contextforge.tool.id": tool_id,
+                                                        "contextforge.gateway_id": tool_gateway_id,
+                                                        "contextforge.runtime": "python",
+                                                    },
+                                                ):
+                                                    with anyio.fail_after(effective_timeout):
+                                                        tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                    finally:
+                                        # Clean up tool call mapping after invocation
+                                        if elicitation_callback and downstream_session_id:
+                                            tool_call_registry = get_tool_call_registry()
+                                            tool_call_registry.unregister_tool_call(tool_call_id)
+
+                                        # Always create response span for observability
+                                        with create_span(
+                                            "mcp.client.response",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                                "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
+                                            },
+                                        ):
+                                            pass
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -4639,36 +4826,59 @@ class ToolService(BaseService):
                                     request_headers = inject_trace_context_headers(headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
-                                    async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
-                                        read_stream,
-                                        write_stream,
-                                        _get_session_id,
-                                    ):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                                                await session.initialize()
-                                            with create_span(
-                                                "mcp.client.request",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                },
-                                            ):
-                                                with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
-                                            with create_span(
-                                                "mcp.client.response",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                                },
-                                            ):
-                                                pass
+
+                                    # Generate unique tool call ID for elicitation routing
+                                    tool_call_id = str(uuid.uuid4())
+
+                                    # Create elicitation callback if enabled and session available
+                                    elicitation_callback = await self._create_elicitation_callback_for_tool_invocation(
+                                        tool_call_id=tool_call_id,
+                                        downstream_session_id=downstream_session_id,
+                                    )
+
+                                    # Register tool call mapping before invocation
+                                    if elicitation_callback and downstream_session_id:
+                                        tool_call_registry = get_tool_call_registry()
+                                        tool_call_registry.register_tool_call(tool_call_id, downstream_session_id)
+
+                                    try:
+                                        async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
+                                            read_stream,
+                                            write_stream,
+                                            _get_session_id,
+                                        ):
+                                            async with ClientSession(read_stream, write_stream, elicitation_callback=elicitation_callback) as session:
+                                                with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
+                                                    await session.initialize()
+                                                with create_span(
+                                                    "mcp.client.request",
+                                                    {
+                                                        "mcp.tool.name": tool_name_original,
+                                                        "contextforge.tool.id": tool_id,
+                                                        "contextforge.gateway_id": tool_gateway_id,
+                                                        "contextforge.runtime": "python",
+                                                    },
+                                                ):
+                                                    with anyio.fail_after(effective_timeout):
+                                                        tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                    finally:
+                                        # Clean up tool call mapping after invocation
+                                        if elicitation_callback and downstream_session_id:
+                                            tool_call_registry = get_tool_call_registry()
+                                            tool_call_registry.unregister_tool_call(tool_call_id)
+
+                                        # Always create response span for observability
+                                        with create_span(
+                                            "mcp.client.response",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                                "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
+                                            },
+                                        ):
+                                            pass
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000

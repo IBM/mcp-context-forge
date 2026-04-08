@@ -19,8 +19,16 @@ from uuid import uuid4
 
 # First-Party
 from mcpgateway.common.models import ElicitResult
+from mcpgateway.services.metrics import (
+    elicitation_completed_total,
+    elicitation_duration_seconds,
+    elicitation_requests_total,
+    elicitation_timeout_total,
+)
+from mcpgateway.services.structured_logger import get_structured_logger
 
 logger = logging.getLogger(__name__)
+structured_logger = get_structured_logger("elicitation_service")
 
 
 @dataclass
@@ -154,13 +162,94 @@ class ElicitationService:
         self._pending[request_id] = elicitation
         logger.info(f"Created elicitation request {request_id}: upstream={upstream_session_id}, downstream={downstream_session_id}, timeout={timeout_val}s")
 
+        # Increment metrics
+        elicitation_requests_total.inc()
+
+        # Structured logging: elicitation created
+        structured_logger.log(
+            level="INFO",
+            message=f"Elicitation created: {request_id}",
+            component="elicitation_service",
+            metadata={
+                "event": "elicitation.created",
+                "request_id": request_id,
+                "upstream_session": upstream_session_id,
+                "downstream_session": downstream_session_id,
+                "message": message,
+                "timeout": timeout_val,
+            },
+        )
+
+        # Structured logging: elicitation delivered
+        # This event is emitted immediately after creation, indicating the request
+        # has been successfully forwarded to the downstream client session.
+        # The actual delivery happens through the callback mechanism in tool_service.py
+        structured_logger.log(
+            level="INFO",
+            message=f"Elicitation delivered: {request_id}",
+            component="elicitation_service",
+            metadata={
+                "event": "elicitation.delivered",
+                "request_id": request_id,
+                "downstream_session": downstream_session_id,
+                "delivered_at": time.time(),
+            },
+        )
+
         try:
             # Wait for response with timeout
             result = await asyncio.wait_for(future, timeout=timeout_val)
+            duration = time.time() - elicitation.created_at
+
+            # Record metrics
+            elicitation_duration_seconds.observe(duration)
+            elicitation_completed_total.labels(action=result.action).inc()
+
+            # Structured logging: elicitation completed
+            structured_logger.log(
+                level="INFO",
+                message=f"Elicitation completed: {request_id}",
+                component="elicitation_service",
+                metadata={
+                    "event": "elicitation.completed",
+                    "request_id": request_id,
+                    "action": result.action,
+                    "duration_ms": duration * 1000,
+                },
+            )
+
             logger.info(f"Elicitation {request_id} completed: action={result.action}")
             return result
         except asyncio.TimeoutError:
+            # Record timeout metric
+            elicitation_timeout_total.inc()
+
+            # Structured logging: elicitation timeout
+            structured_logger.log(
+                level="WARNING",
+                message=f"Elicitation timeout: {request_id}",
+                component="elicitation_service",
+                metadata={
+                    "event": "elicitation.timeout",
+                    "request_id": request_id,
+                    "timeout_seconds": timeout_val,
+                },
+            )
+
             logger.warning(f"Elicitation {request_id} timed out after {timeout_val}s")
+            raise
+        except Exception as e:
+            # Structured logging: elicitation error
+            structured_logger.log(
+                level="ERROR",
+                message=f"Elicitation error: {request_id}",
+                component="elicitation_service",
+                metadata={
+                    "event": "elicitation.error",
+                    "request_id": request_id,
+                    "error": str(e),
+                },
+            )
             raise
         finally:
             # Cleanup

@@ -951,6 +951,73 @@ def _get_shared_session_registry() -> Optional[Any]:
     return _shared_session_registry
 
 
+async def _get_session_for_elicitation(tool_call_id: str) -> Optional[str]:
+    """Get the downstream session ID for an elicitation request.
+
+    This function is used during elicitation pass-through to determine which
+    client session should receive the elicitation request from an upstream server.
+
+    Phase 4: Streamable HTTP Support - Request/Response Correlation
+
+    Args:
+        tool_call_id: The tool call ID that triggered the elicitation
+
+    Returns:
+        The downstream session ID if found, None otherwise
+
+    Note:
+        This function integrates with the tool_call_registry to maintain
+        proper session correlation in multi-user deployments.
+    """
+    # Import tool_call_registry locally to avoid circular imports
+    from mcpgateway.cache.tool_call_registry import get_tool_call_registry  # pylint: disable=import-outside-toplevel
+
+    tool_call_registry = get_tool_call_registry()
+    session_id = tool_call_registry.get_session_for_tool_call(tool_call_id)
+
+    if session_id:
+        logger.debug(f"Elicitation routing: tool_call {tool_call_id} -> session {session_id}")
+    else:
+        logger.warning(f"No session mapping found for tool_call {tool_call_id}")
+
+    return session_id
+
+
+async def _verify_elicitation_capability(session_id: str) -> bool:
+    """Verify that a session has elicitation capability.
+
+    This function checks if the client session advertised elicitation capability
+    during initialization, which is required per MCP 2025-11-25 specification.
+
+    Phase 4: Streamable HTTP Support - Capability Enforcement
+
+    Args:
+        session_id: The session ID to check
+
+    Returns:
+        True if the session has elicitation capability, False otherwise
+
+    Note:
+        This function is used during elicitation pass-through to enforce
+        capability requirements before forwarding requests to clients.
+    """
+    session_registry = _get_shared_session_registry()
+    if session_registry is None:
+        logger.warning(f"Session registry unavailable for capability check: {session_id}")
+        return False
+
+    try:
+        has_capability = await session_registry.has_elicitation_capability(session_id)
+        if has_capability:
+            logger.debug(f"Session {session_id} has elicitation capability")
+        else:
+            logger.warning(f"Session {session_id} lacks elicitation capability")
+        return has_capability
+    except Exception as exc:
+        logger.error(f"Error checking elicitation capability for {session_id}: {exc}")
+        return False
+
+
 async def _claim_streamable_session_owner(session_id: str, owner_email: str) -> Optional[str]:
     """Claim or resolve the logical owner for a Streamable HTTP session.
 
