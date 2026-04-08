@@ -1256,6 +1256,7 @@ class Permissions:
     TOOLS_UPDATE = "tools.update"
     TOOLS_DELETE = "tools.delete"
     TOOLS_EXECUTE = "tools.execute"
+    TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
