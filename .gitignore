@@ -280,6 +280,7 @@ mcpgateway/static/chunk-*.js
 mcpgateway/static/app/
 mcpgateway/static/assets/
 mcpgateway/static/.vite/
+mcpgateway/static/app/
 public/
 
 # Generated Tailwind CSS (built during development or container build)
