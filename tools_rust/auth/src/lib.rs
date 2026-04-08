@@ -746,7 +746,7 @@ async fn proxy_authenticate(state: &AppState, request: &AuthenticateRequest) -> 
                 if api_token.expired {
                     return Err(unauthorized_bearer_response_with_code(
                         "API token expired",
-                        "invalid_credentials",
+                        "api_token_expired",
                     ));
                 }
 
@@ -754,7 +754,7 @@ async fn proxy_authenticate(state: &AppState, request: &AuthenticateRequest) -> 
                     Ok(true) => {
                         return Err(unauthorized_bearer_response_with_code(
                             "API token has been revoked",
-                            "invalid_credentials",
+                            "api_token_revoked",
                         ));
                     }
                     Ok(false) => {}
@@ -972,6 +972,8 @@ fn deny_detail_code(detail: &str) -> Option<&'static str> {
         "User not found in database" => Some("user_not_found"),
         "Invalid authentication credentials" => Some("invalid_credentials"),
         "Token validation failed" => Some("token_validation_failed"),
+        "API token expired" => Some("api_token_expired"),
+        "API token has been revoked" => Some("api_token_revoked"),
         _ => None,
     }
 }
@@ -3221,6 +3223,140 @@ mod tests {
         assert!(
             !called.load(std::sync::atomic::Ordering::Relaxed),
             "backend should not be called for direct api-token auth"
+        );
+    }
+
+    #[tokio::test]
+    async fn proxy_authenticate_rejects_expired_api_token_with_distinct_code_without_backend_call() {
+        let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = called.clone();
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(move || {
+                let called = called_clone.clone();
+                async move {
+                    called.store(true, std::sync::atomic::Ordering::Relaxed);
+                    Json(json!({
+                        "authContext": {
+                            "email": "should-not-be-called@example.com",
+                            "teams": ["unexpected-team"],
+                            "is_authenticated": true,
+                            "is_admin": false
+                        }
+                    }))
+                }
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+        let state = AppState::with_checkers(
+            &test_config(format!("{backend_url}/_internal/core/auth/authenticate")),
+            Arc::new(FixedRevocationChecker { result: Ok(false) }),
+            Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+            Arc::new(FixedApiTokenLookupChecker {
+                result: Ok(Some(ApiTokenLookupRecord {
+                    user_email: "trusted@example.com".to_string(),
+                    jti: "api-token-jti-123".to_string(),
+                    team_id: Some("team-a".to_string()),
+                    server_id: None,
+                    resource_scopes: Vec::new(),
+                    expired: true,
+                })),
+            }),
+        )
+        .expect("state");
+
+        let response = proxy_authenticate(
+            &state,
+            &AuthenticateRequest {
+                method: "GET".to_string(),
+                path: "/mcp".to_string(),
+                query_string: String::new(),
+                headers: [("authorization".to_string(), "Bearer opaque-api-token".to_string())]
+                    .into_iter()
+                    .collect(),
+                client_ip: None,
+            },
+        )
+        .await
+        .expect_err("expired api token should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("payload json");
+        assert_eq!(payload["detail"], "API token expired");
+        assert_eq!(payload["code"], "api_token_expired");
+        assert!(
+            !called.load(std::sync::atomic::Ordering::Relaxed),
+            "backend should not be called for expired api token"
+        );
+    }
+
+    #[tokio::test]
+    async fn proxy_authenticate_rejects_revoked_api_token_with_distinct_code_without_backend_call() {
+        let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = called.clone();
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(move || {
+                let called = called_clone.clone();
+                async move {
+                    called.store(true, std::sync::atomic::Ordering::Relaxed);
+                    Json(json!({
+                        "authContext": {
+                            "email": "should-not-be-called@example.com",
+                            "teams": ["unexpected-team"],
+                            "is_authenticated": true,
+                            "is_admin": false
+                        }
+                    }))
+                }
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+        let state = AppState::with_checkers(
+            &test_config(format!("{backend_url}/_internal/core/auth/authenticate")),
+            Arc::new(FixedRevocationChecker { result: Ok(true) }),
+            Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+            Arc::new(FixedApiTokenLookupChecker {
+                result: Ok(Some(ApiTokenLookupRecord {
+                    user_email: "trusted@example.com".to_string(),
+                    jti: "api-token-jti-123".to_string(),
+                    team_id: Some("team-a".to_string()),
+                    server_id: None,
+                    resource_scopes: Vec::new(),
+                    expired: false,
+                })),
+            }),
+        )
+        .expect("state");
+
+        let response = proxy_authenticate(
+            &state,
+            &AuthenticateRequest {
+                method: "GET".to_string(),
+                path: "/mcp".to_string(),
+                query_string: String::new(),
+                headers: [("authorization".to_string(), "Bearer opaque-api-token".to_string())]
+                    .into_iter()
+                    .collect(),
+                client_ip: None,
+            },
+        )
+        .await
+        .expect_err("revoked api token should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let payload: serde_json::Value = serde_json::from_slice(&body).expect("payload json");
+        assert_eq!(payload["detail"], "API token has been revoked");
+        assert_eq!(payload["code"], "api_token_revoked");
+        assert!(
+            !called.load(std::sync::atomic::Ordering::Relaxed),
+            "backend should not be called for revoked api token"
         );
     }
 

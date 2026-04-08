@@ -12384,6 +12384,142 @@ mod unit_tests {
     }
 
     #[tokio::test]
+    async fn authenticate_public_request_preserves_expired_api_token_code_from_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": ["unexpected-team"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::with_checkers(
+                &auth_config,
+                Arc::new(FixedRevocationChecker { result: Ok(false) }),
+                Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+                Arc::new(FixedApiTokenLookupChecker {
+                    result: Ok(Some(ApiTokenLookupRecord {
+                        user_email: "trusted@example.com".to_string(),
+                        jti: "api-token-jti-123".to_string(),
+                        team_id: Some("team-a".to_string()),
+                        server_id: None,
+                        resource_scopes: Vec::new(),
+                        expired: true,
+                    })),
+                }),
+            )
+            .expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer opaque-api-token"),
+        );
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("expired api token should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "API token expired");
+        assert_eq!(payload["code"], "api_token_expired");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_preserves_revoked_api_token_code_from_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": ["unexpected-team"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::with_checkers(
+                &auth_config,
+                Arc::new(FixedRevocationChecker { result: Ok(true) }),
+                Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+                Arc::new(FixedApiTokenLookupChecker {
+                    result: Ok(Some(ApiTokenLookupRecord {
+                        user_email: "trusted@example.com".to_string(),
+                        jti: "api-token-jti-123".to_string(),
+                        team_id: Some("team-a".to_string()),
+                        server_id: None,
+                        resource_scopes: Vec::new(),
+                        expired: false,
+                    })),
+                }),
+            )
+            .expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer opaque-api-token"),
+        );
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("revoked api token should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "API token has been revoked");
+        assert_eq!(payload["code"], "api_token_revoked");
+    }
+
+    #[tokio::test]
     async fn authenticate_public_request_rejects_non_session_jwt_without_principal_in_auth_service() {
         let backend = Router::new().route(
             "/_internal/core/auth/authenticate",
