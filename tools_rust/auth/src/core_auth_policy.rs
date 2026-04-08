@@ -53,7 +53,11 @@ pub fn normalize_token_teams(payload: &Value) -> Option<Vec<String>> {
 }
 
 #[must_use]
-pub fn resolve_session_teams(payload: &Value, email: Option<&str>, db_teams: Option<&[String]>) -> Option<Vec<String>> {
+pub fn resolve_session_teams(
+    payload: &Value,
+    email: Option<&str>,
+    db_teams: Option<&[String]>,
+) -> Option<Vec<String>> {
     if email.is_none_or(str::is_empty) {
         return Some(Vec::new());
     }
@@ -116,8 +120,10 @@ mod tests {
     }
 
     fn oracle() -> Oracle {
-        serde_json::from_str(include_str!("../../../tests/fixtures/core_auth_policy_oracle.json"))
-            .expect("parse core auth policy oracle")
+        serde_json::from_str(include_str!(
+            "../../../tests/fixtures/core_auth_policy_oracle.json"
+        ))
+        .expect("parse core auth policy oracle")
     }
 
     #[test]
@@ -138,7 +144,11 @@ mod tests {
         let oracle = oracle();
         for case in oracle.resolve_session_teams {
             assert_eq!(
-                resolve_session_teams(&case.payload, case.email.as_deref(), case.db_teams.as_deref()),
+                resolve_session_teams(
+                    &case.payload,
+                    case.email.as_deref(),
+                    case.db_teams.as_deref()
+                ),
                 case.expected,
                 "resolve_session_teams oracle case failed: {}",
                 case.name
