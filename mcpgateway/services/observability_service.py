@@ -219,12 +219,23 @@ class ObservabilityService:
     This service provides comprehensive observability capabilities similar to
     OpenTelemetry, allowing tracking of request flows through the system.
 
+    Observability write operations use independent database sessions (issue #3883)
+    that commit immediately on a best-effort basis, separate from main request
+    transactions. Query methods accept a session parameter for RBAC/token scoping.
+
     Examples:
         >>> service = ObservabilityService()  # doctest: +SKIP
-        >>> trace_id = service.start_trace(db, "POST /tools/invoke")  # doctest: +SKIP
-        >>> span_id = service.start_span(db, trace_id, "tool_execution")  # doctest: +SKIP
-        >>> service.end_span(db, span_id, status="ok")  # doctest: +SKIP
-        >>> service.end_trace(db, trace_id, status="ok")  # doctest: +SKIP
+        >>> # Write methods create independent sessions (no db parameter)
+        >>> trace_id = service.start_trace(
+        ...     "POST /tools/invoke",
+        ...     http_method="POST",
+        ...     http_url="https://api.example.com/tools/invoke"
+        ... )  # doctest: +SKIP
+        >>> span_id = service.start_span(trace_id, "tool_execution")  # doctest: +SKIP
+        >>> service.end_span(span_id, status="ok")  # doctest: +SKIP
+        >>> service.end_trace(trace_id, status="ok")  # doctest: +SKIP
+        >>> # Query methods accept db parameter for RBAC scoping
+        >>> traces = service.get_traces(db, limit=10)  # doctest: +SKIP
     """
 
     def _safe_commit(self, db: Session, context: str) -> bool:
@@ -630,6 +641,7 @@ class ObservabilityService:
                         commit=False,  # Don't commit yet
                         obs_db=obs_db,  # Use our session
                     )
+                    # Add error event using same session for atomic commit
                     self.add_event(
                         span_id,
                         name="exception",
@@ -638,6 +650,7 @@ class ObservabilityService:
                         exception_type=type(e).__name__,
                         exception_message=str(e),
                         exception_stacktrace=traceback.format_exc(),
+                        obs_db=obs_db,  # Use same session for atomicity
                     )
                     # Commit error state
                     self._safe_commit(obs_db, "trace_span_error")
@@ -742,7 +755,7 @@ class ObservabilityService:
                         obs_db=obs_db,  # Use our session
                     )
 
-                    # Note: add_event creates its own session
+                    # Add error event using same session for atomic commit
                     self.add_event(
                         span_id=span_id,
                         name="tool.error",
@@ -751,6 +764,7 @@ class ObservabilityService:
                         exception_type=type(e).__name__,
                         exception_message=str(e),
                         exception_stacktrace=traceback.format_exc(),
+                        obs_db=obs_db,  # Use same session for atomicity
                     )
                     # Commit error state
                     self._safe_commit(obs_db, "trace_tool_invocation_error")
@@ -778,10 +792,12 @@ class ObservabilityService:
         exception_message: Optional[str] = None,
         exception_stacktrace: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        obs_db: Optional[Session] = None,
     ) -> int:
         """Add an event to a span.
 
-        Creates an independent observability session for best-effort recording.
+        Creates an independent observability session for best-effort recording,
+        unless obs_db is provided for atomic operation with caller's session.
 
         Args:
             span_id: Parent span ID
@@ -792,12 +808,15 @@ class ObservabilityService:
             exception_message: Exception message
             exception_stacktrace: Exception stacktrace
             attributes: Additional event attributes
+            obs_db: Optional session for atomic operation (used by context managers)
 
         Returns:
             Event ID (or 0 on failure)
 
         Note:
-            Uses separate database session from main transaction (issue #3883).
+            Uses separate database session from main transaction (issue #3883)
+            unless obs_db is provided. Context managers pass their session for
+            atomic commit of span and error event together.
 
         Examples:
             >>> event_id = service.add_event(  # doctest: +SKIP
@@ -807,7 +826,8 @@ class ObservabilityService:
             ...     message="Failed to connect to database"  # doctest: +SKIP
             ... )  # doctest: +SKIP
         """
-        obs_db, owned = _get_or_create_observability_session()
+        # Use provided session or create new one
+        obs_db, owned = (obs_db, False) if obs_db else _get_or_create_observability_session()
         try:
             event = ObservabilityEvent(
                 span_id=span_id,
@@ -1097,7 +1117,7 @@ class ObservabilityService:
                         obs_db=obs_db,  # Use our session
                     )
 
-                    # Note: add_event creates its own session
+                    # Add error event using same session for atomic commit
                     self.add_event(
                         span_id=span_id,
                         name="a2a.error",
@@ -1106,6 +1126,7 @@ class ObservabilityService:
                         exception_type=type(e).__name__,
                         exception_message=str(e),
                         exception_stacktrace=traceback.format_exc(),
+                        obs_db=obs_db,  # Use same session for atomicity
                     )
                     # Commit error state
                     self._safe_commit(obs_db, "trace_a2a_request_error")
