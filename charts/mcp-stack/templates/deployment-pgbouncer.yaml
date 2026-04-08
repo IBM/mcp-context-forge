@@ -47,6 +47,10 @@ spec:
           image: "{{ .Values.pgbouncer.image.repository }}:{{ .Values.pgbouncer.image.tag }}"
           imagePullPolicy: {{ .Values.pgbouncer.image.pullPolicy }}
 
+          {{- if .Values.pgbouncer.command }}
+          command: {{ .Values.pgbouncer.command | toJson }}
+          {{- end }}
+
           ports:
             - containerPort: {{ .Values.pgbouncer.service.port }}
               name: pgbouncer
@@ -159,7 +163,25 @@ spec:
 {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
           {{- end }}
 
+          # Volume mounts for config file mode (e.g. crunchy-pgbouncer)
+          {{- if .Values.pgbouncer.useConfigFile }}
+          volumeMounts:
+            - name: pgbouncer-config
+              mountPath: /etc/pgbouncer/pgbouncer.ini
+              subPath: pgbouncer.ini
+            - name: pgbouncer-config
+              mountPath: /etc/pgbouncer/userlist.txt
+              subPath: userlist.txt
+          {{- end }}
+
           # Resource limits
           resources:
 {{- toYaml .Values.pgbouncer.resources | nindent 12 }}
+
+      {{- if .Values.pgbouncer.useConfigFile }}
+      volumes:
+        - name: pgbouncer-config
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-pgbouncer-config
+      {{- end }}
 {{- end }}

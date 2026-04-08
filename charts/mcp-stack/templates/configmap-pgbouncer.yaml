@@ -1,0 +1,47 @@
+{{- if .Values.pgbouncer.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-pgbouncer-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+data:
+  pgbouncer.ini: |
+    [databases]
+    {{- if .Values.postgres.external.enabled }}
+    * = host={{ .Values.postgres.external.host }} port={{ .Values.postgres.external.port | default 5432 }}
+    {{- else }}
+    * = host={{ printf "%s-postgres" (include "mcp-stack.fullname" .) }} port={{ .Values.postgres.service.port | default 5432 }}
+    {{- end }}
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = {{ .Values.pgbouncer.service.port | default 6432 }}
+
+    ; Use /tmp for log and pid — writable under OCP restricted SCC
+    logfile = /tmp/pgbouncer.log
+    pidfile = /tmp/pgbouncer.pid
+
+    ; Authentication — plain so PgBouncer can forward credentials to Postgres
+    auth_type = plain
+    auth_file = /etc/pgbouncer/userlist.txt
+
+    ; Pool settings
+    pool_mode = {{ .Values.pgbouncer.pool.mode | default "transaction" }}
+    max_client_conn = {{ .Values.pgbouncer.pool.maxClientConn | default 3000 }}
+    default_pool_size = {{ .Values.pgbouncer.pool.defaultPoolSize | default 120 }}
+    min_pool_size = {{ .Values.pgbouncer.pool.minPoolSize | default 10 }}
+    reserve_pool_size = {{ .Values.pgbouncer.pool.reservePoolSize | default 25 }}
+    reserve_pool_timeout = {{ .Values.pgbouncer.pool.reservePoolTimeout | default 5 }}
+    max_db_connections = {{ .Values.pgbouncer.pool.maxDbConnections | default 200 }}
+    max_user_connections = {{ .Values.pgbouncer.pool.maxUserConnections | default 200 }}
+    server_lifetime = {{ .Values.pgbouncer.pool.serverLifetime | default 3600 }}
+    server_idle_timeout = {{ .Values.pgbouncer.pool.serverIdleTimeout | default 600 }}
+
+    ; Admin access
+    admin_users = {{ .Values.postgres.credentials.user | default "admin" }}
+    stats_users = {{ .Values.postgres.credentials.user | default "admin" }}
+
+  userlist.txt: |
+    "{{ .Values.postgres.credentials.user | default "admin" }}" "{{ .Values.postgres.credentials.password | default "" }}"
+{{- end }}
