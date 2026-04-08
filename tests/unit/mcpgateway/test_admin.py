@@ -23626,6 +23626,7 @@ class TestAdminPersonalTeamFiltering:
             patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service),
             patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
             patch("mcpgateway.admin._resolve_root_path", return_value=""),
+            patch("mcpgateway.admin._get_user_team_roles", return_value={}),
         ):
 
             response = await admin_teams_partial_html(
