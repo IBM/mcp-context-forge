@@ -107,7 +107,6 @@ dev = [
     "dodgy>=0.2.1",
     "faker>=20.0.0",
     "fawltydeps>=0.20.0",
-
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.140.3",
     "interrogate>=1.7.0",
