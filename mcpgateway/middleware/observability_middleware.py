@@ -9,6 +9,15 @@ Observability Middleware for automatic request/response tracing.
 This middleware automatically captures HTTP requests and responses as observability traces,
 providing comprehensive visibility into all gateway operations.
 
+Session Management (Issue #3883):
+    This middleware does NOT create or manage request.state.db. Each observability
+    operation (start_trace, start_span, end_span, end_trace) creates its own short-lived
+    independent database session that commits immediately on a best-effort basis.
+
+    This separation ensures observability data persists even when main request transactions
+    fail, providing visibility into partial failures. SQL query instrumentation is handled
+    separately via attach_trace_to_session() (see instrumentation/sqlalchemy.py).
+
 Examples:
     >>> from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware  # doctest: +SKIP
     >>> app.add_middleware(ObservabilityMiddleware)  # doctest: +SKIP
@@ -27,7 +36,6 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
 from mcpgateway.plugins.framework.observability import current_trace_id as plugins_trace_id
@@ -36,6 +44,41 @@ from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.trace_redaction import sanitize_trace_text
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_header_for_storage(value: Optional[str], max_length: int = 500) -> str:
+    """Sanitize header value for safe database storage.
+
+    Removes control characters and truncates to prevent:
+    - Log injection attacks (newlines, ANSI codes)
+    - DoS via large headers (10MB user-agent)
+    - Storage exhaustion
+
+    Args:
+        value: Header value to sanitize
+        max_length: Maximum length to truncate to (default: 500)
+
+    Returns:
+        Sanitized header value, truncated to max_length
+
+    Examples:
+        >>> sanitize_header_for_storage("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        >>> sanitize_header_for_storage("Evil\\x00\\nInjection")
+        'EvilInjection'
+        >>> len(sanitize_header_for_storage("A" * 1000, max_length=100))
+        100
+        >>> sanitize_header_for_storage(None)
+        'unknown'
+    """
+    if not value:
+        return "unknown"
+    # Remove control characters except space and tab
+    clean = "".join(c for c in value if c.isprintable() or c in " \t")
+    # Truncate to max length
+    if len(clean) > max_length:
+        return clean[:max_length]
+    return clean
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):
@@ -64,6 +107,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request and create observability trace.
 
+        Observability uses independent database sessions (issue #3883) that commit
+        immediately on a best-effort basis, separate from the main request transaction.
+
         Args:
             request: Incoming HTTP request
             call_next: Next middleware/handler in chain
@@ -84,10 +130,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         # Extract request context
         http_method = request.method
-        http_url = str(request.url)
+        http_url = sanitize_header_for_storage(str(request.url), max_length=2000)
         user_email = None
         ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
+        user_agent = sanitize_header_for_storage(request.headers.get("user-agent"), max_length=500)
 
         # Try to extract user from request state (set by auth middleware)
         if hasattr(request.state, "user") and hasattr(request.state.user, "email"):
@@ -103,24 +149,13 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 external_trace_id, external_parent_span_id, _flags = parsed
                 logger.debug(f"Extracted W3C trace context: trace_id={external_trace_id}, parent_span_id={external_parent_span_id}")
 
-        db = None
         trace_id = None
         span_id = None
         start_time = time.time()
-        session_owned_by_middleware = False
 
         try:
-            # Create request-scoped database session and store in request.state
-            # This session will be reused by route handlers via get_db() dependency,
-            # eliminating duplicate session creation (Issue #3467)
-            db = SessionLocal()
-            logger.debug(f"[OBSERVABILITY] DB session created: {id(db)}")
-            request.state.db = db
-            session_owned_by_middleware = True
-
-            # Start trace (use external trace_id if provided for distributed tracing)
+            # Start trace (creates independent observability session)
             trace_id = self.service.start_trace(
-                db=db,
                 name=f"{http_method} {request.url.path}",
                 trace_id=external_trace_id,  # Use external trace ID if provided
                 parent_span_id=external_parent_span_id,  # Track parent span from upstream
@@ -147,60 +182,49 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Bridge: also set the framework's ContextVar so the plugin executor sees it
             plugins_trace_id.set(trace_id)
 
-            # Attach trace_id to database session for SQL query instrumentation
-            attach_trace_to_session(db, trace_id)
+            # If another middleware created request session, attach trace for SQL instrumentation
+            # SQL instrumentation creates its own observability sessions (instrumentation/sqlalchemy.py:58)
+            if hasattr(request.state, "db") and request.state.db is not None:
+                attach_trace_to_session(request.state.db, trace_id)
 
-            # Start request span
-            span_id = self.service.start_span(db=db, trace_id=trace_id, name="http.request", kind="server", attributes={"http.method": http_method, "http.url": http_url})
+            # Start request span (creates independent observability session)
+            span_id = self.service.start_span(
+                trace_id=trace_id,
+                name="http.request",
+                kind="server",
+                attributes={"http.method": http_method, "http.url": http_url},
+            )
 
         except Exception as e:
             # If trace setup failed, log and continue without tracing
             logger.warning(f"Failed to setup observability trace: {e}")
-            # Close db if it was created
-            if db:
-                try:
-                    db.rollback()  # Error path - rollback any partial transaction
-                except Exception as rollback_error:
-                    logger.debug(f"Failed to rollback during cleanup: {rollback_error}")
-                    # Connection is broken - invalidate to remove from pool
-                    try:
-                        db.invalidate()
-                    except Exception:
-                        pass  # nosec B110
-                try:
-                    db.close()
-                except Exception as close_error:
-                    logger.debug(f"Failed to close database session during cleanup: {close_error}")
-                # Clean up request.state.db to prevent get_db() from reusing a closed session
-                if hasattr(request.state, "db"):
-                    delattr(request.state, "db")
             # Continue without tracing
             return await call_next(request)
 
         # Process request (trace is set up at this point)
-        # Route handlers will reuse request.state.db via get_db() dependency
         try:
             response = await call_next(request)
             status_code = response.status_code
 
-            # End span successfully
+            # End span successfully (creates independent observability session)
             if span_id:
                 try:
                     self.service.end_span(
-                        db,
                         span_id,
                         status="ok" if status_code < 400 else "error",
-                        attributes={"http.status_code": status_code, "http.response_size": response.headers.get("content-length")},
+                        attributes={
+                            "http.status_code": status_code,
+                            "http.response_size": response.headers.get("content-length"),
+                        },
                     )
                 except Exception as end_span_error:
                     logger.warning(f"Failed to end span {span_id}: {end_span_error}")
 
-            # End trace
+            # End trace (creates independent observability session)
             if trace_id:
                 duration_ms = (time.time() - start_time) * 1000
                 try:
                     self.service.end_trace(
-                        db,
                         trace_id,
                         status="ok" if status_code < 400 else "error",
                         http_status_code=status_code,
@@ -209,11 +233,6 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 except Exception as end_trace_error:
                     logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
 
-            # NOTE: Transaction control delegated to get_db()
-            # Middleware only manages session lifecycle (create/close), not transactions.
-            # get_db() will commit on success or rollback on error to maintain
-            # predictable transaction semantics for route handlers (Issue #3731).
-
             return response
 
         except Exception as e:
@@ -221,11 +240,18 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if span_id:
                 try:
                     sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
-                    self.service.end_span(db, span_id, status="error", status_message=sanitized_error, attributes={"exception.type": type(e).__name__, "exception.message": sanitized_error})
+                    self.service.end_span(
+                        span_id,
+                        status="error",
+                        status_message=sanitized_error,
+                        attributes={
+                            "exception.type": type(e).__name__,
+                            "exception.message": sanitized_error,
+                        },
+                    )
 
-                    # Add exception event
+                    # Add exception event (creates independent observability session)
                     self.service.add_event(
-                        db,
                         span_id,
                         name="exception",
                         severity="error",
@@ -237,37 +263,18 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 except Exception as log_error:
                     logger.warning(f"Failed to log exception in span: {log_error}")
 
-            # End trace with error
+            # End trace with error (creates independent observability session)
             if trace_id:
                 try:
                     sanitized_error = sanitize_for_log(sanitize_trace_text(str(e)))
-                    self.service.end_trace(db, trace_id, status="error", status_message=sanitized_error, http_status_code=500)
+                    self.service.end_trace(
+                        trace_id,
+                        status="error",
+                        status_message=sanitized_error,
+                        http_status_code=500,
+                    )
                 except Exception as trace_error:
                     logger.warning(f"Failed to end trace: {trace_error}")
 
-            # Rollback the shared session on error
-            try:
-                db.rollback()
-            except Exception as rollback_error:
-                logger.warning(f"Failed to rollback database session: {rollback_error}")
-                # Connection is broken - invalidate to remove from pool
-                # This handles cases like PgBouncer query_wait_timeout where
-                # the connection is dead and rollback itself fails
-                try:
-                    db.invalidate()
-                except Exception:
-                    pass  # nosec B110
-
             # Re-raise the original exception
             raise
-
-        finally:
-            # Always close database session and clean up request state
-            if db and session_owned_by_middleware:
-                try:
-                    db.close()
-                except Exception as close_error:
-                    logger.warning(f"Failed to close database session: {close_error}")
-                # Clean up request.state.db to prevent stale references
-                if hasattr(request.state, "db"):
-                    delattr(request.state, "db")

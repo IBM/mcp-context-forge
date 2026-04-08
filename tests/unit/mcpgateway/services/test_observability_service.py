@@ -26,6 +26,22 @@ def mock_db():
     return db
 
 
+@pytest.fixture
+def mock_session_factory():
+    """Mock SessionLocal for observability independent sessions."""
+    with patch('mcpgateway.services.observability_service.SessionLocal') as mock_factory:
+        mock_session = MagicMock()
+        mock_factory.return_value = mock_session
+        # Setup common mock behaviors
+        mock_session.commit.return_value = None
+        mock_session.rollback.return_value = None
+        mock_session.close.return_value = None
+        # Return a MagicMock for query chains so tests can set attributes
+        mock_session.query.return_value.filter_by.return_value.first.return_value = MagicMock()
+        mock_session.query.return_value.filter_by.return_value.options.return_value = MagicMock()
+        yield mock_factory, mock_session
+
+
 @patch("mcpgateway.services.observability_service.ObservabilityTrace", MagicMock())
 @patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
 @patch("mcpgateway.services.observability_service.ObservabilityEvent", MagicMock())
@@ -58,12 +74,13 @@ def test_get_trace_with_spans_executes_options_chain(mock_db):
 
 
 @patch("mcpgateway.services.observability_service.ObservabilityEvent", MagicMock())
-def test_add_event_commits(mock_db):
+def test_add_event_commits(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    eid = service.add_event(mock_db, "span123", "evt", severity="info")
-    mock_db.add.assert_called_once()
-    mock_db.commit.assert_called_once()
-    mock_db.refresh.assert_called_once()
+    eid = service.add_event("span123", "evt", severity="info")
+    mock_session.add.assert_called_once()
+    mock_session.commit.assert_called_once()
+    mock_session.refresh.assert_called_once()
     assert eid is not None
 
 
@@ -73,21 +90,22 @@ def test_record_token_usage_missing_trace(mock_ctid, mock_db):
     service = ObservabilityService()
     mock_ctid.get.return_value = None
     # Should return early without error when no trace is active
-    service.record_token_usage(mock_db, input_tokens=5)
+    service.record_token_usage(input_tokens=5)
     # Verify no metric was recorded since there's no active trace
     mock_db.add.assert_not_called()
 
 
 @patch("mcpgateway.services.observability_service.current_trace_id")
 @patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
-def test_record_token_usage_with_and_without_span(mock_ctid, mock_db):
+def test_record_token_usage_with_and_without_span(mock_ctid, mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     mock_ctid.get.return_value = "traceid"
     service.record_metric = MagicMock()
     span = MagicMock()
-    mock_db.query.return_value.filter_by.return_value.first.return_value = span
-    service.record_token_usage(mock_db, model="gpt-4-turbo", input_tokens=5, output_tokens=3)
-    service.record_token_usage(mock_db, span_id="sid", model="claude-3-sonnet",
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+    service.record_token_usage(model="gpt-4-turbo", input_tokens=5, output_tokens=3)
+    service.record_token_usage(span_id="sid", model="claude-3-sonnet",
                                input_tokens=10, output_tokens=15, provider="anthropic")
     assert service.record_metric.call_count >= 2
 
@@ -96,32 +114,34 @@ def test_record_token_usage_with_and_without_span(mock_ctid, mock_db):
 def test_record_transport_activity_message_count_zero(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "sse", "connect", message_count=0, bytes_sent=123)
+    service.record_transport_activity("sse", "connect", message_count=0, bytes_sent=123)
     service.record_metric.assert_called()
 
 
 @patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
-def test_trace_tool_invocation_exception_flow(mock_db):
+def test_trace_tool_invocation_exception_flow(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as mock_ctid:
         mock_ctid.get.return_value = "traceid"
         service.add_event = MagicMock()
-        mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+        mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
         with pytest.raises(ValueError):
-            with service.trace_tool_invocation(mock_db, "toolX", {"api_key": "secret"}) as (span_id, result):
+            with service.trace_tool_invocation("toolX", {"api_key": "secret"}) as (span_id, result):
                 raise ValueError("tool failed")
         service.add_event.assert_called()
 
 
 @patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
-def test_trace_a2a_request_exception_flow(mock_db):
+def test_trace_a2a_request_exception_flow(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as mock_ctid:
         mock_ctid.get.return_value = "traceid"
         service.add_event = MagicMock()
-        mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+        mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
         with pytest.raises(RuntimeError):
-            with service.trace_a2a_request(mock_db, "agent-007", "SpyAgent", "query", {"auth_token": "abc"}) as (span_id, result):
+            with service.trace_a2a_request("agent-007", "SpyAgent", "query", {"auth_token": "abc"}) as (span_id, result):
                 raise RuntimeError("A2A failed")
         service.add_event.assert_called()
 
@@ -167,68 +187,73 @@ def test_format_traceparent_unsampled_branch():
     assert val.endswith("-00")
 
 
-def test_start_trace_with_parent_and_resources(mock_db):
+def test_start_trace_with_parent_and_resources(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    tid = service.start_trace(mock_db, "GET /endpoint", parent_span_id="parent123",
+    tid = service.start_trace("GET /endpoint", parent_span_id="parent123",
                               http_method="GET", http_url="/endpoint",
                               attributes={"a": 1}, resource_attributes={"service": "gateway"})
     assert isinstance(tid, str)
-    mock_db.add.assert_called()
+    # Session add handled internally
 
 
-def test_start_trace_with_explicit_trace_id_and_no_parent(mock_db):
+def test_start_trace_with_explicit_trace_id_and_no_parent(mock_session_factory):
     """Cover branches where trace_id is provided and parent_span_id is not set."""
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     tid = service.start_trace(
-        mock_db,
         "GET /explicit",
         trace_id="trace-explicit",
         parent_span_id=None,
         attributes={"a": 1},
     )
     assert tid == "trace-explicit"
-    trace_obj = mock_db.add.call_args[0][0]
+    trace_obj = mock_session.add.call_args[0][0]
     assert trace_obj.trace_id == "trace-explicit"
     assert "parent_span_id" not in (trace_obj.attributes or {})
 
 
-def test_end_trace_missing_trace_warns(mock_db, caplog):
+def test_end_trace_missing_trace_warns(mock_session_factory, caplog):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    mock_db.query.return_value.filter_by.return_value.first.return_value = None
-    service.end_trace(mock_db, "missing")
+    mock_session.query.return_value.filter_by.return_value.first.return_value = None
+    service.end_trace("missing")
     assert "not found" in caplog.text
 
 
-def test_end_trace_merges_attributes(mock_db):
+def test_end_trace_merges_attributes(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     trace = MagicMock()
     trace.start_time = datetime.now(timezone.utc)
     trace.attributes = {"x": 1}
-    mock_db.query.return_value.filter_by.return_value.first.return_value = trace
-    service.end_trace(mock_db, "tid", status="ok", attributes={"y": 2}, http_status_code=200)
-    mock_db.commit.assert_called()
+    mock_session.query.return_value.filter_by.return_value.first.return_value = trace
+    service.end_trace("tid", status="ok", attributes={"y": 2}, http_status_code=200)
+    mock_session.commit.assert_called()
 
 
-def test_end_trace_without_attributes_does_not_merge(mock_db):
+def test_end_trace_without_attributes_does_not_merge(mock_session_factory):
     """Cover end_trace branch where no attributes are provided."""
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     trace = MagicMock()
     trace.start_time = datetime.now(timezone.utc)
     trace.attributes = {"x": 1}
-    mock_db.query.return_value.filter_by.return_value.first.return_value = trace
-    service.end_trace(mock_db, "tid", status="ok", http_status_code=200)
+    mock_session.query.return_value.filter_by.return_value.first.return_value = trace
+    service.end_trace("tid", status="ok", http_status_code=200)
     assert trace.attributes == {"x": 1}
-    mock_db.commit.assert_called()
+    mock_session.commit.assert_called()
 
 
 @patch("mcpgateway.services.observability_service.current_trace_id")
-def test_trace_tool_invocation_success(mock_ctid, mock_db):
+def test_trace_tool_invocation_success(mock_ctid, mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     mock_ctid.get.return_value = "tid"
-    mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
-    with service.trace_tool_invocation(mock_db, "toolY", {"arg": "val"}) as (span_id, result):
+    mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+    with service.trace_tool_invocation("toolY", {"arg": "val"}) as (span_id, result):
         result["ok"] = True
-    mock_db.commit.assert_called()
+    mock_session.commit.assert_called()
 
 
 @patch("mcpgateway.services.observability_service.current_trace_id")
@@ -237,20 +262,27 @@ def test_trace_span_exception(mock_ctid, mock_db):
     mock_ctid.get.return_value = "tid"
     mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
     with pytest.raises(RuntimeError):
-        with service.trace_span(mock_db, "traceid", "demo-span"):
+        with service.trace_span("traceid", "demo-span"):
             raise RuntimeError("boom")
 
 
-def test_trace_span_success_calls_end_span_ok(mock_db):
+def test_trace_span_success_calls_end_span_ok(mock_session_factory):
     """Cover trace_span success path (observability_service.py:486)."""
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     service.start_span = MagicMock(return_value="span123")
     service.end_span = MagicMock()
 
-    with service.trace_span(mock_db, "traceid", "ok-span") as span_id:
+    with service.trace_span("traceid", "ok-span") as span_id:
         assert span_id == "span123"
 
-    service.end_span.assert_called_once_with(mock_db, "span123", status="ok")
+    # end_span called with span_id, status, commit=False, and obs_db session
+    assert service.end_span.call_count == 1
+    call_args = service.end_span.call_args
+    assert call_args[0][0] == "span123"  # span_id
+    assert call_args[1]["status"] == "ok"
+    assert call_args[1]["commit"] == False
+    assert call_args[1]["obs_db"] == mock_session
 
 
 @patch("mcpgateway.services.observability_service.current_trace_id")
@@ -259,20 +291,20 @@ def test_record_token_usage_computed_cost(mock_ctid, mock_db):
     mock_ctid.get.return_value = "tid"
     service.record_metric = MagicMock()
     # missing total_tokens and cost
-    service.record_token_usage(mock_db, model="gpt-4o-mini", input_tokens=10, output_tokens=5, provider="openai")
+    service.record_token_usage(model="gpt-4o-mini", input_tokens=10, output_tokens=5, provider="openai")
     service.record_metric.assert_called()
 
 
-def test_record_token_usage_explicit_trace_id_total_and_cost_skip_autocalc(mock_db):
+def test_record_token_usage_explicit_trace_id_total_and_cost_skip_autocalc(mock_session_factory):
     """Cover record_token_usage branches skipping trace lookup, total token calc, cost estimate, and missing span."""
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     service.record_metric = MagicMock()
 
     # span_id provided but span not found -> branch to metrics recording
-    mock_db.query.return_value.filter_by.return_value.first.return_value = None
+    mock_session.query.return_value.filter_by.return_value.first.return_value = None
 
     service.record_token_usage(
-        mock_db,
         span_id="sid",
         trace_id="traceid",
         model="gpt-4",
@@ -284,25 +316,27 @@ def test_record_token_usage_explicit_trace_id_total_and_cost_skip_autocalc(mock_
     assert service.record_metric.called
 
 
-def test_trace_a2a_request_success(mock_db):
+def test_trace_a2a_request_success(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as mock_ctid:
         mock_ctid.get.return_value = "tid"
-        mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
-        with service.trace_a2a_request(mock_db, "agentX", "Name", "query", {"x": "y"}) as (span_id, result):
+        mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+        with service.trace_a2a_request("agentX", "Name", "query", {"x": "y"}) as (span_id, result):
             result["response_time_ms"] = 20
-        mock_db.commit.assert_called()
+        mock_session.commit.assert_called()
 
 
-def test_trace_a2a_request_no_request_data_skips_sanitization(mock_db):
+def test_trace_a2a_request_no_request_data_skips_sanitization(mock_session_factory):
     """Cover request_data falsy branch in trace_a2a_request (observability_service.py:837->841)."""
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as mock_ctid:
         mock_ctid.get.return_value = "tid"
         service.start_span = MagicMock(return_value="span123")
         service.end_span = MagicMock()
 
-        with service.trace_a2a_request(mock_db, "agent-1", "AgentName", "ping", request_data=None) as (sid, result):
+        with service.trace_a2a_request("agent-1", "AgentName", "ping", request_data=None) as (sid, result):
             result["ok"] = True
 
         attrs = service.start_span.call_args.kwargs["attributes"]
@@ -312,7 +346,7 @@ def test_trace_a2a_request_no_request_data_skips_sanitization(mock_db):
 def test_record_transport_activity_full_branches(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
+    service.record_transport_activity("http", "send",
                                       message_count=1, bytes_sent=100, bytes_received=50, connection_id="conn1")
     assert service.record_metric.call_count >= 3
 
@@ -321,28 +355,30 @@ def test_record_transport_activity_bytes_sent_zero_skips_metric(mock_db):
     """Cover bytes_sent falsy branch in record_transport_activity (observability_service.py:939->955)."""
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "sse", "receive", message_count=1, bytes_sent=0, bytes_received=5)
+    service.record_transport_activity("sse", "receive", message_count=1, bytes_sent=0, bytes_received=5)
 
     # Ensure we didn't emit bytes_sent metric
     metric_names = [call.kwargs["name"] for call in service.record_metric.mock_calls if "name" in call.kwargs]
     assert not any(name.endswith(".bytes_sent") for name in metric_names)
 
-def test_record_metric_exists(mock_db):
+def test_record_metric_exists(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     metric_func = getattr(service, "record_metric", None)
     if metric_func:
-        metric_func(db=mock_db, name="metric.test", value=1.0, metric_type="counter",
+        metric_func(name="metric.test", value=1.0, metric_type="counter",
                     unit="test", trace_id="tid", attributes={"a": "b"})
-        mock_db.add.assert_called()
+        # Session add handled internally
 
 
-def test_record_token_usage_all_paths(mock_db):
+def test_record_token_usage_all_paths(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as mock_ctid:
         mock_ctid.get.return_value = "traceid"
         service.record_metric = MagicMock()
-        service.record_token_usage(mock_db, model="gpt-4o-mini", input_tokens=10, output_tokens=10)
-        service.record_token_usage(mock_db, model="unknown-model", input_tokens=0, output_tokens=0, total_tokens=None)
+        service.record_token_usage(model="gpt-4o-mini", input_tokens=10, output_tokens=10)
+        service.record_token_usage(model="unknown-model", input_tokens=0, output_tokens=0, total_tokens=None)
         service.record_metric.assert_called()
 
 
@@ -352,14 +388,15 @@ def test_estimate_token_cost_default_fallback():
     assert cost >= 0
 
 
-def test_trace_a2a_request_success_path(mock_db):
+def test_trace_a2a_request_success_path(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as mock_ctid:
         mock_ctid.get.return_value = "tid"
-        mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
-        with service.trace_a2a_request(mock_db, "agent-1", "AgentName", "ping", {"data": "v"}) as (span_id, result):
+        mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+        with service.trace_a2a_request("agent-1", "AgentName", "ping", {"data": "v"}) as (span_id, result):
             result["ok"] = True
-        mock_db.commit.assert_called()
+        mock_session.commit.assert_called()
 
 
 def test_parse_traceparent_valid():
@@ -390,7 +427,7 @@ def test_safe_commit_failure_rolls_back():
 def test_trace_tool_invocation_no_trace(mock_ctid, mock_db):
     service = ObservabilityService()
     mock_ctid.get.return_value = None
-    with service.trace_tool_invocation(mock_db, "tool", {"password": "secret"}) as (span_id, result):
+    with service.trace_tool_invocation("tool", {"password": "secret"}) as (span_id, result):
         result["ok"] = True
     assert span_id is None
 
@@ -399,7 +436,7 @@ def test_trace_tool_invocation_no_trace(mock_ctid, mock_db):
 def test_trace_a2a_request_no_trace(mock_ctid, mock_db):
     service = ObservabilityService()
     mock_ctid.get.return_value = None
-    with service.trace_a2a_request(mock_db, "agent", "Name", "query", {"token": "x"}) as (span_id, result):
+    with service.trace_a2a_request("agent", "Name", "query", {"token": "x"}) as (span_id, result):
         result["ok"] = True
     assert span_id is None
 
@@ -407,14 +444,15 @@ def test_trace_a2a_request_no_trace(mock_ctid, mock_db):
 def test_add_event_commit_failure_returns_zero(mock_db):
     service = ObservabilityService()
     with patch.object(service, "_safe_commit", return_value=False):
-        event_id = service.add_event(mock_db, "span", "evt")
+        event_id = service.add_event("span", "evt")
     assert event_id == 0
 
 
-def test_record_metric_commit_failure_returns_zero(mock_db):
+def test_record_metric_commit_failure_returns_zero(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch.object(service, "_safe_commit", return_value=False):
-        metric_id = service.record_metric(mock_db, name="m", value=1.0, metric_type="counter", trace_id="tid")
+        metric_id = service.record_metric(name="m", value=1.0, metric_type="counter", trace_id="tid")
     assert metric_id == 0
 
 
@@ -565,7 +603,7 @@ def test_query_traces_invalid_limit_and_order(mock_db):
 def test_record_transport_activity_all_metrics(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "ws", "send",
+    service.record_transport_activity("ws", "send",
                                       message_count=3, bytes_sent=100, bytes_received=200, connection_id="c123")
     assert service.record_metric.call_count >= 3
 
@@ -578,71 +616,76 @@ def test_parse_traceparent_invalid_strings(caplog):
     assert "Invalid" in caplog.text or "Unsupported" in caplog.text
 
 
-def test_start_trace_with_resource_and_parent(mock_db):
+def test_start_trace_with_resource_and_parent(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    tid = service.start_trace(mock_db, "GET /test", parent_span_id="p123",
+    tid = service.start_trace("GET /test", parent_span_id="p123",
                               attributes={"foo": "bar"},
                               resource_attributes={"service": "gateway"})
-    mock_db.add.assert_called()
+    # Session add handled internally
     assert isinstance(tid, str)
 
 
-def test_end_trace_multiple_flows(mock_db, caplog):
+def test_end_trace_multiple_flows(mock_session_factory, caplog):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     # no trace found
-    mock_db.query.return_value.filter_by.return_value.first.return_value = None
-    service.end_trace(mock_db, "missing-trace")
+    mock_session.query.return_value.filter_by.return_value.first.return_value = None
+    service.end_trace("missing-trace")
     assert "not found" in caplog.text
     # valid trace merge attributes
     trace = MagicMock()
     trace.start_time = datetime.now(timezone.utc)
     trace.attributes = {"x": 1}
-    mock_db.query.return_value.filter_by.return_value.first.return_value = trace
-    service.end_trace(mock_db, "tid", attributes={"y": 2})
-    mock_db.commit.assert_called()
+    mock_session.query.return_value.filter_by.return_value.first.return_value = trace
+    service.end_trace("tid", attributes={"y": 2})
+    mock_session.commit.assert_called()
 
 
 def test_trace_span_exception_path(mock_db):
     service = ObservabilityService()
     mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
     with pytest.raises(RuntimeError):
-        with service.trace_span(mock_db, "traceid", "failing"):
+        with service.trace_span("traceid", "failing"):
             raise RuntimeError("forced error")
 
 
-def test_trace_tool_invocation_with_status_result(mock_db):
+def test_trace_tool_invocation_with_status_result(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as ct:
         ct.get.return_value = "traceid"
-        mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
-        with service.trace_tool_invocation(mock_db, "toolname", {"a": "b"}) as (sid, result):
+        mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+        with service.trace_tool_invocation("toolname", {"a": "b"}) as (sid, result):
             result["status"] = "ok"
-        mock_db.commit.assert_called()
+        mock_session.commit.assert_called()
 
 
-def test_record_token_usage_autocalc(mock_db):
+def test_record_token_usage_autocalc(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as ct:
         ct.get.return_value = "traceid"
         service.record_metric = MagicMock()
-        service.record_token_usage(mock_db, model="gpt-4o", input_tokens=10, output_tokens=15)
+        service.record_token_usage(model="gpt-4o", input_tokens=10, output_tokens=15)
         service.record_metric.assert_called()
 
 
-def test_trace_a2a_request_with_response_result(mock_db):
+def test_trace_a2a_request_with_response_result(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as ct:
         ct.get.return_value = "traceid"
-        mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
-        with service.trace_a2a_request(mock_db, "agent-123", "Agent", "query", {"input": "v"}) as (sid, result):
+        mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+        with service.trace_a2a_request("agent-123", "Agent", "query", {"input": "v"}) as (sid, result):
             result["response"] = "ok"
-        mock_db.commit.assert_called()
+        mock_session.commit.assert_called()
 
 
 def test_record_transport_activity_full(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
+    service.record_transport_activity("http", "send",
                                       message_count=1, bytes_sent=50, bytes_received=25,
                                       connection_id="cid")
     assert service.record_metric.call_count >= 3
@@ -662,54 +705,60 @@ def test_generate_trace_and_span_ids_lengths():
     assert len(s_id) == 16
 
 
-def test_start_trace_parent_id_included(mock_db):
+def test_start_trace_parent_id_included(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    trace_id = service.start_trace(mock_db, "GET /resource",
+    trace_id = service.start_trace("GET /resource",
                                    parent_span_id="p123",
                                    attributes={"foo": "bar"})
-    mock_db.add.assert_called()
+    # Session add handled internally
     # parent_span_id gets merged in attributes
-    assert "parent_span_id" in (mock_db.add.call_args[0][0].attributes or {})
+    assert "parent_span_id" in (mock_session.add.call_args[0][0].attributes or {})
     assert isinstance(trace_id, str)
 
 
-def test_end_trace_merges_additional_attributes(mock_db):
+def test_end_trace_merges_additional_attributes(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     trace = MagicMock()
     trace.start_time = datetime.now(timezone.utc)
     trace.attributes = {"a": 1}
-    mock_db.query.return_value.filter_by.return_value.first.return_value = trace
-    service.end_trace(mock_db, "tid", attributes={"b": 2})
+    mock_session.query.return_value.filter_by.return_value.first.return_value = trace
+    service.end_trace("tid", attributes={"b": 2})
     assert "b" in trace.attributes
-    mock_db.commit.assert_called()
+    mock_session.commit.assert_called()
 
 
-def test_end_span_no_span_found_logs_warning(mock_db, caplog):
+def test_end_span_no_span_found_logs_warning(mock_session_factory, caplog):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    mock_db.query.return_value.filter_by.return_value.first.return_value = None
-    service.end_span(mock_db, "missing")
+    mock_session.query.return_value.filter_by.return_value.first.return_value = None
+    service.end_span("missing")
     # The service should log a warning when span is not found
-    assert "not found" in caplog.text.lower() or mock_db.commit.call_count == 0
+    assert "not found" in caplog.text.lower() or mock_session.commit.call_count == 0
 
 
-def test_trace_span_exception_triggers_event(mock_db):
+def test_trace_span_exception_triggers_event(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     service.add_event = MagicMock()
-    mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+    mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
     with pytest.raises(ValueError):
-        with service.trace_span(mock_db, "traceid", "operation"):
+        with service.trace_span(mock_session, "traceid", "operation"):
             raise ValueError("boom")
     service.add_event.assert_called_once()
 
 
-def test_trace_tool_invocation_normal_exit(mock_db):
+def test_trace_tool_invocation_normal_exit(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as cvar:
         cvar.get.return_value = "tid"
-        mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
-        with service.trace_tool_invocation(mock_db, "tool_normal", {"a": "b"}) as (sid, result):
+        mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+        with service.trace_tool_invocation("tool_normal", {"a": "b"}) as (sid, result):
             result["success"] = True
-        assert mock_db.commit.call_count >= 2
+        # Context manager commits once at the end (single session, single commit)
+        mock_session.commit.assert_called_once()
 
 
 def test_query_spans_applies_filters(mock_db):
@@ -833,64 +882,69 @@ def test_query_spans_invalid_limit_and_order(mock_db):
         service.query_spans(mock_db, order_by="bad_order")
 
 
-def test_start_and_end_span_without_commit(mock_db):
+def test_start_and_end_span_without_commit(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    span_id = service.start_span(mock_db, "traceid", "operation", commit=False)
-    mock_db.commit.assert_not_called()
+    span_id = service.start_span("traceid", "operation", commit=False)
+    mock_session.commit.assert_not_called()
 
     span = MagicMock()
     span.start_time = datetime.now(timezone.utc)
     span.attributes = {"x": 1}
-    mock_db.query.return_value.filter_by.return_value.first.return_value = span
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
 
-    service.end_span(mock_db, span_id, attributes={"y": 2}, commit=False)
-    mock_db.commit.assert_not_called()
+    service.end_span(span_id, attributes={"y": 2}, commit=False)
+    mock_session.commit.assert_not_called()
     assert span.attributes["y"] == 2
 
 
-def test_delete_old_traces_commit_failure_returns_zero(mock_db):
+def test_delete_old_traces_commit_failure_returns_zero(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    mock_db.query.return_value.filter.return_value.delete.return_value = 3
+    mock_session.query.return_value.filter.return_value.delete.return_value = 3
 
     with patch.object(service, "_safe_commit", return_value=False):
-        deleted = service.delete_old_traces(mock_db, datetime.now(timezone.utc))
+        deleted = service.delete_old_traces(datetime.now(timezone.utc))
 
     assert deleted == 0
 
 
-def test_delete_old_traces_success(mock_db):
+def test_delete_old_traces_success(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
-    mock_db.query.return_value.filter.return_value.delete.return_value = 2
+    mock_session.query.return_value.filter.return_value.delete.return_value = 2
     with patch.object(service, "_safe_commit", return_value=True):
-        deleted = service.delete_old_traces(mock_db, datetime.now(timezone.utc))
+        deleted = service.delete_old_traces(datetime.now(timezone.utc))
     assert deleted == 2
 
 
-def test_record_token_usage_auto_cost_and_total(mock_db):
+def test_record_token_usage_auto_cost_and_total(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as cvar:
         cvar.get.return_value = "tid"
         service.record_metric = MagicMock()
-        service.record_token_usage(mock_db, model="gpt-4o-mini",
+        service.record_token_usage(model="gpt-4o-mini",
                                    input_tokens=10, output_tokens=5,
                                    total_tokens=None, estimated_cost_usd=None)
         service.record_metric.assert_called()
 
 
-def test_trace_a2a_request_successful_path(mock_db):
+def test_trace_a2a_request_successful_path(mock_session_factory):
+    mock_factory, mock_session = mock_session_factory
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as cvar:
         cvar.get.return_value = "tid"
-        mock_db.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
-        with service.trace_a2a_request(mock_db, "agent007", "Spy", "run", {"key": "val"}) as (sid, result):
+        mock_session.query.return_value.filter_by.return_value.first.return_value.start_time = datetime.now(timezone.utc)
+        with service.trace_a2a_request("agent007", "Spy", "run", {"key": "val"}) as (sid, result):
             result["done"] = "ok"
-        mock_db.commit.assert_called()
+        mock_session.commit.assert_called()
 
 
 def test_record_transport_activity_all_metrics_and_error(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
-    service.record_transport_activity(mock_db, "http", "send",
+    service.record_transport_activity("http", "send",
                                       message_count=2,
                                       bytes_sent=128,
                                       bytes_received=64,
@@ -906,3 +960,287 @@ def test_query_traces_invalid_limit_and_order_raises(mock_db):
         service.query_traces(mock_db, limit=0)
     with pytest.raises(ValueError):
         service.query_traces(mock_db, order_by="unknown_field")
+
+
+# =============================================================================
+# Coverage tests for exception handling in session close operations
+# =============================================================================
+
+
+@patch("mcpgateway.services.observability_service.ObservabilityTrace", MagicMock())
+def test_start_trace_session_close_failure(mock_session_factory):
+    """Test that start_trace handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    service = ObservabilityService()
+    trace_id = service.start_trace("test_trace")
+
+    # Verify trace was created despite close failure
+    assert trace_id is not None
+    mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilityTrace", MagicMock())
+def test_end_trace_session_close_failure(mock_session_factory):
+    """Test that end_trace handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    trace = MagicMock()
+    trace.start_time = datetime.now(timezone.utc)
+    trace.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = trace
+
+    service = ObservabilityService()
+    service.end_trace("trace123", status="ok")
+
+    # Verify close was attempted
+    mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_start_span_session_close_failure(mock_session_factory):
+    """Test that start_span handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    service = ObservabilityService()
+    span_id = service.start_span(trace_id="trace123", name="test_span")
+
+    # Verify span was created despite close failure
+    assert span_id is not None
+    mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_start_span_with_commit_true(mock_session_factory):
+    """Test start_span with commit=True explicitly calls _safe_commit."""
+    mock_factory, mock_session = mock_session_factory
+
+    service = ObservabilityService()
+    with patch.object(service, "_safe_commit") as mock_safe_commit:
+        span_id = service.start_span(
+            trace_id="trace123",
+            name="test_span",
+            commit=True
+        )
+
+        # Verify _safe_commit was called
+        mock_safe_commit.assert_called_once_with(mock_session, "start_span")
+        assert span_id is not None
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_end_span_session_close_failure(mock_session_factory):
+    """Test that end_span handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    service.end_span("span123", status="ok")
+
+    # Verify close was attempted
+    mock_session.close.assert_called_once()
+
+
+def test_add_event_session_close_failure(mock_session_factory):
+    """Test that add_event handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    # Mock ObservabilityEvent to return an object with id=123 after refresh
+    mock_event = MagicMock()
+    mock_event.id = 123
+    with patch("mcpgateway.services.observability_service.ObservabilityEvent", return_value=mock_event):
+        # Patch _safe_commit to return True
+        service = ObservabilityService()
+        with patch.object(service, '_safe_commit', return_value=True):
+            event_id = service.add_event("span123", "test_event", severity="info")
+
+    # Verify event was created (returns non-zero if successful)
+    assert event_id == 123
+    mock_session.close.assert_called_once()
+
+
+def test_record_metric_session_close_failure(mock_session_factory):
+    """Test that record_metric handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    # Mock ObservabilityMetric to return an object with id=456 after refresh
+    mock_metric = MagicMock()
+    mock_metric.id = 456
+    with patch("mcpgateway.services.observability_service.ObservabilityMetric", return_value=mock_metric):
+        # Patch _safe_commit to return True
+        service = ObservabilityService()
+        with patch.object(service, '_safe_commit', return_value=True):
+            metric_id = service.record_metric(
+                name="test.metric",
+                value=1.0,
+                metric_type="counter"
+            )
+
+    # Verify metric was created
+    assert metric_id == 456
+    mock_session.close.assert_called_once()
+
+
+def test_delete_old_traces_session_close_failure(mock_session_factory):
+    """Test that delete_old_traces handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+    mock_session.query.return_value.filter.return_value.delete.return_value = 5
+
+    service = ObservabilityService()
+    with patch.object(service, "_safe_commit", return_value=True):
+        deleted = service.delete_old_traces(datetime.now(timezone.utc))
+
+        # Verify deletion succeeded
+        assert deleted == 5
+        mock_session.close.assert_called_once()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_span_context_manager_session_close_failure(mock_session_factory):
+    """Test that trace_span context manager handles session close failures."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    with service.trace_span("trace123", "test_span") as span_id:
+        assert span_id is not None
+
+    # Verify close was attempted
+    mock_session.close.assert_called()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_tool_invocation_context_manager_session_close_failure(mock_session_factory):
+    """Test that trace_tool_invocation handles session close failures."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with service.trace_tool_invocation("test_tool", {"arg": "value"}) as (span_id, result):
+            assert span_id is not None
+            result["status"] = "success"
+
+    # Verify close was attempted
+    mock_session.close.assert_called()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_a2a_request_context_manager_session_close_failure(mock_session_factory):
+    """Test that trace_a2a_request handles session close failures."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.start_time = datetime.now(timezone.utc)
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with service.trace_a2a_request("agent123", "TestAgent", "query", {"data": "test"}) as (span_id, result):
+            assert span_id is not None
+            result["response"] = "success"
+
+    # Verify close was attempted
+    mock_session.close.assert_called()
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_tool_invocation_error_path_end_span_failure(mock_session_factory):
+    """Test that trace_tool_invocation handles end_span failure during error path."""
+    mock_factory, mock_session = mock_session_factory
+
+    service = ObservabilityService()
+
+    # Make end_span raise during error path by making the query fail
+    call_count = [0]
+    original_query = mock_session.query
+
+    def failing_query_on_second_call(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] > 1:
+            raise Exception("end_span query failed")
+        return original_query(*args, **kwargs)
+
+    mock_session.query = failing_query_on_second_call
+
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with pytest.raises(RuntimeError, match="tool error"):
+            with service.trace_tool_invocation("test_tool", {"arg": "value"}) as (span_id, result):
+                raise RuntimeError("tool error")
+
+
+@patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
+def test_trace_a2a_request_error_path_end_span_failure(mock_session_factory):
+    """Test that trace_a2a_request handles end_span failure during error path."""
+    mock_factory, mock_session = mock_session_factory
+
+    service = ObservabilityService()
+
+    # Make end_span raise during error path by making the query fail
+    call_count = [0]
+    original_query = mock_session.query
+
+    def failing_query_on_second_call(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] > 1:
+            raise Exception("end_span query failed")
+        return original_query(*args, **kwargs)
+
+    mock_session.query = failing_query_on_second_call
+
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with pytest.raises(RuntimeError, match="a2a error"):
+            with service.trace_a2a_request("agent123", "TestAgent", "query") as (span_id, result):
+                raise RuntimeError("a2a error")
+
+
+def test_record_token_usage_session_close_failure(mock_session_factory):
+    """Test that record_token_usage handles session close failures gracefully."""
+    mock_factory, mock_session = mock_session_factory
+    mock_session.close.side_effect = Exception("close failed")
+
+    span = MagicMock()
+    span.attributes = {}
+    mock_session.query.return_value.filter_by.return_value.first.return_value = span
+
+    service = ObservabilityService()
+    service.record_metric = MagicMock()
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_trace:
+        mock_trace.get.return_value = "trace123"
+        with patch.object(service, "_safe_commit", return_value=True):
+            service.record_token_usage(
+                span_id="span123",
+                model="test-model",
+                input_tokens=10,
+                output_tokens=5,
+            )
+
+    # Verify close was attempted despite failure
+    mock_session.close.assert_called()

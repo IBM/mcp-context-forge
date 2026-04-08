@@ -506,7 +506,7 @@ class PromptService(BaseService):
         from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
 
         results = get_top_performers_combined(
-            db=db,
+            db,
             metric_type="prompt",
             entity_model=DbPrompt,
             limit=effective_limit,
@@ -1354,7 +1354,7 @@ class PromptService(BaseService):
 
             # Use unified pagination helper - handles both page and cursor pagination
             pag_result = await unified_paginate(
-                db=db,
+                db,
                 query=query,
                 page=page,
                 per_page=per_page,
@@ -1821,7 +1821,6 @@ class PromptService(BaseService):
         if trace_id and observability_service:
             try:
                 db_span_id = observability_service.start_span(
-                    db=db,
                     trace_id=trace_id,
                     name="prompt.render",
                     attributes={
@@ -2064,7 +2063,6 @@ class PromptService(BaseService):
                 if db_span_id and observability_service and not db_span_ended:
                     try:
                         observability_service.end_span(
-                            db=db,
                             span_id=db_span_id,
                             status="ok" if success else "error",
                             status_message=error_message if error_message else None,

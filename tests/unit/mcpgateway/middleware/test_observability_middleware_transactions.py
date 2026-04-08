@@ -37,41 +37,9 @@ def create_mock_request():
     return request
 
 
-@pytest.mark.asyncio
-async def test_middleware_does_not_commit_shared_session():
-    """
-    Test 1: Verify middleware does not commit the shared session.
-
-    The middleware should only manage session lifecycle (create/close),
-    not transactions (commit/rollback). Transaction control is delegated
-    to get_db() to maintain predictable semantics for route handlers.
-    """
-    middleware = ObservabilityMiddleware(app=None, enabled=True)
-    mock_request = create_mock_request()
-    mock_session = MagicMock()
-    mock_session.is_active = True
-    mock_session.in_transaction.return_value = False
-
-    with (
-        patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session),
-        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
-        patch.object(middleware.service, "start_trace", return_value="trace123"),
-        patch.object(middleware.service, "start_span", return_value="span123"),
-        patch.object(middleware.service, "end_span"),
-        patch.object(middleware.service, "end_trace"),
-        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
-    ):
-
-        async def mock_call_next(request):
-            return Response("OK", status_code=200)
-
-        response = await middleware.dispatch(mock_request, mock_call_next)
-
-        assert response.status_code == 200
-        # CRITICAL: Verify middleware did NOT call commit
-        mock_session.commit.assert_not_called()
-        # Verify middleware DID call close (lifecycle management)
-        mock_session.close.assert_called_once()
+# Test removed - obsolete after #3883
+# Middleware no longer creates or manages request sessions.
+# Observability operations create their own independent sessions.
 
 
 @pytest.mark.asyncio
@@ -177,15 +145,22 @@ async def test_get_db_invalidates_broken_connection_middleware_session():
     mock_session.invalidate.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_full_request_flow_with_observability():
-    """
-    Test 5: Integration test - Full request flow with observability enabled.
+# Test removed - obsolete after #3883
+# Middleware no longer creates request sessions. Each observability operation
+# creates its own independent session. See test_middleware_no_session_management() instead.
 
-    Verifies the complete flow: middleware creates session, route handler
-    uses get_db(), get_db() commits, middleware closes. This confirms the
-    separation of concerns between lifecycle (middleware) and transactions
-    (get_db()).
+
+@pytest.mark.asyncio
+async def test_observability_data_persists_on_error_separate_session():
+    """
+    Test 6: Verify that observability data persists on error (Option 2 behavior).
+
+    With separate observability sessions (issue #3883), observability data
+    commits independently of main transaction failures. This provides
+    visibility into partial failures at the cost of atomicity.
+
+    This is a BREAKING BEHAVIOR CHANGE from the previous implementation
+    where observability data was rolled back with main transaction.
     """
     # First-Party
     from mcpgateway.main import get_db
@@ -193,68 +168,13 @@ async def test_full_request_flow_with_observability():
 
     middleware = ObservabilityMiddleware(app=None, enabled=True)
     mock_request = create_mock_request()
-    mock_session = MagicMock()
-    mock_session.is_active = True
-    mock_session.in_transaction.return_value = False
 
     with (
-        patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session),
         patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
-        patch.object(middleware.service, "start_trace", return_value="trace123"),
-        patch.object(middleware.service, "start_span", return_value="span123"),
-        patch.object(middleware.service, "end_span"),
-        patch.object(middleware.service, "end_trace"),
-        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
-    ):
-
-        async def mock_call_next(request):
-            # Simulate route handler using get_db()
-            gen = get_db(request=request)
-            next(gen)
-            # Do some work...
-            # Complete successfully
-            try:
-                next(gen)
-            except StopIteration:
-                pass
-            return Response("OK", status_code=200)
-
-        response = await middleware.dispatch(mock_request, mock_call_next)
-
-        assert response.status_code == 200
-        # Verify commit was called exactly once (by get_db())
-        mock_session.commit.assert_called_once()
-        # Verify session was closed exactly once (by middleware)
-        mock_session.close.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_observability_data_lost_on_error_is_acceptable():
-    """
-    Test 6: Verify that observability data is rolled back on error.
-
-    This is EXPECTED and ACCEPTABLE behavior - observability is best-effort.
-    When a route handler fails, get_db() rolls back the entire transaction,
-    including any observability traces/spans that were written. This is an
-    acceptable trade-off to maintain data integrity.
-    """
-    # First-Party
-    from mcpgateway.main import get_db
-    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
-
-    middleware = ObservabilityMiddleware(app=None, enabled=True)
-    mock_request = create_mock_request()
-    mock_session = MagicMock()
-    mock_session.is_active = True
-    mock_session.in_transaction.return_value = False
-
-    with (
-        patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=mock_session),
-        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
-        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start,
-        patch.object(middleware.service, "start_span", return_value="span123"),
-        patch.object(middleware.service, "end_span"),
-        patch.object(middleware.service, "end_trace"),
+        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start_trace,
+        patch.object(middleware.service, "start_span", return_value="span123") as mock_start_span,
+        patch.object(middleware.service, "end_span") as mock_end_span,
+        patch.object(middleware.service, "end_trace") as mock_end_trace,
         patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
     ):
 
@@ -273,12 +193,22 @@ async def test_observability_data_lost_on_error_is_acceptable():
         with pytest.raises(ValueError):
             await middleware.dispatch(mock_request, failing_call_next)
 
-        # Observability trace/span were created
-        mock_start.assert_called_once()
-        # Session was rolled back by middleware (observability data lost - ACCEPTABLE)
-        mock_session.rollback.assert_called()
-        # Session was closed
-        mock_session.close.assert_called_once()
+        # CRITICAL: Verify observability methods were called (they create their own sessions)
+        mock_start_trace.assert_called_once()
+        mock_start_span.assert_called_once()
+        mock_end_span.assert_called_once()  # Called with error status
+        mock_end_trace.assert_called_once()  # Called with error status
+
+        # Verify end_span was called with error status
+        end_span_call = mock_end_span.call_args
+        assert end_span_call is not None
+        # Check that status="error" was passed
+        assert end_span_call.kwargs.get("status") == "error" or (len(end_span_call.args) > 1 and end_span_call.args[1] == "error")
+
+        # Verify end_trace was called with error status
+        end_trace_call = mock_end_trace.call_args
+        assert end_trace_call is not None
+        assert end_trace_call.kwargs.get("status") == "error" or (len(end_trace_call.args) > 1 and end_trace_call.args[1] == "error")
 
 
 @pytest.mark.asyncio
@@ -347,3 +277,172 @@ async def test_get_db_inactive_session_skips_commit():
     mock_session.commit.assert_not_called()
     # Verify get_db() did NOT call close
     mock_session.close.assert_not_called()
+
+
+# =============================================================================
+# New tests for separate observability session pattern (issue #3883)
+# =============================================================================
+
+
+def test_observability_uses_independent_sessions():
+    """Verify observability write operations use independent sessions."""
+    # First-Party
+    from mcpgateway.services.observability_service import ObservabilityService
+
+    service = ObservabilityService()
+
+    with patch("mcpgateway.services.observability_service.SessionLocal") as mock_factory:
+        mock_session = MagicMock()
+        mock_factory.return_value = mock_session
+
+        trace_id = service.start_trace(name="test_trace")
+
+        # Verify: New session created
+        mock_factory.assert_called_once()
+        # Verify: Session committed
+        mock_session.commit.assert_called_once()
+        # Verify: Session closed
+        mock_session.close.assert_called_once()
+        # Verify: trace_id returned
+        assert trace_id is not None
+
+
+def test_context_manager_reuses_session():
+    """Verify context managers use a single session for start/end."""
+    # Standard
+    from datetime import datetime, timezone
+
+    # First-Party
+    from mcpgateway.services.observability_service import ObservabilityService
+
+    service = ObservabilityService()
+
+    with patch("mcpgateway.services.observability_service.SessionLocal") as mock_factory:
+        mock_session = MagicMock()
+        mock_factory.return_value = mock_session
+
+        # Mock the query chain for end_span
+        mock_span = MagicMock()
+        mock_span.start_time = datetime.now(timezone.utc)
+        mock_span.attributes = {}
+        mock_session.query.return_value.filter_by.return_value.first.return_value = mock_span
+
+        with service.trace_span(trace_id="test123", name="test_span"):
+            pass
+
+        # Verify: Only ONE session created (not two for start_span + end_span)
+        mock_factory.assert_called_once()
+        # Verify: Single commit at end
+        mock_session.commit.assert_called_once()
+        # Verify: Session closed
+        mock_session.close.assert_called_once()
+
+
+def test_add_event_bug_fix():
+    """Verify add_event doesn't call refresh after commit failure."""
+    # Third-Party
+    from sqlalchemy.exc import SQLAlchemyError
+
+    # First-Party
+    from mcpgateway.services.observability_service import ObservabilityService
+
+    service = ObservabilityService()
+
+    with patch("mcpgateway.services.observability_service.SessionLocal") as mock_factory:
+        mock_session = MagicMock()
+        mock_session.commit.side_effect = SQLAlchemyError("commit failed")
+        mock_factory.return_value = mock_session
+
+        event_id = service.add_event(
+            span_id="test",
+            name="test_event",
+            severity="info",
+            message="test"
+        )
+
+        # Verify: Returns 0 on commit failure
+        assert event_id == 0
+        # Verify: refresh NOT called after commit failure (bug fix)
+        mock_session.refresh.assert_not_called()
+        # Verify: rollback was called
+        mock_session.rollback.assert_called_once()
+        # Verify: session still closed
+        mock_session.close.assert_called_once()
+
+
+def test_record_metric_returns_zero_on_failure():
+    """Verify record_metric returns 0 when commit fails."""
+    # Third-Party
+    from sqlalchemy.exc import SQLAlchemyError
+
+    # First-Party
+    from mcpgateway.services.observability_service import ObservabilityService
+
+    service = ObservabilityService()
+
+    with patch("mcpgateway.services.observability_service.SessionLocal") as mock_factory:
+        mock_session = MagicMock()
+        mock_session.commit.side_effect = SQLAlchemyError("commit failed")
+        mock_factory.return_value = mock_session
+
+        metric_id = service.record_metric(
+            name="test.metric",
+            value=42.0,
+            metric_type="gauge"
+        )
+
+        # Verify: Returns 0 on commit failure
+        assert metric_id == 0
+        # Verify: refresh NOT called after commit failure
+        mock_session.refresh.assert_not_called()
+        # Verify: rollback was called
+        mock_session.rollback.assert_called_once()
+        # Verify: session still closed
+        mock_session.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_middleware_no_session_management():
+    """Verify middleware doesn't create or manage request sessions anymore."""
+    # First-Party
+    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
+
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    # Create a fresh mock request without any preset attributes
+    mock_request = MagicMock(spec=Request)
+    mock_request.method = "GET"
+    mock_request.url.path = "/api/v1/servers"
+    mock_request.url.query = ""
+    mock_request.url.__str__.return_value = "http://testserver/api/v1/servers"
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.headers = {"user-agent": "pytest"}
+    # Create a clean state object without db attribute
+    mock_request.state = MagicMock()
+    del mock_request.state.db  # Explicitly remove db attribute if it exists
+
+    db_was_set = False
+
+    with (
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+        patch.object(middleware.service, "start_trace", return_value="trace123"),
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+    ):
+
+        async def mock_call_next(request):
+            # Verify: No session in request.state created by middleware
+            nonlocal db_was_set
+            db_was_set = hasattr(request.state, "db") and request.state.db is not None
+            return Response("OK", status_code=200)
+
+        response = await middleware.dispatch(mock_request, mock_call_next)
+
+        assert response.status_code == 200
+        # CRITICAL: Verify middleware did NOT set request.state.db
+        assert not db_was_set, "Middleware should not create request.state.db"
+        # Verify: trace_id was set in request state
+        assert hasattr(mock_request.state, "trace_id")
+        assert mock_request.state.trace_id == "trace123"

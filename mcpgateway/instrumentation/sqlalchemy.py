@@ -56,27 +56,27 @@ def _write_span_to_db(span_data: dict) -> None:
         # pylint: enable=import-outside-toplevel
 
         service = ObservabilityService()
+        # start_span and end_span create their own independent sessions (issue #3883)
+        span_id = service.start_span(
+            trace_id=span_data["trace_id"],
+            name=span_data["name"],
+            kind=span_data["kind"],
+            resource_type=span_data["resource_type"],
+            resource_name=span_data["resource_name"],
+            attributes=span_data["start_attributes"],
+        )
+
+        # End span with measured duration in attributes
+        service.end_span(
+            span_id=span_id,
+            status=span_data["status"],
+            attributes=span_data["end_attributes"],
+        )
+
+        # Update the span duration to match what we actually measured
+        # Use independent session for this query (follows #3883 pattern)
         db = SessionLocal()
         try:
-            span_id = service.start_span(
-                db=db,
-                trace_id=span_data["trace_id"],
-                name=span_data["name"],
-                kind=span_data["kind"],
-                resource_type=span_data["resource_type"],
-                resource_name=span_data["resource_name"],
-                attributes=span_data["start_attributes"],
-            )
-
-            # End span with measured duration in attributes
-            service.end_span(
-                db=db,
-                span_id=span_id,
-                status=span_data["status"],
-                attributes=span_data["end_attributes"],
-            )
-
-            # Update the span duration to match what we actually measured
             span = db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
             if span:
                 span.duration_ms = span_data["duration_ms"]
