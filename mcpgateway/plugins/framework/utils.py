@@ -209,7 +209,7 @@ def normalize_content_type(content_type: str) -> str:
     """
     if not isinstance(content_type, str):
         return ""
-    return content_type.split(";")[0].strip().lower()
+    return content_type.split(";", maxsplit=1)[0].strip().lower()
 
 
 def matches(condition: PluginCondition, context: GlobalContext) -> bool:
