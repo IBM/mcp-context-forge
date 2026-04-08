@@ -68,6 +68,8 @@ async fn spawn_router(router: Router) -> String {
 fn test_runtime_config() -> RuntimeConfig {
     RuntimeConfig {
         backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
+        backend_authenticate_url: None,
+        backend_auth_health_url: None,
         listen_http: "127.0.0.1:8787".to_string(),
         listen_uds: None,
         public_listen_http: None,

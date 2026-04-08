@@ -3232,6 +3232,7 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
         "auth_method",
         "token_use",
         "permission_is_admin",
+        "policy_inputs",
         "scoped_permissions",
         "scoped_server_id",
     ):
@@ -3570,16 +3571,19 @@ class _StreamableHttpAuthHandler:
             if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
                 # Session token: resolve teams via single policy point (DB-first intersection)
                 # First-Party
-                from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import _resolve_teams_from_db, resolve_session_teams  # pylint: disable=import-outside-toplevel
 
+                policy_db_teams = None
                 if cached_team_ids is not None:
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=cached_team_ids)
+                    policy_db_teams = list(cached_team_ids)
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=policy_db_teams)
                 elif batched_auth_ctx is not None:
-                    preresolved = None if is_admin else list(batched_auth_ctx.get("team_ids") or [])
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=preresolved)
+                    policy_db_teams = None if is_admin else list(batched_auth_ctx.get("team_ids") or [])
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=policy_db_teams)
                 else:
                     _record_mcp_auth_cache_event("teams_db_resolve")
-                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin})
+                    policy_db_teams = await _resolve_teams_from_db(user_email, {"is_admin": is_admin}) if user_email else []
+                    final_teams = await resolve_session_teams(user_payload, user_email, {"is_admin": is_admin}, preresolved_db_teams=policy_db_teams)
             else:
                 # API token or legacy: use embedded teams from JWT
                 # First-Party
@@ -3651,6 +3655,19 @@ class _StreamableHttpAuthHandler:
                 "permission_is_admin": db_user_is_admin or is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
+            if token_use != "session":
+                auth_user_ctx["policy_inputs"] = {
+                    "token_payload": user_payload,
+                    "db_user_is_admin": db_user_is_admin,
+                }
+            else:
+                auth_user_ctx["policy_inputs"] = {
+                    "token_payload": user_payload,
+                    "db_teams": policy_db_teams,
+                    "db_user_is_admin": db_user_is_admin,
+                }
+                if batched_auth_ctx and batched_auth_ctx.get("team_names"):
+                    auth_user_ctx["policy_inputs"]["team_names"] = dict(batched_auth_ctx.get("team_names") or {})
             trace_team_name = await resolve_trace_team_name(user_payload, final_teams, preresolved_team_names=batched_auth_ctx.get("team_names") if batched_auth_ctx else None)
             if trace_team_name:
                 auth_user_ctx["team_name"] = trace_team_name

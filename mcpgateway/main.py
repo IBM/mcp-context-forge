@@ -427,6 +427,21 @@ def _is_trusted_internal_mcp_runtime_request(request: Request) -> bool:
     return runtime_marker == "rust" and _has_valid_internal_mcp_runtime_auth_header(request) and client_host in ("127.0.0.1", "::1")
 
 
+def _is_trusted_internal_core_auth_request(request: Request) -> bool:
+    """Return whether the request came from the local Rust runtime or auth service.
+
+    Args:
+        request: Incoming request to inspect.
+
+    Returns:
+        ``True`` when the request carries a trusted local Rust caller marker and
+        the shared secret-derived trust header from loopback.
+    """
+    runtime_marker = request.headers.get("x-contextforge-mcp-runtime")
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    return runtime_marker in ("rust", "auth") and _has_valid_internal_mcp_runtime_auth_header(request) and client_host in ("127.0.0.1", "::1")
+
+
 def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     """Build the authenticated user payload for internal Rust -> Python MCP dispatch.
 
@@ -7153,12 +7168,17 @@ async def handle_internal_mcp_authenticate(request: Request):
     Raises:
         HTTPException: If the request is not trusted or the forwarded payload is invalid.
     """
-    if not _is_trusted_internal_mcp_runtime_request(request):
-        raise HTTPException(status_code=403, detail="Internal MCP authenticate is only available to the local Rust runtime")
+    return await _handle_internal_core_auth_authenticate(request, denied_detail="Internal MCP authenticate is only available to the local Rust runtime")
+
+
+async def _handle_internal_core_auth_authenticate(request: Request, denied_detail: str):
+    """Authenticate a trusted internal request against the core auth boundary."""
+    if not _is_trusted_internal_core_auth_request(request):
+        raise HTTPException(status_code=403, detail=denied_detail)
 
     payload = await request.json()
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Invalid internal MCP authenticate payload")
+        raise HTTPException(status_code=400, detail="Invalid internal auth authenticate payload")
 
     method = str(payload.get("method") or "GET").upper()
     path = payload.get("path")
@@ -7167,13 +7187,13 @@ async def handle_internal_mcp_authenticate(request: Request):
     client_ip = payload.get("clientIp")
 
     if not isinstance(path, str) or not path:
-        raise HTTPException(status_code=400, detail="Internal MCP authenticate payload requires path")
+        raise HTTPException(status_code=400, detail="Internal auth authenticate payload requires path")
     if not isinstance(query_string, str):
-        raise HTTPException(status_code=400, detail="Internal MCP authenticate payload queryString must be a string")
+        raise HTTPException(status_code=400, detail="Internal auth authenticate payload queryString must be a string")
     if not isinstance(forwarded_headers, dict) or not all(isinstance(name, str) and isinstance(value, str) for name, value in forwarded_headers.items()):
-        raise HTTPException(status_code=400, detail="Internal MCP authenticate payload headers must be a string map")
+        raise HTTPException(status_code=400, detail="Internal auth authenticate payload headers must be a string map")
     if client_ip is not None and not isinstance(client_ip, str):
-        raise HTTPException(status_code=400, detail="Internal MCP authenticate payload clientIp must be a string")
+        raise HTTPException(status_code=400, detail="Internal auth authenticate payload clientIp must be a string")
 
     error_response, auth_context = await _run_internal_mcp_authentication(
         method=method,
@@ -7186,6 +7206,13 @@ async def handle_internal_mcp_authenticate(request: Request):
         return error_response
 
     return ORJSONResponse(status_code=200, content={"authContext": auth_context})
+
+
+@utility_router.post("/_internal/core/auth/authenticate/")
+@utility_router.post("/_internal/core/auth/authenticate")
+async def handle_internal_core_auth_authenticate(request: Request):
+    """Authenticate a trusted internal request through the core-owned auth boundary."""
+    return await _handle_internal_core_auth_authenticate(request, denied_detail="Internal core auth authenticate is only available to the local Rust runtime or auth service")
 
 
 @utility_router.post("/_internal/mcp/rpc/")

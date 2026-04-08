@@ -11,8 +11,15 @@ request.state.team_id derivation logic.
 # Future
 from __future__ import annotations
 
+# Standard
+import json
+from pathlib import Path
+
+# Third-Party
+import pytest
+
 # First-Party
-from mcpgateway.auth import normalize_token_teams
+from mcpgateway.auth import normalize_token_teams, resolve_session_teams
 
 # ---------------------------------------------------------------------------
 # D2.1: normalize_token_teams truth table
@@ -157,3 +164,36 @@ class TestTokenTeamIdDerivation:
         assert teams is None
         team_id = None  # admin bypass → None
         assert team_id is None
+
+
+class TestCoreAuthOracle:
+    """Shared oracle cases for the experimental Rust core-auth policy."""
+
+    @staticmethod
+    def _load_oracle() -> dict:
+        fixture_path = Path(__file__).resolve().parents[2] / "fixtures" / "core_auth_policy_oracle.json"
+        return json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    def test_normalize_token_teams_matches_oracle(self):
+        """Python token normalization must satisfy the shared oracle fixture."""
+        oracle = self._load_oracle()
+
+        for case in oracle["normalize_token_teams"]:
+            assert normalize_token_teams(case["payload"]) == case["expected"], case["name"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_session_teams_matches_oracle(self):
+        """Python session narrowing must satisfy the shared oracle fixture."""
+        oracle = self._load_oracle()
+
+        for case in oracle["resolve_session_teams"]:
+            user_info = {"is_admin": case["expected"] is None}
+            assert (
+                await resolve_session_teams(
+                    case["payload"],
+                    case["email"],
+                    user_info,
+                    preresolved_db_teams=case["db_teams"],
+                )
+                == case["expected"]
+            ), case["name"]

@@ -2607,6 +2607,13 @@ MCP_BENCHMARK_MIXED_MASTER_PORT ?= 5567
 MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
 MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
 MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
+MCP_AUTH_COMPARE_PROXY_HOST ?= http://localhost:8080
+MCP_AUTH_COMPARE_DIRECT_HOST ?= http://localhost:8081
+MCP_AUTH_COMPARE_USERS ?= $(MCP_BENCHMARK_USERS)
+MCP_AUTH_COMPARE_SPAWN_RATE ?= $(MCP_BENCHMARK_SPAWN_RATE)
+MCP_AUTH_COMPARE_RUN_TIME ?= $(MCP_BENCHMARK_RUN_TIME)
+MCP_AUTH_COMPARE_HTML_DIR ?= reports/core_auth_compare
+MCP_AUTH_COMPARE_CSV_DIR ?= reports/core_auth_compare
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2646,6 +2653,7 @@ load-test-mcp-protocol-ui:                 ## MCP Streamable HTTP protocol test 
 
 # help: benchmark-mcp-mixed      - Quick mixed MCP benchmark against the testing stack
 # help: benchmark-mcp-tools      - Quick tools-only MCP benchmark against the testing stack
+# help: benchmark-mcp-auth-compare - Compare proxy auth vs direct Rust auth on the MCP path
 # help: benchmark-mcp-mixed-300  - Distributed 300-user mixed MCP benchmark
 # help: benchmark-mcp-tools-300  - Distributed 300-user tools-only MCP benchmark
 
@@ -2683,6 +2691,27 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 			--headless \
 			--only-summary \
 			MCPToolCallerUser'
+
+.PHONY: benchmark-mcp-auth-compare
+benchmark-mcp-auth-compare:                ## Compare proxy auth vs direct Rust auth on the MCP path
+	@echo "📊 Running MCP core-auth comparison benchmark..."
+	@echo "   Proxy host: $(MCP_AUTH_COMPARE_PROXY_HOST)"
+	@echo "   Direct host: $(MCP_AUTH_COMPARE_DIRECT_HOST)"
+	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
+	@echo "   Users: $(MCP_AUTH_COMPARE_USERS), Spawn: $(MCP_AUTH_COMPARE_SPAWN_RATE)/s, Duration: $(MCP_AUTH_COMPARE_RUN_TIME)"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
+		MCP_AUTH_COMPARE_PROXY_HOST=$(MCP_AUTH_COMPARE_PROXY_HOST) \
+		MCP_AUTH_COMPARE_DIRECT_HOST=$(MCP_AUTH_COMPARE_DIRECT_HOST) \
+		MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_PROTOCOL_LOCUSTFILE=$(MCP_PROTOCOL_LOCUSTFILE) \
+		MCP_AUTH_COMPARE_USERS=$(MCP_AUTH_COMPARE_USERS) \
+		MCP_AUTH_COMPARE_SPAWN_RATE=$(MCP_AUTH_COMPARE_SPAWN_RATE) \
+		MCP_AUTH_COMPARE_RUN_TIME=$(MCP_AUTH_COMPARE_RUN_TIME) \
+		MCP_AUTH_COMPARE_HTML_DIR=$(MCP_AUTH_COMPARE_HTML_DIR) \
+		MCP_AUTH_COMPARE_CSV_DIR=$(MCP_AUTH_COMPARE_CSV_DIR) \
+		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) \
+		bash tests/loadtest/run_core_auth_compare.sh'
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter

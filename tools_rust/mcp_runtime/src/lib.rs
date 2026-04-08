@@ -105,6 +105,8 @@ const INTERNAL_AFFINITY_FORWARDED_VALUE: &str = "rust";
 pub enum RuntimeError {
     #[error("{0}")]
     Config(String),
+    #[error("auth service readiness check failed: {0}")]
+    AuthServiceReadiness(String),
     #[error("http client error: {0}")]
     HttpClient(#[from] reqwest::Error),
     #[error("postgres error: {0}")]
@@ -125,6 +127,7 @@ pub enum RuntimeError {
 pub struct AppState {
     backend_rpc_url: Arc<str>,
     backend_authenticate_url: Arc<str>,
+    backend_auth_health_url: Option<Arc<str>>,
     backend_initialize_url: Arc<str>,
     backend_notifications_initialized_url: Arc<str>,
     backend_notifications_message_url: Arc<str>,
@@ -207,6 +210,8 @@ pub struct HealthResponse {
     pub status: &'static str,
     pub runtime: &'static str,
     pub backend_rpc_url: String,
+    pub backend_authenticate_url: String,
+    pub backend_auth_health_url: Option<String>,
     pub protocol_version: String,
     pub supported_protocol_versions: Vec<String>,
     pub server_name: String,
@@ -238,6 +243,8 @@ pub struct SessionAuthReuseStatsSnapshot {
     pub hits: u64,
     pub misses: u64,
     pub backend_auth_round_trips: u64,
+    pub backend_auth_round_trip_total_ms: u64,
+    pub backend_auth_round_trip_max_ms: u64,
     pub miss_disabled: u64,
     pub miss_no_session: u64,
     pub miss_server_scope_mismatch: u64,
@@ -267,6 +274,8 @@ struct RuntimeStats {
     session_auth_reuse_hits: AtomicU64,
     session_auth_reuse_misses: AtomicU64,
     session_auth_backend_round_trips: AtomicU64,
+    session_auth_backend_round_trip_total_ms: AtomicU64,
+    session_auth_backend_round_trip_max_ms: AtomicU64,
     session_auth_reuse_miss_disabled: AtomicU64,
     session_auth_reuse_miss_no_session: AtomicU64,
     session_auth_reuse_miss_server_scope_mismatch: AtomicU64,
@@ -347,10 +356,10 @@ struct InitializeParams {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-/// Minimal normalized auth context returned by Python to the Rust edge.
+/// Minimal normalized auth context returned by the core auth boundary to the Rust edge.
 ///
-/// Rust uses this for ownership checks and optional session-bound auth reuse,
-/// but Python remains the source of truth for authentication and RBAC.
+/// Rust uses this for ownership checks and optional session-bound auth reuse
+/// while the core auth service remains the source of truth for auth and RBAC.
 struct InternalAuthContext {
     email: Option<String>,
     teams: Option<Vec<String>>,
@@ -374,10 +383,10 @@ impl InternalAuthContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// Payload sent to Python's trusted internal authenticate endpoint.
+/// Payload sent to the trusted core-auth authenticate endpoint.
 ///
 /// The request captures the public MCP request shape after nginx/Rust ingress
-/// normalization so Python can evaluate auth and token scoping exactly once.
+/// normalization so core auth can evaluate auth and token scoping exactly once.
 struct InternalAuthenticateRequest {
     method: String,
     path: String,
@@ -702,9 +711,16 @@ impl AppState {
 
         Ok(Self {
             backend_rpc_url: Arc::from(config.backend_rpc_url.clone()),
-            backend_authenticate_url: Arc::from(derive_backend_authenticate_url(
-                &config.backend_rpc_url,
-            )),
+            backend_authenticate_url: Arc::from(
+                config
+                    .backend_authenticate_url
+                    .clone()
+                    .unwrap_or_else(|| derive_backend_authenticate_url(&config.backend_rpc_url)),
+            ),
+            backend_auth_health_url: config
+                .backend_auth_health_url
+                .clone()
+                .map(Arc::from),
             backend_initialize_url: Arc::from(derive_backend_initialize_url(
                 &config.backend_rpc_url,
             )),
@@ -826,6 +842,11 @@ impl AppState {
     #[must_use]
     pub fn backend_authenticate_url(&self) -> &str {
         &self.backend_authenticate_url
+    }
+
+    #[must_use]
+    pub fn backend_auth_health_url(&self) -> Option<&str> {
+        self.backend_auth_health_url.as_deref()
     }
 
     #[must_use]
@@ -1116,6 +1137,12 @@ impl RuntimeStats {
                 backend_auth_round_trips: self
                     .session_auth_backend_round_trips
                     .load(Ordering::Relaxed),
+                backend_auth_round_trip_total_ms: self
+                    .session_auth_backend_round_trip_total_ms
+                    .load(Ordering::Relaxed),
+                backend_auth_round_trip_max_ms: self
+                    .session_auth_backend_round_trip_max_ms
+                    .load(Ordering::Relaxed),
                 miss_disabled: self
                     .session_auth_reuse_miss_disabled
                     .load(Ordering::Relaxed),
@@ -1201,9 +1228,13 @@ impl RuntimeStats {
         }
     }
 
-    fn record_session_auth_backend_round_trip(&self) {
+    fn record_session_auth_backend_round_trip(&self, elapsed: Duration) {
         self.session_auth_backend_round_trips
             .fetch_add(1, Ordering::Relaxed);
+        let elapsed_ms = elapsed.as_millis().min(u128::from(u64::MAX)) as u64;
+        self.session_auth_backend_round_trip_total_ms
+            .fetch_add(elapsed_ms, Ordering::Relaxed);
+        update_max_counter(&self.session_auth_backend_round_trip_max_ms, elapsed_ms);
     }
 
     fn record_session_access_denial(&self, reason: SessionAccessDenyReason) {
@@ -1318,6 +1349,7 @@ fn build_public_router(state: AppState) -> Router {
 /// exits with an application-level runtime error.
 pub async fn run(config: RuntimeConfig) -> Result<(), RuntimeError> {
     let state = AppState::new(&config)?;
+    verify_auth_service_readiness(&state).await?;
     spawn_local_cache_sweeper(state.clone());
     let app = build_router(state.clone());
     let public_app = build_public_router(state);
@@ -1398,12 +1430,33 @@ async fn serve_uds(
     Ok(())
 }
 
+async fn verify_auth_service_readiness(state: &AppState) -> Result<(), RuntimeError> {
+    let Some(health_url) = state.backend_auth_health_url() else {
+        return Ok(());
+    };
+
+    let response = state.client.get(health_url).send().await.map_err(|err| {
+        RuntimeError::AuthServiceReadiness(format!("GET {health_url} failed: {err}"))
+    })?;
+
+    if !response.status().is_success() {
+        return Err(RuntimeError::AuthServiceReadiness(format!(
+            "GET {health_url} returned {}",
+            response.status()
+        )));
+    }
+
+    Ok(())
+}
+
 async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
     let active_sessions = active_runtime_session_count(&state).await;
     Json(HealthResponse {
         status: "ok",
         runtime: RUNTIME_NAME,
         backend_rpc_url: state.backend_rpc_url().to_string(),
+        backend_authenticate_url: state.backend_authenticate_url().to_string(),
+        backend_auth_health_url: state.backend_auth_health_url().map(str::to_string),
         protocol_version: state.protocol_version().to_string(),
         supported_protocol_versions: state.supported_protocol_versions().to_vec(),
         server_name: state.server_name().to_string(),
@@ -2540,9 +2593,7 @@ async fn authenticate_public_request_if_needed(
         }
     }
 
-    state
-        .runtime_stats()
-        .record_session_auth_backend_round_trip();
+    let backend_auth_started = Instant::now();
     let request_body = InternalAuthenticateRequest {
         method: method.to_string(),
         path: public_path.clone(),
@@ -2566,6 +2617,9 @@ async fn authenticate_public_request_if_needed(
             error!("backend MCP authenticate failed: {err}");
             backend_detail_error_response("Backend MCP authenticate failed")
         })?;
+    state
+        .runtime_stats()
+        .record_session_auth_backend_round_trip(backend_auth_started.elapsed());
 
     if !backend_response.status().is_success() {
         return Err(response_from_backend(backend_response));
@@ -9931,6 +9985,21 @@ fn backend_detail_error_response(detail: &str) -> Response {
     )
 }
 
+fn update_max_counter(counter: &AtomicU64, candidate: u64) {
+    let mut current = counter.load(Ordering::Relaxed);
+    while candidate > current {
+        match counter.compare_exchange_weak(
+            current,
+            candidate,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 fn backend_jsonrpc_error_response(
     request_id: Option<Value>,
     message: impl Into<String>,
@@ -10007,7 +10076,7 @@ mod unit_tests {
         extract_first_sse_data_payload, finalize_sse_frame, forward_initialize_to_backend,
         forward_to_backend, forward_transport_request, get_runtime_session,
         handle_initialize_with_session_core, handle_resume_transport_request, has_server_scope,
-        hex_decode, hex_encode, inject_server_id_header, inject_session_header,
+        healthz, hex_decode, hex_encode, inject_server_id_header, inject_session_header,
         invalid_request_response, is_affinity_forwarded_request, load_pem_certificates,
         maybe_bind_session_auth_context, maybe_upsert_runtime_session_from_transport_response,
         normalize_postgres_database_url, normalize_tool_input_schema, parse_error_response,
@@ -10020,7 +10089,9 @@ mod unit_tests {
         tools_call_error_type_from_payload, transport_delete_server_scoped,
         transport_get_server_scoped, upsert_runtime_session, validate_initialize_params,
         validate_protocol_version, validate_runtime_session_request,
+        verify_auth_service_readiness,
     };
+    use async_trait::async_trait;
     use axum::{
         Json, Router,
         body::to_bytes,
@@ -10028,6 +10099,11 @@ mod unit_tests {
         http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
         response::{IntoResponse, Response, sse::Sse},
         routing::{get, post},
+    };
+    use contextforge_auth::{
+        ApiTokenLookupChecker, ApiTokenLookupRecord, AppState as AuthServiceState,
+        build_router as build_auth_service_router, config::AuthConfig as AuthServiceConfig,
+        RevocationChecker, UserLookupChecker, UserLookupRecord,
     };
     use futures_util::stream;
     use reqwest::Url;
@@ -10119,6 +10195,8 @@ mod unit_tests {
     fn test_config() -> RuntimeConfig {
         RuntimeConfig {
             backend_rpc_url: "http://127.0.0.1:4444/rpc".to_string(),
+            backend_authenticate_url: None,
+            backend_auth_health_url: None,
             listen_http: free_tcp_addr(),
             listen_uds: None,
             public_listen_http: None,
@@ -10157,6 +10235,63 @@ mod unit_tests {
         }
     }
 
+    fn test_auth_service_config(backend_authenticate_url: String) -> AuthServiceConfig {
+        AuthServiceConfig {
+            database_url: None,
+            backend_authenticate_url,
+            backend_health_url: None,
+            listen_http: "127.0.0.1:8788".to_string(),
+            request_timeout_ms: 30_000,
+            db_pool_max_size: 8,
+            experimental_direct_auth: true,
+            shadow_compare_direct_auth: false,
+            log_filter: "error".to_string(),
+            jwt_secret_key: "this-is-a-long-test-secret-key-32chars".to_string(),
+            jwt_algorithm: "HS256".to_string(),
+            jwt_audience: "mcpgateway-api".to_string(),
+            jwt_issuer: "mcpgateway".to_string(),
+            jwt_audience_verification: true,
+            jwt_issuer_verification: true,
+            require_token_expiration: true,
+            require_jti: true,
+            require_user_in_db: false,
+            platform_admin_email: "admin@example.com".to_string(),
+        }
+    }
+
+    struct FixedRevocationChecker {
+        result: Result<bool, String>,
+    }
+
+    #[async_trait]
+    impl RevocationChecker for FixedRevocationChecker {
+        async fn is_revoked(&self, _jti: &str) -> Result<bool, String> {
+            self.result.clone()
+        }
+    }
+
+    struct FixedUserLookupChecker {
+        result: Result<Option<UserLookupRecord>, String>,
+    }
+
+    #[async_trait]
+    impl UserLookupChecker for FixedUserLookupChecker {
+        async fn lookup_user(&self, _email: &str) -> Result<Option<UserLookupRecord>, String> {
+            self.result.clone()
+        }
+    }
+
+    struct FixedApiTokenLookupChecker {
+        result: Result<Option<ApiTokenLookupRecord>, String>,
+    }
+
+    #[async_trait]
+    impl ApiTokenLookupChecker for FixedApiTokenLookupChecker {
+        async fn lookup_api_token(&self, _token: &str) -> Result<Option<ApiTokenLookupRecord>, String> {
+            self.result.clone()
+        }
+    }
+
     #[tokio::test]
     async fn app_state_new_exposes_derived_urls_and_runtime_flags() {
         let config = test_config();
@@ -10167,6 +10302,7 @@ mod unit_tests {
             state.backend_authenticate_url(),
             "http://127.0.0.1:4444/_internal/mcp/authenticate"
         );
+        assert_eq!(state.backend_auth_health_url(), None);
         assert_eq!(
             state.backend_initialize_url(),
             "http://127.0.0.1:4444/_internal/mcp/initialize"
@@ -10311,6 +10447,51 @@ mod unit_tests {
             assert!(!state.use_rmcp_upstream_client());
             assert!(state.rmcp_upstream_clients().lock().await.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn app_state_new_prefers_explicit_backend_authenticate_url_override() {
+        let mut config = test_config();
+        config.backend_authenticate_url =
+            Some("http://127.0.0.1:4545/_internal/core/auth/authenticate".to_string());
+
+        let state = AppState::new(&config).expect("state");
+
+        assert_eq!(
+            state.backend_authenticate_url(),
+            "http://127.0.0.1:4545/_internal/core/auth/authenticate"
+        );
+        assert_eq!(state.backend_rpc_url(), "http://127.0.0.1:4444/rpc");
+    }
+
+    #[tokio::test]
+    async fn app_state_new_exposes_explicit_backend_auth_health_url_override() {
+        let mut config = test_config();
+        config.backend_auth_health_url = Some("http://127.0.0.1:4545/healthz".to_string());
+
+        let state = AppState::new(&config).expect("state");
+
+        assert_eq!(state.backend_auth_health_url(), Some("http://127.0.0.1:4545/healthz"));
+    }
+
+    #[tokio::test]
+    async fn healthz_includes_auth_service_configuration() {
+        let mut config = test_config();
+        config.backend_authenticate_url =
+            Some("http://127.0.0.1:4545/_internal/core/auth/authenticate".to_string());
+        config.backend_auth_health_url = Some("http://127.0.0.1:4545/healthz".to_string());
+        let state = AppState::new(&config).expect("state");
+
+        let response = healthz(State(state)).await;
+
+        assert_eq!(
+            response.backend_authenticate_url,
+            "http://127.0.0.1:4545/_internal/core/auth/authenticate"
+        );
+        assert_eq!(
+            response.backend_auth_health_url.as_deref(),
+            Some("http://127.0.0.1:4545/healthz")
+        );
     }
 
     #[test]
@@ -10631,6 +10812,31 @@ mod unit_tests {
     }
 
     #[tokio::test]
+    async fn run_rejects_unhealthy_auth_service_before_startup() {
+        let auth_service = Router::new().route(
+            "/healthz",
+            get(|| async move {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({"status": "down"})),
+                )
+            }),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.backend_auth_health_url = Some(format!("{auth_service_url}/healthz"));
+
+        let error = run(config)
+            .await
+            .expect_err("unhealthy auth service should prevent runtime startup");
+
+        assert!(
+            matches!(error, RuntimeError::AuthServiceReadiness(message) if message.contains("returned 503 Service Unavailable"))
+        );
+    }
+
+    #[tokio::test]
     async fn run_uds_listener_can_exit_after_startup_delay() {
         let mut config = test_config();
         config.listen_uds = Some(PathBuf::from(format!(
@@ -10835,6 +11041,1594 @@ mod unit_tests {
         );
         assert!(captured_request_headers.contains_key(INTERNAL_RUNTIME_AUTH_HEADER));
     }
+
+    #[tokio::test]
+    async fn authenticate_public_request_can_target_separate_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "trusted@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let sidecar = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let sidecar_url = spawn_router(sidecar).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{sidecar_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("public ingress auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": "trusted@example.com",
+                "teams": ["team-a"],
+                "team_id": "team-a",
+                "permission_is_admin": false,
+                "is_authenticated": true,
+                "is_admin": false
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_uses_auth_service_recomputed_session_teams() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "trusted@example.com",
+                        "teams": ["stale-team"],
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "token_use": "session",
+                        "policy_inputs": {
+                            "token_payload": {
+                                "teams": ["team-a"]
+                            },
+                            "db_teams": ["team-a", "team-b"]
+                        }
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("public ingress auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": "trusted@example.com",
+                "teams": ["team-a"],
+                "auth_method": "jwt",
+                "permission_is_admin": false,
+                "is_authenticated": true,
+                "is_admin": false,
+                "token_use": "session",
+                "policy_inputs": {
+                    "token_payload": {
+                        "teams": ["team-a"]
+                    },
+                    "db_teams": ["team-a", "team-b"]
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_uses_auth_service_db_admin_bypass_for_session_tokens() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "trusted@example.com",
+                        "teams": ["stale-team"],
+                        "team_name": "stale-name",
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "token_use": "session",
+                        "policy_inputs": {
+                            "db_user_is_admin": true,
+                            "token_payload": {
+                                "teams": ["team-a"]
+                            },
+                            "db_teams": ["team-a", "team-b"],
+                            "team_names": {
+                                "team-a": "Alpha Team"
+                            }
+                        }
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("public ingress auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": "trusted@example.com",
+                "teams": null,
+                "team_name": null,
+                "auth_method": "jwt",
+                "permission_is_admin": true,
+                "is_authenticated": true,
+                "is_admin": false,
+                "token_use": "session",
+                "policy_inputs": {
+                    "db_user_is_admin": true,
+                    "token_payload": {
+                        "teams": ["team-a"]
+                    },
+                    "db_teams": ["team-a", "team-b"],
+                    "team_names": {
+                        "team-a": "Alpha Team"
+                    }
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_invalid_session_db_teams_shape_from_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "trusted@example.com",
+                        "teams": ["stale-team"],
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "token_use": "session",
+                        "policy_inputs": {
+                            "token_payload": {
+                                "teams": ["team-a"]
+                            },
+                            "db_teams": "team-a"
+                        }
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("invalid session db_teams shape should fail closed");
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let payload: Value = serde_json::from_slice(&body).expect("payload json");
+        assert_eq!(payload["detail"], "Auth service received invalid auth context");
+        assert_eq!(payload["code"], "invalid_auth_context");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_non_admin_session_without_db_teams_from_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "trusted@example.com",
+                        "teams": ["stale-team"],
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "token_use": "session",
+                        "policy_inputs": {
+                            "db_user_is_admin": false,
+                            "token_payload": {
+                                "teams": ["team-a"]
+                            },
+                            "db_teams": null
+                        }
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("non-admin session auth without db_teams should fail closed");
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read body");
+        let payload: Value = serde_json::from_slice(&body).expect("payload json");
+        assert_eq!(payload["detail"], "Auth service received invalid auth context");
+        assert_eq!(payload["code"], "invalid_auth_context");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_session_missing_email_forces_public_only_scope() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": null,
+                        "teams": ["stale-team"],
+                        "team_name": "stale-name",
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "token_use": "session",
+                        "policy_inputs": {
+                            "db_user_is_admin": true,
+                            "token_payload": {
+                                "teams": ["team-a"]
+                            },
+                            "db_teams": ["team-a", "team-b"],
+                            "team_names": {
+                                "team-a": "Alpha Team"
+                            }
+                        }
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("public ingress auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": null,
+                "teams": [],
+                "team_name": null,
+                "auth_method": "jwt",
+                "permission_is_admin": true,
+                "is_authenticated": true,
+                "is_admin": false,
+                "token_use": "session",
+                "policy_inputs": {
+                    "db_user_is_admin": true,
+                    "token_payload": {
+                        "teams": ["team-a"]
+                    },
+                    "db_teams": ["team-a", "team-b"],
+                    "team_names": {
+                        "team-a": "Alpha Team"
+                    }
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_uses_auth_service_recomputed_scoped_fields() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "trusted@example.com",
+                        "teams": ["stale-team"],
+                        "team_id": "stale-team",
+                        "team_name": "stale-name",
+                        "permission_is_admin": false,
+                        "scoped_permissions": ["stale.permission"],
+                        "scoped_server_id": "stale-server",
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "token_use": "api",
+                        "policy_inputs": {
+                            "db_user_is_admin": true,
+                            "token_payload": {
+                                "teams": [{
+                                    "id": "team-a",
+                                    "name": "Alpha Team"
+                                }],
+                                "scopes": {
+                                    "permissions": ["tools.execute", " resources.read ", 4],
+                                    "server_id": "server-123"
+                                }
+                            }
+                        }
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("public ingress auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": "trusted@example.com",
+                "teams": ["team-a"],
+                "team_id": "team-a",
+                "team_name": "Alpha Team",
+                "permission_is_admin": true,
+                "scoped_permissions": ["tools.execute", "resources.read"],
+                "scoped_server_id": "server-123",
+                "auth_method": "jwt",
+                "is_authenticated": true,
+                "is_admin": false,
+                "token_use": "api",
+                "policy_inputs": {
+                    "db_user_is_admin": true,
+                    "token_payload": {
+                        "teams": [{
+                            "id": "team-a",
+                            "name": "Alpha Team"
+                        }],
+                        "scopes": {
+                            "permissions": ["tools.execute", " resources.read ", 4],
+                            "server_id": "server-123"
+                        }
+                    }
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_preserves_auth_service_deny_code() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"detail": "Token has been revoked"})),
+                )
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("deny should propagate");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Token has been revoked");
+        assert_eq!(payload["code"], "token_revoked");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_preserves_token_validation_failure_code() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"detail": "Token validation failed"})),
+                )
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("deny should propagate");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Token validation failed");
+        assert_eq!(payload["code"], "token_validation_failed");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_empty_bearer_credentials_in_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": [],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer"),
+        );
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("empty bearer credentials should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get("www-authenticate").and_then(|v| v.to_str().ok()),
+            Some("Bearer")
+        );
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Invalid authentication credentials");
+        assert_eq!(payload["code"], "invalid_credentials");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_invalid_bearer_jwt_in_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": [],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer definitely-not-a-jwt"),
+        );
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("invalid bearer jwt should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get("www-authenticate").and_then(|v| v.to_str().ok()),
+            Some("Bearer")
+        );
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Invalid authentication credentials");
+        assert_eq!(payload["code"], "invalid_credentials");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_revoked_bearer_jwt_in_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": [],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::with_revocation_checker(
+                &auth_config,
+                Arc::new(FixedRevocationChecker { result: Ok(true) }),
+            )
+            .expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({
+                "sub": "trusted@example.com",
+                "jti": "revoked-jwt-123",
+                "aud": "mcpgateway-api",
+                "iss": "mcpgateway",
+                "exp": 4_102_444_800i64
+            }),
+            &jsonwebtoken::EncodingKey::from_secret(
+                b"this-is-a-long-test-secret-key-32chars",
+            ),
+        )
+        .expect("encode jwt");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("bearer header"),
+        );
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("revoked bearer jwt should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get("www-authenticate").and_then(|v| v.to_str().ok()),
+            Some("Bearer")
+        );
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Token has been revoked");
+        assert_eq!(payload["code"], "token_revoked");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_missing_user_in_strict_mode_in_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": [],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        auth_config.require_user_in_db = true;
+        let auth_service = build_auth_service_router(
+            AuthServiceState::with_checkers(
+                &auth_config,
+                Arc::new(FixedRevocationChecker { result: Ok(false) }),
+                Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+                Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
+            )
+            .expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({
+                "sub": "trusted@example.com",
+                "jti": "jwt-123",
+                "aud": "mcpgateway-api",
+                "iss": "mcpgateway",
+                "exp": 4_102_444_800i64
+            }),
+            &jsonwebtoken::EncodingKey::from_secret(
+                b"this-is-a-long-test-secret-key-32chars",
+            ),
+        )
+        .expect("encode jwt");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("bearer header"),
+        );
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("strict missing user should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "User not found in database");
+        assert_eq!(payload["code"], "user_not_found");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_uses_direct_public_only_jwt_auth_from_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": ["unexpected-team"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::with_checkers(
+                &auth_config,
+                Arc::new(FixedRevocationChecker { result: Ok(false) }),
+                Arc::new(FixedUserLookupChecker {
+                    result: Ok(Some(UserLookupRecord {
+                        is_active: true,
+                        is_admin: false,
+                    })),
+                }),
+                Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
+            )
+            .expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({
+                "sub": "trusted@example.com",
+                "jti": "jwt-123",
+                "aud": "mcpgateway-api",
+                "iss": "mcpgateway",
+                "exp": 4_102_444_800i64
+            }),
+            &jsonwebtoken::EncodingKey::from_secret(
+                b"this-is-a-long-test-secret-key-32chars",
+            ),
+        )
+        .expect("encode jwt");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("bearer header"),
+        );
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("direct public-only auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": "trusted@example.com",
+                "teams": [],
+                "permission_is_admin": false,
+                "auth_method": "jwt",
+                "is_authenticated": true,
+                "is_admin": false,
+                "token_use": null,
+                "policy_inputs": {
+                    "token_payload": {
+                        "sub": "trusted@example.com",
+                        "jti": "jwt-123",
+                        "aud": "mcpgateway-api",
+                        "iss": "mcpgateway",
+                        "exp": 4_102_444_800i64
+                    },
+                    "db_user_is_admin": false
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_uses_direct_team_scoped_jwt_auth_from_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": ["unexpected-team"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::with_checkers(
+                &auth_config,
+                Arc::new(FixedRevocationChecker { result: Ok(false) }),
+                Arc::new(FixedUserLookupChecker {
+                    result: Ok(Some(UserLookupRecord {
+                        is_active: true,
+                        is_admin: false,
+                    })),
+                }),
+                Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
+            )
+            .expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({
+                "sub": "trusted@example.com",
+                "jti": "jwt-123",
+                "aud": "mcpgateway-api",
+                "iss": "mcpgateway",
+                "exp": 4_102_444_800i64,
+                "teams": [{
+                    "id": "team-a",
+                    "name": "Alpha Team"
+                }],
+                "scopes": {
+                    "permissions": ["tools.execute", " resources.read "],
+                    "server_id": "server-123"
+                }
+            }),
+            &jsonwebtoken::EncodingKey::from_secret(
+                b"this-is-a-long-test-secret-key-32chars",
+            ),
+        )
+        .expect("encode jwt");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("bearer header"),
+        );
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("direct team-scoped auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": "trusted@example.com",
+                "teams": ["team-a"],
+                "team_id": "team-a",
+                "team_name": "Alpha Team",
+                "permission_is_admin": false,
+                "auth_method": "jwt",
+                "is_authenticated": true,
+                "is_admin": false,
+                "token_use": null,
+                "scoped_permissions": ["tools.execute", "resources.read"],
+                "scoped_server_id": "server-123",
+                "policy_inputs": {
+                    "token_payload": {
+                        "sub": "trusted@example.com",
+                        "jti": "jwt-123",
+                        "aud": "mcpgateway-api",
+                        "iss": "mcpgateway",
+                        "exp": 4_102_444_800i64,
+                        "teams": [{
+                            "id": "team-a",
+                            "name": "Alpha Team"
+                        }],
+                        "scopes": {
+                            "permissions": ["tools.execute", " resources.read "],
+                            "server_id": "server-123"
+                        }
+                    },
+                    "db_user_is_admin": false
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_uses_direct_platform_admin_bootstrap_auth_from_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": ["unexpected-team"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::with_checkers(
+                &auth_config,
+                Arc::new(FixedRevocationChecker { result: Ok(false) }),
+                Arc::new(FixedUserLookupChecker { result: Ok(None) }),
+                Arc::new(FixedApiTokenLookupChecker { result: Ok(None) }),
+            )
+            .expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({
+                "sub": "admin@example.com",
+                "jti": "jwt-123",
+                "aud": "mcpgateway-api",
+                "iss": "mcpgateway",
+                "exp": 4_102_444_800i64,
+                "is_admin": true,
+                "teams": null
+            }),
+            &jsonwebtoken::EncodingKey::from_secret(
+                b"this-is-a-long-test-secret-key-32chars",
+            ),
+        )
+        .expect("encode jwt");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("bearer header"),
+        );
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("direct platform-admin bootstrap auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": "admin@example.com",
+                "teams": null,
+                "permission_is_admin": true,
+                "auth_method": "jwt",
+                "is_authenticated": true,
+                "is_admin": true,
+                "token_use": null,
+                "policy_inputs": {
+                    "token_payload": {
+                        "sub": "admin@example.com",
+                        "jti": "jwt-123",
+                        "aud": "mcpgateway-api",
+                        "iss": "mcpgateway",
+                        "exp": 4_102_444_800i64,
+                        "is_admin": true,
+                        "teams": null
+                    },
+                    "db_user_is_admin": false
+                }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_uses_direct_api_token_auth_from_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": ["unexpected-team"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::with_checkers(
+                &auth_config,
+                Arc::new(FixedRevocationChecker { result: Ok(false) }),
+                Arc::new(FixedUserLookupChecker {
+                    result: Ok(Some(UserLookupRecord {
+                        is_active: true,
+                        is_admin: false,
+                    })),
+                }),
+                Arc::new(FixedApiTokenLookupChecker {
+                    result: Ok(Some(ApiTokenLookupRecord {
+                        user_email: "trusted@example.com".to_string(),
+                        jti: "api-token-jti-123".to_string(),
+                        team_id: Some("team-a".to_string()),
+                        server_id: Some("server-123".to_string()),
+                        resource_scopes: vec![
+                            "tools.execute".to_string(),
+                            "resources.read".to_string(),
+                        ],
+                        expired: false,
+                    })),
+                }),
+            )
+            .expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer opaque-api-token"),
+        );
+
+        let (headers, path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("direct api token auth");
+
+        assert_eq!(path, "/mcp");
+        let decoded_auth_context: Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(
+                    headers
+                        .get("x-contextforge-auth-context")
+                        .and_then(|value| value.to_str().ok())
+                        .expect("auth context header"),
+                )
+                .expect("decode auth context"),
+        )
+        .expect("auth context json");
+        assert_eq!(
+            decoded_auth_context,
+            json!({
+                "email": "trusted@example.com",
+                "teams": ["team-a"],
+                "team_id": "team-a",
+                "permission_is_admin": false,
+                "auth_method": "api_token",
+                "is_authenticated": true,
+                "is_admin": false,
+                "token_use": null,
+                "jti": "api-token-jti-123",
+                "scoped_permissions": ["tools.execute", "resources.read"],
+                "scoped_server_id": "server-123"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_non_session_jwt_without_principal_in_auth_service() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "should-not-be-called@example.com",
+                        "teams": [],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &json!({
+                "jti": "jwt-123",
+                "aud": "mcpgateway-api",
+                "iss": "mcpgateway",
+                "exp": 4_102_444_800i64
+            }),
+            &jsonwebtoken::EncodingKey::from_secret(b"this-is-a-long-test-secret-key-32chars"),
+        )
+        .expect("encode jwt");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("authorization header"),
+        );
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            headers,
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("non-session jwt without principal should fail closed");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get("www-authenticate").and_then(|v| v.to_str().ok()),
+            Some("Bearer")
+        );
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Invalid authentication credentials");
+        assert_eq!(payload["code"], "invalid_credentials");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_authenticated_non_session_context_without_email() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": null,
+                        "teams": ["team-a"],
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "token_use": "api",
+                        "policy_inputs": {
+                            "token_payload": {
+                                "teams": ["team-a"]
+                            }
+                        }
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("authenticated non-session context without email should fail closed");
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Auth service received invalid auth context");
+        assert_eq!(payload["code"], "invalid_auth_context");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_rejects_email_mismatch_with_token_payload() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                Json(json!({
+                    "authContext": {
+                        "email": "runtime@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": true,
+                        "is_admin": false,
+                        "token_use": "api",
+                        "policy_inputs": {
+                            "token_payload": {
+                                "sub": "token@example.com",
+                                "teams": ["team-a"]
+                            }
+                        }
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let auth_config =
+            test_auth_service_config(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let auth_service = build_auth_service_router(
+            AuthServiceState::new(&auth_config).expect("auth state"),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("token payload principal mismatch should fail closed");
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Auth service received invalid auth context");
+        assert_eq!(payload["code"], "invalid_auth_context");
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_preserves_auth_service_internal_error_code() {
+        let auth_state = AuthServiceState::new(&test_auth_service_config(
+            "http://127.0.0.1:9/_internal/core/auth/authenticate".to_string(),
+        ))
+        .expect("auth state");
+        let auth_service = build_auth_service_router(auth_state);
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{auth_service_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let response = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect_err("internal auth service failure should propagate");
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let payload = response_json(response).await;
+        assert_eq!(payload["detail"], "Auth service backend authenticate failed");
+        assert_eq!(payload["code"], "backend_authenticate_failed");
+    }
+
+    #[tokio::test]
+    async fn verify_auth_service_readiness_accepts_healthy_service() {
+        let auth_service = Router::new().route(
+            "/healthz",
+            get(|| async move { Json(json!({"status": "ok"})) }),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.backend_auth_health_url = Some(format!("{auth_service_url}/healthz"));
+        let state = AppState::new(&config).expect("state");
+
+        verify_auth_service_readiness(&state)
+            .await
+            .expect("healthy auth service");
+    }
+
+    #[tokio::test]
+    async fn verify_auth_service_readiness_rejects_unhealthy_service() {
+        let auth_service = Router::new().route(
+            "/healthz",
+            get(|| async move { (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"status": "down"}))) }),
+        );
+        let auth_service_url = spawn_router(auth_service).await;
+
+        let mut config = test_config();
+        config.backend_auth_health_url = Some(format!("{auth_service_url}/healthz"));
+        let state = AppState::new(&config).expect("state");
+
+        let error = verify_auth_service_readiness(&state)
+            .await
+            .expect_err("unhealthy auth service should fail readiness");
+
+        assert!(
+            matches!(error, RuntimeError::AuthServiceReadiness(message) if message.contains("returned 503 Service Unavailable"))
+        );
+    }
+
 
     #[tokio::test]
     async fn authenticate_public_request_surfaces_backend_transport_and_decode_failures() {
@@ -11885,6 +13679,55 @@ mod unit_tests {
             1
         );
         assert_eq!(runtime_stats.session_auth_reuse.backend_auth_round_trips, 1);
+        assert!(
+            runtime_stats
+                .session_auth_reuse
+                .backend_auth_round_trip_max_ms
+                <= runtime_stats
+                    .session_auth_reuse
+                    .backend_auth_round_trip_total_ms
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_public_request_records_auth_round_trip_latency() {
+        let backend = Router::new().route(
+            "/_internal/core/auth/authenticate",
+            post(|| async move {
+                sleep(Duration::from_millis(20)).await;
+                Json(json!({
+                    "authContext": {
+                        "email": "trusted@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": true,
+                        "is_admin": false
+                    }
+                }))
+            }),
+        );
+        let backend_url = spawn_router(backend).await;
+
+        let mut config = test_config();
+        config.public_listen_http = Some(free_tcp_addr());
+        config.backend_authenticate_url =
+            Some(format!("{backend_url}/_internal/core/auth/authenticate"));
+        let state = AppState::new(&config).expect("state");
+
+        let (_returned_headers, _path) = authenticate_public_request_if_needed(
+            &state,
+            "GET",
+            HeaderMap::new(),
+            &"/mcp".parse::<Uri>().expect("uri"),
+            None,
+            Some(SocketAddr::from(([198, 51, 100, 9], 44444))),
+        )
+        .await
+        .expect("backend auth succeeds");
+
+        let runtime_stats = state.runtime_stats().snapshot();
+        assert_eq!(runtime_stats.session_auth_reuse.backend_auth_round_trips, 1);
+        assert!(runtime_stats.session_auth_reuse.backend_auth_round_trip_total_ms >= 20);
+        assert!(runtime_stats.session_auth_reuse.backend_auth_round_trip_max_ms >= 20);
     }
 
     #[test]

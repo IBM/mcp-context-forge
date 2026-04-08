@@ -26,6 +26,12 @@ pub struct RuntimeConfig {
     )]
     pub backend_rpc_url: String,
 
+    #[arg(long, env = "MCP_RUST_BACKEND_AUTHENTICATE_URL")]
+    pub backend_authenticate_url: Option<String>,
+
+    #[arg(long, env = "MCP_RUST_BACKEND_AUTH_HEALTH_URL")]
+    pub backend_auth_health_url: Option<String>,
+
     #[arg(long, env = "MCP_RUST_LISTEN_HTTP", default_value = "127.0.0.1:8787")]
     pub listen_http: String,
 

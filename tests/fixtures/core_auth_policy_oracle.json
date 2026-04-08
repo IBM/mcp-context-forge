@@ -1,0 +1,194 @@
+{
+  "normalize_token_teams": [
+    {
+      "name": "missing_teams_key_returns_public_only",
+      "payload": {
+        "sub": "user@test.local"
+      },
+      "expected": []
+    },
+    {
+      "name": "null_teams_top_level_admin_returns_admin_bypass",
+      "payload": {
+        "teams": null,
+        "is_admin": true
+      },
+      "expected": null
+    },
+    {
+      "name": "null_teams_non_admin_returns_public_only",
+      "payload": {
+        "teams": null,
+        "is_admin": false
+      },
+      "expected": []
+    },
+    {
+      "name": "null_teams_nested_admin_returns_admin_bypass",
+      "payload": {
+        "teams": null,
+        "user": {
+          "is_admin": true
+        }
+      },
+      "expected": null
+    },
+    {
+      "name": "empty_list_returns_public_only",
+      "payload": {
+        "teams": []
+      },
+      "expected": []
+    },
+    {
+      "name": "mixed_team_entries_are_normalized",
+      "payload": {
+        "teams": [
+          "team-1",
+          {
+            "id": "team-2"
+          },
+          {
+            "name": "missing-id"
+          },
+          42,
+          null
+        ]
+      },
+      "expected": [
+        "team-1",
+        "team-2"
+      ]
+    },
+    {
+      "name": "top_level_admin_takes_precedence_over_nested_user",
+      "payload": {
+        "teams": null,
+        "is_admin": true,
+        "user": {
+          "is_admin": false
+        }
+      },
+      "expected": null
+    }
+  ],
+  "resolve_session_teams": [
+    {
+      "name": "missing_email_returns_public_only",
+      "payload": {
+        "is_admin": true
+      },
+      "email": null,
+      "db_teams": [
+        "t1"
+      ],
+      "expected": []
+    },
+    {
+      "name": "admin_db_bypass_passthrough",
+      "payload": {
+        "sub": "admin@example.com",
+        "teams": [
+          "t1"
+        ]
+      },
+      "email": "admin@example.com",
+      "db_teams": null,
+      "expected": null
+    },
+    {
+      "name": "missing_jwt_teams_keeps_full_db_membership",
+      "payload": {
+        "sub": "u@example.com"
+      },
+      "email": "u@example.com",
+      "db_teams": [
+        "t1",
+        "t2"
+      ],
+      "expected": [
+        "t1",
+        "t2"
+      ]
+    },
+    {
+      "name": "jwt_teams_narrow_to_overlap",
+      "payload": {
+        "sub": "u@example.com",
+        "teams": [
+          "t1"
+        ]
+      },
+      "email": "u@example.com",
+      "db_teams": [
+        "t1",
+        "t2"
+      ],
+      "expected": [
+        "t1"
+      ]
+    },
+    {
+      "name": "jwt_teams_with_no_overlap_fail_closed_to_public_only",
+      "payload": {
+        "sub": "u@example.com",
+        "teams": [
+          "revoked-team"
+        ]
+      },
+      "email": "u@example.com",
+      "db_teams": [
+        "t1",
+        "t2"
+      ],
+      "expected": []
+    },
+    {
+      "name": "null_jwt_teams_do_not_narrow",
+      "payload": {
+        "sub": "u@example.com",
+        "teams": null
+      },
+      "email": "u@example.com",
+      "db_teams": [
+        "t1"
+      ],
+      "expected": [
+        "t1"
+      ]
+    },
+    {
+      "name": "empty_jwt_teams_do_not_narrow",
+      "payload": {
+        "sub": "u@example.com",
+        "teams": []
+      },
+      "email": "u@example.com",
+      "db_teams": [
+        "t1"
+      ],
+      "expected": [
+        "t1"
+      ]
+    },
+    {
+      "name": "malformed_jwt_entries_are_filtered_before_intersection",
+      "payload": {
+        "sub": "u@example.com",
+        "teams": [
+          123,
+          null,
+          "t1"
+        ]
+      },
+      "email": "u@example.com",
+      "db_teams": [
+        "t1",
+        "123"
+      ],
+      "expected": [
+        "t1"
+      ]
+    }
+  ]
+}

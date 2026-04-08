@@ -390,6 +390,7 @@ def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
         "is_admin": False,
         "token_use": "session",
         "permission_is_admin": True,
+        "policy_inputs": {"token_payload": {"teams": ["team-a"]}},
         "scoped_permissions": ["tools.read"],
         "scoped_server_id": "srv-1",
         "ignored": "value",
@@ -408,6 +409,7 @@ def test_get_streamable_http_auth_context_copies_supported_keys_and_lists():
         "is_admin": False,
         "token_use": "session",
         "permission_is_admin": True,
+        "policy_inputs": {"token_payload": {"teams": ["team-a"]}},
         "scoped_permissions": ["tools.read"],
         "scoped_server_id": "srv-1",
     }

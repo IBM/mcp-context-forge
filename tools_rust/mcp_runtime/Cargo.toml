@@ -44,5 +44,8 @@ url = "2.5.7"
 uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]
+async-trait = "0.1.89"
+contextforge_auth = { path = "../auth" }
+jsonwebtoken = "9.3.1"
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "stream", "http2", "rustls-tls-native-roots"] }
 tokio = { version = "1.50.0", features = ["full"] }

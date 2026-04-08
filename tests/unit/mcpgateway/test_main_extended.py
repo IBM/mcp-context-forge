@@ -62,6 +62,7 @@ from mcpgateway.main import (
     export_selective_configuration,
     get_a2a_agent,
     handle_internal_mcp_authenticate,
+    handle_internal_core_auth_authenticate,
     handle_internal_mcp_completion_complete,
     handle_internal_mcp_initialize,
     handle_internal_mcp_logging_set_level,
@@ -835,7 +836,7 @@ class TestInternalTrustedMcpTransportBridge:
             }
         )
 
-        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_mcp_runtime_request", lambda _request: True)
+        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_core_auth_request", lambda _request: True)
         monkeypatch.setattr(
             "mcpgateway.main._run_internal_mcp_authentication",
             AsyncMock(
@@ -851,6 +852,40 @@ class TestInternalTrustedMcpTransportBridge:
         )
 
         response = await handle_internal_mcp_authenticate(request)
+
+        assert response.status_code == 200
+        assert orjson.loads(response.body)["authContext"]["email"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_handle_internal_core_auth_authenticate_returns_auth_context(self, monkeypatch):
+        """Trusted runtime core-auth requests should return the same auth context contract."""
+        request = MagicMock(spec=Request)
+        request.json = AsyncMock(
+            return_value={
+                "method": "POST",
+                "path": "/servers/server-1/mcp",
+                "queryString": "session_id=abc123",
+                "headers": {"authorization": "Bearer token"},
+                "clientIp": "203.0.113.10",
+            }
+        )
+
+        monkeypatch.setattr("mcpgateway.main._is_trusted_internal_core_auth_request", lambda _request: True)
+        monkeypatch.setattr(
+            "mcpgateway.main._run_internal_mcp_authentication",
+            AsyncMock(
+                return_value=(
+                    None,
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                    },
+                )
+            ),
+        )
+
+        response = await handle_internal_core_auth_authenticate(request)
 
         assert response.status_code == 200
         assert orjson.loads(response.body)["authContext"]["email"] == "user@example.com"
