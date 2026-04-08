@@ -692,7 +692,6 @@ ignore_unused = [
   "cookiecutter",
   "coverage",
   "diff-cover",
-
   "fawltydeps",
   "gprof2dot",
   "gunicorn",
