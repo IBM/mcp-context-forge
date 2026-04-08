@@ -45,7 +45,7 @@ import re
 
 # Third-Party
 from fastapi import Depends, Request, Response, status
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest, REGISTRY
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, generate_latest, Histogram, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # First-Party
@@ -137,9 +137,6 @@ elicitation_timeout_total = Counter(
 
 elicitation_duration_seconds = _get_registry_collector("elicitation_duration_seconds")
 if elicitation_duration_seconds is None:
-    # Third-Party
-    from prometheus_client import Histogram
-
     elicitation_duration_seconds = Histogram(
         "elicitation_duration_seconds",
         "Duration of elicitation requests in seconds",

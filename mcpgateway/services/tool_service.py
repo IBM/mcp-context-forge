@@ -3596,18 +3596,18 @@ class ToolService(BaseService):
         elicitation_service = get_elicitation_service()
         tool_call_registry = get_tool_call_registry()
 
-        # Phase 3: Check capability and create appropriate callback
+        # Check capability and create appropriate callback
         has_capability = await session_registry.has_elicitation_capability(downstream_session_id)
 
         if not has_capability:
-            # Phase 3: Log capability mismatch for debugging
+            # Log capability mismatch for debugging
             logger.warning(
                 f"Elicitation capability check failed for session {downstream_session_id} "
                 f"(tool call {tool_call_id}). Client must advertise capabilities.elicitation "
                 f"during initialization to support elicitation requests."
             )
 
-            # Phase 3: Return callback that produces -32601 error
+            # Return callback that produces -32601 error
             async def capability_error_callback(context: Any, params: types.ElicitRequestParams):
                 """Return -32601 error when client lacks elicitation capability.
 
@@ -3617,8 +3617,8 @@ class ToolService(BaseService):
                 available.
 
                 Args:
-                    context: RequestContext from MCP SDK (unused)
-                    params: ElicitRequestParams (unused, error returned immediately)
+                    context: RequestContext from MCP SDK
+                    params: ElicitRequestParams containing the elicitation request
 
                 Returns:
                     ErrorData with code -32601 and clear error message
@@ -3628,7 +3628,10 @@ class ToolService(BaseService):
                     f"The client must advertise 'capabilities.elicitation' during initialization "
                     f"to receive elicitation requests from MCP servers."
                 )
-                logger.info(f"Returning -32601 error for tool call {tool_call_id}: {error_msg}")
+                logger.info(
+                    f"Returning -32601 error for tool call {tool_call_id}: {error_msg}. "
+                    f"Request message: {params.message}"
+                )
                 return types.ErrorData(code=-32601, message=error_msg)
 
             return capability_error_callback
