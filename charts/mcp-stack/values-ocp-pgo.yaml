@@ -41,7 +41,7 @@ mcpContextForge:
       memory: 4Gi
 
   pluginConfig:
-    enabled: false                         # disabled for benchmark
+    enabled: true                          # enabled for rate limiter testing
     plugins: |
       plugin_dirs:
         - "plugins/native"
@@ -319,8 +319,9 @@ redis:
 nginxProxy:
   enabled: true
   image:
-    repository: docker.io/nginxinc/nginx-unprivileged
-    tag: alpine
+    repository: registry.access.redhat.com/ubi9/nginx-126
+    tag: latest
+  command: ["nginx", "-g", "daemon off;"]   # bypass S2I entrypoint for UBI NGINX
   resources:
     limits:
       cpu: "4"

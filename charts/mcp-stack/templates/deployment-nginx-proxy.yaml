@@ -39,6 +39,9 @@ spec:
         - name: nginx
           image: "{{ .Values.nginxProxy.image.repository }}:{{ .Values.nginxProxy.image.tag }}"
           imagePullPolicy: {{ .Values.nginxProxy.image.pullPolicy }}
+          {{- if .Values.nginxProxy.command }}
+          command: {{ .Values.nginxProxy.command | toJson }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.nginxProxy.containerPort | default 80 }}
