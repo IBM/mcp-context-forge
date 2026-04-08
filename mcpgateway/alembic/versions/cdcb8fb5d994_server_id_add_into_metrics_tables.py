@@ -1,7 +1,7 @@
 """server_id add into metrics tables
 
 Revision ID: cdcb8fb5d994
-Revises: cbedf4e580e0
+Revises: c2d3e4f5a6b7
 Create Date: 2026-04-01 15:20:35.241922
 
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "cdcb8fb5d994"
-down_revision: Union[str, Sequence[str], None] = "cbedf4e580e0"
+down_revision: Union[str, Sequence[str], None] = "c2d3e4f5a6b7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -28,7 +28,15 @@ def upgrade() -> None:
 
     # Helper to check if column exists in a table
     def column_exists(table_name: str, column_name: str) -> bool:
-        """Check if a column exists in a table."""
+        """Check if a column exists in a table.
+
+        Args:
+            table_name: Name of the table to check
+            column_name: Name of the column to check
+
+        Returns:
+            True if column exists, False otherwise
+        """
         if table_name not in table_names:
             return False
         columns = [col["name"] for col in inspector.get_columns(table_name)]
@@ -36,7 +44,15 @@ def upgrade() -> None:
 
     # Helper to check if index exists
     def index_exists(table_name: str, index_name: str) -> bool:
-        """Check if an index exists in a table."""
+        """Check if an index exists in a table.
+
+        Args:
+            table_name: Name of the table to check
+            index_name: Name of the index to check
+
+        Returns:
+            True if index exists, False otherwise
+        """
         if table_name not in table_names:
             return False
         indexes = inspector.get_indexes(table_name)
@@ -44,7 +60,15 @@ def upgrade() -> None:
 
     # Helper to check if constraint exists
     def constraint_exists(table_name: str, constraint_name: str) -> bool:
-        """Check if a unique constraint exists in a table."""
+        """Check if a unique constraint exists in a table.
+
+        Args:
+            table_name: Name of the table to check
+            constraint_name: Name of the constraint to check
+
+        Returns:
+            True if constraint exists, False otherwise
+        """
         if table_name not in table_names:
             return False
         constraints = inspector.get_unique_constraints(table_name)
@@ -125,7 +149,15 @@ def downgrade() -> None:
 
     # Helper to check if column exists in a table
     def column_exists(table_name: str, column_name: str) -> bool:
-        """Check if a column exists in a table."""
+        """Check if a column exists in a table.
+
+        Args:
+            table_name: Name of the table to check
+            column_name: Name of the column to check
+
+        Returns:
+            True if column exists, False otherwise
+        """
         if table_name not in table_names:
             return False
         columns = [col["name"] for col in inspector.get_columns(table_name)]
@@ -133,7 +165,15 @@ def downgrade() -> None:
 
     # Helper to check if index exists
     def index_exists(table_name: str, index_name: str) -> bool:
-        """Check if an index exists in a table."""
+        """Check if an index exists in a table.
+
+        Args:
+            table_name: Name of the table to check
+            index_name: Name of the index to check
+
+        Returns:
+            True if index exists, False otherwise
+        """
         if table_name not in table_names:
             return False
         indexes = inspector.get_indexes(table_name)
@@ -141,7 +181,15 @@ def downgrade() -> None:
 
     # Helper to check if constraint exists
     def constraint_exists(table_name: str, constraint_name: str) -> bool:
-        """Check if a unique constraint exists in a table."""
+        """Check if a unique constraint exists in a table.
+
+        Args:
+            table_name: Name of the table to check
+            constraint_name: Name of the constraint to check
+
+        Returns:
+            True if constraint exists, False otherwise
+        """
         if table_name not in table_names:
             return False
         constraints = inspector.get_unique_constraints(table_name)

@@ -4164,7 +4164,7 @@ class ToolService(BaseService):
                                     exc_info=True,
                                 )
 
-                            if self._plugin_manager:
+                            if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")

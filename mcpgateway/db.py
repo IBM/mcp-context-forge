@@ -936,7 +936,14 @@ def _compute_metrics_summary(
         if server_id is not None:
             # Normalize: treat NULL and empty string as equivalent
             def normalize_server_id(sid):
-                """Normalize server_id by treating NULL and empty string as equivalent."""
+                """Normalize server_id by treating NULL and empty string as equivalent.
+
+                Args:
+                    sid: Server ID to normalize
+
+                Returns:
+                    Normalized server ID (None if empty/None)
+                """
                 return sid if sid else None
 
             raw_metrics = [m for m in raw_metrics if normalize_server_id(m.server_id) == normalize_server_id(server_id)]
