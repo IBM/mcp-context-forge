@@ -742,7 +742,16 @@ class OpenTelemetryRequestMiddleware:
         status_code_holder: Dict[str, int] = {}
 
         async def _send_with_span_status(message: Mapping[str, Any]) -> None:
-            """Send ASGI message and update span status based on HTTP response code."""
+            """Send an ASGI message and update the span status from the HTTP response.
+
+            If the message is an ``http.response.start`` event, the HTTP status code
+            is extracted, stored, and applied to the active span. Status codes >= 500
+            mark the span as an error; all others are marked as OK.
+
+            Args:
+                message: ASGI message dictionary from which the HTTP status code
+                    may be retrieved.
+            """
             if message.get("type") == "http.response.start":
                 status_code = int(message.get("status", 0) or 0)
                 status_code_holder["status"] = status_code

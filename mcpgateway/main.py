@@ -11019,6 +11019,7 @@ app.include_router(export_import_router)
 
 # Tool plugin bindings router
 try:
+    # First-Party
     from mcpgateway.routers.tool_plugin_bindings import router as tool_plugin_bindings_router  # pylint: disable=import-outside-toplevel
 
     app.include_router(tool_plugin_bindings_router)

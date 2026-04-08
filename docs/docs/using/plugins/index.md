@@ -1167,7 +1167,41 @@ conditions:
     server_ids: ["prod-server-1", "prod-server-2"]
     tenant_ids: ["enterprise-tenant"]
     user_patterns: ["admin-*", "support-*"]
+    content_types: ["application/json", "text/plain"]
 ```
+
+**Content Type Filtering:**
+
+Plugins can be configured to execute only for specific HTTP Content-Type headers:
+
+```yaml
+plugins:
+  - name: "JsonValidator"
+    kind: "plugins.validation.json_validator.JsonValidator"
+    hooks: ["tool_pre_invoke"]
+    mode: "enforce"
+    priority: 50
+    conditions:
+      - content_types: ["application/json"]
+    config:
+      strict_schema: true
+
+  - name: "MultiFormatProcessor"
+    kind: "plugins.processors.format_processor.FormatProcessor"
+    hooks: ["tool_pre_invoke", "tool_post_invoke"]
+    conditions:
+      - content_types:
+          - "application/json"
+          - "application/xml"
+          - "text/csv"
+        server_ids: ["data-api"]
+```
+
+**Key behaviors:**
+- Case-insensitive matching (`APPLICATION/JSON` matches `application/json`)
+- Ignores charset parameters (`application/json; charset=utf-8` matches `application/json`)
+- If `content_types` is not specified, plugin executes for all content types
+- If request has no Content-Type header, plugin executes normally (permissive default)
 
 ### 4. Logging and Monitoring
 
