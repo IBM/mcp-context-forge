@@ -23556,3 +23556,113 @@ class TestAdminPersonalTeamFiltering:
             call_kwargs = mock_team_service.list_teams.call_args[1]
             assert call_kwargs["search_query"] == "nomatch"
             assert call_kwargs["personal_owner_email"] == "admin@example.com"
+
+    @pytest.mark.asyncio
+    async def test_admin_sees_join_button_for_public_teams(self, monkeypatch, mock_admin_user):
+        """Platform admins should see 'public' relationship for public teams they're not members of.
+
+        This test verifies the fix for issue #3488 where admins were incorrectly seeing
+        admin controls instead of the "Request to Join" button for public teams.
+        """
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True)
+
+        # First-Party
+        from mcpgateway.db import EmailTeam
+
+        # Create mock teams
+        public_team = MagicMock(spec=EmailTeam)
+        public_team.id = "public-team-id"
+        public_team.name = "Public Test Team"
+        public_team.slug = "public-test-team"
+        public_team.description = "A public team"
+        public_team.created_by = "owner@test.com"
+        public_team.visibility = "public"
+        public_team.is_personal = False
+        public_team.is_active = True
+
+        private_team = MagicMock(spec=EmailTeam)
+        private_team.id = "private-team-id"
+        private_team.name = "Private Test Team"
+        private_team.slug = "private-test-team"
+        private_team.description = "A private team"
+        private_team.created_by = "owner@test.com"
+        private_team.visibility = "private"
+        private_team.is_personal = False
+        private_team.is_active = True
+
+        mock_request = MagicMock()
+        mock_request.app.state.templates.TemplateResponse = MagicMock(return_value=MagicMock(headers={}))
+        mock_request.url.path = "/admin/teams/partial"
+
+        mock_db = MagicMock()
+
+        # Mock auth service to return admin user
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_admin_user)
+
+        # Mock team service
+        mock_team_service = MagicMock()
+        # Admin is NOT a member of any teams
+        mock_team_service.get_user_teams = AsyncMock(return_value=[])
+        mock_team_service.discover_public_teams = AsyncMock(return_value=[public_team])
+        mock_team_service.get_user_roles_batch = MagicMock(return_value={})
+        mock_team_service.get_pending_join_requests_batch = MagicMock(return_value={})
+        mock_team_service.get_member_counts_batch_cached = AsyncMock(return_value={
+            "public-team-id": 5,
+            "private-team-id": 3
+        })
+
+        # Admin sees both teams via list_teams (no relationship filter)
+        mock_team_service.list_teams = AsyncMock(
+            return_value={
+                "data": [public_team, private_team],
+                "pagination": MagicMock(page=1, per_page=50, total_items=2, total_pages=1, has_next=False, has_prev=False),
+                "links": None
+            }
+        )
+
+        with (
+            patch("mcpgateway.admin.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.admin.TeamManagementService", return_value=mock_team_service),
+            patch("mcpgateway.admin.get_user_email", return_value="admin@example.com"),
+            patch("mcpgateway.admin._resolve_root_path", return_value=""),
+        ):
+
+            response = await admin_teams_partial_html(
+                request=mock_request,
+                page=1,
+                per_page=50,
+                include_inactive=False,
+                visibility=None,
+                render=None,
+                q=None,
+                relationship=None,
+                db=mock_db,
+                user={"email": "admin@example.com", "db": mock_db},
+            )
+
+            # Get the rendered template context
+            template_call = mock_request.app.state.templates.TemplateResponse.call_args
+            context = template_call[0][2] if len(template_call[0]) > 2 else template_call[1]
+            teams_data = context.get("data", [])
+
+            # Find our test teams in the response
+            public_team_data = None
+            private_team_data = None
+            for team in teams_data:
+                if team.id == "public-team-id":
+                    public_team_data = team
+                elif team.id == "private-team-id":
+                    private_team_data = team
+
+            # Assertions
+            assert public_team_data is not None, "Public team should be in response"
+            assert private_team_data is not None, "Private team should be in response"
+
+            # CRITICAL: Admin should see "public" relationship for public teams
+            assert public_team_data.relationship == "public", \
+                f"Admin should see 'public' relationship for public teams, got '{public_team_data.relationship}'"
+
+            # Admin should see "none" relationship (admin controls) for private teams
+            assert private_team_data.relationship == "none", \
+                f"Admin should see 'none' relationship for private teams, got '{private_team_data.relationship}'"
