@@ -544,7 +544,6 @@ flowchart TD
     W --> W5[make semgrep - Semantic Analysis]
     W --> W6[make dodgy - Secret Detection]
     W --> W7[make gitleaks - Git History Scan]
-
     W --> W9[make interrogate - Docstring Coverage]
     W --> W10[make prospector - Comprehensive Analysis]
     W --> W11[make pyupgrade - Modernize Syntax]
