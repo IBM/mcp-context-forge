@@ -149,6 +149,7 @@ class PromptTarget:
     name: str
     required_arguments: dict[str, str]
 
+
 # Shared state (populated on test_start)
 _server_id: str = ""
 _tool_names: list[str] = []
@@ -561,16 +562,19 @@ class BaseMCPUser(FastHttpUser):
 
                 if response.status_code in (502, 503, 504):
                     response.failure(f"Infrastructure error: {response.status_code}")
+                    logger.error("❌ %s — HTTP %s: %s", name, response.status_code, response.text[:300])
                     return None
 
                 if response.status_code != 200:
                     response.failure(f"HTTP {response.status_code}")
+                    logger.error("❌ %s — HTTP %s: %s", name, response.status_code, response.text[:300])
                     return None
 
                 try:
                     data = response.json()
                 except Exception as e:
                     response.failure(f"Invalid JSON: {e}")
+                    logger.error("❌ %s — Invalid JSON: %s (body: %s)", name, e, response.text[:200])
                     return None
 
                 if data is None:
@@ -579,7 +583,9 @@ class BaseMCPUser(FastHttpUser):
 
                 if "error" in data:
                     err = data["error"]
-                    response.failure(f"JSON-RPC error {err.get('code', '?')}: {err.get('message', '?')}")
+                    err_msg = f"JSON-RPC error {err.get('code', '?')}: {err.get('message', '?')}"
+                    response.failure(err_msg)
+                    logger.error("❌ %s — %s", name, err_msg)
                     return None
 
                 response.success()
@@ -747,15 +753,16 @@ class MCPToolCallerUser(BaseMCPUser):
             return
         tool = random.choice(self._tool_names[:6] if len(self._tool_names) > 6 else self._tool_names)
         name_lower = tool.lower()
-        if "time" in name_lower:
-            args = {"timezone": random.choice(TIMEZONES)}
-        elif "echo" in name_lower:
-            args = {"message": "perf-test"}
-        elif "convert" in name_lower:
+        if "convert" in name_lower:
             args = {"time": "2025-01-01T00:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"}
+        elif "time" in name_lower:
+            args = {"timezone": random.choice(TIMEZONES)}
         else:
             args = {}
-        self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [rapid]")
+        result = self._mcp_request("tools/call", {"name": tool, "arguments": args}, "MCP tools/call [rapid]")
+        # Log tool output for verification (limited to first call per 50 requests to avoid spam)
+        if result is not None and random.random() < 0.02:
+            logger.info("🔧 %s(%s) = %s", tool, args, json.dumps(result, ensure_ascii=False)[:500])
 
     @task(1)
     @tag("toolcall", "list")
