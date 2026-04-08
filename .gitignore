@@ -276,6 +276,7 @@ jwt/
 mcpgateway/static/vendor/
 mcpgateway/static/bundle-*.js
 mcpgateway/static/.vite/
+mcpgateway/static/app/
 public/
 
 # Export & SBOM files
