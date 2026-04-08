@@ -65,9 +65,11 @@ def sanitize_header_for_storage(value: Optional[str], max_length: int = 500) -> 
         >>> sanitize_header_for_storage("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
         >>> sanitize_header_for_storage("Evil\\x00\\nInjection")
-        'Evil Injection'
-        >>> sanitize_header_for_storage("A" * 1000, max_length=100)
-        'AAAAAAAAAA...'
+        'EvilInjection'
+        >>> len(sanitize_header_for_storage("A" * 1000, max_length=100))
+        100
+        >>> sanitize_header_for_storage(None)
+        'unknown'
     """
     if not value:
         return "unknown"
