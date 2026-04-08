@@ -15,7 +15,7 @@ functions for protecting routes.
 import functools
 from functools import wraps
 import logging
-from typing import Callable, Generator, List, Optional
+from typing import Any, Callable, Generator, List, Optional
 import uuid
 import warnings
 
@@ -598,7 +598,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
         """
 
         @wraps(func)
-        async def wrapper(*args, **kwargs):
+        async def wrapper(*args, **kwargs: dict[str, Any]):
             """Async wrapper function that performs permission check before calling original function.
 
             Args:
@@ -659,10 +659,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     global_context = plugin_global_context
                 else:
                     request_id = user_context.get("request_id") or uuid.uuid4().hex
+                    request: Optional[Request] = kwargs.get("request")
+                    content_type = request.headers.get("content-type") if request and hasattr(request, "headers") else None
                     global_context = GlobalContext(
                         request_id=request_id,
                         server_id=None,
                         tenant_id=None,
+                        content_type=content_type,
                     )
 
                 # Invoke permission check hook, passing plugin contexts from HTTP_PRE_REQUEST hook

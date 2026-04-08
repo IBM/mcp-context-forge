@@ -184,15 +184,46 @@ def parse_class_name(name: str) -> tuple[str, str]:
     return ("", name)
 
 
+def normalize_content_type(content_type: str) -> str:
+    """Extract base content type without parameters.
+
+    Args:
+        content_type: Raw content type string (e.g., 'application/json; charset=utf-8')
+
+    Returns:
+        Normalized content type (e.g., 'application/json')
+
+    Examples:
+        >>> normalize_content_type('application/json; charset=utf-8')
+        'application/json'
+        >>> normalize_content_type('text/html')
+        'text/html'
+        >>> normalize_content_type('TEXT/PLAIN')
+        'text/plain'
+        >>> normalize_content_type('application/json;charset=utf-8')
+        'application/json'
+        >>> normalize_content_type('')
+        ''
+        >>> normalize_content_type('   ')
+        ''
+    """
+    if not isinstance(content_type, str):
+        return ""
+    return content_type.split(";", maxsplit=1)[0].strip().lower()
+
+
 def matches(condition: PluginCondition, context: GlobalContext) -> bool:
-    """Check if conditions match the current context.
+    """Check if GlobalContext conditions match (AND logic).
+
+    All specified fields in the condition must match for this function to return True.
+    This function uses AND logic - if any field doesn't match, it returns False.
 
     Args:
         condition: the conditions on the plugin that are required for execution.
         context: the global context.
 
     Returns:
-        True if the plugin matches criteria.
+        True if all specified fields match, False otherwise.
 
     Examples:
         >>> from mcpgateway.plugins.framework import GlobalContext, PluginCondition
@@ -207,19 +238,53 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
         >>> ctx3 = GlobalContext(request_id="req3", user="admin_user")
         >>> matches(cond2, ctx3)
         True
+        >>> cond3 = PluginCondition(content_types=["application/json"])
+        >>> ctx4 = GlobalContext(request_id="req4", content_type="application/json")
+        >>> matches(cond3, ctx4)
+        True
+        >>> ctx5 = GlobalContext(request_id="req5", content_type="application/json; charset=utf-8")
+        >>> matches(cond3, ctx5)
+        True
+        >>> ctx6 = GlobalContext(request_id="req6", content_type="text/plain")
+        >>> matches(cond3, ctx6)
+        False
     """
     # Check server ID
-    if condition.server_ids and context.server_id not in condition.server_ids:
-        return False
+    if condition.server_ids:
+        if context.server_id not in condition.server_ids:
+            logger.debug("Server ID mismatch: %s not in %s", context.server_id, condition.server_ids)
+            return False
+        logger.debug("Server ID matched: %s", context.server_id)
 
     # Check tenant ID
-    if condition.tenant_ids and context.tenant_id not in condition.tenant_ids:
-        return False
+    if condition.tenant_ids:
+        if context.tenant_id not in condition.tenant_ids:
+            logger.debug("Tenant ID mismatch: %s not in %s", context.tenant_id, condition.tenant_ids)
+            return False
+        logger.debug("Tenant ID matched: %s", context.tenant_id)
+
+    # Check content types (strict AND logic - fail if content_type is None but condition requires it)
+    if condition.content_types:
+        if not context.content_type:
+            logger.debug("Content-type mismatch: content_type is None but condition requires: %s", condition.content_types)
+            return False
+        normalized_request = normalize_content_type(context.content_type)
+        if normalized_request not in condition.content_types:
+            return False
+        logger.debug("Content-type matched: %s", context.content_type)
 
     # Check user patterns (simple contains check, could be regex)
-    if condition.user_patterns and context.user:
-        if not any(pattern in context.user for pattern in condition.user_patterns):
+    if condition.user_patterns:
+        if not context.user:
+            logger.debug("User pattern mismatch: user is None but patterns required: %s", condition.user_patterns)
             return False
+
+        if not any(pattern in context.user for pattern in condition.user_patterns):
+            logger.debug("User pattern mismatch: %s does not match any of %s", context.user, condition.user_patterns)
+            return False
+        logger.debug("User pattern matched: %s", context.user)
+
+    logger.debug("All GlobalContext conditions matched")
     return True
 
 
@@ -303,31 +368,38 @@ def payload_matches(
     conditions: list[PluginCondition],
     context: GlobalContext,
 ) -> bool:
-    """Check if a payload matches any of the plugin conditions.
+    """Check if payload matches plugin conditions using hybrid AND/OR logic.
 
-    This function provides generic conditional matching for all hook types.
-    It checks both GlobalContext conditions (via matches()) and payload-specific
-    conditions (tools, prompts, resources, agents).
+    Evaluation logic:
+    - Within a condition object: ALL fields must match (AND logic)
+    - Across condition objects: ANY can match (OR logic)
+
+    This enables expressions like:
+    - (tenant=X AND tool=Y) OR (server=Z AND user=W)
 
     Args:
         payload: The payload object.
         hook_type: The hook type identifier.
-        conditions: List of conditions to check against.
+        conditions: List of conditions (any can match).
         context: The global context.
 
     Returns:
-        True if the payload matches any condition or if no conditions are specified.
+        True if any condition fully matches, False otherwise.
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
         >>> from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
+        >>> # Single condition - all fields must match
         >>> payload = ToolPreInvokePayload(name="calculator", args={})
         >>> cond = PluginCondition(tools={"calculator"})
         >>> ctx = GlobalContext(request_id="req1")
         >>> payload_matches(payload, "tool_pre_invoke", [cond], ctx)
         True
-        >>> cond2 = PluginCondition(tools={"other_tool"})
-        >>> payload_matches(payload, "tool_pre_invoke", [cond2], ctx)
+        >>> # Multiple conditions - any can match
+        >>> cond1 = PluginCondition(tenant_ids={"healthcare"}, tools={"tool1"})
+        >>> cond2 = PluginCondition(server_ids={"prod"}, user_patterns={"admin_.*"})
+        >>> # Matches if (healthcare AND tool1) OR (prod AND admin_*)
+        >>> payload_matches(payload, "tool_pre_invoke", [cond1, cond2], ctx)
         False
         >>> payload_matches(payload, "tool_pre_invoke", [], ctx)
         True
@@ -346,29 +418,38 @@ def payload_matches(
 
     # If no conditions, match everything
     if not conditions:
+        logger.debug("No conditions specified - matching all requests")
         return True
 
-    # Check each condition (OR logic between conditions)
-    for condition in conditions:
-        # First check GlobalContext conditions
-        if not matches(condition, context):
-            continue
+    logger.debug("Evaluating %d condition object(s) for hook %s (OR logic across objects)", len(conditions), hook_type)
 
-        # Then check payload-specific conditions
+    # ANY condition object can match (OR logic across objects)
+    for idx, condition in enumerate(conditions, 1):
+        logger.debug("Evaluating condition object %d/%d", idx, len(conditions))
+
+        # Within this condition object, ALL fields must match (AND logic)
+
+        # Check GlobalContext conditions first (server_id, tenant_id, user_patterns)
+        if not matches(condition, context):
+            logger.debug("Condition object %d: GlobalContext mismatch (server_id=%s, tenant_id=%s, user=%s)", idx, context.server_id, context.tenant_id, context.user)
+            continue  # Try next condition object (OR logic)
+
+        # Check payload-specific conditions (tools, prompts, resources, agents)
         condition_attr = condition_attr_map.get(hook_type)
         if condition_attr:
             condition_set = getattr(condition, condition_attr, None)
             if condition_set:
-                # Extract the matchable value from the payload
                 payload_value = get_matchable_value(payload, hook_type)
-                if payload_value and payload_value not in condition_set:
-                    # Payload value doesn't match this condition's set
-                    continue
+                if not payload_value or payload_value not in condition_set:
+                    logger.debug("Condition object %d: Payload mismatch (%s='%s' not in %s)", idx, condition_attr, payload_value, condition_set)
+                    continue  # Try next condition object (OR logic)
 
-        # If we get here, this condition matched
-        return True
+        # If we reach here, this condition object fully matched (all fields matched)
+        logger.debug("Condition object %d MATCHED - plugin will execute (hook=%s)", idx, hook_type)
+        return True  # OR logic - any condition object matching is sufficient
 
-    # No conditions matched
+    # No condition objects matched
+    logger.debug("No condition objects matched for hook %s - plugin will NOT execute", hook_type)
     return False
 
 

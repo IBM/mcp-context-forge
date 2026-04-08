@@ -1190,10 +1190,14 @@ async def get_current_user(
             if not global_context:
                 # Propagate team_id → tenant_id for by_tenant rate limiting
                 team_id = getattr(getattr(request, "state", None), "team_id", None) if request else None
+                # Extract content type from headers
+                content_type = headers.get("content-type") if headers else None
+                # Create global context
                 global_context = GlobalContext(
                     request_id=request_id,
                     server_id=None,
                     tenant_id=team_id,
+                    content_type=content_type,
                 )
 
             context_table = getattr(request.state, "plugin_context_table", None) if request else None
@@ -1753,11 +1757,14 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
     # Get plugin contexts from request state if available
     global_context = getattr(request.state, "plugin_global_context", None) if request else None
     if not global_context:
+        # Extract content type from request headers
+        content_type = request.headers.get("content-type") if request and hasattr(request, "headers") else None
         # Create global context
         global_context = GlobalContext(
             request_id=request_id,
             server_id=None,
             tenant_id=None,
+            content_type=content_type,
         )
 
     if user:

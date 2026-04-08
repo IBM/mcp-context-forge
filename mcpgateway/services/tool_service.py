@@ -3241,6 +3241,7 @@ class ToolService(BaseService):
                 plugin_global_context=plugin_global_context,
                 tool_payload=tool_payload,
                 gateway_payload=gateway_payload,
+                request_headers=request_headers,
             )
 
         native_post_invoke_retry_policy = None
@@ -3301,6 +3302,7 @@ class ToolService(BaseService):
         plugin_global_context: Optional[GlobalContext],
         tool_payload: Optional[Dict[str, Any]],
         gateway_payload: Optional[Dict[str, Any]],
+        request_headers: Optional[Dict[str, str]] = None,
     ) -> GlobalContext:
         """Build plugin global context for Rust-direct tool plan resolution.
 
@@ -3311,6 +3313,7 @@ class ToolService(BaseService):
             plugin_global_context: Existing middleware context if available.
             tool_payload: Resolved tool payload.
             gateway_payload: Resolved gateway payload.
+            request_headers: Request headers for extracting content type.
 
         Returns:
             GlobalContext primed with the same metadata the Python invoke path exposes.
@@ -3324,7 +3327,8 @@ class ToolService(BaseService):
         else:
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else server_id
-            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email)
+            content_type = request_headers.get("content-type") if request_headers else None
+            hook_global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
 
         tool_metadata: Optional[PydanticTool] = self._pydantic_tool_from_payload(tool_payload) if tool_payload else None
         gateway_metadata: Optional[PydanticGateway] = self._pydantic_gateway_from_payload(gateway_payload) if gateway_payload else None
@@ -4130,7 +4134,8 @@ class ToolService(BaseService):
             # Use correlation ID from context if available, otherwise generate new one
             request_id = get_correlation_id() or uuid.uuid4().hex
             context_server_id = tool_gateway_id if tool_gateway_id and isinstance(tool_gateway_id, str) else "unknown"
-            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email)
+            content_type = request_headers.get("content-type") if request_headers else None
+            global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=None, user=app_user_email, content_type=content_type)
 
         start_time = time.monotonic()
         success = False
