@@ -354,16 +354,33 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
         # Content Security Policy
-        # This CSP is designed to work with the Admin UI while providing security
-        # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting to stay consistent
-        csp_directives = [
-            "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
-            "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
-            "img-src 'self' data: https:",
-            "font-src 'self' data: https://cdnjs.cloudflare.com",
-            "connect-src 'self' ws: wss: https:",
-        ]
+        # /app/* uses a strict CSP — the React SPA is fully bundled by Vite:
+        #   - no CDN imports, no eval, no inline scripts.
+        # All other routes keep the broader legacy CSP for the HTMX/Alpine UI.
+        is_spa_path = request.url.path == "/app" or request.url.path.startswith("/app/")
+        if is_spa_path:
+            csp_directives = [
+                "default-src 'self'",
+                # Vite bundles all JS locally; no CDN, no eval, no inline scripts.
+                "script-src 'self'",
+                # Tailwind v4 injects styles at runtime via a <style> tag — unsafe-inline
+                # is required until the project migrates to a nonce-based approach.
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data:",
+                "font-src 'self'",
+                # API calls go to the same origin only.
+                "connect-src 'self'",
+            ]
+        else:
+            # Legacy CSP for the HTMX + Alpine.js admin UI at /admin/*
+            csp_directives = [
+                "default-src 'self'",
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
+                "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
+                "img-src 'self' data: https:",
+                "font-src 'self' data: https://cdnjs.cloudflare.com",
+                "connect-src 'self' ws: wss: https:",
+            ]
 
         # Only add frame-ancestors if x_frame is set (None/empty = allow all embedding)
         if x_frame is not None:
