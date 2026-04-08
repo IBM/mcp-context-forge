@@ -73,7 +73,7 @@ jobs:
       # 2️⃣  Upgrade npm to minimum required version
       # -----------------------------------------------------------
       - name: 🔧  Upgrade npm to minimum required version
-        run: npm install -g npm@^11.10.0
+        run: sudo npm install -g npm@^11.10.0
 
       # -----------------------------------------------------------
       # 3️⃣  Install Dependencies
