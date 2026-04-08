@@ -71,7 +71,7 @@ For the manual YAML deployment approach (without Helm or PGO), see [openshift.md
 - **CrunchyData PGO operator** installed from OperatorHub
 - **Helm 3** CLI installed locally
 - **Persistent storage** for PostgreSQL (dynamic StorageClass or manually provisioned PV)
-- Redis persistence is optional (can run with `persistence.enabled: false`)
+- Redis persistence is optional. If no PV is available, set in your values file: `redis.persistence.enabled: false`
 
 ---
 
@@ -107,6 +107,9 @@ oc get csv | grep crunchy
 
 Apply the CrunchyData PostgresCluster CR. A tuned example is provided in the chart:
 
+> The CR name (`metadata.name`) determines the generated secret name and service names.
+> The provided example uses `gp-postgres` — adjust if you prefer a different name.
+
 ```bash
 oc apply -n contextforge -f charts/mcp-stack/crunchydata-postgres-cr.yaml
 ```
@@ -122,8 +125,10 @@ The operator creates a secret with the database credentials. Note the secret nam
 
 ```bash
 oc get secrets -n contextforge | grep pguser
-# Example: contextforge-postgres-pguser-admin
+# Example: gp-postgres-pguser-admin
 ```
+
+The secret name follows the pattern `<cr-name>-pguser-<username>`. If you used the provided CR (`name: gp-postgres`), the secret will be `gp-postgres-pguser-admin`.
 
 ---
 
@@ -142,11 +147,7 @@ The chart includes an OCP-specific values override file: `charts/mcp-stack/value
 
 2. Create a local secrets file (never committed to git):
    ```bash
-   cp charts/mcp-stack/values-ocp-pgo.yaml charts/mcp-stack/values-ocp-pgo-secrets.yaml
-   ```
-
-   Edit `values-ocp-pgo-secrets.yaml` — replace only the `secret:` section with real values:
-   ```yaml
+   cat > charts/mcp-stack/values-ocp-pgo-secrets.yaml << 'EOF'
    mcpContextForge:
      secret:
        JWT_SECRET_KEY: "<your-strong-jwt-key-at-least-32-chars>"
@@ -159,7 +160,10 @@ The chart includes an OCP-specific values override file: `charts/mcp-stack/value
      registration:
        jwt:
          secret: "<same-jwt-key-as-above>"
+   EOF
    ```
+
+   Replace the placeholder values with your actual secrets.
 
 > The committed `values-ocp-pgo.yaml` has placeholder secrets (`changeme`, `my-test-salt`).
 > Real secrets are provided via the local `-secrets.yaml` file at deploy time, keeping
@@ -182,6 +186,9 @@ helm install contextforge charts/mcp-stack \
 ```
 
 Wait for the single gateway pod to be **1/1 Ready**:
+
+> **Note:** The install may report `INSTALLATION FAILED` due to registration hook timeouts.
+> This is expected — the gateway pod still starts successfully. Verify with `oc get pods`.
 
 ```bash
 oc get pods -n contextforge -l app=contextforge-mcp-stack-mcpgateway -w
@@ -215,7 +222,7 @@ oc get pods -n contextforge
 
 These steps are needed until the Helm chart templates are updated to handle them automatically.
 
-**Scale NGINX to 3 replicas** (hardcoded to 1 in the template):
+**Scale NGINX to 3 replicas** (the template currently hardcodes replicas to 1):
 
 ```bash
 oc -n contextforge scale deploy/contextforge-mcp-stack-nginx --replicas=3
@@ -239,7 +246,15 @@ curl -sk https://$ROUTE/health
 
 ## Step 7: Register MCP servers
 
-The Helm chart includes registration hook jobs, but if they timeout you can register manually:
+The Helm chart includes registration hook jobs, but if they timeout you can register manually.
+
+First, port-forward to access the gateway API from your laptop:
+
+```bash
+oc -n contextforge port-forward deploy/contextforge-mcp-stack-mcpgateway 4444:4444 &
+```
+
+Then register the servers:
 
 ```bash
 # Get a JWT token
