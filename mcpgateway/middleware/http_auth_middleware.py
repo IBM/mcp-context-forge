@@ -166,10 +166,13 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
 
         request.state.request_id = request_id
 
+        # Extract content type from request headers for plugin context
+        content_type = request.headers.get("content-type") if request and hasattr(request, "headers") else None
         global_context = GlobalContext(
             request_id=request_id,
             server_id=None,
             tenant_id=None,
+            content_type=content_type,
         )
 
         client_host = None

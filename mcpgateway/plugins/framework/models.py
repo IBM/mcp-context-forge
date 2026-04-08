@@ -14,7 +14,7 @@ from enum import Enum
 import logging
 import os
 from pathlib import Path
-from typing import Any, Generic, Literal, Optional, Self, TypeVar, Union
+from typing import Any, Generic, Optional, Self, TypeVar, Union
 
 # Third-Party
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
@@ -230,17 +230,17 @@ class PluginCondition(BaseModel):
 
     @field_validator("content_types")
     @classmethod
-    def normalize_content_types(cls, value: str | None) -> list[str] | Literal[""] | None:
+    def normalize_content_types(cls, value: list[str] | None) -> list[str] | None:
         """Pre-normalize content types during initialization.
 
         Args:
-            value: str of content type.
+            value: List of content types to normalize.
 
         Returns:
-            Normalized content type.
+            Normalized list of content types (base type without parameters).
         """
         if value:
-            return [each.split(sep=";")[0].strip().lower() for each in value]
+            return [ct.split(";", maxsplit=1)[0].strip().lower() for ct in value]
         return value
 
 

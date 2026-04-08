@@ -3116,6 +3116,7 @@ class ToolService(BaseService):
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
 
         # Resolve per-tool context_id for plugin manager (same pattern as invoke_tool)
+        # First-Party
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
 
         _tool_team_id = tool_payload.get("team_id")

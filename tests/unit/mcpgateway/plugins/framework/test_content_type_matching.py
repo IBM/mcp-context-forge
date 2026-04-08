@@ -81,11 +81,11 @@ class TestContentTypeMatching:
         assert matches(condition, context) is True
 
     def test_matches_content_type_none_context(self):
-        """Test condition ignored when context.content_type is None."""
+        """Test strict AND logic: condition fails when context.content_type is None but required."""
         condition = PluginCondition(content_types=["application/json"])
         context = GlobalContext(request_id="req1", content_type=None)
-        # Permissive when None - plugin should execute
-        assert matches(condition, context) is True
+        # Strict AND logic - plugin should NOT execute when content_type is None but required
+        assert matches(condition, context) is False
 
     def test_matches_content_type_empty_list(self):
         """Test empty content_types list matches everything."""
@@ -229,5 +229,5 @@ class TestContentTypeMatching:
         condition = PluginCondition(content_types=["application/json"])
         # Create context without content_type (defaults to None)
         context = GlobalContext(request_id="req1")
-        # Should be permissive and allow execution
-        assert matches(condition, context) is True
+        # Strict AND logic - plugin should NOT execute when content_type is None but required
+        assert matches(condition, context) is False
