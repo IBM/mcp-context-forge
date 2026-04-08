@@ -1,3 +1,4 @@
+
 # Plugin Framework Specification
 
 **Version**: 1.0
@@ -1009,6 +1010,93 @@ class PluginCondition(BaseModel):
     user_patterns: Optional[list[str]] = None  # Execute for users matching patterns
     content_types: Optional[list[str]] = None  # Execute for specific content types
 ```
+
+#### Content Type Filtering
+
+Plugins can be configured to execute only for specific content types using the `content_types` condition. This enables fine-grained control over when plugins process requests based on the HTTP `Content-Type` header.
+
+**Configuration Example:**
+
+```yaml
+plugins:
+  - name: "JsonValidator"
+    kind: "plugins.json_validator.JsonValidator"
+    hooks: ["tool_pre_invoke"]
+    conditions:
+      - content_types: ["application/json"]
+```
+
+**Matching Behavior:**
+
+- **Case-insensitive**: `APPLICATION/JSON` matches `application/json`
+- **Parameter stripping**: `application/json; charset=utf-8` matches `application/json`
+- **Multiple types**: Supports OR logic - plugin executes if any content type matches
+- **Permissive default**: If `content_types` is not specified or request has no Content-Type header, plugin executes normally
+
+**Common Content Types:**
+
+| Content Type | Description | Use Case |
+|--------------|-------------|----------|
+| `application/json` | JSON data | API requests, structured data validation |
+| `text/plain` | Plain text | Simple text processing, logging |
+| `text/html` | HTML documents | Web scraping, content extraction |
+| `application/xml` | XML data | Legacy API integration, SOAP services |
+| `multipart/form-data` | File uploads | File validation, virus scanning |
+| `application/x-www-form-urlencoded` | Form submissions | Form data validation |
+
+**Example: JSON-Only Security Plugin**
+
+```yaml
+plugins:
+  - name: "JsonSecurityScanner"
+    kind: "plugins.security.json_scanner.JsonSecurityScanner"
+    hooks: ["tool_pre_invoke", "tool_post_invoke"]
+    mode: "enforce"
+    priority: 10
+    conditions:
+      - content_types: ["application/json"]
+        server_ids: ["production-api"]
+```
+
+**Example: Multi-Format Data Validator**
+
+```yaml
+plugins:
+  - name: "DataValidator"
+    kind: "plugins.validation.data_validator.DataValidator"
+    hooks: ["tool_pre_invoke"]
+    conditions:
+      - content_types:
+          - "application/json"
+          - "application/xml"
+          - "text/csv"
+```
+
+**Combined Conditions:**
+
+Content type filtering works seamlessly with other conditions:
+
+```yaml
+plugins:
+  - name: "TeamJsonProcessor"
+    kind: "plugins.processors.json_processor.JsonProcessor"
+    hooks: ["tool_pre_invoke"]
+    conditions:
+      - content_types: ["application/json"]
+        tenant_ids: ["team-alpha", "team-beta"]
+        tools: ["data_analysis", "report_generation"]
+```
+
+**Security Considerations:**
+
+!!! warning "Content-Type Spoofing"
+    Clients can set arbitrary Content-Type headers. Use `content_types` for filtering and optimization, not as a security boundary. Combine with other conditions (server_ids, tenant_ids) for defense-in-depth.
+
+**Performance Benefits:**
+
+- **Reduced overhead**: Skip expensive processing for irrelevant content types
+- **Targeted validation**: Apply format-specific validators only when needed
+- **Resource optimization**: Prevent unnecessary plugin execution
 
 ## Hook Reference Documentation
 
