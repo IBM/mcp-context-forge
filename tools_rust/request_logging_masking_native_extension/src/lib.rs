@@ -1,6 +1,8 @@
-use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyDict, PyList, PyString};
+use pyo3_stub_gen::define_stub_info_gatherer;
+use pyo3_stub_gen::derive::*;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -231,6 +233,7 @@ fn mask_json_value_inner(value: Value, max_depth: i32, key_cache: &mut HashMap<S
     }
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 fn mask_sensitive_data(
     py: Python<'_>,
@@ -241,6 +244,7 @@ fn mask_sensitive_data(
     mask_sensitive_data_inner(py, data, max_depth.unwrap_or(10), &mut key_cache)
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let source = headers.cast::<PyDict>()?;
@@ -267,13 +271,14 @@ fn mask_sensitive_headers(py: Python<'_>, headers: &Bound<'_, PyAny>) -> PyResul
     Ok(masked.into_any().unbind())
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 fn mask_sensitive_json_bytes(
     py: Python<'_>,
-    payload: &[u8],
+    payload: Vec<u8>,
     max_depth: Option<i32>,
 ) -> PyResult<Py<PyAny>> {
-    let parsed: Value = serde_json::from_slice(payload).map_err(|err| PyValueError::new_err(err.to_string()))?;
+    let parsed: Value = serde_json::from_slice(&payload).map_err(|err| PyValueError::new_err(err.to_string()))?;
     let mut key_cache = HashMap::with_capacity(16);
     let masked = mask_json_value_inner(parsed, max_depth.unwrap_or(10), &mut key_cache);
     let serialized = serde_json::to_vec(&masked).map_err(|err| PyValueError::new_err(err.to_string()))?;
@@ -287,6 +292,8 @@ fn request_logging_masking_native_extension(module: &Bound<'_, PyModule>) -> PyR
     module.add_function(wrap_pyfunction!(mask_sensitive_json_bytes, module)?)?;
     Ok(())
 }
+
+define_stub_info_gatherer!(stub_info);
 
 #[cfg(test)]
 mod tests {
