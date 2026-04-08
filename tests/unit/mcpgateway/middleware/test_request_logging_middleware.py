@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 from starlette.datastructures import Headers
 from starlette.types import Scope
 from mcpgateway.middleware.request_logging_middleware import (
+    _load_rust_request_logging_module,
+    _mask_json_payload_for_logging,
     mask_sensitive_data,
     mask_jwt_in_cookies,
     mask_sensitive_headers,
@@ -248,6 +250,39 @@ def test_mask_sensitive_headers_fall_back_to_python_when_native_extension_import
 
     assert masked == {"Authorization": "******", "X-Trace-Id": "123"}
     assert len(dummy_logger.warnings) == 1
+
+
+def test_mask_json_payload_for_logging_returns_native_string_result(monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_json_bytes.return_value = '{"password":"******","data":"ok"}'  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    with patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension):
+        masked = _mask_json_payload_for_logging(orjson.dumps({"password": "123", "data": "ok"}))
+
+    assert masked == '{"password":"******","data":"ok"}'  # pragma: allowlist secret
+
+
+def test_mask_json_payload_for_logging_falls_back_when_native_json_masking_raises(monkeypatch):
+    native_extension = MagicMock()
+    native_extension.mask_sensitive_json_bytes.side_effect = RuntimeError("boom")
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.settings.experimental_rust_request_logging_masking_enabled", True, raising=False)
+
+    with (
+        patch("mcpgateway.middleware.request_logging_middleware._load_rust_request_logging_module", return_value=native_extension),
+        patch("mcpgateway.middleware.request_logging_middleware.mask_sensitive_data", return_value={"password": "******", "data": "ok"}),  # pragma: allowlist secret
+    ):
+        masked = _mask_json_payload_for_logging(orjson.dumps({"password": "123", "data": "ok"}))
+
+    assert masked == '{"password":"******","data":"ok"}'  # pragma: allowlist secret
+
+
+def test_load_rust_request_logging_module_returns_cached_module(monkeypatch):
+    cached_module = object()
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware._RUST_REQUEST_LOGGING_MODULE", cached_module)
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware._RUST_REQUEST_LOGGING_IMPORT_FAILED", False)
+
+    assert _load_rust_request_logging_module() is cached_module
 
 
 # --- RequestLoggingMiddleware tests ---
