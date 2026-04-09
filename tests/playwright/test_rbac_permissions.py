@@ -108,7 +108,7 @@ def _wait_for_admin_shell(page: Page, timeout: int = 60000, team_id: Optional[st
         raise
     # Wait for JS initialization
     try:
-        page.wait_for_function("typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'", timeout=30000)
+        page.wait_for_function("typeof window.Admin.showTab === 'function' && typeof window.htmx !== 'undefined'", timeout=30000)
     except PlaywrightTimeoutError:
         pass
 
@@ -538,8 +538,8 @@ class TestRBACGatewayDelete:
 
         try:
             gateway_row = gw_page.get_gateway_row_by_name(gw_name)
+            gw_page._open_action_dropdown(gateway_row.first)
             delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
-            delete_btn.scroll_into_view_if_needed()
 
             # Intercept the delete POST response
             with page.expect_response(
@@ -1214,10 +1214,17 @@ class TestRPCToolExecutionRBAC:
         tool_name = f"{RBAC_TEST_PREFIX}-rpc-exec-{uuid.uuid4().hex[:8]}"
 
         # Create a team-scoped REST tool via admin API (JSON body required)
+        # Standard
         import json as _json  # noqa: PLC0415
+
         create_resp = admin_api.post(
             "/tools",
-            data=_json.dumps({"tool": {"name": tool_name, "description": "RPC RBAC regression test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}}, "team_id": team_id, "visibility": "team"}),
+            data=_json.dumps(
+                {
+                    "tool": {"name": tool_name, "description": "RPC RBAC regression test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "team_id": team_id,
+                }
+            ),
             headers={"Content-Type": "application/json"},
         )
         assert create_resp.status in (200, 201), f"Failed to create test tool: {create_resp.status} {create_resp.text()}"
@@ -1238,10 +1245,7 @@ class TestRPCToolExecutionRBAC:
                 )
                 body = rpc_resp.json()
                 error_code = body.get("error", {}).get("code")
-                assert error_code != -32003, (
-                    f"Developer session token was denied tools.execute with -32003 — #3515 regression. "
-                    f"Full response: {body}"
-                )
+                assert error_code != -32003, f"Developer session token was denied tools.execute with -32003 — #3515 regression. " f"Full response: {body}"
                 logger.info("Developer /rpc tools/call: HTTP %d, error_code=%s — RBAC passed", rpc_resp.status, error_code)
             finally:
                 dev_ctx.dispose()
@@ -1249,22 +1253,31 @@ class TestRPCToolExecutionRBAC:
             if tool_id:
                 admin_api.delete(f"/tools/{tool_id}")
 
-    def test_viewer_rpc_tools_call_denied(self, playwright: Playwright, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer (no tools.execute) must still be denied -32003 on /rpc tools/call (deny-path).
+    def test_viewer_rpc_tools_call_allowed(self, playwright: Playwright, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer (team-scoped) has tools.execute and can invoke tools via /rpc tools/call.
 
-        Ensures the fix doesn't inadvertently grant execute to roles that should not have it.
+        Team-scoped viewer should be able to execute tools within their team scope.
         """
         team_id = rbac_test_team["id"]
         tool_name = f"{RBAC_TEST_PREFIX}-rpc-viewer-{uuid.uuid4().hex[:8]}"
 
+        # Standard
         import json as _json  # noqa: PLC0415
+
         create_resp = admin_api.post(
             "/tools",
-            data=_json.dumps({"tool": {"name": tool_name, "description": "RPC RBAC deny-path test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}}, "team_id": team_id, "visibility": "team"}),
+            data=_json.dumps(
+                {
+                    "tool": {"name": tool_name, "description": "RPC RBAC viewer execute test tool", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "team_id": team_id,
+                }
+            ),
             headers={"Content-Type": "application/json"},
         )
         assert create_resp.status in (200, 201), f"Failed to create test tool: {create_resp.status}"
-        tool_id = create_resp.json().get("id")
+        created_tool = create_resp.json()
+        tool_id = created_tool.get("id")
+        assert created_tool.get("visibility") == "team", f"Tool should be team-scoped but got visibility={created_tool.get('visibility')}"
 
         try:
             token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
@@ -1278,12 +1291,9 @@ class TestRPCToolExecutionRBAC:
                     data='{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"' + tool_name + '","arguments":{}}}',
                 )
                 body = rpc_resp.json()
-                error_code = body.get("error", {}).get("code")
-                assert error_code == -32003, (
-                    f"Viewer should be denied tools.execute with -32003 but got error_code={error_code}. "
-                    f"Full response: {body}"
-                )
-                logger.info("Viewer /rpc tools/call: HTTP %d, error_code=%s — correctly denied", rpc_resp.status, error_code)
+                assert rpc_resp.status == 200, f"RPC request failed with HTTP {rpc_resp.status}"
+                assert "result" in body, f"Viewer tools/call should return a result, got: {body}"
+                logger.info("Viewer /rpc tools/call: HTTP %d — successfully executed", rpc_resp.status)
             finally:
                 viewer_ctx.dispose()
         finally:
@@ -1299,10 +1309,17 @@ class TestRPCToolExecutionRBAC:
         team_id = rbac_test_team["id"]
         tool_name = f"{RBAC_TEST_PREFIX}-list-vis-{uuid.uuid4().hex[:8]}"
 
+        # Standard
         import json as _json  # noqa: PLC0415
+
         create_resp = admin_api.post(
             "/tools",
-            data=_json.dumps({"tool": {"name": tool_name, "description": "Visibility test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}}, "team_id": team_id, "visibility": "team"}),
+            data=_json.dumps(
+                {
+                    "tool": {"name": tool_name, "description": "Visibility test tool (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "team_id": team_id,
+                }
+            ),
             headers={"Content-Type": "application/json"},
         )
         assert create_resp.status in (200, 201), f"Failed to create test tool: {create_resp.status}"
@@ -1319,10 +1336,7 @@ class TestRPCToolExecutionRBAC:
                 assert list_resp.status == 200, f"Developer GET /tools failed: {list_resp.status}"
                 tools = list_resp.json()
                 names = [t.get("name") for t in (tools if isinstance(tools, list) else tools.get("tools", []))]
-                assert tool_name in names, (
-                    f"Developer cannot see team-scoped tool '{tool_name}' in GET /tools response. "
-                    f"Visible tools: {names}"
-                )
+                assert tool_name in names, f"Developer cannot see team-scoped tool '{tool_name}' in GET /tools response. " f"Visible tools: {names}"
                 logger.info("Developer GET /tools: tool '%s' visible — Layer 1 scoping correct", tool_name)
             finally:
                 dev_ctx.dispose()
@@ -1354,15 +1368,17 @@ class TestSessionTokenCookieRBAC:
         team_id = rbac_test_team["id"]
         tool_name = f"{RBAC_TEST_PREFIX}-cookie-exec-{uuid.uuid4().hex[:8]}"
 
+        # Standard
         import json as _json  # noqa: PLC0415
 
         create_resp = admin_api.post(
             "/tools",
-            data=_json.dumps({
-                "tool": {"name": tool_name, "description": "Cookie RBAC test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}},
-                "team_id": team_id,
-                "visibility": "team",
-            }),
+            data=_json.dumps(
+                {
+                    "tool": {"name": tool_name, "description": "Cookie RBAC test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "team_id": team_id,
+                }
+            ),
             headers={"Content-Type": "application/json"},
         )
         assert create_resp.status in (200, 201), f"Failed to create tool: {create_resp.status} {create_resp.text()}"
@@ -1384,33 +1400,34 @@ class TestSessionTokenCookieRBAC:
                 tool_name,
             )
             error_code = result["body"].get("error", {}).get("code")
-            assert error_code != -32003, (
-                f"Developer cookie session denied tools.execute with -32003 — #3515 regression. "
-                f"Response: {result['body']}"
-            )
+            assert error_code != -32003, f"Developer cookie session denied tools.execute with -32003 — #3515 regression. " f"Response: {result['body']}"
             logger.info("Developer cookie /rpc tools/call: error_code=%s — RBAC passed", error_code)
         finally:
             if tool_id:
                 admin_api.delete(f"/tools/{tool_id}")
 
-    def test_viewer_cookie_rpc_tools_call_denied(self, page: Page, base_url: str, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
-        """Viewer cookie session must be denied -32003 on /rpc tools/call (deny-path)."""
+    def test_viewer_cookie_rpc_tools_call_allowed(self, page: Page, base_url: str, admin_api: APIRequestContext, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer cookie session has team-scoped tools.execute and must NOT get -32003 on /rpc tools/call."""
         team_id = rbac_test_team["id"]
-        tool_name = f"{RBAC_TEST_PREFIX}-cookie-deny-{uuid.uuid4().hex[:8]}"
+        tool_name = f"{RBAC_TEST_PREFIX}-cookie-viewer-exec-{uuid.uuid4().hex[:8]}"
 
+        # Standard
         import json as _json  # noqa: PLC0415
 
         create_resp = admin_api.post(
             "/tools",
-            data=_json.dumps({
-                "tool": {"name": tool_name, "description": "Cookie deny test (#3515)", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}},
-                "team_id": team_id,
-                "visibility": "team",
-            }),
+            data=_json.dumps(
+                {
+                    "tool": {"name": tool_name, "description": "Cookie viewer execute test", "url": f"{base_url}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "team_id": team_id,
+                }
+            ),
             headers={"Content-Type": "application/json"},
         )
         assert create_resp.status in (200, 201), f"Failed to create tool: {create_resp.status}"
-        tool_id = create_resp.json().get("id")
+        created_tool = create_resp.json()
+        tool_id = created_tool.get("id")
+        assert created_tool.get("visibility") == "team", f"Tool should be team-scoped but got visibility={created_tool.get('visibility')}"
 
         try:
             _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
@@ -1427,12 +1444,9 @@ class TestSessionTokenCookieRBAC:
                 }""",
                 tool_name,
             )
-            error_code = result["body"].get("error", {}).get("code")
-            assert error_code == -32003, (
-                f"Viewer cookie session should get -32003 but got error_code={error_code}. "
-                f"Response: {result['body']}"
-            )
-            logger.info("Viewer cookie /rpc tools/call: error_code=%s — correctly denied", error_code)
+            assert result["status"] == 200, f"RPC request failed with HTTP {result['status']}"
+            assert "result" in result["body"], f"Viewer cookie tools/call should return a result, got: {result['body']}"
+            logger.info("Viewer cookie /rpc tools/call: HTTP %d — successfully executed", result["status"])
         finally:
             if tool_id:
                 admin_api.delete(f"/tools/{tool_id}")
@@ -1446,24 +1460,17 @@ class TestSessionTokenCookieRBAC:
         _inject_jwt_cookie(page, rbac_developer_user["email"], token_use="session")
         page.goto(f"{base_url}/admin/tools")
 
-        result = page.evaluate(
-            """async () => {
+        result = page.evaluate("""async () => {
                 const resp = await fetch('/rpc', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({jsonrpc: '2.0', id: 1, method: 'tools/list', params: {}})
                 });
                 return {status: resp.status, body: await resp.json()};
-            }"""
-        )
+            }""")
         error_code = result["body"].get("error", {}).get("code")
-        assert error_code != -32003, (
-            f"Developer cookie session denied tools.read on tools/list with -32003. "
-            f"Response: {result['body']}"
-        )
-        assert "result" in result["body"] or error_code is None, (
-            f"Expected tools/list result, got: {result['body']}"
-        )
+        assert error_code != -32003, f"Developer cookie session denied tools.read on tools/list with -32003. " f"Response: {result['body']}"
+        assert "result" in result["body"] or error_code is None, f"Expected tools/list result, got: {result['body']}"
         logger.info("Developer cookie /rpc tools/list: error_code=%s — RBAC passed", error_code)
 
     def test_cross_team_tool_not_visible(self, playwright: Playwright, admin_api: APIRequestContext, rbac_developer_user: Dict):
@@ -1473,6 +1480,7 @@ class TestSessionTokenCookieRBAC:
         Verifies Layer 1 (token scoping) denies visibility even though
         check_any_team=True grants the RBAC permission.
         """
+        # Standard
         import json as _json  # noqa: PLC0415
 
         other_team_name = f"{RBAC_TEST_PREFIX}-other-{uuid.uuid4().hex[:8]}"
@@ -1483,11 +1491,12 @@ class TestSessionTokenCookieRBAC:
         tool_name = f"{RBAC_TEST_PREFIX}-xteam-{uuid.uuid4().hex[:8]}"
         create_resp = admin_api.post(
             "/tools",
-            data=_json.dumps({
-                "tool": {"name": tool_name, "description": "Cross-team test (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}},
-                "team_id": other_team_id,
-                "visibility": "team",
-            }),
+            data=_json.dumps(
+                {
+                    "tool": {"name": tool_name, "description": "Cross-team test (#3515)", "url": f"{BASE_URL}/health", "integration_type": "REST", "input_schema": {}, "visibility": "team"},
+                    "team_id": other_team_id,
+                }
+            ),
             headers={"Content-Type": "application/json"},
         )
         assert create_resp.status in (200, 201), f"Failed to create tool: {create_resp.status}"
@@ -1504,10 +1513,7 @@ class TestSessionTokenCookieRBAC:
                 assert list_resp.status == 200
                 tools = list_resp.json()
                 names = [t.get("name") for t in (tools if isinstance(tools, list) else tools.get("tools", []))]
-                assert tool_name not in names, (
-                    f"Developer can see cross-team tool '{tool_name}' — Layer 1 isolation broken. "
-                    f"Visible: {names}"
-                )
+                assert tool_name not in names, f"Developer can see cross-team tool '{tool_name}' — Layer 1 isolation broken. " f"Visible: {names}"
                 logger.info("Cross-team tool '%s' correctly NOT visible to developer", tool_name)
             finally:
                 dev_ctx.dispose()

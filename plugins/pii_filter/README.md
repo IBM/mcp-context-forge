@@ -18,14 +18,14 @@ A plugin for detecting and masking Personally Identifiable Information (PII) in 
 - **Driver's License Numbers** - US state formats
 - **Bank Account Numbers** - Including IBAN
 - **Medical Record Numbers** - MRN formats
-- **AWS Access Keys** - AKIA prefixed keys and secrets
-- **API Keys** - Generic API key patterns
 - **Custom Patterns** - Define your own PII patterns
+
+Secret-style credentials such as AWS keys and generic API tokens are handled by the `secrets_detection` plugin, not the PII filter.
 
 ### Masking Strategies
 - **REDACT** - Complete replacement with `[REDACTED]` or custom text
 - **PARTIAL** - Show partial info (e.g., `***-**-1234` for SSN, `j***e@example.com` for email)
-- **HASH** - Replace with hash value for consistency
+- **HASH** - Replace with a deterministic SHA-256-derived placeholder such as `[HASH:8f434346648f6b96]`
 - **TOKENIZE** - Replace with unique token for reversibility
 - **REMOVE** - Complete removal of PII
 
@@ -62,8 +62,6 @@ plugins:
       detect_email: true
       detect_phone: true
       detect_ip_address: true
-      detect_aws_keys: true
-      detect_api_keys: true
       # Masking Settings
       default_mask_strategy: "partial"
       redaction_text: "[PII_REDACTED]"
@@ -102,18 +100,34 @@ config:
   # ... enable all detection types
 ```
 
-### API Keys Only
+### PII Only
 ```yaml
 config:
   detect_ssn: false
   detect_credit_card: false
   detect_email: false
   detect_phone: false
-  detect_aws_keys: true  # Only detect API keys
-  detect_api_keys: true
-  block_on_detection: true  # Always block if keys detected
+  detect_ip_address: true
+  block_on_detection: true
   default_mask_strategy: "redact"
 ```
+
+## SSN Detection Notes
+
+- SSNs do not have a public checksum comparable to Luhn. Local pattern checks can only determine whether a value looks like an SSN, not whether it is assigned to a real person.
+- Authoritative SSN verification requires identity-aware SSA-backed verification, not standalone checksum validation.
+- The current Rust detector may classify bare 9-digit values as SSNs. This can create false positives for other 9-digit identifiers when `detect_ssn` is enabled.
+- A future hardening pass should keep broad compact-SSN support but reject structurally impossible SSNs instead of requiring an `SSN` label.
+
+### Structural Validation Limits
+
+The planned structural hardening should reject values that violate SSA invalid-number rules:
+
+- The first three digits cannot be `000`, `666`, or `900-999`
+- The middle two digits cannot be `00`
+- The last four digits cannot be `0000`
+
+These checks reduce false positives, but they still cannot prove a value is a real SSN.
 
 ## Testing
 
@@ -187,6 +201,15 @@ config:
       mask_strategy: "redact"
       enabled: true
 ```
+
+**Custom Pattern Complexity Limits (DoS Prevention):**
+
+To prevent Regular Expression Denial of Service (ReDoS) attacks, custom patterns are subject to the following limits:
+- **Maximum pattern length:** 256 characters
+- **Maximum alternations (`|`):** 16
+- **Maximum quantifiers (`*`, `+`, `?`, `{}`):** 24
+
+Custom patterns are expected to be written by trusted operators in plugin configuration, not supplied by end users at request time. The Rust detector uses the `regex` crate's linear-time matching engine, and these limits add extra guardrails for maintainability and compilation cost. Patterns exceeding these limits will be rejected during configuration validation.
 
 Test the custom pattern:
 ```python
@@ -310,7 +333,7 @@ DOB: 01/15/1985
 ## CURL Command to Test
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Then test with a prompt containing various PII
 curl -X POST "http://localhost:4444/prompts/test_prompt" \

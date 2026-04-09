@@ -48,7 +48,7 @@ HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`**
 > **Tip - generate a token**
 
 ```bash
-python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --secret my-test-key
+python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 ## 🔗 Option 2 - Streamable HTTP (best for prod / remote)
@@ -146,7 +146,7 @@ Copilot routes the call → Gateway → tool, and prints the reply.
 * **Use SSE for production**, stdio for local/offline.
 * You can manage servers, tools and prompts from the Gateway **Admin UI** (`/admin`).
 * Need a bearer quickly?
-  `export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)`
+  `export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)`
 
 ---
 

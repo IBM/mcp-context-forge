@@ -798,10 +798,10 @@ The user interface adapts based on the user's assigned roles:
 - **Create Resources**: Can create new tools, resources, and prompts within their teams
 
 #### Viewer Experience
-- **Read-Only Access**: Can view tools, resources, and prompts but cannot execute or modify them
+- **Read and Execute Access**: Can view tools, resources, and prompts and execute tools within team scope
 - **No Creation Rights**: Cannot create new resources or tools
 - **No Management Access**: Cannot manage team membership or settings
-- **Limited Interaction**: Primarily for reviewing and consuming existing resources
+- **Limited Mutation**: Can execute tools but cannot create, update, or delete resources
 
 ### Default Visibility & Sharing
 
@@ -1126,7 +1126,7 @@ sequenceDiagram
 AUTO_CREATE_PERSONAL_TEAMS=true
 # PERSONAL_TEAM_PREFIX=personal  # optional: set to get collision-safe email-based slugs
 MAX_TEAMS_PER_USER=50
-MAX_MEMBERS_PER_TEAM=100        # platform admins are exempt from this cap
+MAX_MEMBERS_PER_TEAM=100        # default limit resolved at check time; platform admins are exempt
 
 # Team Invitation Settings
 INVITATION_EXPIRY_DAYS=7

@@ -394,7 +394,7 @@ async def cleanup_old_traces(
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
         >>> class FakeService:
-        ...     def delete_old_traces(self, db, cutoff):
+        ...     def delete_old_traces(self, cutoff):
         ...         return 5
         >>> obs.ObservabilityService = FakeService
         >>> async def run_cleanup():
@@ -405,7 +405,7 @@ async def cleanup_old_traces(
     """
     service = ObservabilityService()
     cutoff_time = datetime.now() - timedelta(days=days)
-    deleted = service.delete_old_traces(db, cutoff_time)
+    deleted = service.delete_old_traces(cutoff_time)
     return {"deleted": deleted, "cutoff_time": cutoff_time}
 
 
@@ -732,8 +732,7 @@ def _get_query_performance_postgresql(db: Session, cutoff_time: datetime, hours:
     Returns:
         dict: Performance analytics computed via SQL
     """
-    stats_sql = text(
-        """
+    stats_sql = text("""
         SELECT
             COUNT(*) as total_traces,
             percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
@@ -746,8 +745,7 @@ def _get_query_performance_postgresql(db: Session, cutoff_time: datetime, hours:
             MAX(duration_ms) as max_duration
         FROM observability_traces
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
-        """
-    )
+        """)
 
     result = db.execute(stats_sql, {"cutoff_time": cutoff_time}).fetchone()
 

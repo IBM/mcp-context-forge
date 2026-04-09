@@ -516,10 +516,10 @@ def test_matches_edge_cases():
     condition_user_no_match = PluginCondition(user_patterns=["guest", "visitor"])
     assert matches(condition_user_no_match, context) is False
 
-    # Test context without user
+    # Test context without user - with AND logic, if user_patterns is specified, user must match
     context_no_user = GlobalContext(request_id="req1", server_id="srv1")
     condition_user_required = PluginCondition(user_patterns=["admin"])
-    assert matches(condition_user_required, context_no_user) is True  # No user means condition is ignored
+    assert matches(condition_user_required, context_no_user) is False  # AND logic: user_patterns specified but user is None
 
     # Test all conditions together
     complex_condition = PluginCondition(server_ids={"srv1", "srv2"}, tenant_ids={"tenant1"}, user_patterns=["admin"])

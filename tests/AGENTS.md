@@ -65,7 +65,7 @@ make jmeter-stress                # Stress test (ramp to 10,000 RPS)
 make jmeter-report                # Generate HTML report from JTL file
 
 # PR readiness
-make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint verify
+make doctest test htmlcov smoketest lint-web bandit interrogate pylint verify
 ```
 
 ## Test Markers

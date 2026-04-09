@@ -66,7 +66,10 @@ make serve-ssl                    # HTTPS on :4444 (creates certs if needed)
 make autoflake isort black pre-commit
 
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
-make flake8 bandit interrogate pylint verify
+make ruff bandit interrogate pylint verify
+
+# Before committing Rust changes (plugins_rust/ or tools_rust/):
+make rust-check                   # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
 ```
 
 ## Authentication & RBAC Overview
@@ -125,13 +128,46 @@ ContextForge implements a **two-layer security model**:
 | `platform_admin` | global | `*` (all) |
 | `team_admin` | team | teams.*, tools.read/execute, resources.read |
 | `developer` | team | tools.read/execute, resources.read |
-| `viewer` | team | tools.read, resources.read (read-only) |
+| `viewer` | team | tools.read/execute, resources.read |
 
 ### Documentation
 
 - **Full RBAC guide**: `docs/docs/manage/rbac.md`
 - **Multi-tenancy architecture**: `docs/docs/architecture/multitenancy.md`
 - **OAuth token delegation**: `docs/docs/architecture/oauth-design.md`
+
+## Observability Transaction Behavior
+
+**Issue #3883 - Separate Session Pattern**
+
+Observability write operations use **independent database sessions** that commit immediately (best-effort pattern). This means:
+
+- Observability data persists even when the main request fails
+- Traces may show "in progress" or partial states for failed requests
+- **NOT atomic** with main request transaction (intentional trade-off)
+- Provides visibility into partial failures at the cost of atomicity
+
+### Implementation Details
+
+**Write methods** (use independent sessions):
+- `start_trace()`, `end_trace()`
+- `start_span()`, `end_span()`
+- `add_event()`, `record_token_usage()`, `record_metric()`, `delete_old_traces()`
+
+**Query methods** (use request-scoped sessions):
+- `get_trace()`, `get_traces()`, `get_spans()`, etc.
+- These accept a `db: Session` parameter for RBAC/token scoping
+
+**Context managers** (create single independent session for lifecycle):
+- `trace_span()`, `trace_tool_invocation()`, `trace_a2a_request()`
+
+**Pattern**: Follows existing SQL instrumentation approach in `instrumentation/sqlalchemy.py:58-87`
+
+**Middleware**: `ObservabilityMiddleware` no longer creates `request.state.db`. Each observability operation creates its own short-lived session.
+
+**Security**: Query operations use request-scoped sessions for RBAC/token scoping. Write operations are not RBAC-protected (observability visibility is platform-wide).
+
+**Connection Pool Sizing**: The separate session pattern creates 4-6 independent database sessions per traced request (trace start/end, span start/end, metrics, events). Default configuration (`DB_POOL_SIZE=200`, `DB_MAX_OVERFLOW=10`) provides 210 total connections, supporting ~35 concurrent traced requests. This is adequate for typical deployments. High-traffic production systems (>50 req/sec sustained) should increase pool size via environment variables: `DB_POOL_SIZE=500`, `DB_MAX_OVERFLOW=100` to support 80+ concurrent requests. Monitor for "QueuePool limit exceeded" errors and adjust pool sizing accordingly. Note: SQLite connections are capped at 50 due to file-based limitations.
 
 ## Key Environment Variables
 
@@ -281,6 +317,16 @@ make test
 - Include tests for behavior changes
 - Require green lint and tests before PR
 - Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
+
+### Tone for GitHub Comments
+
+When posting PR reviews, issue comments, or any public-facing text on GitHub, use a collaborative and constructive tone:
+
+- Lead with what's good before raising concerns.
+- Frame issues as questions or options ("worth considering", "a couple of approaches") rather than directives.
+- Remember contributors are people doing their jobs — be direct about problems without being harsh.
+- Categorize findings clearly (blocking, suggestions, minor notes) so the author knows what must change vs. what's optional.
+- Avoid sounding algorithmic or robotic; write the way a respectful senior colleague would in a code review.
 
 ## GitHub Issues (Brief)
 

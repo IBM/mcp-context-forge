@@ -553,8 +553,7 @@ async def oauth_callback(
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
         # Return success page with option to return to admin
-        return HTMLResponse(
-            content=f"""
+        return HTMLResponse(content=f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -642,8 +641,7 @@ async def oauth_callback(
             </script>
         </body>
         </html>
-        """
-        )
+        """)
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
@@ -813,7 +811,7 @@ async def fetch_tools_after_oauth(
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party
-        from mcpgateway.services.gateway_service import GatewayService
+        from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
 
         gateway_service = GatewayService()
         result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email)
@@ -823,6 +821,10 @@ async def fetch_tools_after_oauth(
 
     except HTTPException:
         raise
+    except GatewayConnectionError as e:
+        # Configuration or token claim mismatch — 400 so operators know to fix oauth_config
+        logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to fetch tools: {str(e)}")
     except Exception as e:
         logger.error(f"Failed to fetch tools after OAuth for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {str(e)}")

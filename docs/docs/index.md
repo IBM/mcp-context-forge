@@ -112,7 +112,7 @@ ContextForge is published on [PyPI](https://pypi.org/project/mcp-contextforge-ga
 
 ```bash
 # Quick start with environment variables
-JWT_SECRET_KEY=my-test-key \
+JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
 MCPGATEWAY_UI_ENABLED=true \
 MCPGATEWAY_ADMIN_API_ENABLED=true \
 PLATFORM_ADMIN_EMAIL=admin@example.com \
@@ -153,12 +153,12 @@ export PLATFORM_ADMIN_EMAIL=admin@example.com
 export PLATFORM_ADMIN_PASSWORD=changeme
 export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
 
-JWT_SECRET_KEY=my-test-key \
+JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   mcpgateway --host 0.0.0.0 --port 4444 &
 
 # 3️⃣  Generate a bearer token & smoke-test the API
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
@@ -181,7 +181,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
     # Or set environment variables (session-only)
     $Env:MCPGATEWAY_UI_ENABLED        = "true"
     $Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
-    $Env:JWT_SECRET_KEY               = "my-test-key"
+    $Env:JWT_SECRET_KEY               = "my-test-key-but-now-longer-than-32-bytes"
     $Env:PLATFORM_ADMIN_EMAIL         = "admin@example.com"
     $Env:PLATFORM_ADMIN_PASSWORD      = "changeme"
     $Env:PLATFORM_ADMIN_FULL_NAME     = "Platform Administrator"
@@ -191,7 +191,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
     # 4️⃣  Bearer token and smoke-test
     $Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-        --username admin@example.com --exp 10080 --secret my-test-key
+        --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 
     curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
          http://127.0.0.1:4444/version | jq
@@ -297,7 +297,7 @@ docker compose logs -f gateway
 # Access Admin UI: http://localhost:4444/admin
 # Generate API token
 docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key
+  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 **What you get:**
@@ -338,7 +338,7 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_UI_ENABLED=true \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-test-key \
+  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
@@ -350,7 +350,7 @@ docker run -d --name mcpgateway \
 # Tail logs and generate API key
 docker logs -f mcpgateway
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
@@ -365,7 +365,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
       -p 4444:4444 -v $(pwd)/data:/data \
       -e DATABASE_URL=sqlite:////data/mcp.db \
       -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
-      -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key \
+      -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
       -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=changeme \
       ghcr.io/ibm/mcp-context-forge:1.0.0-RC-2
     ```
@@ -385,7 +385,7 @@ Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and log
     docker build -f Containerfile.lite -t mcpgateway:airgapped .
     docker run -d --name mcpgateway -p 4444:4444 \
       -e MCPGATEWAY_UI_AIRGAPPED=true -e MCPGATEWAY_UI_ENABLED=true \
-      -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key \
+      -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
       mcpgateway:airgapped
     ```
 
@@ -470,7 +470,7 @@ These variables have insecure defaults and **must be changed** before production
 
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
-| `JWT_SECRET_KEY` | Secret key for signing JWT tokens (32+ chars) | `my-test-key` | Generate with `openssl rand -hex 32` |
+| `JWT_SECRET_KEY` | Secret key for signing JWT tokens (32+ chars) | `my-test-key-but-now-longer-than-32-bytes` | Generate with `openssl rand -hex 32` |
 | `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `my-test-salt` | Generate with `openssl rand -hex 32` |
 | `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
 | `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
@@ -590,7 +590,7 @@ Interactive API documentation is available when the server is running (adjust th
 ```bash
 # Generate a JWT token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key)
+  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Test API access
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/health

@@ -40,7 +40,8 @@ import logging
 import re
 import signal
 import sys
-from typing import Any, AsyncIterator, Dict, List, Optional, TypeAlias, Union
+import threading
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeAlias, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 import warnings
@@ -58,6 +59,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
+import jwt
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -93,8 +95,18 @@ from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddl
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
-from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import HttpHookType, PluginError, PluginManager, PluginViolationError
+from mcpgateway.observability import init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
+from mcpgateway.plugins.framework import (
+    enable_plugins,
+    get_plugin_manager,
+    HttpHookType,
+    init_plugin_manager_factory,
+    PluginError,
+    PluginViolationError,
+    PromptHookType,
+    ResourceHookType,
+    shutdown_plugin_manager_factory,
+)
 from mcpgateway.plugins.framework.constants import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
@@ -135,7 +147,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.content_security import ContentSizeError
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
@@ -171,6 +183,7 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
+from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_admin_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 from mcpgateway.version import router as version_router
@@ -196,17 +209,11 @@ except RuntimeError:
 else:
     loop.create_task(bootstrap_db())
 
-# Initialize plugin manager as a singleton.
-_PLUGINS_ENABLED = settings.plugins.enabled
-if _PLUGINS_ENABLED:
-    _plugin_settings = settings.plugins
-    # First-Party
-    from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
-
-    plugin_manager: PluginManager | None = PluginManager(_plugin_settings.config_file, timeout=_plugin_settings.plugin_timeout, hook_policies=HOOK_PAYLOAD_POLICIES)
-else:
-    plugin_manager = None  # pylint: disable=invalid-name
-
+# Enable plugin subsystem at module load time, mirroring the old singleton pattern.
+# get_plugin_manager() guards on this flag, so it must be set before lifespan runs.
+if settings.plugins.enabled:
+    enable_plugins(True)
+    logger.info("Plugin subsystem enabled (factory will be initialized in lifespan)")
 
 # First-Party
 # First-Party - import module-level service singletons
@@ -453,11 +460,21 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
     if request.headers.get(_INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
         auth_context["_rust_session_validated"] = True
 
+    forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
+
+    set_trace_context_from_teams(
+        auth_context.get("teams"),
+        user_email=auth_context.get("email"),
+        is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
+        auth_method=forwarded_auth_method,
+        team_name=auth_context.get("team_name"),
+    )
+
     return {
         "email": auth_context.get("email"),
         "full_name": auth_context.get("email") or "MCP Internal Forward",
         "is_admin": bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
-        "auth_method": "mcp_internal_forward",
+        "auth_method": forwarded_auth_method,
         "token_use": auth_context.get("token_use"),
     }
 
@@ -578,6 +595,7 @@ async def _run_internal_mcp_authentication(
     """
     # Run pre-request plugin hooks (e.g. WXO JWT → team token exchange)
     # before building the auth scope, so plugins can transform headers.
+    plugin_manager = await get_plugin_manager()
     if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST):
         headers, _, _ = await run_pre_request_hooks(
             plugin_manager=plugin_manager,
@@ -1018,11 +1036,17 @@ def _serialize_mcp_tool_definition(tool: Any) -> Dict[str, Any]:
     else:
         data = {}
 
-    payload: Dict[str, Any] = {
-        "name": data.get("name", getattr(tool, "name", None)),
-        "description": data.get("description", getattr(tool, "description", None)),
-        "inputSchema": data.get("inputSchema", getattr(tool, "input_schema", None)),
-    }
+    name = data.get("name", getattr(tool, "name", None))
+    description = data.get("description", getattr(tool, "description", None))
+    input_schema = data.get("inputSchema", getattr(tool, "input_schema", None))
+
+    payload: Dict[str, Any] = {}
+    if name is not None:
+        payload["name"] = name
+    if description is not None or name is not None or input_schema is not None:
+        payload["description"] = description or ""
+    if input_schema is not None:
+        payload["inputSchema"] = input_schema
 
     output_schema = data.get("outputSchema", getattr(tool, "output_schema", None))
     if output_schema is not None:
@@ -1142,17 +1166,16 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
     requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
     run_status = await cancellation_service.get_status(request_id)
 
-    unauthorized = False
     if run_status is None:
-        # Default deny for non-admin users when run is not known on this worker.
-        # Session-affinity clients should route cancellation to the worker that owns the run.
-        unauthorized = not requester_is_admin
-    else:
-        run_owner_email = run_status.get("owner_email")
-        run_owner_team_ids = run_status.get("owner_team_ids") or []
-        requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
-        requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
-        unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
+        # Notifications are best-effort; unknown request ids should be accepted
+        # as no-ops rather than rejected as authorization failures.
+        return
+
+    run_owner_email = run_status.get("owner_email")
+    run_owner_team_ids = run_status.get("owner_team_ids") or []
+    requester_is_owner = bool(run_owner_email and requester_email and run_owner_email == requester_email)
+    requester_shares_team = bool(run_owner_team_ids and requester_teams and any(team in run_owner_team_ids for team in requester_teams))
+    unauthorized = not requester_is_admin and not requester_is_owner and not requester_shares_team
 
     if unauthorized:
         if as_jsonrpc_error:
@@ -1498,6 +1521,57 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
+def _create_jwt_identity_extractor() -> Callable[[dict], Optional[str]]:
+    """Create JWT identity extractor function for session pool.
+
+    Extracts stable user ID from JWT token to prevent bucket explosion
+    when using short-lived JWTs with rotating jti/exp/iat claims.
+
+    Returns:
+        Callable that extracts stable user identifier from request headers,
+        or None if extraction fails.
+    """
+
+    def jwt_identity_extractor(headers: dict) -> Optional[str]:
+        """Extract stable user ID from JWT token.
+
+        Decodes JWT without signature verification to extract sub, email, or user_id claim.
+        This prevents bucket explosion when using short-lived JWTs with rotating jti/exp/iat.
+
+        Args:
+            headers: Request headers dict (case-insensitive lookup handled by caller).
+
+        Returns:
+            Stable user identifier (sub, email, or user_id claim), or None if extraction fails.
+        """
+        auth_header = headers.get("authorization", "") or headers.get("Authorization", "")
+        if not auth_header:
+            return None
+
+        # Extract token from "Bearer <token>" format
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+        else:
+            token = auth_header.strip()
+        if not token:
+            return None
+
+        try:
+            # SECURITY NOTE: JWT decoded without signature verification for session pool bucketing only.
+            # This is NOT a security boundary - authentication happens separately via get_current_user.
+            # We only extract stable identity (sub/email/user_id) to group sessions by user.
+            # Crafted JWTs could influence pool key selection but cannot bypass authentication.
+            # algorithms parameter required by PyJWT >= 2.4 even when verify_signature=False
+            claims = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"])
+            # Try standard claims in order of preference
+            return claims.get("sub") or claims.get("email") or claims.get("user_id")
+        except Exception as e:
+            logger.debug(f"JWT identity extraction failed: {e}")
+            return None
+
+    return jwt_identity_extractor
+
+
 async def attempt_to_bootstrap_sso_providers():
     """
     Try to bootstrap SSO provider services based on settings.
@@ -1515,6 +1589,43 @@ async def attempt_to_bootstrap_sso_providers():
 ####################
 # Startup/Shutdown #
 ####################
+def _can_manage_sighup_handler() -> bool:
+    """Return whether this runtime context can safely install process signal handlers.
+
+    Returns:
+        ``True`` when startup is running on the process main thread and SIGHUP is available.
+    """
+    return hasattr(signal, "SIGHUP") and threading.current_thread() is threading.main_thread()
+
+
+def _install_sighup_handler() -> bool:
+    """Install the SIGHUP handler when the current runtime context supports it.
+
+    Returns:
+        ``True`` when the handler was installed in the current runtime context.
+    """
+    if not _can_manage_sighup_handler():
+        logger.debug("Skipping SIGHUP handler registration outside the main thread")
+        return False
+
+    # First-Party
+    from mcpgateway.handlers.signal_handlers import sighup_handler  # pylint: disable=import-outside-toplevel
+
+    signal.signal(signal.SIGHUP, sighup_handler)
+    return True
+
+
+def _restore_default_sighup_handler() -> None:
+    """Restore the default SIGHUP handler when the current runtime context supports it.
+
+    Returns:
+        ``None``.
+    """
+    if not _can_manage_sighup_handler():
+        return
+    signal.signal(signal.SIGHUP, signal.SIG_DFL)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """
@@ -1569,6 +1680,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
 
         max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
+
+        # Create JWT identity extractor if enabled (prevents bucket explosion from rotating tokens)
+        identity_extractor = None
+        if settings.mcp_session_pool_jwt_identity_extraction:
+            identity_extractor = _create_jwt_identity_extractor()
+            logger.info("JWT identity extraction enabled for session pool")
+
         init_mcp_session_pool(
             max_sessions_per_key=max_sessions_per_key,
             session_ttl_seconds=settings.mcp_session_pool_ttl,
@@ -1578,6 +1696,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             circuit_breaker_threshold=settings.mcp_session_pool_circuit_breaker_threshold,
             circuit_breaker_reset_seconds=settings.mcp_session_pool_circuit_breaker_reset,
             identity_headers=frozenset(settings.mcp_session_pool_identity_headers),
+            identity_extractor=identity_extractor,
             idle_pool_eviction_seconds=settings.mcp_session_pool_idle_eviction,
             # Use dedicated transport timeout (default 30s to match MCP SDK default).
             # This is separate from health_check_timeout to allow long-running tool calls.
@@ -1585,6 +1704,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             # Configurable health check chain - ordered list of methods to try.
             health_check_methods=settings.mcp_session_pool_health_check_methods,
             health_check_timeout_seconds=settings.mcp_session_pool_health_check_timeout,
+            max_total_keys=settings.mcp_session_pool_max_total_keys,
+            max_total_sessions=settings.mcp_session_pool_max_total_sessions,
         )
         logger.info("MCP session pool initialized")
 
@@ -1602,14 +1723,44 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Validate security configuration
         validate_security_configuration()
 
-        if plugin_manager:
-            logger.debug("plugin_manager.initialize() starting...")
-            try:
-                await plugin_manager.initialize()
+        # Initialize plugin manager factory if plugins are enabled
+        if settings.plugins.enabled:
+            # First-Party
+            from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
+
+            init_plugin_manager_factory(
+                yaml_path=settings.plugins.config_file,
+                timeout=settings.plugins.plugin_timeout,
+                hook_policies=HOOK_PAYLOAD_POLICIES,
+                observability=None,  # Will be set later if needed
+                db_factory=SessionLocal,
+            )
+            logger.info("Plugin manager factory initialized")
+
+        try:
+            plugin_manager = await get_plugin_manager()
+            if plugin_manager:
                 logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
-            except Exception as diag_exc:
-                logger.error(f"plugin_manager.initialize() failed: {diag_exc}", exc_info=True)
-                raise
+                # Wire plugin manager to plugin service for admin endpoints
+                # First-Party
+                from mcpgateway.services.plugin_service import get_plugin_service  # pylint: disable=import-outside-toplevel
+
+                plugin_service = get_plugin_service()
+                plugin_service.set_plugin_manager(plugin_manager)
+                # Expose on app.state so the admin UI can show the correct enabled status
+                app.state.plugin_manager = plugin_manager
+        except Exception as diag_exc:
+            logger.error(f"Plugin manager initialization failed: {diag_exc}", exc_info=True)
+            raise
+
+        # Wire observability adapter to plugin manager if observability is enabled
+        if settings.observability_enabled and _service is not None:  # pylint: disable=possibly-used-before-assignment
+            # First-Party
+            from mcpgateway.plugins.framework import set_global_observability  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter  # pylint: disable=import-outside-toplevel
+
+            set_global_observability(ObservabilityServiceAdapter(service=_service))
+            logger.info("🔍 Plugin observability adapter wired to ObservabilityService")
 
         if settings.enable_header_passthrough:
             await setup_passthrough_headers()
@@ -1628,14 +1779,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             await start_pool_notification_service(gateway_service)
 
-            # Start RPC listener for multi-worker session affinity
-            if settings.mcpgateway_session_affinity_enabled:
-                # First-Party
-                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+        # Start heartbeat and RPC listener for multi-worker session affinity.
+        # This must be outside the mcp_session_pool_enabled guard because
+        # affinity-only deployments (pool disabled, affinity enabled) still
+        # need heartbeat and RPC forwarding.
+        if settings.mcpgateway_session_affinity_enabled:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
-                pool = get_mcp_session_pool()
-                pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
-                logger.info("Multi-worker session affinity RPC listener started")
+            pool = get_mcp_session_pool()
+            pool.start_heartbeat()
+            pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
+            logger.info("Multi-worker session affinity heartbeat and RPC listener started")
 
         await root_service.initialize()
         await completion_service.initialize()
@@ -1702,10 +1857,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         logger.info("All services initialized successfully")
 
-        # First-Party
-        from mcpgateway.handlers.signal_handlers import sighup_handler  # pylint: disable=import-outside-toplevel
-
-        signal.signal(signal.SIGHUP, sighup_handler)
+        _install_sighup_handler()
 
         # Start cache invalidation subscriber for cross-worker cache synchronization
         # First-Party
@@ -1777,7 +1929,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         # Restore default SIGHUP handling in case we reset signal handlers.
         try:
-            signal.signal(signal.SIGHUP, signal.SIG_DFL)
+            _restore_default_sighup_handler()
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"Failed to restore default SIGHUP handler: {exc}")
 
@@ -1789,13 +1941,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 with suppress(asyncio.CancelledError):
                     await task
 
-        # Shutdown plugin manager
-        if plugin_manager:
-            try:
-                await plugin_manager.shutdown()
-                logger.info("Plugin manager shutdown complete")
-            except Exception as e:
-                logger.error(f"Error shutting down plugin manager: {str(e)}")
+        # Shutdown global plugin manager factory (no-op when plugins were never initialised)
+        try:
+            await shutdown_plugin_manager_factory()
+            logger.info("Plugin manager shutdown complete")
+        except Exception as e:
+            logger.error(f"Error shutting down plugin manager: {str(e)}")
 
         # Stop cache invalidation subscriber
         try:
@@ -1868,7 +2019,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await shutdown_services(services_to_shutdown)
 
         # Shutdown MCP session pool (before shared HTTP client)
-        if settings.mcp_session_pool_enabled:
+        # Must match the init condition (pool OR affinity) to cover affinity-only deployments.
+        if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
             # First-Party
             from mcpgateway.services.mcp_session_pool import close_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
@@ -1952,7 +2104,7 @@ def validate_security_configuration():
     # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
     critical_issues = []
 
-    if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:  # nosec B105 - checking for default value
+    if settings.jwt_secret_key in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes") and not settings.dev_mode:  # nosec B105 - checking for default values
         critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
 
     if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
@@ -2037,7 +2189,7 @@ def log_security_recommendations(security_status: settings.SecurityStatus):
         logger.info("📋 SECURITY RECOMMENDATIONS:")
         logger.info("=" * 60)
 
-        if settings.jwt_secret_key == "my-test-key":  # nosec B105 - checking for default value
+        if settings.jwt_secret_key in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"):  # nosec B105 - checking for default value
             logger.info("  • Generate a strong JWT secret:")
             logger.info("    python3 -c 'import secrets; print(secrets.token_urlsafe(32))'")
 
@@ -2364,6 +2516,30 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
     return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
+@app.exception_handler(ContentTypeError)
+async def content_type_exception_handler(_request: Request, exc: ContentTypeError):
+    """Handle MIME type validation failures globally.
+
+    Args:
+        _request: The incoming request (unused, required by FastAPI handler interface).
+        exc: The ContentTypeError with mime_type and allowed_types.
+
+    Returns:
+        ORJSONResponse: A 415 Unsupported Media Type response with error details.
+    """
+    return ORJSONResponse(
+        status_code=415,
+        content={
+            "detail": {
+                "error": "Unsupported MIME type",
+                "message": str(exc),
+                "mime_type": exc.mime_type,
+                "allowed_types": exc.allowed_types[:5],  # Limit to first 5
+            }
+        },
+    )
+
+
 def _normalize_scope_path(scope_path: str, root_path: str) -> str:
     """Strip ``root_path`` prefix from *scope_path* when a reverse proxy forwards the full path.
 
@@ -2676,7 +2852,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                             pass  # keep raw value for non-UUID token_teams
                     # Only trust team_id if it is in the user's DB-resolved teams
                     validated_team_id = request_team_id if (token_teams and request_team_id and request_team_id in token_teams) else None
-                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id)
+                    has_admin_access = await permission_service.has_admin_permission(username, team_id=validated_team_id, token_teams=token_teams)
                     if not has_admin_access:
                         logger.warning(f"Admin access denied for user without admin permissions: {SecurityValidator.sanitize_log_message(str(username))}")
                         return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
@@ -2828,6 +3004,24 @@ class MCPPathRewriteMiddleware:
         # These paths may end with /mcp but should not be rewritten to the MCP transport
         if not original_path.startswith("/.well-known/"):
             if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+                # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
+                # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
+                # /mcp/ as that would expose the global MCP transport under
+                # undocumented aliases, broadening the externally reachable
+                # route surface.
+                if original_path.startswith("/servers/"):
+                    # Validate that a non-empty server_id segment is present.
+                    # Without this check, paths like /servers//mcp (empty ID)
+                    # would be rewritten and silently fall through (#3891).
+                    _srv_match = re.match(r"/servers/([^/]+)/mcp", original_path)
+                    if not _srv_match:
+                        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+                        await response(scope, receive, send)
+                        return
+                else:
+                    # Not a /servers/ path — do not rewrite, pass through
+                    await self.application(scope, receive, send)
+                    return
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 scope["path"] = "/mcp/"
                 await self.application(scope, receive, send)
@@ -2899,9 +3093,8 @@ else:
     app.add_middleware(MCPPathRewriteMiddleware)
 
 # Add HTTP authentication hook middleware for plugins (before auth dependencies)
-if plugin_manager:
-    app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
-    logger.info("🔌 HTTP authentication hooks enabled for plugins")
+# Middleware will get the global plugin manager at request time if factory exists
+app.add_middleware(HttpAuthMiddleware)
 
 # Add request logging middleware FIRST (always enabled for gateway boundary logging)
 # IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
@@ -2966,16 +3159,34 @@ else:
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
-    from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
     from mcpgateway.services.observability_service import ObservabilityService
 
     _service = ObservabilityService()
     app.add_middleware(ObservabilityMiddleware, enabled=True, service=_service)
-    if plugin_manager:
-        plugin_manager.observability = ObservabilityServiceAdapter(service=_service)
+    # Plugin observability adapter will be set in lifespan after plugin_manager is initialized
     logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
 else:
     logger.info("🔍 Observability middleware disabled")
+
+if otel_tracing_enabled():
+    app.add_middleware(OpenTelemetryRequestMiddleware)
+    logger.info("🧵 OTEL request tracing middleware enabled for transport request roots")
+else:
+    logger.info("🧵 OTEL request tracing middleware disabled")
+
+# Add OTEL baggage middleware after request tracing middleware so it executes first
+# and attaches baggage before the request-root span is created.
+if settings.otel_baggage_enabled and otel_tracing_enabled():
+    # First-Party
+    from mcpgateway.middleware.baggage_middleware import BaggageMiddleware
+
+    app.add_middleware(BaggageMiddleware)
+    logger.info("🧳 OTEL baggage middleware enabled for HTTP header extraction")
+elif settings.otel_baggage_enabled and not otel_tracing_enabled():
+    logger.warning("🧳 OTEL baggage enabled but tracing disabled - baggage will not be captured in spans")
+else:
+    logger.debug("🧳 OTEL baggage middleware disabled")
+
 
 # Database query logging middleware (for N+1 detection)
 if settings.db_query_log_enabled:
@@ -3057,16 +3268,10 @@ if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")
 app.state.templates = templates
 
-# Store plugin manager in app state for access in routes
-app.state.plugin_manager = plugin_manager
+# Plugin manager is obtained from factory at request time via get_plugin_manager()
+# No need to store in app state; routes will get it from the factory when needed
 
-# Initialize plugin service with plugin manager
-if plugin_manager:
-    # First-Party
-    from mcpgateway.services.plugin_service import get_plugin_service
-
-    plugin_service = get_plugin_service()
-    plugin_service.set_plugin_manager(plugin_manager)
+# Plugin service will be initialized in lifespan after plugin manager is ready
 
 # Create API routers
 protocol_router = APIRouter(prefix="/protocol", tags=["Protocol"])
@@ -3092,8 +3297,17 @@ def get_db(request: Request = None):
 
     When observability is enabled, this reuses the session created by
     ObservabilityMiddleware (stored in request.state.db) to avoid duplicate
-    session creation. When observability is disabled or the
-    middleware hasn't created a session, this creates its own session.
+    session creation. When observability is disabled or the middleware hasn't
+    created a session, this creates its own session.
+
+    **Transaction Control**: This function ALWAYS controls transaction boundaries
+    (commit/rollback) regardless of whether it creates the session or reuses one
+    from middleware. This ensures predictable transaction semantics for route
+    handlers and maintains data integrity.
+
+    **Session Lifecycle**: Middleware manages session lifecycle (create/close)
+    while this function manages transactions (commit/rollback). This separation
+    of concerns prevents the transaction management violation described in #3731.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.
@@ -3114,7 +3328,10 @@ def get_db(request: Request = None):
         Exception: Re-raises any exception after rolling back the transaction.
 
     Ensures:
-        The database session is closed after the request completes, even in the case of an exception.
+        - Transaction is committed on success (for both owned and reused sessions)
+        - Transaction is rolled back on error (for both owned and reused sessions)
+        - Session is closed only if created by this function (not if reused from middleware)
+        - Broken connections are invalidated to prevent pool corruption
 
     Examples:
         >>> # Test that get_db returns a generator
@@ -3138,9 +3355,32 @@ def get_db(request: Request = None):
         db = request.state.db
         if db is not None:
             logger.debug(f"[GET_DB] Reusing session from middleware: {id(db)}")
-            # Yield the middleware's session without closing it
-            # The middleware will handle commit/rollback/close
-            yield db
+            # Yield the middleware's session. We control transactions, middleware controls lifecycle.
+            try:
+                yield db
+                # Commit on successful completion (only if transaction still active)
+                # The transaction can become inactive if an exception occurred during
+                # async context manager cleanup (e.g., CancelledError during MCP session teardown).
+                if db.is_active:
+                    db.commit()
+            except Exception:
+                try:
+                    # Always call rollback() in exception handler.
+                    # rollback() is safe to call even when is_active=False - it succeeds and
+                    # restores the session to a usable state. When is_active=False (e.g., after
+                    # IntegrityError), rollback() is actually REQUIRED to clear the failed state.
+                    # Skipping rollback when is_active=False would leave the session unusable.
+                    db.rollback()
+                except Exception:
+                    # Connection is broken - invalidate to remove from pool
+                    # This handles cases like PgBouncer query_wait_timeout where
+                    # the connection is dead and rollback itself fails
+                    try:
+                        db.invalidate()
+                    except Exception:
+                        pass  # nosec B110 - Best effort cleanup on connection failure
+                raise
+            # Don't close - middleware owns the session lifecycle
             return
 
     # Fallback: Create our own session (observability disabled or middleware didn't create one)
@@ -3175,6 +3415,32 @@ def get_db(request: Request = None):
             db.close()
         except Exception:
             pass  # nosec B110 - Best effort cleanup on already-failed prompt bridge sessions
+
+
+async def require_valid_server(server_id: str, db: Session = Depends(get_db)) -> str:
+    """FastAPI dependency that validates a server_id exists in the database.
+
+    Provides a reusable, fail-closed guard for any server-scoped endpoint.
+    Uses the lightweight ``entity_exists()`` check — no eager loading.
+
+    Args:
+        server_id: Path parameter extracted by FastAPI.
+        db: Database session from the ``get_db`` dependency.
+
+    Returns:
+        The validated server_id string.
+
+    Raises:
+        HTTPException: 404 if the server does not exist, 503 on database errors.
+    """
+    try:
+        if not await server_service.entity_exists(db, server_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Server not found")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Service unavailable — unable to verify server")
+    return server_id
 
 
 async def _read_request_json(request: Request) -> Any:
@@ -4042,7 +4308,7 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
 
 @server_router.post("/{server_id}/message")
 @require_permission("servers.use")
-async def message_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
+async def message_endpoint(request: Request, server_id: str = Depends(require_valid_server), user=Depends(get_current_user_with_permissions)):
     """
     Handles incoming messages for a specific server.
 
@@ -4063,6 +4329,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+        set_trace_session_id(session_id)
 
         await _assert_session_owner_or_admin(request, user, session_id)
 
@@ -5284,6 +5551,7 @@ async def list_resources(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5299,6 +5567,7 @@ async def list_resources(
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
+        gateway_id (Optional[str]): Filter by gateway ID. Use 'null' for resources without a gateway.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -5337,7 +5606,7 @@ async def list_resources(
     # Use unified list_resources() with token-based team filtering
     # Always apply visibility filtering based on token scope
     logger.debug(
-        f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+        f"User {SecurityValidator.sanitize_log_message(user_email)} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}, gateway_id={gateway_id}"
     )
     data, next_cursor = await resource_service.list_resources(
         db=db,
@@ -5345,6 +5614,7 @@ async def list_resources(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
+        gateway_id=gateway_id,
         user_email=user_email,
         team_id=team_id,
         visibility=visibility,
@@ -5449,6 +5719,9 @@ async def create_resource(
     except ContentSizeError as e:
         logger.error(f"Content size exceeded in creating resource: {e}")
         raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+    except ContentTypeError as e:
+        logger.error(f"MIME type not allowed in creating resource: {e}")
+        raise HTTPException(status_code=415, detail={"error": "Unsupported Media Type", "message": str(e), "mime_type": e.mime_type, "allowed_types": e.allowed_types})
 
 
 @resource_router.get("/{resource_id}")
@@ -5632,6 +5905,9 @@ async def update_resource(
     except ContentSizeError as e:
         logger.error(f"Content size exceeded in updating resource: {e}")
         raise HTTPException(status_code=413, detail={"error": f"{e.content_type} size limit exceeded", "message": str(e), "actual_size": e.actual_size, "max_size": e.max_size})
+    except ContentTypeError as e:
+        logger.error(f"MIME type not allowed in updating resource: {e}")
+        raise HTTPException(status_code=415, detail={"error": "Unsupported Media Type", "message": str(e), "mime_type": e.mime_type, "allowed_types": e.allowed_types})
     db.commit()
     db.close()
     await invalidate_resource_cache(resource_id)
@@ -5788,6 +6064,7 @@ async def list_prompts(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
@@ -5803,6 +6080,7 @@ async def list_prompts(
         tags: Comma-separated list of tags to filter by.
         team_id: Filter by specific team ID.
         visibility: Filter by visibility (private, team, public).
+        gateway_id: Filter by gateway ID. Use 'null' for prompts without a gateway.
         db: Database session.
         user: Authenticated user.
 
@@ -5841,7 +6119,7 @@ async def list_prompts(
     # Use consolidated prompt listing with token-based team filtering
     # Always apply visibility filtering based on token scope
     logger.debug(
-        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}"
+        f"User: {SecurityValidator.sanitize_log_message(user_email)} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}, gateway_id={gateway_id}"
     )
     data, next_cursor = await prompt_service.list_prompts(
         db=db,
@@ -5849,6 +6127,7 @@ async def list_prompts(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
+        gateway_id=gateway_id,
         user_email=user_email,
         team_id=team_id,
         visibility=visibility,
@@ -8413,7 +8692,10 @@ async def _authorize_internal_mcp_server_scoped_method(
         method: MCP method name being authorized.
 
     Returns:
-        Empty success response when the method is authorized, otherwise a JSON error response.
+        Empty success response when the method is authorized and remains eligible
+        for Rust direct execution, or a JSON success payload instructing Rust to
+        forward the request to Python when plugin hooks require Python
+        execution. Returns a JSON error response when authorization fails.
 
     Raises:
         HTTPException: If the trusted server scope header is missing.
@@ -8434,6 +8716,16 @@ async def _authorize_internal_mcp_server_scoped_method(
         )
         if db.is_active and db.in_transaction() is not None:
             db.commit()
+        plugin_manager = await get_plugin_manager()
+        fallback_reason = _server_scoped_direct_execution_fallback_reason(method, plugin_manager)
+        if fallback_reason:
+            return ORJSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "directExecutionEligible": False,
+                    "fallbackReason": fallback_reason,
+                },
+            )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content={"code": exc.code, "message": exc.message, "data": exc.data})
@@ -8448,6 +8740,33 @@ async def _authorize_internal_mcp_server_scoped_method(
         raise
     finally:
         db.close()
+
+
+def _server_scoped_direct_execution_fallback_reason(method: str, plugin_manager) -> Optional[str]:
+    """Return a direct-execution fallback reason for server-scoped Rust MCP calls.
+
+    This fail-closed helper lets Python remain the source of truth for plugin
+    semantics. Rust can safely execute DB-direct reads only when no relevant
+    prompt/resource hooks are configured.
+
+    Args:
+        method: MCP method name being considered for Rust direct execution.
+        plugin_manager: Plugin manager instance to check for configured hooks.
+
+    Returns:
+        A stable fallback reason when Python must handle the request to preserve
+        plugin semantics, otherwise ``None``.
+    """
+    if not plugin_manager:
+        return None
+
+    if method == "resources/read":
+        if plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH) or plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH):
+            return "resource-hooks-configured"
+    if method == "prompts/get":
+        if plugin_manager.has_hooks_for(PromptHookType.PROMPT_PRE_FETCH) or plugin_manager.has_hooks_for(PromptHookType.PROMPT_POST_FETCH):
+            return "prompt-hooks-configured"
+    return None
 
 
 @utility_router.post("/_internal/mcp/resources/list/authz/")
@@ -9002,7 +9321,15 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
     except (PluginError, PluginViolationError):
         raise
     except JSONRPCError as exc:
-        return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
+        request_id = body.get("id") if isinstance(body, dict) else None
+        return ORJSONResponse(
+            status_code=403,
+            content={
+                "jsonrpc": "2.0",
+                "error": {"code": exc.code, "message": exc.message, **({"data": exc.data} if exc.data is not None else {})},
+                "id": exc.request_id if exc.request_id is not None else request_id,
+            },
+        )
     except Exception:
         try:
             db.rollback()
@@ -10010,6 +10337,7 @@ async def utility_message_endpoint(request: Request, user=Depends(get_current_us
         if not session_id:
             logger.error("Missing session_id in message request")
             raise HTTPException(status_code=400, detail="Missing session_id")
+        set_trace_session_id(session_id)
 
         await _assert_session_owner_or_admin(request, user, session_id)
 
@@ -10689,6 +11017,16 @@ app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
 
+# Tool plugin bindings router
+try:
+    # First-Party
+    from mcpgateway.routers.tool_plugin_bindings import router as tool_plugin_bindings_router  # pylint: disable=import-outside-toplevel
+
+    app.include_router(tool_plugin_bindings_router)
+    logger.info("Tool plugin bindings router included")
+except ImportError as e:
+    logger.error(f"Tool plugin bindings router not available: {e}")
+
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
     try:
@@ -11030,12 +11368,21 @@ class InternalTrustedMCPTransportBridge:
         forwarded_scope = dict(scope)
         forwarded_scope["path"] = "/mcp/"
         forwarded_scope["modified_path"] = f"/servers/{server_id}/mcp" if server_id else "/mcp/"
+        forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
 
         token = user_context_var.set(auth_context)
         try:
+            set_trace_context_from_teams(
+                auth_context.get("teams"),
+                user_email=auth_context.get("email"),
+                is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
+                auth_method=forwarded_auth_method,
+                team_name=auth_context.get("team_name"),
+            )
             await self.transport_app.handle_streamable_http(forwarded_scope, receive, send)
         finally:
             user_context_var.reset(token)
+            clear_trace_context()
 
 
 mcp_transport_app = _build_mcp_transport_app()

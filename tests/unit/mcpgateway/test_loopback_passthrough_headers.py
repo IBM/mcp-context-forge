@@ -77,6 +77,23 @@ class TestFilterLoopbackSkipHeaders:
 
         assert result == {"x-tenant-id": "acme"}
 
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_strips_hop_by_hop_and_routing_headers(self, mock_settings):
+        """Deny-path: loopback filtering removes request-routing and hop-by-hop headers."""
+        mock_settings.proxy_user_header = "X-Authenticated-User"
+
+        headers = {
+            "host": "evil.internal",
+            "content-length": "999",
+            "transfer-encoding": "chunked",
+            "connection": "keep-alive",
+            "te": "trailers",
+            "x-tenant-id": "acme",
+        }
+        result = filter_loopback_skip_headers(headers)
+
+        assert result == {"x-tenant-id": "acme"}
+
 
 # ---------------------------------------------------------------------------
 # Tests for extract_headers_for_loopback utility

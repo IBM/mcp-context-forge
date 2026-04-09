@@ -1,6 +1,5 @@
 async_linting:
   ruff_rules: ["F", "E", "B", "ASYNC"]
-  flake8_plugins: ["flake8-bugbear", "flake8-async"]
   mypy_config:
     warn_unused_coroutine: true
     strict: true

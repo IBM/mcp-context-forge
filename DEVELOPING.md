@@ -31,8 +31,14 @@ make dev
 
 # Run quality checks before committing
 make autoflake isort black pre-commit
-make doctest test htmlcov flake8 pylint verify
+make doctest test htmlcov pylint verify
+
+# If you changed Rust code (plugins_rust/ or tools_rust/):
+make rust-check    # fmt-check, clippy -D warnings, cargo test
 ```
+
+Note that if the pre-commit check fails on detect secrets you need to identify if any secrets are in the code and remove them if necessary.
+If these are fake secrets for testing, you can attest to the fact that they are not in-fact secrets by executing `make detect-secrets-scan` followed by `make detect-secrets-audit` which will bring you through the `detect-secrets` interface for acknowledging/rejecting secrets - you will need to commit the `.secrets.baseline file as part of your PR.
 
 ## Development Setup
 
@@ -190,7 +196,7 @@ python3 -m mcpgateway --host 0.0.0.0 --port 8080
 make autoflake isort black pre-commit
 
 # Comprehensive linting
-make flake8 bandit interrogate pylint verify
+make bandit interrogate pylint verify
 
 # Quick lint for changed files only
 make lint-changed
@@ -200,6 +206,9 @@ make lint-watch
 
 # Fix common issues automatically
 make lint-fix
+
+# Rust plugins (plugins_rust/ or tools_rust/) — run before committing Rust changes
+make rust-check    # Runs fmt-check, clippy -D warnings, and cargo test for all Rust crates
 ```
 
 ### Pre-commit Workflow
@@ -214,7 +223,10 @@ make pre-commit
 # Complete quality pipeline (recommended before commits)
 make autoflake isort black pre-commit
 make doctest test htmlcov smoketest
-make flake8 bandit interrogate pylint verify
+make bandit interrogate pylint verify
+
+# If Rust code was changed:
+make rust-check
 ```
 
 ### Nginx Cache Management
@@ -277,7 +289,6 @@ make autoflake          # Remove unused imports
 
 # Lint code
 make ruff               # Ruff linter (RUFF_MODE=check|fix|format)
-make flake8             # Style checker
 make pylint             # Advanced linting
 make mypy               # Type checking
 make bandit             # Security analysis
@@ -472,7 +483,7 @@ make dev
 # Setup environment
 export MCP_GATEWAY_BASE_URL=http://localhost:4444
 export MCP_SERVER_URL=http://localhost:4444/servers/UUID/mcp
-export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)"
+export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key-but-now-longer-than-32-bytes)"
 
 # Launch Inspector with SSE (direct)
 npx @modelcontextprotocol/inspector

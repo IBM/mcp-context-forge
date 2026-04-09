@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_serializer, model_validator, SecretStr, ValidationError, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -390,6 +390,7 @@ class ToolCreate(BaseModel):
 
     name: str = Field(..., description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
     integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
@@ -522,7 +523,7 @@ class ToolCreate(BaseModel):
         if v is None:
             return v
 
-        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
         # for inline code examples in tool descriptions.
         # When VALIDATION_STRICT=false these patterns produce a warning only so
         # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
@@ -964,6 +965,7 @@ class ToolUpdate(BaseModelWithConfigDict):
 
     name: Optional[str] = Field(None, description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
@@ -1079,18 +1081,20 @@ class ToolUpdate(BaseModelWithConfigDict):
         if v is None:
             return v
 
-        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # Note: backticks (`) and semicolons (;) are allowed as they are commonly used in Markdown
         # for inline code examples in tool descriptions.
         # When VALIDATION_STRICT=false these patterns produce a warning only so
         # that MCP servers with Markdown-formatted descriptions (e.g. "> quote",
         # "< input", "cmd | grep") can be updated without error.
-        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
-        for pat in forbidden_patterns:
-            if pat in v:
-                if settings.validation_strict:
-                    raise ValueError(f"Description contains unsafe characters: '{pat}'")
-                logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
-                break
+        if settings.tool_description_forbidden_patterns_enabled:
+            for pat in settings.tool_description_forbidden_patterns:
+                if not pat or not pat.strip():
+                    continue
+                if pat in v:
+                    if settings.validation_strict:
+                        raise ValueError(f"Description contains unsafe characters: '{pat}'")
+                    logger.warning("Description contains potentially unsafe characters: '%s' (VALIDATION_STRICT=false, proceeding)", pat)
+                    break
 
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
@@ -1400,6 +1404,7 @@ class ToolRead(BaseModelWithConfigDict):
     url: Optional[str]
     description: Optional[str]
     original_description: Optional[str] = None
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the tool (MCP BaseMetadata)")
     request_type: str
     integration_type: str
     headers: Optional[Dict[str, str]]
@@ -1648,6 +1653,7 @@ class ResourceCreate(BaseModel):
     uri: str = Field(..., description="Unique URI for the resource")
     name: str = Field(..., description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
@@ -1794,6 +1800,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     uri: Optional[str] = Field(None, description="Unique URI for the resource")
     name: Optional[str] = Field(None, description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource (MCP BaseMetadata)")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
@@ -1933,6 +1940,7 @@ class ResourceRead(BaseModelWithConfigDict):
     name: str
     description: Optional[str]
     mime_type: Optional[str]
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
     uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     size: Optional[int]
     created_at: datetime
@@ -1963,7 +1971,7 @@ class ResourceRead(BaseModelWithConfigDict):
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # MCP protocol fields
-    title: Optional[str] = Field(None, description="Human-readable title for the resource")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the resource")
     annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
@@ -2209,6 +2217,7 @@ class PromptCreate(BaseModelWithConfigDict):
     name: str = Field(..., description="Unique name for the prompt")
     custom_name: Optional[str] = Field(None, description="Custom prompt name used for MCP invocation")
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt (MCP BaseMetadata)")
     description: Optional[str] = Field(None, description="Prompt description")
     template: str = Field(..., description="Prompt template text")
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
@@ -2376,6 +2385,7 @@ class PromptUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the prompt")
     custom_name: Optional[str] = Field(None, description="Custom prompt name used for MCP invocation")
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt (MCP BaseMetadata)")
     description: Optional[str] = Field(None, description="Prompt description")
     template: Optional[str] = Field(None, description="Prompt template text")
     arguments: Optional[List[PromptArgument]] = Field(None, description="List of arguments for the template")
@@ -2522,6 +2532,7 @@ class PromptRead(BaseModelWithConfigDict):
     custom_name: str
     custom_name_slug: str
     display_name: Optional[str] = Field(None, description="Display name for the prompt (shown in UI)")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
     gateway_slug: Optional[str] = None
     description: Optional[str]
     template: str
@@ -2555,7 +2566,7 @@ class PromptRead(BaseModelWithConfigDict):
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
     # MCP protocol fields
-    title: Optional[str] = Field(None, description="Human-readable title for the prompt")
+    title: Optional[str] = Field(None, max_length=255, description="Human-readable title for the prompt")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
@@ -3401,6 +3412,9 @@ class GatewayRead(BaseModelWithConfigDict):
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
 
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
+
+    # Tool count (populated from the tools relationship; 0 when not loaded)
+    tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
 
     @model_validator(mode="before")
     @classmethod
@@ -5869,7 +5883,7 @@ class TeamCreateRequest(BaseModel):
     slug: Optional[str] = Field(None, min_length=2, max_length=255, pattern="^[a-z0-9-]+$", description="URL-friendly team identifier")
     description: Optional[str] = Field(None, max_length=1000, description="Team description")
     visibility: Literal["private", "public"] = Field("private", description="Team visibility level")
-    max_members: Optional[int] = Field(default=None, description="Maximum number of team members")
+    max_members: Optional[int] = Field(default=None, ge=1, description="Maximum number of team members. If omitted, the team inherits the global MAX_MEMBERS_PER_TEAM setting at check time.")
 
     @field_validator("name")
     @classmethod
@@ -5964,7 +5978,9 @@ class TeamUpdateRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255, description="Team display name")
     description: Optional[str] = Field(None, max_length=1000, description="Team description")
     visibility: Optional[Literal["private", "public"]] = Field(None, description="Team visibility level")
-    max_members: Optional[int] = Field(default=None, description="Maximum number of team members")
+    max_members: Optional[int] = Field(
+        default=None, ge=1, description="Maximum number of team members. Set to null to clear a per-team override and revert to the global MAX_MEMBERS_PER_TEAM setting."
+    )
 
     @field_validator("name")
     @classmethod
@@ -6057,7 +6073,7 @@ class TeamResponse(BaseModel):
     created_by: str = Field(..., description="Email of team creator")
     is_personal: bool = Field(..., description="Whether this is a personal team")
     visibility: Optional[Literal["private", "public"]] = Field(..., description="Team visibility level")
-    max_members: Optional[int] = Field(None, description="Maximum number of members allowed")
+    max_members: Optional[int] = Field(None, description="Per-team member limit override. Null means the team uses the global MAX_MEMBERS_PER_TEAM setting.")
     member_count: int = Field(..., description="Current number of team members")
     created_at: datetime = Field(..., description="Team creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
@@ -6075,6 +6091,7 @@ class TeamMemberResponse(BaseModel):
         joined_at: When the member joined
         invited_by: Email of user who invited this member
         is_active: Whether the membership is active
+        grant_source: Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = TeamMemberResponse(
@@ -6098,6 +6115,7 @@ class TeamMemberResponse(BaseModel):
     joined_at: datetime = Field(..., description="When the member joined")
     invited_by: Optional[str] = Field(None, description="Email of user who invited this member")
     is_active: bool = Field(..., description="Whether the membership is active")
+    grant_source: Optional[str] = Field(None, description="Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')")
 
 
 class PaginatedTeamMembersResponse(BaseModel):
@@ -7832,3 +7850,281 @@ class PerformanceHistoryResponse(BaseModel):
     aggregates: List[PerformanceAggregateRead] = Field(default_factory=list, description="Historical aggregates")
     period_type: str = Field(..., description="Aggregation period type")
     total_count: int = Field(0, description="Total matching records")
+
+
+# ---------------------------------------------------------------------------
+# Tool Plugin Binding Schemas
+# ---------------------------------------------------------------------------
+
+
+class PluginId(str, Enum):
+    """Supported plugin identifiers for tool plugin bindings."""
+
+    OUTPUT_LENGTH_GUARD = "OUTPUT_LENGTH_GUARD"
+    RATE_LIMITER = "RATE_LIMITER"
+    SECRETS_DETECTION = "SECRETS_DETECTION"
+
+
+# Maps PluginId enum values (stored in DB) to plugin class names used by the
+# plugin framework's PluginConfigOverride.name field.
+PLUGIN_ID_TO_NAME: dict[str, str] = {
+    PluginId.OUTPUT_LENGTH_GUARD: "OutputLengthGuardPlugin",
+    PluginId.RATE_LIMITER: "RateLimiterPlugin",
+    PluginId.SECRETS_DETECTION: "SecretsDetection",
+}
+
+
+class PluginBindingMode(str, Enum):
+    """Plugin execution mode for tool plugin bindings."""
+
+    ENFORCE = "enforce"
+    PERMISSIVE = "permissive"
+    DISABLED = "disabled"
+
+
+# --- Plugin-specific config schemas ---
+
+
+class OutputLengthGuardConfig(BaseModel):
+    """Config schema for OUTPUT_LENGTH_GUARD plugin.
+
+    Attributes:
+        min_chars: Minimum character count (>= 0).
+        max_chars: Maximum character count (> 1).
+        strategy: What to do when limit is exceeded.
+        ellipsis: Suffix appended when truncating.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    min_chars: int = Field(0, ge=0, description="Minimum character count, must be >= 0")
+    max_chars: int = Field(2000, gt=1, description="Maximum character count, must be > 1")
+    strategy: Literal["truncate", "block"] = Field("truncate", description="Action when limit exceeded")
+    ellipsis: str = Field("...", max_length=20, description="Suffix appended on truncation")
+
+    @model_validator(mode="after")
+    def min_less_than_max(self) -> "OutputLengthGuardConfig":
+        """Validate min_chars < max_chars.
+
+        Returns:
+            self after validation.
+
+        Raises:
+            ValueError: If min_chars >= max_chars.
+        """
+        if self.min_chars >= self.max_chars:
+            raise ValueError("min_chars must be less than max_chars")
+        return self
+
+
+class RateLimiterConfig(BaseModel):
+    """Config schema for RATE_LIMITER plugin.
+
+    Rate strings use the format ``<count>/<period>`` where period is
+    ``s`` (second) or ``m`` (minute), e.g. ``60/m``, ``10/s``.
+
+    Attributes:
+        by_user: Rate limit per user.
+        by_tenant: Rate limit per tenant.
+        by_tool: Rate limit per tool.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    by_user: Optional[str] = Field(None, description="Rate limit per user, e.g. '60/m' or '10/s'")
+    by_tenant: Optional[str] = Field(None, description="Rate limit per tenant, e.g. '600/m'")
+    by_tool: Optional[str] = Field(None, description="Rate limit per tool, e.g. '10/m'")
+
+    @field_validator("by_user", "by_tenant", "by_tool", mode="before")
+    @classmethod
+    def validate_rate_string(cls, v: Optional[str]) -> Optional[str]:
+        """Validate rate string format <count>/<s|m>.
+
+        Args:
+            v: Rate string to validate.
+
+        Returns:
+            Validated rate string or None.
+
+        Raises:
+            ValueError: If format is invalid.
+        """
+        if v is None:
+            return v
+        if not re.match(r"^\d+/[sm]$", v):
+            raise ValueError(f"Rate string '{v}' is invalid. Use format '<count>/s' or '<count>/m'")
+        return v
+
+
+class SecretsDetectionConfig(BaseModel):
+    """Config schema for SECRETS_DETECTION plugin.
+
+    Attributes:
+        enabled: Map of pattern names to whether they are active.
+        redact: Whether to redact detected secrets from output.
+        redaction_text: Text used to replace redacted secrets.
+        block_on_detection: Whether to block the response when secrets are found.
+        min_findings_to_block: Minimum number of findings required to trigger a block.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: Dict[str, bool] = Field(default_factory=dict, description="Map of pattern names to enabled flag, e.g. {'aws_key': true}")
+    redact: bool = Field(True, description="Whether to redact detected secrets")
+    redaction_text: str = Field("[REDACTED]", max_length=50, description="Text to replace secrets with when redacting")
+    block_on_detection: bool = Field(False, description="Whether to block the response when secrets are detected")
+    min_findings_to_block: int = Field(1, ge=1, description="Minimum number of findings required to block")
+
+
+# Map of plugin_id → config schema class for validation
+_PLUGIN_CONFIG_MAP: Dict[str, type] = {
+    PluginId.OUTPUT_LENGTH_GUARD: OutputLengthGuardConfig,
+    PluginId.RATE_LIMITER: RateLimiterConfig,
+    PluginId.SECRETS_DETECTION: SecretsDetectionConfig,
+}
+
+
+# --- Policy item (one plugin, one or more tools) ---
+
+
+class PluginPolicyItem(BaseModel):
+    """A single plugin policy entry within a team's binding payload.
+
+    Attributes:
+        tool_names: List of tool names this policy applies to. Use ``["*"]`` for all tools.
+        plugin_id: The plugin to bind.
+        mode: Execution mode.
+        priority: Execution order — lower numbers run first.
+        config: Plugin-specific configuration.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_names: List[str] = Field(..., min_length=1, description="Tool names to apply the policy to; use ['*'] for all tools in the team")
+    plugin_id: PluginId = Field(..., description="Plugin to bind")
+    mode: PluginBindingMode = Field(PluginBindingMode.ENFORCE, description="Execution mode: enforce, permissive, or disabled")
+    priority: int = Field(50, ge=1, le=1000, description="Execution priority; lower numbers run first")
+    config: Dict[str, Any] = Field(
+        ..., description="Plugin-specific configuration; always provide all fields you care about — on upsert the config is fully replaced, so any key you omit reverts to the plugin's default value"
+    )
+
+    @model_validator(mode="after")
+    def validate_config_for_plugin(self) -> "PluginPolicyItem":
+        """Validate config against the schema for the selected plugin_id.
+
+        Returns:
+            self after validation.
+
+        Raises:
+            ValueError: If config is invalid for the chosen plugin.
+        """
+        config_cls = _PLUGIN_CONFIG_MAP.get(self.plugin_id)
+        if config_cls:
+            expected = set(config_cls.model_fields.keys())
+            provided = set(self.config.keys())
+            missing = expected - provided
+            if missing:
+                raise ValueError(f"Missing config fields for {self.plugin_id.value}: {sorted(missing)}")
+            try:
+                config_cls(**self.config)
+            except ValidationError as exc:
+                parts = []
+                for e in exc.errors():
+                    loc = ".".join(str(p) for p in e["loc"])
+                    parts.append(f"{loc}: {e['msg']}" if loc else e["msg"])
+                raise ValueError(f"Invalid {self.plugin_id.value} config: [{', '.join(parts)}]") from exc
+        return self
+
+
+# --- Per-team policies wrapper ---
+
+
+class TeamPolicies(BaseModel):
+    """Policies for a single team."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policies: List[PluginPolicyItem] = Field(..., min_length=1, description="List of plugin policies for this team")
+
+
+# --- Top-level request body ---
+
+
+class ToolPluginBindingRequest(BaseModel):
+    """Request body for POST /v1/tools/plugin_bindings.
+
+    The payload is a dict keyed by team_id, each value being a ``TeamPolicies``
+    object.  Multiple teams can be configured in a single request.  If a
+    (team_id, tool_name, plugin_id) triple already exists the row is updated
+    in place (upsert); otherwise a new row is inserted.
+
+    Example::
+
+        {
+            "team_abc": {
+                "policies": [
+                    {
+                        "tool_names": ["tool_a", "tool_b"],
+                        "plugin_id": "OUTPUT_LENGTH_GUARD",
+                        "mode": "enforce",
+                        "priority": 10,
+                        "config": {"max_chars": 2000, "strategy": "truncate"}
+                    }
+                ]
+            }
+        }
+    """
+
+    teams: Dict[str, TeamPolicies] = Field(..., min_length=1, description="Map of team_id to its plugin policies")
+
+
+# --- Response schemas ---
+
+
+class ToolPluginBindingResponse(BaseModelWithConfigDict):
+    """A single tool plugin binding record returned from the API.
+
+    Attributes:
+        id: Unique binding identifier (UUID).
+        team_id: Team the binding belongs to.
+        tool_name: Tool name the policy applies to.
+        plugin_id: Plugin identifier.
+        mode: Execution mode.
+        priority: Execution priority.
+        config: Plugin-specific configuration.
+        created_at: Creation timestamp.
+        created_by: Email of creator.
+        updated_at: Last update timestamp.
+        updated_by: Email of last updater.
+    """
+
+    id: str = Field(..., description="Unique binding identifier")
+    team_id: str = Field(..., description="Team the binding belongs to")
+    tool_name: str = Field(..., description="Tool name the policy applies to")
+    plugin_id: str = Field(..., description="Plugin identifier")
+    mode: str = Field(..., description="Execution mode")
+    priority: int = Field(..., description="Execution priority")
+    config: Dict[str, Any] = Field(..., description="Plugin-specific configuration")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    created_by: str = Field(..., description="Email of creator")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    updated_by: str = Field(..., description="Email of last updater")
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_dt(self, v: datetime) -> str:
+        """Serialize datetime fields to ISO 8601.
+
+        Args:
+            v: Datetime to serialize.
+
+        Returns:
+            ISO 8601 string.
+        """
+        return encode_datetime(v)
+
+
+class ToolPluginBindingListResponse(BaseModelWithConfigDict):
+    """Response for GET /v1/tools/plugin_bindings[/{team_id}]."""
+
+    bindings: List[ToolPluginBindingResponse] = Field(default_factory=list, description="List of tool plugin bindings")
+    total: int = Field(0, description="Total number of bindings returned")

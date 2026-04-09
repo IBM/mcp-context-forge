@@ -32,7 +32,6 @@ config:
   max_text_length: 1000000              # Maximum text length (DoS prevention)
   max_structure_size: 10000             # Maximum items in list/dict
   max_recursion_depth: 100              # Maximum nesting depth
-  max_binary_search_iterations: 20      # Binary search iteration limit
 ```
 
 **⚠️ IMPORTANT:** Use `limit_mode` to choose between character or token enforcement:
@@ -273,7 +272,7 @@ This approximate method avoids third-party dependencies while providing reasonab
 #### How It Works
 
 1. **Token Estimation**: Calculates `tokens = len(text) // chars_per_token`
-2. **Binary Search**: Finds optimal character cut point to meet token limit (O(log n) complexity)
+2. **Cut Point Calculation**: Computes character cut point as `max_tokens * chars_per_token`
 3. **Word Boundary**: Optionally adjusts cut point to nearest word boundary
 4. **Truncation**: Applies cut and appends ellipsis
 
@@ -308,13 +307,12 @@ config:
 
 #### Performance
 
-- **Binary Search**: O(log n) complexity for finding cut point
+- **Direct Arithmetic**: O(1) token-to-character conversion for finding cut point
 - **Token Caching**: Token counts calculated once and reused
 - **Security Limits**:
   - Max text length: 1MB
   - Max structure size: 10K items
   - Max recursion depth: 100 levels
-  - Max binary search iterations: 30
 
 #### Examples
 
@@ -372,9 +370,8 @@ Token operations are logged at DEBUG/INFO levels:
 
 ```
 DEBUG: Estimating tokens for text (37 chars, ratio=4) → 9 tokens
-DEBUG: Finding token cut point (max=5, ratio=4) using binary search
-DEBUG: Binary search: left=0, right=37, mid=18, tokens=4
-INFO: Token-based truncation: 37 chars → 19 chars (9 tokens → 4 tokens)
+DEBUG: Token cut point: max_tokens=5, chars_per_token=4 → cut at 20 chars
+INFO: Token-based truncation: 37 chars → 20 chars (9 tokens → 5 tokens)
 ```
 
 ### Security Limits
@@ -388,7 +385,6 @@ The plugin includes configurable security limits to prevent resource exhaustion 
 | `max_text_length` | 1,000,000 | 1KB - 10MB | Maximum text size to process (prevents memory exhaustion) |
 | `max_structure_size` | 10,000 | 10 - 100K | Maximum items in list/dict (prevents DoS attacks) |
 | `max_recursion_depth` | 100 | 10 - 1000 | Maximum nesting depth (prevents stack overflow) |
-| `max_binary_search_iterations` | 30 | 10 - 100 | Binary search iteration limit (prevents infinite loops) |
 
 #### Customizing Security Limits
 
@@ -406,8 +402,6 @@ config:
   max_text_length: 100000       # 100KB limit
   max_structure_size: 1000      # 1K items max
   max_recursion_depth: 50       # Shallow nesting only
-    - ssn
-    - credit_card
 ```
 
 #### Security Best Practices
@@ -424,7 +418,6 @@ All security limits are validated at configuration time:
 - `max_text_length`: Must be between 1,000 and 10,000,000 bytes
 - `max_structure_size`: Must be between 10 and 100,000 items
 - `max_recursion_depth`: Must be between 10 and 1,000 levels
-- `max_binary_search_iterations`: Must be between 10 and 100 iterations
 
 Invalid values will raise a `ValueError` with a descriptive message.
 

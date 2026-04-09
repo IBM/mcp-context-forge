@@ -82,7 +82,7 @@ defusedxml
 deployable
 dev
 dir
-dlint
+
 docbuilder
 Dockerfile
 Dockle
@@ -509,7 +509,6 @@ toolchain
 Toolchain
 Tooltips
 toplevel
-Trivy
 TTL
 TTP
 TTP

@@ -28,7 +28,7 @@ Ensure you have a valid JWT token:
 
 ```bash
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-      --username admin --exp 10080 --secret my-test-key)
+      --username admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 ```
 
 Configure the wrapper via ENV variables:
@@ -72,8 +72,10 @@ Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful fo
 
 === "uv / uvx (ultra-fast)"
 
+    Install `uv` using the official instructions or a trusted package manager:
+    <https://docs.astral.sh/uv/getting-started/installation/>
+
     ```bash
-    curl -Ls https://astral.sh/uv/install.sh | sh
     uv venv ~/.venv/mcpgw && source ~/.venv/mcpgw/bin/activate
     uv pip install mcp-contextforge-gateway
     uv python3 -m mcpgateway.wrapper

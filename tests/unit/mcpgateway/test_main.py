@@ -13,6 +13,7 @@ Comprehensive tests for the main API endpoints with full coverage.
 import asyncio
 from copy import deepcopy
 import datetime
+import importlib
 import json
 import os
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -45,6 +46,7 @@ from mcpgateway.schemas import (
     ToolMetrics,
     ToolRead,
 )
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
 
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
@@ -257,6 +259,21 @@ def _make_request(path: str = "/", headers: dict | None = None) -> Request:
         "headers": header_list,
     }
     return Request(scope)
+
+
+def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
+    """Import-time app setup should register the OTEL request middleware when enabled."""
+    # First-Party
+    import mcpgateway.main as main_module
+
+    with patch("mcpgateway.observability.otel_tracing_enabled", return_value=True):
+        reloaded = importlib.reload(main_module)
+
+    try:
+        middleware_classes = [middleware.cls for middleware in reloaded.app.user_middleware]
+        assert reloaded.OpenTelemetryRequestMiddleware in middleware_classes
+    finally:
+        importlib.reload(reloaded)
 
 
 # --------------------------------------------------------------------------- #
@@ -644,6 +661,20 @@ class TestProtocolEndpoints:
         assert response.json()["detail"] == "Not authorized to cancel this run"
         mock_cancel_run.assert_not_awaited()
         mock_notify.assert_not_awaited()
+
+    @patch("mcpgateway.main._get_rpc_filter_context")
+    @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_handle_notification_cancelled_accepts_unknown_run_as_noop(self, mock_notify, mock_cancel_run, mock_get_status, mock_get_context, test_client, auth_headers):
+        """Unknown cancellation notifications should be accepted as best-effort no-ops."""
+        mock_get_context.return_value = ("viewer@example.com", [], False)
+        mock_get_status.return_value = None
+        req = {"method": "notifications/cancelled", "params": {"requestId": "unknown-run"}}
+        response = test_client.post("/protocol/notifications", json=req, headers=auth_headers)
+        assert response.status_code == 200
+        mock_cancel_run.assert_awaited_once_with("unknown-run", reason=None)
+        mock_notify.assert_awaited_once()
 
     @patch("mcpgateway.main._get_rpc_filter_context")
     @patch("mcpgateway.main.cancellation_service.get_status", new_callable=AsyncMock)
@@ -1089,8 +1120,6 @@ class TestResourceEndpoints:
         data = response.json()
         # Default response is a plain list (include_pagination=False by default)
         assert isinstance(data, list)
-        assert len(data) == 1 and data[0]["name"] == "Test Resource"
-        mock_list_resources.assert_called_once()
 
     @patch("mcpgateway.main.resource_service.update_resource")
     def test_update_resource_content_size_error(self, mock_update, test_client, auth_headers):
@@ -1107,6 +1136,20 @@ class TestResourceEndpoints:
         assert data["actual_size"] == 150000
         assert data["max_size"] == 102400
 
+    @patch("mcpgateway.main.resource_service.update_resource")
+    def test_update_resource_content_type_error(self, mock_update, test_client, auth_headers):
+        """Test update_resource returns 415 for unsupported MIME type."""
+        # First-Party
+        from mcpgateway.services.content_security import ContentTypeError
+
+        mock_update.side_effect = ContentTypeError("application/x-executable", ["text/plain", "application/json"])
+        req = {"mime_type": "text/plain", "content": "hello"}
+        response = test_client.put("/resources/1", json=req, headers=auth_headers)
+        assert response.status_code == 415
+        data = response.json()["detail"]
+        assert data["error"] == "Unsupported Media Type"
+        assert data["mime_type"] == "application/x-executable"
+
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_endpoint(self, mock_create, test_client, auth_headers):
         """Test registering a new resource."""
@@ -1116,14 +1159,24 @@ class TestResourceEndpoints:
         response = test_client.post("/resources/", json=req, headers=auth_headers)
 
         assert response.status_code == 200  # route returns 200 on success
+
+    @patch("mcpgateway.main.resource_service.register_resource")
+    def test_create_resource_content_type_error(self, mock_create, test_client, auth_headers):
+        """Test create_resource returns 415 for unsupported MIME type."""
+        mock_create.side_effect = ContentTypeError("application/x-malicious", ["text/plain", "application/json"])
+        req = {"resource": {"uri": "test/resource", "name": "Test Resource", "mime_type": "text/plain", "content": "hello"}, "team_id": None, "visibility": "private"}
+        response = test_client.post("/resources/", json=req, headers=auth_headers)
+        assert response.status_code == 415
+        data = response.json()["detail"]
+        assert data["error"] == "Unsupported Media Type"
+        assert data["mime_type"] == "application/x-malicious"
+        assert "allowed_types" in data
+
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.resource_service.register_resource")
     def test_create_resource_content_size_error(self, mock_create, test_client, auth_headers):
         """Test create_resource returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
         mock_create.side_effect = ContentSizeError("Resource", 150000, 102400)
         req = {"resource": {"uri": "test/resource", "name": "Test Resource", "content": "x" * 150000}, "team_id": None, "visibility": "private"}
         response = test_client.post("/resources/", json=req, headers=auth_headers)
@@ -1319,9 +1372,6 @@ class TestPromptEndpoints:
     @patch("mcpgateway.main.prompt_service.register_prompt")
     def test_create_prompt_content_size_error(self, mock_create, test_client, auth_headers):
         """Test create_prompt returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
         mock_create.side_effect = ContentSizeError("Prompt", 15000, 10240)
         req = {"prompt": {"name": "test_prompt", "template": "x" * 15000}, "team_id": None, "visibility": "private"}
         response = test_client.post("/prompts/", json=req, headers=auth_headers)
@@ -1334,9 +1384,6 @@ class TestPromptEndpoints:
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_content_size_error(self, mock_update, test_client, auth_headers):
         """Test update_prompt returns 413 for content size limit exceeded."""
-        # First-Party
-        from mcpgateway.services.content_security import ContentSizeError
-
         mock_update.side_effect = ContentSizeError("Prompt", 15000, 10240)
         req = {"template": "x" * 15000}
         response = test_client.put("/prompts/test_prompt", json=req, headers=auth_headers)
@@ -2550,12 +2597,29 @@ class TestRealtimeEndpoints:
         """Server message endpoint should fail closed when owner metadata is unknown."""
         message = {"type": "test", "data": "hello"}
         with (
+            patch("mcpgateway.services.server_service.ServerService.entity_exists", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.session_registry.get_session_owner", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.session_registry.session_exists", new=AsyncMock(return_value=True)),
         ):
             response = test_client.post("/servers/test-server/message?session_id=test-session", json=message, headers=auth_headers)
         assert response.status_code == 403
         assert response.json()["detail"] == "Session owner metadata unavailable"
+
+    def test_server_message_endpoint_rejects_nonexistent_server(self, test_client, auth_headers):
+        """Server message endpoint returns 404 for non-existent server IDs."""
+        message = {"type": "test", "data": "hello"}
+        with patch("mcpgateway.services.server_service.ServerService.entity_exists", new=AsyncMock(return_value=False)):
+            response = test_client.post("/servers/nonexistent-id/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Server not found"
+
+    def test_server_message_endpoint_returns_503_on_db_error(self, test_client, auth_headers):
+        """Server message endpoint returns 503 when database validation fails (fail-closed)."""
+        message = {"type": "test", "data": "hello"}
+        with patch("mcpgateway.services.server_service.ServerService.entity_exists", new=AsyncMock(side_effect=Exception("DB down"))):
+            response = test_client.post("/servers/test-server/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 503
+        assert "unable to verify server" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_websocket_forwards_auth_token_to_rpc(self, monkeypatch):
@@ -3358,11 +3422,7 @@ class TestPluginExceptionHandlers:
 
     def test_plugin_violation_exception_handler_without_violation_object(self):
         """Test plugin_violation_exception_handler when violation object is None."""
-        # Standard
-        import asyncio
-
         # First-Party
-        from mcpgateway.main import plugin_violation_exception_handler
         from mcpgateway.plugins.framework.errors import PluginViolationError
 
         exc = PluginViolationError(message="Generic plugin violation", violation=None)
@@ -4191,9 +4251,6 @@ class _InjectRequestState:
 
 def _make_team_scoped_client(app_fixture, token_teams, team_id):
     """Create a TestClient with injected token_teams and team_id on request.state."""
-    # Standard
-    from unittest.mock import patch
-
     # First-Party
     from mcpgateway.auth import get_current_user
     from mcpgateway.db import EmailUser

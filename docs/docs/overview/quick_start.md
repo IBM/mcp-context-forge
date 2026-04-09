@@ -27,7 +27,7 @@ Pick an install method below, generate an auth token, then walk through a real t
 
     ```bash
     # Quick start with environment variables
-    JWT_SECRET_KEY=my-test-key \
+    JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
     MCPGATEWAY_UI_ENABLED=true \
     MCPGATEWAY_ADMIN_API_ENABLED=true \
     PLATFORM_ADMIN_EMAIL=admin@example.com \
@@ -74,7 +74,7 @@ Pick an install method below, generate an auth token, then walk through a real t
         mcpgateway --host 0.0.0.0 --port 4444
 
         # Option 2: Set environment variables directly
-        export JWT_SECRET_KEY=my-test-key
+        export JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes
         export MCPGATEWAY_UI_ENABLED=true
         export MCPGATEWAY_ADMIN_API_ENABLED=true
         export PLATFORM_ADMIN_EMAIL=admin@example.com
@@ -92,7 +92,7 @@ Pick an install method below, generate an auth token, then walk through a real t
 
         ```bash
         export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-            --username admin@example.com --exp 10080 --secret my-test-key)
+            --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
         ```
 
         !!! tip "Non-expiring tokens require `REQUIRE_TOKEN_EXPIRATION=false`"
@@ -118,7 +118,7 @@ Pick an install method below, generate an auth token, then walk through a real t
         docker run -d --name mcpgateway \
           -p 4444:4444 \
           -e HOST=0.0.0.0 \
-          -e JWT_SECRET_KEY=my-test-key \
+          -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
           -e PLATFORM_ADMIN_EMAIL=admin@example.com \
           -e PLATFORM_ADMIN_PASSWORD=changeme \
           -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
@@ -134,7 +134,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 4444:4444 \
               -v $(pwd)/data:/data \
               -e DATABASE_URL=sqlite:////data/mcp.db \
-              -e JWT_SECRET_KEY=my-test-key \
+              -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
@@ -156,7 +156,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 4444:4444 \
               --link postgres-db:postgres \
               -e DATABASE_URL=postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp \
-              -e JWT_SECRET_KEY=my-test-key \
+              -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
@@ -167,7 +167,7 @@ Pick an install method below, generate an auth token, then walk through a real t
 
         ```bash
         docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
-          --username admin@example.com --exp 10080 --secret my-test-key
+          --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
         ```
 
     4. **Smoke-test**

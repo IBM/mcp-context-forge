@@ -33,11 +33,11 @@ Examples:
 
 # Standard
 import asyncio
-from contextlib import asynccontextmanager, AsyncExitStack
+from contextlib import asynccontextmanager, AsyncExitStack, ExitStack
 import contextvars
 from dataclasses import dataclass
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Tuple, Union
+from typing import Any, AsyncGenerator, ContextManager, Dict, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -60,10 +60,12 @@ from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN, HTTP_404
 from starlette.types import Receive, Scope, Send
 
 # First-Party
+from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
+from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -77,11 +79,109 @@ from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
+from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import is_proxy_auth_trust_active, require_auth_header_first, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def _maybe_open_initialize_span(body: bytes, *, mcp_session_id: Optional[str], server_id: Optional[str]) -> Optional[ContextManager[Any]]:
+    """Return an active span context manager for raw MCP initialize traffic.
+
+    Args:
+        body: Raw JSON-RPC request body bytes.
+        mcp_session_id: Session identifier from the request headers when present.
+        server_id: Effective virtual server identifier for the request, if any.
+
+    Returns:
+        Active span context manager for initialize requests, otherwise a no-op context.
+    """
+    try:
+        payload = orjson.loads(body)
+    except orjson.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict) or str(payload.get("method") or "").strip() != "initialize":
+        return None
+
+    params = payload.get("params")
+    if not isinstance(params, dict):
+        params = {}
+
+    session_id = params.get("sessionId") or params.get("session_id")
+    if not session_id and mcp_session_id and mcp_session_id != "not-provided":
+        session_id = mcp_session_id
+
+    span_attributes: Dict[str, Any] = {
+        "mcp.protocol_version": params.get("protocolVersion") or params.get("protocol_version"),
+        "mcp.session_id": session_id,
+        "server.id": server_id,
+    }
+    return create_span("mcp.initialize", span_attributes)
+
+
+def _normalize_mcp_prompt_arguments(arguments: Any) -> Optional[List[types.PromptArgument]]:
+    """Convert internal prompt-argument objects to MCP prompt arguments.
+
+    The prompt service returns internal schema models, while the MCP transport
+    must emit ``mcp.types.PromptArgument`` instances. Pydantic does not treat
+    different model classes as interchangeable, so raw pass-through raises
+    validation errors during prompt listing.
+
+    Args:
+        arguments: Prompt arguments from internal services. Items may already be
+            ``mcp.types.PromptArgument`` instances, dicts, or other Pydantic
+            models with matching attributes.
+
+    Returns:
+        Normalized MCP prompt arguments, or ``None`` when the prompt has no
+        argument list.
+    """
+    if arguments is None:
+        return None
+
+    normalized_arguments: List[types.PromptArgument] = []
+    for argument in arguments:
+        if isinstance(argument, types.PromptArgument):
+            normalized_arguments.append(argument)
+        else:
+            normalized_arguments.append(types.PromptArgument.model_validate(argument, from_attributes=True))
+    return normalized_arguments
+
+
+def _safe_str_attr(obj: Any, attr: str) -> Optional[str]:
+    """Extract an attribute as ``str | None``, guarding against non-string values.
+
+    Args:
+        obj: The object to read the attribute from.
+        attr: The attribute name to extract.
+
+    Returns:
+        The attribute value if it is a ``str``, otherwise ``None``.
+    """
+    value = getattr(obj, attr, None)
+    return value if isinstance(value, str) else None
+
+
+def _to_mcp_prompt(prompt: Any) -> types.Prompt:
+    """Convert an internal prompt object to the MCP transport model.
+
+    Args:
+        prompt: Internal prompt object returned by prompt_service.
+
+    Returns:
+        MCP prompt model suitable for protocol responses.
+    """
+    title = _safe_str_attr(prompt, "title")
+
+    meta = getattr(prompt, "meta", None)
+    if not isinstance(meta, dict):
+        meta = None
+
+    return types.Prompt(name=prompt.name, title=title, description=prompt.description, arguments=_normalize_mcp_prompt_arguments(getattr(prompt, "arguments", None)), meta=meta)
 
 
 def _record_mcp_auth_cache_event(outcome: str) -> None:
@@ -96,8 +196,20 @@ def _record_mcp_auth_cache_event(outcome: str) -> None:
         pass  # nosec B110 - Metrics must not break auth flow
 
 
-# Precompiled regex for server ID extraction from path
-_SERVER_ID_RE: Pattern[str] = re.compile(r"/servers/(?P<server_id>[a-fA-F0-9\-]+)/mcp")
+# Precompiled regex for server ID extraction from path.
+# SECURITY: Uses [^/]+ (any non-slash characters) instead of a restrictive hex-only
+# class to ensure ALL server-scoped paths are captured.  A narrow regex caused non-hex
+# IDs (e.g. "xyz") to silently fall through to unscoped global behaviour (#3891).
+_SERVER_ID_RE: Pattern[str] = re.compile(r"^/servers/(?P<server_id>[^/]+)/mcp")
+
+# Pattern that detects a server-scoped MCP path even when _SERVER_ID_RE doesn't
+# match (e.g. empty segment: /servers//mcp).  Used as a defense-in-depth guard.
+_SERVER_SCOPED_PATH_RE: Pattern[str] = re.compile(r"^/servers/.*/mcp(?:/)?$")
+
+# Sentinel returned by _validate_server_id to signal that an error response
+# has already been sent and the caller should return immediately.
+_REJECT = object()
+
 
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
@@ -942,12 +1054,21 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         # Prepare headers with gateway auth
         headers = build_gateway_auth_headers(gateway)
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gw_passthrough,
+            )
 
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -985,12 +1106,21 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         # Prepare headers with gateway auth
         headers = build_gateway_auth_headers(gateway)
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gw_passthrough,
+            )
 
         logger.info("Proxying resources/list to gateway %s at %s", gateway.id, gateway.url)
         if meta:
@@ -1042,12 +1172,21 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         if gw_id:
             headers[GATEWAY_ID_HEADER] = gw_id
 
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        # Forward passthrough headers using shared utility (includes X-Upstream-Authorization rename)
+        if request_headers:
+            gw_passthrough = gateway.passthrough_headers if hasattr(gateway, "passthrough_headers") and gateway.passthrough_headers is not None else None
+            if gw_passthrough is not None:
+                passthrough_allowed = gw_passthrough
+            else:
+                with SessionLocal() as db:
+                    passthrough_allowed = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
+            headers = compute_passthrough_headers_cached(
+                request_headers,
+                headers,
+                passthrough_allowed,
+                gateway_auth_type=gateway.auth_type if hasattr(gateway, "auth_type") else None,
+                gateway_passthrough_headers=gw_passthrough,
+            )
 
         logger.info("Proxying resources/read for %s to gateway %s at %s", resource_uri, gateway.id, gateway.url)
         if meta:
@@ -1696,7 +1835,17 @@ async def list_tools() -> List[types.Tool]:
 
                 # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
+                return [
+                    types.Tool(
+                        name=tool.name,
+                        title=_safe_str_attr(tool, "title"),
+                        description=tool.description or "",
+                        inputSchema=tool.input_schema,
+                        outputSchema=tool.output_schema,
+                        annotations=tool.annotations,
+                    )
+                    for tool in tools
+                ]
         except Exception as e:
             logger.error("Error listing tools:%s", e)
             return []
@@ -1704,7 +1853,17 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools, _ = await tool_service.list_tools(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
+                return [
+                    types.Tool(
+                        name=tool.name,
+                        title=_safe_str_attr(tool, "title"),
+                        description=tool.description or "",
+                        inputSchema=tool.input_schema,
+                        outputSchema=tool.output_schema,
+                        annotations=tool.annotations,
+                    )
+                    for tool in tools
+                ]
         except Exception as e:
             logger.exception("Error listing tools:%s", e)
             return []
@@ -1764,7 +1923,7 @@ async def list_prompts() -> List[types.Prompt]:
         try:
             async with get_db() as db:
                 prompts = await prompt_service.list_server_prompts(db, server_id, user_email=user_email, token_teams=token_teams)
-                return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
+                return [_to_mcp_prompt(prompt) for prompt in prompts]
         except Exception as e:
             logger.exception("Error listing Prompts:%s", e)
             return []
@@ -1772,7 +1931,7 @@ async def list_prompts() -> List[types.Prompt]:
         try:
             async with get_db() as db:
                 prompts, _ = await prompt_service.list_prompts(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
-                return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
+                return [_to_mcp_prompt(prompt) for prompt in prompts]
         except Exception as e:
             logger.exception("Error listing prompts:%s", e)
             return []
@@ -1962,7 +2121,10 @@ async def list_resources() -> List[types.Resource]:
 
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
-                return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
+                return [
+                    types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type)
+                    for resource in resources
+                ]
         except Exception as e:
             logger.exception("Error listing Resources:%s", e)
             return []
@@ -1970,7 +2132,10 @@ async def list_resources() -> List[types.Resource]:
         try:
             async with get_db() as db:
                 resources, _ = await resource_service.list_resources(db, include_inactive=False, limit=0, user_email=user_email, token_teams=token_teams)
-                return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
+                return [
+                    types.Resource(uri=resource.uri, name=resource.name, title=_safe_str_attr(resource, "title"), description=resource.description, mimeType=resource.mime_type)
+                    for resource in resources
+                ]
         except Exception as e:
             logger.exception("Error listing resources:%s", e)
             return []
@@ -2447,6 +2612,58 @@ class SessionManagerWrapper:
         logger.debug("Stopping Streamable HTTP Session Manager...")
         await self.stack.aclose()
 
+    @staticmethod
+    async def _validate_server_id(match: "re.Match[str] | None", path: str, scope: Scope, receive: Receive, send: Send) -> str | None:
+        """Validate and resolve the server_id from the request path.
+
+        Args:
+            match: Result of ``_SERVER_ID_RE.search(path)``.
+            path: Original request path (``scope["modified_path"]``).
+            scope: ASGI scope dict.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+
+        Returns:
+            The validated server_id string, ``None`` when the path is
+            not server-scoped (legitimate global ``/mcp``), or the
+            sentinel ``_REJECT`` when an error response has already been
+            sent and the caller should return immediately.
+        """
+        if match:
+            server_id = match.group("server_id")
+            # SECURITY: Validate that the server_id exists in the database
+            # to prevent unauthorized access via invalid server IDs.
+            # Uses the shared BaseService.entity_exists() for a lightweight
+            # EXISTS check — no row data is loaded.
+            try:
+                # First-Party
+                from mcpgateway.services.server_service import server_service as _server_svc  # pylint: disable=import-outside-toplevel,no-name-in-module
+
+                async with get_db() as db:
+                    if not await _server_svc.entity_exists(db, server_id):
+                        logger.warning("Invalid server ID in MCP request path: %s", server_id)
+                        response = ORJSONResponse({"detail": "Server not found"}, status_code=404)
+                        await response(scope, receive, send)
+                        return _REJECT
+            except Exception as e:
+                logger.error("Failed to validate server ID %s: %s", server_id, e)
+                response = ORJSONResponse({"detail": "Service unavailable — unable to verify server"}, status_code=503)
+                await response(scope, receive, send)
+                return _REJECT
+            return server_id
+
+        # SECURITY (defense-in-depth): If the path looks server-scoped but
+        # the primary regex didn't capture a server_id (e.g. empty segment
+        # /servers//mcp, or an encoding edge case), reject immediately
+        # rather than falling through to unscoped global behaviour (#3891).
+        if _SERVER_SCOPED_PATH_RE.search(path):
+            logger.warning("Server-scoped MCP path with unparseable server ID rejected: %s", path)
+            response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+            await response(scope, receive, send)
+            return _REJECT
+
+        return None  # Legitimate unscoped /mcp path
+
     async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
         """
         Forwards an incoming ASGI request to the streamable HTTP session manager.
@@ -2493,7 +2710,9 @@ class SessionManagerWrapper:
             headers[k.decode("latin-1").lower()] = v.decode("latin-1")
 
         # Log session info for debugging stateful sessions
-        mcp_session_id = headers.get("mcp-session-id", "not-provided")
+        mcp_session_id = headers.get("x-mcp-session-id") or headers.get("mcp-session-id") or "not-provided"
+        if mcp_session_id != "not-provided":
+            set_trace_session_id(mcp_session_id)
         method = scope.get("method", "UNKNOWN")
         query_string = scope.get("query_string", b"").decode("utf-8")
         logger.debug("[STATEFUL] Streamable HTTP %s %s | MCP-Session-Id: %s | Query: %s | Stateful: %s", method, path, mcp_session_id, query_string, settings.use_stateful_sessions)
@@ -2541,6 +2760,14 @@ class SessionManagerWrapper:
                 )
                 await response(scope, receive, send)
                 return
+
+        # SECURITY: Validate server existence early — before affinity routing
+        # can shortcut to /rpc, which checks token scoping but not server
+        # existence.  Without this, nonexistent server IDs that reach the
+        # affinity branches would bypass the 404 and get empty-scoped results.
+        validated = await self._validate_server_id(match, path, scope, receive, send)
+        if validated is _REJECT:
+            return
 
         if is_internally_forwarded:
             logger.debug("[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: %s | Session: %s", method, mcp_session_id)
@@ -2827,11 +3054,7 @@ class SessionManagerWrapper:
         # Store headers in context for tool invocations
         request_headers_var.set(headers)
 
-        if match:
-            server_id = match.group("server_id")
-            server_id_var.set(server_id)
-        else:
-            server_id_var.set(None)
+        server_id_var.set(validated)
 
         # For session affinity: wrap send to capture session ID from response headers
         # This allows us to register ownership for new sessions created by the SDK
@@ -2867,8 +3090,38 @@ class SessionManagerWrapper:
             "user_context": user_context,
         }
 
+        buffered_request_body = bytearray()
+        initialize_span_cm: Optional[ContextManager[Any]] = None
+        initialize_span_stack: Optional[ExitStack] = None
+        initialize_span_active = False
+
+        async def receive_with_initialize_trace() -> Dict[str, Any]:
+            """Capture initialize requests so the public MCP handshake is traced.
+
+            Returns:
+                The next ASGI receive message, with initialize payloads recorded so
+                tracing can wrap the SDK-managed handshake path.
+            """
+            nonlocal initialize_span_cm, initialize_span_stack, initialize_span_active
+            message = await receive()
+            if method == "POST" and not initialize_span_active and message.get("type") == "http.request":
+                buffered_request_body.extend(message.get("body", b""))
+                if not message.get("more_body", False):
+                    initialize_span_cm = _maybe_open_initialize_span(
+                        bytes(buffered_request_body),
+                        mcp_session_id=mcp_session_id,
+                        server_id=validated,
+                    )
+                    if initialize_span_cm is not None:
+                        initialize_span_stack = ExitStack()
+                        initialize_span_stack.enter_context(initialize_span_cm)
+                        initialize_span_active = True
+            return message
+
+        span_exit_exc: tuple[Any, Any, Any] = (None, None, None)
+
         try:
-            await self.session_manager.handle_request(scope, receive, send_with_capture)
+            await self.session_manager.handle_request(scope, receive_with_initialize_trace, send_with_capture)
             logger.debug("[STATEFUL] Streamable HTTP request completed successfully | Session: %s", mcp_session_id)
 
             # Register ownership for the session we just handled
@@ -2923,9 +3176,13 @@ class SessionManagerWrapper:
             # Expected when client closes one side of the stream (normal lifecycle)
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
+            span_exit_exc = (type(e), e, e.__traceback__)
             logger.error("[STATEFUL] Streamable HTTP request failed | Session: %s | Error: %s", mcp_session_id, e)
             logger.exception("Error handling streamable HTTP request: %s", e)
             raise
+        finally:
+            if initialize_span_active and initialize_span_stack is not None:
+                initialize_span_stack.__exit__(*span_exit_exc)
 
 
 # ------------------------- Authentication for /mcp routes ------------------------------
@@ -2944,8 +3201,10 @@ def _set_proxy_user_context(proxy_user: str) -> None:
             "is_authenticated": True,
             "is_admin": False,
             "permission_is_admin": False,
+            "auth_method": "proxy",
         }
     )
+    set_trace_context_from_teams([], user_email=proxy_user, is_admin=False, auth_method="proxy")
 
 
 def get_streamable_http_auth_context() -> dict[str, Any]:
@@ -2967,8 +3226,10 @@ def get_streamable_http_auth_context() -> dict[str, Any]:
     for key in (
         "email",
         "teams",
+        "team_name",
         "is_authenticated",
         "is_admin",
+        "auth_method",
         "token_use",
         "permission_is_admin",
         "scoped_permissions",
@@ -3037,11 +3298,22 @@ class _StreamableHttpAuthHandler:
         path = self.scope.get("path", "")
         # Normalize trailing slash for consistent matching
         normalized = path.rstrip("/")
-        # Check if this is an MCP-related path that requires authentication
-        is_mcp_path = normalized.endswith("/mcp") or normalized == "/mcp" or normalized.endswith("/mcp/sse") or normalized.endswith("/mcp/message")
+        # Check if this is an MCP-related path that requires authentication.
+        # path.startswith("/mcp/") catches /mcp/{server_id} paths that the
+        # Starlette mount at /mcp routes but that don't endswith("/mcp").
+        is_mcp_path = normalized.endswith("/mcp") or normalized == "/mcp" or normalized.endswith("/mcp/sse") or normalized.endswith("/mcp/message") or path.startswith("/mcp/")
         if not is_mcp_path or path.startswith("/.well-known/"):
             # No auth for non-MCP paths or RFC 9728 metadata endpoints
             return True
+
+        # Reject undocumented /mcp/* sub-paths that the Starlette mount would
+        # otherwise route to the global MCP handler.  Only /mcp, /mcp/,
+        # /mcp/sse, and /mcp/message are valid direct-access endpoints;
+        # server-scoped access uses /servers/{id}/mcp (rewritten by middleware).
+        if path.startswith("/mcp/"):
+            _sub = normalized.removeprefix("/mcp")
+            if _sub and _sub not in ("/sse", "/message"):
+                return await self._send_error(detail="Not found", status_code=404)
 
         # Reset per-request OAuth enforcement cache so keep-alive connections
         # re-evaluate on every request instead of inheriting a stale True.
@@ -3094,12 +3366,11 @@ class _StreamableHttpAuthHandler:
         if bearer_header_supplied:
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})
 
-        # Strict mode: require authentication
-        if settings.mcp_require_auth:
-            return await self._send_error(detail="Authentication required for MCP endpoints", headers={"WWW-Authenticate": "Bearer"})
-
-        # Permissive mode: allow unauthenticated access with public-only scope
-        # BUT first check if this specific server requires OAuth (per-server enforcement)
+        # Per-server OAuth enforcement MUST run before the global auth check so that
+        # oauth_enabled servers always return 401 with resource_metadata URL (RFC 9728).
+        # Without this, strict mode (mcp_require_auth=True) returns a generic
+        # WWW-Authenticate: Bearer with no resource_metadata, and MCP clients cannot
+        # discover the OAuth server to authenticate.  (Fixes #3752)
         match = _SERVER_ID_RE.search(path)
         if match:
             per_server_id = match.group("server_id")
@@ -3113,6 +3384,11 @@ class _StreamableHttpAuthHandler:
                 logger.exception("OAuth enforcement check failed for server %s", per_server_id)
                 return await self._send_error(detail="Service unavailable — unable to verify server authentication requirements", status_code=503)
 
+        # Strict mode: require authentication (non-OAuth servers get generic 401)
+        if settings.mcp_require_auth:
+            return await self._send_error(detail="Authentication required for MCP endpoints", headers={"WWW-Authenticate": "Bearer"})
+
+        # Permissive mode: allow unauthenticated access with public-only scope
         # Set context indicating unauthenticated user with public-only access (teams=[])
         user_context_var.set(
             {
@@ -3121,8 +3397,10 @@ class _StreamableHttpAuthHandler:
                 "is_authenticated": False,
                 "is_admin": False,
                 "permission_is_admin": False,
+                "auth_method": "anonymous",
             }
         )
+        set_trace_context_from_teams([], auth_method="anonymous")
         return True  # Allow request to proceed with public-only access
 
     async def _auth_jwt(self, *, token: str) -> bool:
@@ -3141,7 +3419,7 @@ class _StreamableHttpAuthHandler:
                 return True
 
             # First-Party
-            from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+            from mcpgateway.auth import _get_auth_context_batched_sync, resolve_trace_team_name  # pylint: disable=import-outside-toplevel
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
@@ -3369,9 +3647,13 @@ class _StreamableHttpAuthHandler:
                 "teams": final_teams,
                 "is_authenticated": True,
                 "is_admin": is_admin,
+                "auth_method": "jwt",
                 "permission_is_admin": db_user_is_admin or is_admin,
                 "token_use": token_use,  # propagated for downstream RBAC (check_any_team)
             }
+            trace_team_name = await resolve_trace_team_name(user_payload, final_teams, preresolved_team_names=batched_auth_ctx.get("team_names") if batched_auth_ctx else None)
+            if trace_team_name:
+                auth_user_ctx["team_name"] = trace_team_name
             # Extract scoped permissions from JWT for per-method enforcement
             jwt_scopes = user_payload.get("scopes") or {}
             jwt_scoped_perms = jwt_scopes.get("permissions") or [] if isinstance(jwt_scopes, dict) else []
@@ -3381,6 +3663,13 @@ class _StreamableHttpAuthHandler:
             if isinstance(scoped_server_id, str) and scoped_server_id:
                 auth_user_ctx["scoped_server_id"] = scoped_server_id
             user_context_var.set(auth_user_ctx)
+            set_trace_context_from_teams(
+                final_teams,
+                user_email=user_email,
+                is_admin=bool(db_user_is_admin or is_admin),
+                auth_method="jwt",
+                team_name=trace_team_name,
+            )
         except HTTPException:
             # JWT verification failed (expired, malformed, bad signature, etc.)
             return await self._send_error(detail="Invalid authentication credentials", headers={"WWW-Authenticate": "Bearer"})

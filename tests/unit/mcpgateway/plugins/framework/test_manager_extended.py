@@ -202,6 +202,27 @@ async def test_manager_exception_handling():
 
 
 @pytest.mark.asyncio
+async def test_manager_initialize_skips_plugin_load_errors_when_configured():
+    """Startup should continue when plugin init fails and fail_on_plugin_error is false."""
+    PluginManager.reset()
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+
+    with (
+        patch.object(manager._loader, "load_and_instantiate_plugin", side_effect=RuntimeError("plugin offline")),
+        patch("mcpgateway.plugins.framework.manager.logger") as mock_logger,
+    ):
+        await manager.initialize()
+
+    mock_logger.warning.assert_called_with("Skipping plugin %s because fail_on_plugin_error is disabled", "ReplaceBadWordsPlugin")
+
+    assert manager.initialized is True
+    assert manager.plugin_count == 0
+
+    await manager.shutdown()
+    PluginManager.reset()
+
+
+@pytest.mark.asyncio
 async def test_manager_condition_filtering():
     """Test that plugins are filtered based on conditions across all hook types."""
     from mcpgateway.plugins.framework import (
@@ -740,7 +761,7 @@ async def test_manager_initialization_edge_cases():
                 config={},
             )
         ],
-        plugin_settings=PluginSettings(),
+        plugin_settings=PluginSettings(fail_on_plugin_error=True),
     )
 
     # Mock the loader to return None (covers lines 495-496)

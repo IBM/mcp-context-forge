@@ -67,6 +67,7 @@ import jwt
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
+from mcpgateway.utils.time_restrictions import validate_time_restrictions
 
 basic_security = HTTPBasic(auto_error=False)
 security = HTTPBearer(auto_error=False)
@@ -204,6 +205,9 @@ async def verify_jwt_token(token: str) -> dict:
                     detail=f"Token environment mismatch: token is for '{token_env}', server is '{settings.environment}'",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+
+        # Validate time restrictions if present in token scopes
+        validate_time_restrictions(payload)
 
         return payload
 

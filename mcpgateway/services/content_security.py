@@ -7,17 +7,44 @@ Content Security Service for ContextForge.
 Provides validation for user-submitted content including size limits,
 MIME type restrictions, and malicious pattern detection.
 
-This module implements (Content Size Limits) from issue #538.
+This module implements Content Size Limits and MIME Type Restrictions (US-2)
+from issue #538.
 """
 
 # Standard
 import hashlib
 import logging
 import threading
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 # First-Party
 from mcpgateway.config import settings
+
+# Import metrics with error handling for test environments
+try:
+    # First-Party
+    from mcpgateway.services.metrics import content_size_violations_counter, content_type_violations_counter
+except ImportError:
+    # Metrics not available in test environment - create no-op counters
+    class NoOpCounter:
+        """No-op counter for test environments where metrics are unavailable."""
+
+        def labels(self, **_kwargs):
+            """Return self to allow method chaining.
+
+            Args:
+                **_kwargs: Arbitrary keyword arguments (ignored)
+
+            Returns:
+                self: Returns self for method chaining
+            """
+            return self
+
+        def inc(self, _amount=1):
+            """No-op increment method."""
+
+    content_size_violations_counter = NoOpCounter()
+    content_type_violations_counter = NoOpCounter()
 
 logger = logging.getLogger(__name__)
 
@@ -112,12 +139,42 @@ class ContentSizeError(Exception):
         super().__init__(f"{content_type} size ({actual_formatted}) exceeds " f"maximum allowed size ({max_formatted})")
 
 
+class ContentTypeError(Exception):
+    """Raised when a resource MIME type is not in the allowed list."""
+
+    def __init__(self, mime_type: str, allowed_types: List[str]):
+        """Initialize ContentTypeError with MIME type details.
+
+        Args:
+            mime_type: The disallowed MIME type that was submitted
+            allowed_types: List of allowed MIME types from configuration
+
+        Examples:
+            >>> err = ContentTypeError("application/evil", ["text/plain", "text/markdown"])
+            >>> err.mime_type
+            'application/evil'
+            >>> err.allowed_types
+            ['text/plain', 'text/markdown']
+            >>> "application/evil" in str(err)
+            True
+        """
+        self.mime_type = mime_type
+        self.allowed_types = allowed_types
+
+        # Show up to 5 allowed types in the message for readability
+        display = ", ".join(allowed_types[:5])
+        if len(allowed_types) > 5:
+            display += f", ... ({len(allowed_types)} total)"
+
+        super().__init__(f"MIME type '{mime_type}' is not allowed. Allowed types: {display}")
+
+
 class ContentSecurityService:
     """Service for validating content security constraints.
 
     This service provides validation for:
-    - Content size limits
-    - MIME type restrictions (US-2, future)
+    - Content size limits (US-1)
+    - MIME type restrictions (US-2)
     - Malicious pattern detection (US-3, future)
     - Template syntax validation (US-4, future)
 
@@ -135,7 +192,15 @@ class ContentSecurityService:
         """Initialize the content security service."""
         self.max_resource_size = settings.content_max_resource_size
         self.max_prompt_size = settings.content_max_prompt_size
-        logger.info("ContentSecurityService initialized: " f"max_resource_size={self.max_resource_size}, " f"max_prompt_size={self.max_prompt_size}")
+        logger.info(
+            "ContentSecurityService initialized",
+            extra={
+                "max_resource_size": self.max_resource_size,
+                "max_prompt_size": self.max_prompt_size,
+                "strict_mime_validation": settings.content_strict_mime_validation,
+                "allowed_resource_mimetypes_count": len(settings.content_allowed_resource_mimetypes),
+            },
+        )
 
     def validate_resource_size(self, content: Union[str, bytes], uri: Optional[str] = None, user_email: Optional[str] = None, ip_address: Optional[str] = None) -> None:
         """Validate resource content size.
@@ -162,6 +227,9 @@ class ContentSecurityService:
         actual_size = len(content_bytes)
 
         if actual_size > self.max_resource_size:
+            # Increment Prometheus metric
+            content_size_violations_counter.labels(content_type="resource").inc()
+
             # Log security violation with sanitized PII
             sanitized = _sanitize_pii_for_logging(user_email, ip_address)
             logger.warning(
@@ -196,12 +264,103 @@ class ContentSecurityService:
         actual_size = len(template_bytes)
 
         if actual_size > self.max_prompt_size:
+            # Increment Prometheus metric
+            content_size_violations_counter.labels(content_type="prompt").inc()
+
             # Log security violation with sanitized PII
             sanitized = _sanitize_pii_for_logging(user_email, ip_address)
             logger.warning("Prompt size limit exceeded", extra={"actual_size": actual_size, "max_size": self.max_prompt_size, "content_type": "prompt", "name_provided": name is not None, **sanitized})
             raise ContentSizeError("Prompt template", actual_size, self.max_prompt_size)
 
         logger.debug(f"Prompt size validation passed: {actual_size} bytes")
+
+    def validate_resource_mime_type(
+        self,
+        mime_type: Optional[str],
+        uri: Optional[str] = None,
+        user_email: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> None:
+        """Validate a resource MIME type against the configured allowlist.
+
+        When :attr:`~mcpgateway.config.Settings.content_strict_mime_validation`
+        is ``True``, only MIME types explicitly listed in the allowlist are accepted.
+        This includes vendor types (``application/x-*``, ``text/x-*``) and
+        structured-syntax suffix types (e.g. ``application/vnd.api+json``) which
+        must be explicitly added to the allowlist if needed.
+
+        When :attr:`~mcpgateway.config.Settings.content_strict_mime_validation`
+        is ``False`` the method logs a warning but does **not** raise, enabling
+        a log-only migration mode.
+
+        Args:
+            mime_type: The MIME type declared by the caller.  ``None`` or empty
+                string is accepted without validation.
+            uri: Optional resource URI included in log output (not logged raw).
+            user_email: Optional user e-mail for PII-safe audit logging.
+            ip_address: Optional client IP for PII-safe audit logging.
+
+        Raises:
+            ContentTypeError: If ``mime_type`` is not in the allowlist and
+                ``content_strict_mime_validation`` is ``True``.
+
+        Examples:
+            >>> service = ContentSecurityService()
+            >>> service.validate_resource_mime_type("text/plain")  # OK if in allowlist
+            >>> service.validate_resource_mime_type(None)          # OK - no type declared
+            >>> from unittest.mock import patch
+            >>> with patch("mcpgateway.services.content_security.settings") as mock_settings:
+            ...     mock_settings.content_strict_mime_validation = True
+            ...     mock_settings.content_allowed_resource_mimetypes = ["text/plain"]
+            ...     try:
+            ...         service.validate_resource_mime_type("application/evil")
+            ...     except ContentTypeError as e:
+            ...         print("blocked:", e.mime_type)
+            blocked: application/evil
+            >>> # Vendor types must be explicitly in allowlist
+            >>> with patch("mcpgateway.services.content_security.settings") as mock_settings:
+            ...     mock_settings.content_strict_mime_validation = True
+            ...     mock_settings.content_allowed_resource_mimetypes = ["text/plain"]
+            ...     try:
+            ...         service.validate_resource_mime_type("application/x-custom")
+            ...     except ContentTypeError as e:
+            ...         print("vendor type blocked:", e.mime_type)
+            vendor type blocked: application/x-custom
+        """
+        # Allow absent MIME types - callers may omit the field legitimately
+        if not mime_type:
+            return
+
+        allowed_types: List[str] = settings.content_allowed_resource_mimetypes
+        strict = settings.content_strict_mime_validation
+
+        # Strip parameters from MIME type for comparison (e.g., "text/plain; charset=utf-8" -> "text/plain")
+        base_mime_type = mime_type.split(";")[0].strip()
+
+        # Fast path: exact match in allowlist (check both full and base MIME type)
+        if mime_type in allowed_types or base_mime_type in allowed_types:
+            logger.debug("Resource MIME type validation passed: %s", mime_type)
+            return
+
+        # Violation detected — always increment metric and log regardless of mode.
+        # In strict mode, also raise to block the request.
+        content_type_violations_counter.labels(content_type="resource").inc()
+
+        sanitized = _sanitize_pii_for_logging(user_email, ip_address)
+        logger.warning(
+            "Resource MIME type not in allowlist%s",
+            " (log-only mode, not blocking)" if not strict else "",
+            extra={
+                "mime_type": mime_type,
+                "allowed_count": len(allowed_types),
+                "uri_provided": uri is not None,
+                "strict": strict,
+                **sanitized,
+            },
+        )
+
+        if strict:
+            raise ContentTypeError(mime_type, allowed_types)
 
 
 # Singleton instance with thread-safe initialization
@@ -235,13 +394,3 @@ def get_content_security_service() -> ContentSecurityService:
                 _content_security_service = ContentSecurityService()
 
     return _content_security_service
-
-
-def reset_content_security_service() -> None:
-    """Reset the singleton instance so it re-reads settings on next access.
-
-    Intended for test teardown when monkeypatching size limits.
-    """
-    global _content_security_service  # pylint: disable=global-statement
-    with _content_security_service_lock:
-        _content_security_service = None

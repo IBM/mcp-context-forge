@@ -154,6 +154,14 @@ class TokenStorageService:
                 logger.debug(f"No OAuth tokens found for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}")
                 return None
 
+            # Verify token_type is Bearer
+            if hasattr(token_record, "token_type") and token_record.token_type and token_record.token_type.lower() != "bearer":
+                logger.warning(
+                    f"Unexpected token_type '{token_record.token_type}' for gateway "
+                    f"{SecurityValidator.sanitize_log_message(gateway_id)}, app user "
+                    f"{SecurityValidator.sanitize_log_message(app_user_email)}; expected 'Bearer'"
+                )
+
             # Check if token is expired or near expiration
             if self._is_token_expired(token_record, threshold_seconds):
                 logger.info(f"OAuth token expired for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, app user {SecurityValidator.sanitize_log_message(app_user_email)}")

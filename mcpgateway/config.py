@@ -62,7 +62,7 @@ from urllib.parse import urlparse
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import orjson
-from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
+from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Only configure basic logging if no handlers exist yet
@@ -91,6 +91,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
         "TOOL_DESCRIPTION_FORBIDDEN_PATTERNS",
+        "CONTENT_ALLOWED_RESOURCE_MIMETYPES",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -365,8 +366,8 @@ class Settings(BaseSettings):
     )
     tool_description_forbidden_patterns_enabled: bool = Field(default=True, description="Enable forbidden pattern validation on tool descriptions. Set to false to disable all checks.")
     tool_description_forbidden_patterns: List[str] = Field(
-        default_factory=lambda: ["&&", ";", "||", "$(", "|", "> ", "< "],
-        description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&",";"]\'.',
+        default_factory=lambda: ["&&", "||", "$(", "> ", "< "],
+        description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&","||"]\'.',
     )
 
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
@@ -385,6 +386,15 @@ class Settings(BaseSettings):
     sso_entra_graph_api_timeout: int = Field(default=10, ge=1, le=120, description="Timeout in seconds for Microsoft Graph group fallback requests")
     sso_entra_graph_api_max_groups: int = Field(default=0, ge=0, description="Maximum groups to keep from Graph fallback (0 = no limit)")
 
+    sso_adfs_enabled: bool = Field(default=False, description="Enable ADFS OIDC authentication")
+    sso_adfs_client_id: Optional[str] = Field(default=None, description="ADFS OAuth client ID")
+    sso_adfs_client_secret: Optional[SecretStr] = Field(default=None, description="ADFS OAuth client secret")
+    sso_adfs_authorization_url: Optional[str] = Field(default=None, description="ADFS authorization endpoint URL (e.g., https://adfs.example.com/adfs/oauth2/authorize/)")
+    sso_adfs_token_url: Optional[str] = Field(default=None, description="ADFS token endpoint URL (e.g., https://adfs.example.com/adfs/oauth2/token/)")
+    sso_adfs_issuer: Optional[str] = Field(default=None, description="ADFS issuer URL (e.g., https://adfs.example.com/adfs)")
+    sso_adfs_scope: Optional[str] = Field(default="openid profile email", description="ADFS OAuth scopes (space-separated)")
+    sso_adfs_display_name: Optional[str] = Field(default="ADFS Login", description="Display name shown on login page for ADFS")
+
     sso_generic_enabled: bool = Field(default=False, description="Enable generic OIDC provider (Keycloak, Auth0, etc.)")
     sso_generic_provider_id: Optional[str] = Field(default=None, description="Provider ID (e.g., 'keycloak', 'auth0', 'authentik')")
     sso_generic_display_name: Optional[str] = Field(default=None, description="Display name shown on login page")
@@ -401,12 +411,26 @@ class Settings(BaseSettings):
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
     sso_trusted_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
     sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
+    sso_auto_disable_unconfigured_providers: bool = Field(
+        default=False,
+        description=(
+            "Automatically disable SSO providers not present in environment configuration during bootstrap. "
+            "When enabled, providers configured in the database but missing from SSO_*_ENABLED environment variables "
+            "will be disabled. This enforces environment config as the single source of truth. "
+            "Default: false (preserves manually configured providers for backward compatibility)."
+        ),
+    )
 
     # SSO Admin Assignment Settings
     sso_auto_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
     sso_github_admin_orgs: Annotated[list[str], NoDecode] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
     sso_google_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
     sso_require_admin_approval: bool = Field(default=False, description="Require admin approval for new SSO registrations")
+
+    # ADFS-specific Settings
+    sso_adfs_default_email_domain: Optional[str] = Field(
+        default=None, description="Default email domain for ADFS when UPN is plain username (e.g., 'company.com' converts 'user123' to 'user123@company.com')"
+    )
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
@@ -649,6 +673,14 @@ class Settings(BaseSettings):
     mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
         description="CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
+    )
+    mcpgateway_ui_hide_sections_admin: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=("CSV/JSON list of UI sections to hide for admin users. " "Same valid values as MCPGATEWAY_UI_HIDE_SECTIONS. " "When unset, admins see all sections."),
+    )
+    mcpgateway_ui_hide_header_items_admin: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description="CSV/JSON list of header items to hide for admin users. Same valid values as MCPGATEWAY_UI_HIDE_HEADER_ITEMS.",
     )
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
@@ -1085,7 +1117,7 @@ class Settings(BaseSettings):
 
         return {
             "secure_secrets": (self.jwt_secret_key.get_secret_value() if isinstance(self.jwt_secret_key, SecretStr) else self.jwt_secret_key)
-            != "my-test-key",  # nosec B105 - checking for default value
+            not in ("my-test-key", "my-test-key-but-now-longer-than-32-bytes"),  # nosec B105 - checking for default values
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -1569,6 +1601,34 @@ class Settings(BaseSettings):
     content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB
     content_max_prompt_size: int = Field(default=10240, ge=512, le=1048576, description="Maximum size in bytes for prompt templates (default: 10KB)")  # 10KB  # Minimum 512 bytes  # Maximum 1MB
 
+    # Content Security - MIME Type Restrictions (US-2)
+    content_allowed_resource_mimetypes: List[str] = Field(
+        default_factory=lambda: [
+            "text/plain",
+            "text/markdown",
+            "text/html",
+            "text/csv",
+            "application/json",
+            "application/xml",
+            "application/yaml",
+            "application/pdf",
+            "image/png",
+            "image/jpeg",
+            "image/gif",
+            "image/svg+xml",
+            "image/webp",
+            "audio/mpeg",
+            "audio/wav",
+            "video/mp4",
+            "video/webm",
+        ],
+        description="Allowed MIME types for resources. In strict mode, only types explicitly listed here are accepted. Vendor types (application/x-*, text/x-*) and suffix types (+json, +xml) must be explicitly added if needed.",
+    )
+    content_strict_mime_validation: bool = Field(
+        default=False,
+        description="Enable strict MIME type validation for resources (US-2). Set to false to log violations without blocking.",
+    )
+
     # MCP Session Pool - reduces per-request latency from ~20ms to ~1-2ms
     # Disabled by default for safety. Enable explicitly in production after testing.
     mcp_session_pool_enabled: bool = False
@@ -1595,6 +1655,16 @@ class Settings(BaseSettings):
     # Timeout in seconds for each health check attempt
     mcp_session_pool_health_check_timeout: float = 5.0
     mcp_session_pool_identity_headers: List[str] = ["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie", "x-mcp-session-id"]
+    # Global session caps to prevent resource exhaustion (0 = unlimited for backwards compat)
+    mcp_session_pool_max_total_keys: int = 0  # Max total pool keys across all buckets (0 = unlimited)
+    # Soft cap with eventual enforcement - in high-concurrency scenarios, multiple concurrent
+    # acquire() calls may pass the check before sessions are added to _active, temporarily
+    # overshooting the limit. Prevents unbounded growth but not strict at exact threshold.
+    mcp_session_pool_max_total_sessions: int = 0  # Max total active sessions across all buckets (0 = unlimited, soft cap)
+    # JWT identity extraction - decode JWT to extract stable user ID instead of hashing full token
+    # Prevents bucket explosion from rotating JWTs (different jti/exp/iat per request)
+    # When enabled, extracts 'sub', 'email', or 'user_id' claim from JWT for identity hash
+    mcp_session_pool_jwt_identity_extraction: bool = True
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
     # memory streams) don't respond to cancellation. Does NOT affect tool execution
@@ -1668,6 +1738,12 @@ class Settings(BaseSettings):
     # Per-gateway refresh configuration (used when auto_refresh_servers is True)
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
+
+    # Hot/Cold Server Classification
+    # Classify servers by usage (hot = active sessions, cold = inactive) for optimized polling
+    # Poll intervals auto-derived: hot = gateway_auto_refresh_interval (1x), cold = 3x
+    # Classification refresh uses gateway_auto_refresh_interval (no separate config needed)
+    hot_cold_classification_enabled: bool = Field(default=False, description="Enable hot/cold server classification for staggered polling (requires Redis for multi-worker)")
 
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds
@@ -1783,13 +1859,36 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Observability (OpenTelemetry)
+    deployment_env: str = Field(default="development", validation_alias=AliasChoices("DEPLOYMENT_ENV", "ENVIRONMENT"), description="Deployment environment label")
     otel_enable_observability: bool = Field(default=False, description="Enable OpenTelemetry observability")
     otel_traces_exporter: str = Field(default="otlp", description="Traces exporter: otlp, jaeger, zipkin, console, none")
     otel_exporter_otlp_endpoint: Optional[str] = Field(default=None, description="OTLP endpoint (e.g., http://localhost:4317)")
     otel_exporter_otlp_protocol: str = Field(default="grpc", description="OTLP protocol: grpc or http")
     otel_exporter_otlp_insecure: bool = Field(default=True, description="Use insecure connection for OTLP")
     otel_exporter_otlp_headers: Optional[str] = Field(default=None, description="OTLP headers (comma-separated key=value)")
+    otel_emit_langfuse_attributes: Optional[bool] = Field(
+        default=None,
+        description="Emit Langfuse-specific span attributes. Defaults to auto-enable when a Langfuse OTLP endpoint is configured.",
+    )
+    otel_capture_identity_attributes: Optional[bool] = Field(
+        default=None,
+        description="Capture user/team identity span attributes. Defaults to auto-enable when Langfuse-specific attributes are emitted.",
+    )
+    otel_copy_resource_attrs_to_spans: bool = Field(default=False, description="Copy selected OTEL resource attributes onto spans")
+    otel_redact_fields: str = Field(
+        default="password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key,session_id,sessionid",
+        description="Comma-separated trace payload field names to redact before export",
+    )
+    otel_max_trace_payload_size: int = Field(default=32768, ge=256, description="Maximum serialized trace payload size in characters")
+    otel_capture_input_spans: str = Field(default="", description="Comma-separated span names allowed to capture input payloads")
+    otel_capture_output_spans: str = Field(default="", description="Comma-separated span names allowed to capture output payloads")
+    langfuse_otel_endpoint: Optional[str] = Field(default=None, description="Langfuse OTLP/HTTP endpoint override")
+    langfuse_public_key: Optional[SecretStr] = Field(default=None, description="Langfuse project public key for derived OTLP auth")
+    langfuse_secret_key: Optional[SecretStr] = Field(default=None, description="Langfuse project secret key for derived OTLP auth")
+    langfuse_otel_auth: Optional[SecretStr] = Field(default=None, description="Base64-encoded Langfuse OTLP basic auth override")
     otel_exporter_jaeger_endpoint: Optional[str] = Field(default=None, description="Jaeger endpoint")
+    otel_exporter_jaeger_user: Optional[str] = Field(default=None, description="Jaeger collector username")
+    otel_exporter_jaeger_password: Optional[SecretStr] = Field(default=None, description="Jaeger collector password")
     otel_exporter_zipkin_endpoint: Optional[str] = Field(default=None, description="Zipkin endpoint")
     otel_service_name: str = Field(default="mcp-gateway", description="Service name for traces")
     otel_resource_attributes: Optional[str] = Field(default=None, description="Resource attributes (comma-separated key=value)")
@@ -1798,6 +1897,48 @@ class Settings(BaseSettings):
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
 
     # ===================================
+
+    # ===================================
+    # OpenTelemetry Baggage Configuration
+    # ===================================
+
+    otel_baggage_enabled: bool = Field(
+        default=False,
+        description="Enable HTTP header to W3C baggage conversion for distributed tracing context propagation",
+    )
+    otel_baggage_header_mappings: str = Field(
+        default="[]",
+        description=("JSON array of header-to-baggage mappings. " 'Example: [{"header_name": "X-Tenant-ID", "baggage_key": "tenant.id"}]'),
+    )
+    otel_baggage_propagate_to_external: bool = Field(
+        default=False,
+        description=(
+            "Propagate baggage to external downstream services via W3C baggage header. "
+            "When false (default), baggage is captured in spans only for internal observability. "
+            "Enable only for trusted internal microservices."
+        ),
+    )
+    otel_baggage_max_items: int = Field(
+        default=32,
+        ge=1,
+        le=64,
+        description="Maximum number of baggage items from headers (security limit to prevent DoS)",
+    )
+    otel_baggage_max_size_bytes: int = Field(
+        default=8192,
+        ge=1024,
+        le=16384,
+        description="Maximum total size of header-derived baggage in bytes (security limit)",
+    )
+    otel_baggage_log_rejected: bool = Field(
+        default=True,
+        description="Log rejected headers for security auditing",
+    )
+    otel_baggage_log_sanitization: bool = Field(
+        default=True,
+        description="Log sanitization events for compliance tracking",
+    )
+
     # Well-Known URI Configuration
     # ===================================
 
@@ -1879,6 +2020,32 @@ Disallow: /
             logger.error(f"Invalid JSON in WELL_KNOWN_CUSTOM_FILES: {self.well_known_custom_files}")
             return {}
 
+    @property
+    def hot_server_check_interval(self) -> float:
+        """Hot server polling interval (auto-derived from gateway_auto_refresh_interval).
+
+        Hot servers (top 20% by usage) are polled at the same rate as gateway tool refresh.
+
+        Returns:
+            float: Hot server check interval in seconds (equals gateway_auto_refresh_interval)
+        """
+        return float(self.gateway_auto_refresh_interval)
+
+    @property
+    def cold_server_check_interval(self) -> float:
+        """Cold server polling interval (auto-derived from gateway_auto_refresh_interval).
+
+        Cold servers (remaining 80%) are polled at 3x the gateway refresh rate to save resources.
+
+        Examples:
+            - gateway_auto_refresh_interval=300s → cold=900s (15 minutes)
+            - gateway_auto_refresh_interval=60s → cold=180s (3 minutes)
+
+        Returns:
+            float: Cold server check interval in seconds (3x gateway_auto_refresh_interval)
+        """
+        return float(self.gateway_auto_refresh_interval * 3)
+
     @field_validator("well_known_security_txt_enabled", mode="after")
     @classmethod
     def _auto_enable_security_txt(cls, v: Any, info: ValidationInfo) -> bool:
@@ -1931,6 +2098,8 @@ Disallow: /
         "insecure_queryparam_auth_allowed_hosts",
         "mcpgateway_ui_hide_sections",
         "mcpgateway_ui_hide_header_items",
+        "mcpgateway_ui_hide_sections_admin",
+        "mcpgateway_ui_hide_header_items_admin",
         "tool_description_forbidden_patterns",
         mode="before",
     )
@@ -1981,7 +2150,7 @@ Disallow: /
         """
         return [p for p in value if p and p.strip()]
 
-    @field_validator("mcpgateway_ui_hide_sections", mode="after")
+    @field_validator("mcpgateway_ui_hide_sections", "mcpgateway_ui_hide_sections_admin", mode="after")
     @classmethod
     def _validate_ui_hide_sections(cls, value: list[str]) -> list[str]:
         """Normalize and filter hidable UI sections.
@@ -2009,7 +2178,7 @@ Disallow: /
 
         return normalized
 
-    @field_validator("mcpgateway_ui_hide_header_items", mode="after")
+    @field_validator("mcpgateway_ui_hide_header_items", "mcpgateway_ui_hide_header_items_admin", mode="after")
     @classmethod
     def _validate_ui_hide_header_items(cls, value: list[str]) -> list[str]:
         """Normalize and filter hidable header items.

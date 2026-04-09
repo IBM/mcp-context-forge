@@ -40,7 +40,7 @@ format: ## Format code with black and isort
 	isort .
 
 lint: ## Run linting checks
-	flake8 mcp_eval_server tests
+	ruff check mcp_eval_server tests
 	mypy mcp_eval_server
 
 # Testing
@@ -125,7 +125,7 @@ clean-volumes: ## Remove data volumes
 
 # Security scanning
 scan: ## Scan container for vulnerabilities
-	trivy image $(IMAGE_NAME):$(IMAGE_TAG)
+	@echo "ℹ️  No repo-managed vulnerability scanner is configured for this image."
 
 # Example usage
 example: ## Run example evaluation

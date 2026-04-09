@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
-# flake8: noqa: DAR101, DAR201, DAR401
+# ruff: noqa: D417
 
 # Future
 from __future__ import annotations
@@ -301,6 +301,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         health_check_methods: Optional[list[str]] = None,
         health_check_timeout_seconds: float = 5.0,
         message_handler_factory: Optional[MessageHandlerFactory] = None,
+        max_total_keys: int = 0,
+        max_total_sessions: int = 0,
     ):
         """
         Initialize the session pool.
@@ -326,6 +328,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             message_handler_factory: Optional factory for creating message handlers.
                                     Called with (url, gateway_id) to create handlers for
                                     each new session. Enables notification handling.
+            max_total_keys: Maximum total pool keys across all buckets (0 = unlimited).
+            max_total_sessions: Maximum total active sessions across all buckets (0 = unlimited).
         """
         # Configuration
         self._max_sessions = max_sessions_per_key
@@ -342,6 +346,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         self._health_check_methods = health_check_methods or ["ping", "skip"]
         self._health_check_timeout = health_check_timeout_seconds
         self._message_handler_factory = message_handler_factory
+        self._max_total_keys = max_total_keys
+        self._max_total_sessions = max_total_sessions
 
         # State - protected by _global_lock for creation, per-key locks for access
         self._global_lock = asyncio.Lock()
@@ -381,7 +387,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Multi-worker session affinity via Redis pub/sub
         # Track pending responses for forwarded RPC requests
         self._rpc_listener_task: Optional[asyncio.Task[None]] = None
-        self._pending_responses: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
+        self._heartbeat_task: Optional[asyncio.Task[None]] = None
 
         # Session affinity metrics
         self._session_affinity_local_hits = 0
@@ -397,6 +403,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         Returns:
             MCPSessionPool: This pool instance.
         """
+        self.start_heartbeat()
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -512,9 +519,34 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return self._locks[pool_key]
 
     async def _get_or_create_pool(self, pool_key: PoolKey) -> asyncio.Queue[PooledSession]:
-        """Get or create a pool queue for the given key (thread-safe)."""
+        """Get or create a pool queue for the given key (thread-safe).
+
+        Raises:
+            RuntimeError: If max_total_keys limit would be exceeded.
+        """
         async with self._global_lock:
             if pool_key not in self._pools:
+                # Enforce global pool key limit (if configured)
+                if self._max_total_keys > 0 and len(self._pools) >= self._max_total_keys:
+                    logger.error(
+                        f"Pool key limit reached: {len(self._pools)}/{self._max_total_keys}. "
+                        f"Cannot create new pool for {sanitize_url_for_logging(pool_key[1])}. "
+                        f"Consider increasing MCP_SESSION_POOL_MAX_TOTAL_KEYS or enabling "
+                        f"MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION to reduce bucket explosion."
+                    )
+                    raise RuntimeError(f"Maximum pool keys ({self._max_total_keys}) reached. " f"Cannot create new session pool.")
+
+                # Warn when approaching limit (at 80% capacity)
+                if self._max_total_keys > 0:
+                    current_count = len(self._pools)
+                    threshold = int(self._max_total_keys * 0.8)
+                    if current_count >= threshold and (current_count - threshold) % 10 == 0:  # Log every 10 keys within warning window
+                        logger.warning(
+                            f"Pool key count approaching limit: {current_count}/{self._max_total_keys} "
+                            f"({current_count * 100 // self._max_total_keys}%). "
+                            f"Consider enabling JWT identity extraction or increasing limit."
+                        )
+
                 self._pools[pool_key] = asyncio.Queue(maxsize=self._max_sessions)
                 self._active[pool_key] = set()
                 self._semaphores[pool_key] = asyncio.Semaphore(self._max_sessions)
@@ -587,6 +619,52 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     def _pool_owner_key(mcp_session_id: str) -> str:
         """Return Redis key for session ownership tracking."""
         return f"mcpgw:pool_owner:{mcp_session_id}"
+
+    def _worker_heartbeat_key(self) -> str:
+        """Redis key for this worker's heartbeat."""
+        return f"mcpgw:worker_heartbeat:{WORKER_ID}"
+
+    def start_heartbeat(self) -> None:
+        """Start the worker heartbeat background task.
+
+        Must be called from an async context. Safe to call multiple times;
+        subsequent calls are no-ops if the heartbeat is already running.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+        if self._heartbeat_task is None or self._heartbeat_task.done():
+            self._heartbeat_task = asyncio.create_task(self._run_heartbeat_loop())
+
+    async def _run_heartbeat_loop(self) -> None:
+        """Maintain worker heartbeat in Redis."""
+        # First-Party
+        from mcpgateway.utils.redis_client import get_redis_client
+
+        while not self._closed:
+            try:
+                redis = await get_redis_client()
+                if redis:
+                    # Refresh heartbeat with 30s TTL (much shorter than session TTL)
+                    await redis.setex(self._worker_heartbeat_key(), 30, "alive")
+            except Exception as e:
+                logger.debug(f"Heartbeat update failed: {e}")
+
+            await asyncio.sleep(10)  # Refresh every 10s
+
+    async def _is_worker_alive(self, worker_id: str) -> bool:
+        """Check if a worker is alive via heartbeat."""
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client
+
+            redis = await get_redis_client()
+            if not redis:
+                return True  # Assume alive if Redis unavailable
+
+            heartbeat_key = f"mcpgw:worker_heartbeat:{worker_id}"
+            return await redis.exists(heartbeat_key) > 0
+        except Exception:
+            return True  # Fail open
 
     async def register_session_mapping(
         self,
@@ -706,6 +784,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         Sessions are isolated by identity (derived from auth headers) AND
         transport type. Returns an initialized, healthy session ready for tool calls.
 
+        **Note on max_total_sessions limit**: This is a soft cap with eventual enforcement,
+        not a strict circuit breaker. In high-concurrency scenarios, multiple concurrent
+        acquire() calls may pass the check before any session is added to _active,
+        temporarily overshooting the limit. The cap prevents unbounded growth but does
+        not guarantee hard enforcement at the exact threshold.
+
         Args:
             url: The MCP server URL.
             headers: Request headers (used for identity hashing and passed to server).
@@ -783,7 +867,29 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             self._session_affinity_misses += 1
             pool_key = self._make_pool_key(url, headers, transport_type, user_id, gateway_id)
 
-        pool = await self._get_or_create_pool(pool_key)
+        # Enforce global total sessions limit (if configured)
+        if self._max_total_sessions > 0:
+            async with self._global_lock:
+                total_active = sum(len(active_set) for active_set in self._active.values())
+                if total_active >= self._max_total_sessions:
+                    logger.error(
+                        f"Total active sessions limit reached: {total_active}/{self._max_total_sessions}. "
+                        f"Cannot acquire new session for {sanitize_url_for_logging(url)}. "
+                        f"Consider increasing MCP_SESSION_POOL_MAX_TOTAL_SESSIONS or reducing "
+                        f"MCP_SESSION_POOL_MAX_PER_KEY."
+                    )
+                    raise asyncio.TimeoutError(f"Maximum total active sessions ({self._max_total_sessions}) reached. " f"Cannot acquire new session.")
+
+        try:
+            pool = await self._get_or_create_pool(pool_key)
+        except RuntimeError as e:
+            # NOTE: Intentionally convert RuntimeError to TimeoutError for user-facing error messages.
+            # This provides clearer guidance (capacity exhaustion vs generic runtime error).
+            # Original error is preserved via 'from e' for debugging/monitoring.
+            if "Maximum pool keys" in str(e):
+                logger.error(f"Pool key limit reached, cannot acquire session: {e}")
+                raise asyncio.TimeoutError("Session pool capacity exhausted. Enable MCP_SESSION_POOL_JWT_IDENTITY_EXTRACTION or increase limits.") from e
+            raise
 
         # Update pool key last used time IMMEDIATELY after getting pool
         # This prevents race with eviction removing keys between awaits
@@ -844,11 +950,37 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
                     owner = await self._get_pool_session_owner(mcp_session_id)
                     if owner and owner != WORKER_ID:
-                        # Another worker claimed ownership - should have been forwarded
-                        # Release semaphore and raise to trigger forwarding
-                        semaphore.release()
-                        logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({WORKER_ID})")
-                        raise RuntimeError(f"Session owned by another worker: {owner}")
+                        # Check if owner is still alive
+                        if not await self._is_worker_alive(owner):
+                            # Owner is dead - reclaim ownership with compare-and-swap
+                            # First-Party
+                            from mcpgateway.utils.redis_client import get_redis_client
+
+                            redis = await get_redis_client()
+                            if redis:
+                                owner_key = self._pool_owner_key(mcp_session_id)
+                                # Lua CAS: only reclaim if still owned by the dead worker
+                                cas_script = """
+                                local cur = redis.call('GET', KEYS[1])
+                                if cur == ARGV[1] then
+                                  redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+                                  return 1
+                                end
+                                return 0
+                                """
+                                ttl = int(settings.mcpgateway_session_affinity_ttl)
+                                reclaimed = await redis.eval(cas_script, 1, owner_key, owner, WORKER_ID, ttl)
+                                if reclaimed == 1:
+                                    logger.info(f"Reclaimed ownership from dead worker {owner}: {mcp_session_id[:8]}...")
+                                else:
+                                    # Another worker already reclaimed - let it handle
+                                    # (outer except BaseException releases the semaphore)
+                                    raise RuntimeError(f"Session reclaimed by another worker: {mcp_session_id[:8]}...")
+                        else:
+                            # Owner is alive - should have been forwarded
+                            # (outer except BaseException releases the semaphore)
+                            logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({WORKER_ID})")
+                            raise RuntimeError(f"Session owned by another worker: {owner}")
 
             pooled = await asyncio.wait_for(
                 self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout, gateway_id),
@@ -899,7 +1031,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value, pooled.gateway_id)
         lock = await self._get_or_create_lock(pool_key)
-        pool = await self._get_or_create_pool(pool_key)
+        try:
+            pool = await self._get_or_create_pool(pool_key)
+        except RuntimeError:
+            # max_total_keys limit hit for an evicted key — discard session to avoid leak
+            logger.warning(f"Pool key limit reached during release, discarding session for {sanitize_url_for_logging(pooled.url)}")
+            await self._close_session(pooled)
+            return
 
         async with lock:
             # Update last-used FIRST to prevent eviction race:
@@ -930,7 +1068,14 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         # Return to pool (pool may have been evicted in edge case, recreate if needed)
         if pool_key not in self._pools:
-            pool = await self._get_or_create_pool(pool_key)
+            try:
+                pool = await self._get_or_create_pool(pool_key)
+            except RuntimeError:
+                logger.warning(f"Pool key limit reached during release, discarding session for {sanitize_url_for_logging(pooled.url)}")
+                await self._close_session(pooled)
+                if pool_key in self._semaphores:
+                    self._semaphores[pool_key].release()
+                return
             self._pool_last_used[pool_key] = time.time()
 
         try:
@@ -1015,6 +1160,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._locks.pop(pool_key, None)
                 self._semaphores.pop(pool_key, None)
                 self._pool_last_used.pop(pool_key, None)
+
+                # Clean up session mappings pointing to this evicted pool key
+                async with self._mcp_session_mapping_lock:
+                    stale_mappings = [k for k, v in self._mcp_session_mapping.items() if v == pool_key]
+                    for mapping_key in stale_mappings:
+                        self._mcp_session_mapping.pop(mapping_key, None)
+
                 self._pool_keys_evicted += 1
                 logger.debug(f"Evicted idle pool key: {pool_key[0][:8]}|{pool_key[1]}|{pool_key[2][:8]}")
 
@@ -1388,6 +1540,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             self._active.clear()
             self._locks.clear()
             self._semaphores.clear()
+            self._mcp_session_mapping.clear()
 
         # Stop RPC listener if running
         if self._rpc_listener_task and not self._rpc_listener_task.done():
@@ -1397,6 +1550,15 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             except asyncio.CancelledError:
                 pass
             self._rpc_listener_task = None
+
+        # Stop heartbeat if running
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
 
         logger.info("All sessions closed")
 
@@ -1424,6 +1586,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
             self._pools.clear()
             self._active.clear()
+            self._mcp_session_mapping.clear()
 
         logger.info("All pooled sessions drained; pool remains operational")
 
@@ -1558,6 +1721,31 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
                 return None  # We own it - execute locally
 
+            if not await self._is_worker_alive(owner_id):
+                logger.warning(f"[AFFINITY] Owner {owner_id} is dead for session {mcp_session_id[:8]}...")
+                # CAS: reclaim only if still owned by the dead worker
+                cas_script = """
+                local cur = redis.call('GET', KEYS[1])
+                if cur == ARGV[1] then
+                  redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+                  return 1
+                end
+                return 0
+                """
+                ttl = int(settings.mcpgateway_session_affinity_ttl)
+                reclaimed = await redis.eval(cas_script, 1, self._pool_owner_key(mcp_session_id), owner_id, WORKER_ID, ttl)
+                if reclaimed == 1:
+                    logger.info(f"[AFFINITY] Reclaimed session {mcp_session_id[:8]}... from dead worker {owner_id} → execute locally")
+                    return None  # We won the reclaim - execute locally
+                # Another worker already reclaimed; re-read the new owner and forward
+                new_owner = await redis.get(self._pool_owner_key(mcp_session_id))
+                if not new_owner:
+                    return None  # Key vanished - execute locally
+                owner_id = new_owner.decode() if isinstance(new_owner, bytes) else new_owner
+                if owner_id == WORKER_ID:
+                    return None  # We ended up as owner
+                logger.info(f"[AFFINITY] Session {mcp_session_id[:8]}... reclaimed by {owner_id} → forwarding to new owner")
+
             logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
 
             # Forward to owner worker via pub/sub
@@ -1584,9 +1772,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                 # Wait for response
                 async with asyncio.timeout(effective_timeout):
-                    while True:
-                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
-                        if msg and msg["type"] == "message":
+                    async for msg in pubsub.listen():
+                        if msg["type"] == "message":
                             return orjson.loads(msg["data"])
             finally:
                 await pubsub.unsubscribe(response_channel)
@@ -1949,6 +2136,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         """
         total_requests = self._hits + self._misses
         total_affinity_requests = self._session_affinity_local_hits + self._session_affinity_redis_hits + self._session_affinity_misses
+
+        # Calculate total active sessions across all pools
+        total_active = sum(len(active_set) for active_set in self._active.values())
+
         return {
             "hits": self._hits,
             "misses": self._misses,
@@ -1960,6 +2151,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             "anonymous_identity_count": self._anonymous_identity_count,
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
+            "total_active_sessions": total_active,
+            "max_total_keys": self._max_total_keys,
+            "max_total_sessions": self._max_total_sessions,
             # Session affinity metrics
             "session_affinity": {
                 "local_hits": self._session_affinity_local_hits,
@@ -2049,6 +2243,7 @@ def get_mcp_session_pool() -> MCPSessionPool:
 
 
 def init_mcp_session_pool(
+    *,
     max_sessions_per_key: int = 10,
     session_ttl_seconds: float = 300.0,
     health_check_interval_seconds: float = 60.0,
@@ -2065,6 +2260,8 @@ def init_mcp_session_pool(
     message_handler_factory: Optional[MessageHandlerFactory] = None,
     enable_notifications: bool = True,
     notification_debounce_seconds: float = 5.0,
+    max_total_keys: int = 0,
+    max_total_sessions: int = 0,
 ) -> MCPSessionPool:
     """Initialize the global MCP session pool.
 
@@ -2120,6 +2317,8 @@ def init_mcp_session_pool(
         health_check_methods=health_check_methods,
         health_check_timeout_seconds=health_check_timeout_seconds,
         message_handler_factory=effective_handler_factory,
+        max_total_keys=max_total_keys,
+        max_total_sessions=max_total_sessions,
     )
     logger.info("MCP session pool initialized")
     return _mcp_session_pool

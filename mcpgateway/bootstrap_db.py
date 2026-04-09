@@ -36,14 +36,17 @@ from importlib.resources import files
 import json
 import os
 from pathlib import Path
+import random
+import re
 import tempfile
+import time
 from typing import cast
 
 # Third-Party
 from alembic import command
 from alembic.config import Config
 from filelock import FileLock
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, or_, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
@@ -102,7 +105,7 @@ def advisory_lock(conn: Connection):
     Acquire a distributed advisory lock to serialize migrations across multiple instances.
 
     Behavior depends on the database backend:
-    - Postgres: Uses `pg_advisory_lock` (blocking)
+    - Postgres: Uses `pg_try_advisory_lock` (non-blocking)
     - SQLite: Fallback to local `FileLock`
 
     Args:
@@ -119,8 +122,34 @@ def advisory_lock(conn: Connection):
     pg_lock_id = 42424242424242
 
     if dialect == "postgresql":
-        logger.info("Acquiring Postgres advisory lock...")
-        conn.execute(text(f"SELECT pg_advisory_lock({pg_lock_id})"))
+        logger.info("Attempting to acquire Postgres advisory lock...")
+
+        # Retry parameters
+        max_retries = 60  # 60 attempts
+        base_delay = 1.0  # Start with 1 second
+        max_delay = 10.0  # Cap at 10 seconds
+
+        acquired = False
+        for attempt in range(max_retries):
+            # Try non-blocking lock
+            result = conn.execute(text(f"SELECT pg_try_advisory_lock({pg_lock_id})"))
+            acquired = result.scalar()
+
+            if acquired:
+                logger.info(f"Acquired Postgres advisory lock on attempt {attempt + 1}")
+                break
+
+            # Exponential backoff with jitter
+            delay = min(base_delay * (1.5**attempt), max_delay)
+            jitter = delay * random.uniform(-0.1, 0.1)  # nosec B311  # noqa: DUO102
+            sleep_time = delay + jitter
+
+            logger.info(f"Lock held by another instance, retrying in {sleep_time:.1f}s (attempt {attempt + 1}/{max_retries})")
+            time.sleep(sleep_time)
+
+        if not acquired:
+            raise TimeoutError(f"Failed to acquire advisory lock after {max_retries} attempts")
+
         try:
             yield
         finally:
@@ -276,6 +305,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         "tokens.read",
                         "tokens.update",
                         "tokens.revoke",
+                        "tools.manage_plugins",
                     ],
                     "is_system_role": True,
                 },
@@ -326,7 +356,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 },
                 {
                     "name": "viewer",
-                    "description": "Read-only access to resources and admin UI",
+                    "description": "Read access and tool execution within team scope",
                     "scope": "team",
                     "permissions": [
                         "admin.dashboard",
@@ -337,6 +367,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         "teams.read",
                         "teams.join",
                         "tools.read",
+                        "tools.execute",
                         "resources.read",
                         "prompts.read",
                         "llm.read",
@@ -551,23 +582,94 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
 
             total_assigned = 0
 
+            # Unique field per resource type that participates in the team-scoped unique constraint
+            unique_field: dict[str, str] = {
+                "servers": "name",
+                "tools": "name",
+                "resources": "uri",
+                "prompts": "name",
+                "gateways": "slug",
+                "a2a_agents": "slug",
+            }
+
+            def _like_safe(v: str) -> str:
+                """Escape SQL LIKE wildcard characters for safe use in LIKE patterns.
+
+                Args:
+                    v: The string value to escape.
+
+                Returns:
+                    The escaped string safe for use in SQL LIKE patterns.
+                """
+                return v.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
             for resource_name, resource_model in resource_types:
                 try:
                     # Find unassigned resources
                     unassigned = db.query(resource_model).filter((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None)) | (resource_model.visibility.is_(None))).all()
 
-                    if unassigned:
-                        logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to admin team")
+                    if not unassigned:
+                        continue
 
-                        for resource in unassigned:
-                            resource.team_id = personal_team.id
-                            resource.owner_email = admin_user.email
-                            resource.visibility = "public"  # Make visible to all users
-                            if hasattr(resource, "federation_source") and not resource.federation_source:
-                                resource.federation_source = "mcpgateway-0.7.0-migration"
+                    logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to admin team")
 
-                        db.commit()
-                        total_assigned += len(unassigned)
+                    field = unique_field[resource_name]
+                    field_col = getattr(resource_model, field)
+
+                    # Collect unique field values from the orphaned batch
+                    original_values = {getattr(r, field) for r in unassigned if getattr(r, field) is not None}
+
+                    # One query: fetch all names already taken in the admin team that match any
+                    # original value exactly or as a suffixed variant (value-N).
+                    # NOTE: This intentionally omits gateway_id from the filter, making it
+                    # conservative — for Resource/Prompt models whose uniqueness also depends
+                    # on gateway_id, this may produce unnecessary renames but can never miss a
+                    # real conflict. That is the correct tradeoff for one-time bootstrap code.
+                    existing_taken: set[str] = (
+                        {
+                            row[0]
+                            for row in db.query(field_col).filter(
+                                resource_model.team_id == personal_team.id,
+                                resource_model.owner_email == admin_user.email,
+                                or_(*[cond for v in original_values for cond in (field_col == v, field_col.like(f"{_like_safe(v)}-%", escape="\\"))]),
+                            )
+                        }
+                        if original_values
+                        else set()
+                    )
+
+                    # Pre-compile suffix regexes keyed by original value
+                    suffix_res = {v: re.compile(rf"^{re.escape(v)}-(\d+)$") for v in original_values}
+
+                    # Track names claimed within this batch to catch intra-batch duplicates
+                    batch_assigned: set[str] = set()
+
+                    for resource in unassigned:
+                        original_value = getattr(resource, field)
+
+                        if original_value is not None:
+                            taken = existing_taken | batch_assigned
+                            if original_value in taken:
+                                # Parse numeric suffixes from taken values to find next free one
+                                suffix_re = suffix_res[original_value]
+                                used = {int(m.group(1)) for v in taken if (m := suffix_re.match(v))}
+                                new_value = f"{original_value}-{(max(used) if used else 1) + 1}"
+                                logger.warning(
+                                    f"Name conflict for {SecurityValidator.sanitize_log_message(resource_name)} '{SecurityValidator.sanitize_log_message(original_value)}' — renaming to '{SecurityValidator.sanitize_log_message(new_value)}'"
+                                )
+                                setattr(resource, field, new_value)
+                                batch_assigned.add(new_value)
+                            else:
+                                batch_assigned.add(original_value)
+
+                        resource.team_id = personal_team.id
+                        resource.owner_email = admin_user.email
+                        resource.visibility = "public"  # Make visible to all users
+                        if hasattr(resource, "federation_source") and not resource.federation_source:
+                            resource.federation_source = "mcpgateway-0.7.0-migration"
+
+                    db.commit()
+                    total_assigned += len(unassigned)
 
                 except Exception as e:
                     logger.error(f"Failed to assign {SecurityValidator.sanitize_log_message(resource_name)}: {SecurityValidator.sanitize_log_message(str(e))}")

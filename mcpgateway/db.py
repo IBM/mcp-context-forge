@@ -1256,6 +1256,7 @@ class Permissions:
     TOOLS_UPDATE = "tools.update"
     TOOLS_DELETE = "tools.delete"
     TOOLS_EXECUTE = "tools.execute"
+    TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
@@ -1983,6 +1984,7 @@ class EmailTeamMember(Base):
         joined_at (datetime): When the user joined the team
         invited_by (str): Email of the user who invited this member
         is_active (bool): Whether the membership is active
+        grant_source (str): Origin of the grant (e.g., 'sso', 'manual', 'bootstrap', 'auto')
 
     Examples:
         >>> member = EmailTeamMember(
@@ -2009,6 +2011,7 @@ class EmailTeamMember(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     invited_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    grant_source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default=None)
 
     # Relationships
     team: Mapped["EmailTeam"] = relationship("EmailTeam", back_populates="members")
@@ -3223,6 +3226,7 @@ class Tool(Base):
     custom_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     custom_name_slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Passthrough REST fields
     base_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -3564,6 +3568,7 @@ class Resource(Base):
     uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     uri_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
@@ -3942,6 +3947,7 @@ class Prompt(Base):
     custom_name: Mapped[str] = mapped_column(String(255), nullable=False)
     custom_name_slug: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
@@ -6542,3 +6548,84 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
     else:
         target.name = target.custom_name_slug
+
+
+# ---------------------------------------------------------------------------
+# ToolPluginBinding — per-tool per-tenant plugin policy bindings
+# ---------------------------------------------------------------------------
+
+
+class ToolPluginBinding(Base):
+    """ORM model for per-tool per-tenant plugin policy bindings.
+
+    Each row represents a single plugin policy applied to a specific tool
+    within a specific team.  Multiple rows for the same (team, tool) pair
+    are allowed as long as the plugin_id differs — each plugin type may only
+    appear once per (team_id, tool_name, plugin_id) triple (enforced via
+    UniqueConstraint).  A POST with an existing triple performs an upsert
+    (updates the existing row's config/mode/priority).
+
+    Supported plugin_id values:
+        - ``OUTPUT_LENGTH_GUARD`` — truncate/block responses exceeding a char limit.
+        - ``RATE_LIMITER``        — per-user / per-tenant / per-tool rate gating.
+        - ``SECRETS_DETECTION``   — redact or block secret patterns in output.
+
+    Attributes:
+        id (str): UUID primary key.
+        team_id (str): FK to ``email_teams.id``.
+        tool_name (str): Name of the tool the policy applies to; ``"*"`` means all team tools.
+        plugin_id (str): One of the supported plugin identifiers.
+        mode (str): ``"enforce"`` | ``"permissive"`` | ``"disabled"``.
+        priority (int): Execution priority — lower numbers run first.
+        config (dict): Plugin-specific JSON configuration blob.
+        created_at (datetime): Row creation timestamp (UTC).
+        created_by (str): Email of the user who created the binding.
+        updated_at (datetime): Last update timestamp (UTC).
+        updated_by (str): Email of the user who last updated the binding.
+
+    Examples:
+        >>> binding = ToolPluginBinding(
+        ...     team_id="abc123",
+        ...     tool_name="*",
+        ...     plugin_id="OUTPUT_LENGTH_GUARD",
+        ...     mode="enforce",
+        ...     priority=10,
+        ...     config={"max_chars": 2000, "strategy": "truncate", "ellipsis": "..."},
+        ...     created_by="admin@example.com",
+        ... )
+        >>> binding.plugin_id
+        'OUTPUT_LENGTH_GUARD'
+        >>> binding.mode
+        'enforce'
+    """
+
+    __tablename__ = "tool_plugin_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plugin_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="enforce")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
+    config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Relationship back to team
+    team: Mapped["EmailTeam"] = relationship("EmailTeam", foreign_keys=[team_id])
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "tool_name", "plugin_id", name="uq_tool_plugin_binding"),
+        Index("ix_tool_plugin_bindings_team_id", "team_id"),
+        Index("ix_tool_plugin_bindings_tool_name", "tool_name"),
+    )
+
+    def __repr__(self) -> str:
+        """String representation.
+
+        Returns:
+            str: String representation of ToolPluginBinding instance.
+        """
+        return f"<ToolPluginBinding(id='{self.id}', team_id='{self.team_id}', tool_name='{self.tool_name}', plugin_id='{self.plugin_id}')>"

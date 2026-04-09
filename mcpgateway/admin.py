@@ -125,7 +125,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
-from mcpgateway.services.content_security import ContentSizeError
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -145,7 +145,7 @@ from mcpgateway.services.root_service import RootService, RootServiceError, Root
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
@@ -191,7 +191,6 @@ except ImportError:
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
-
 UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "overview": ("overview",),
     "servers": ("catalog",),
@@ -372,6 +371,50 @@ UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "
 UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
 UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
 
+# Cache for the bundle filename to avoid reading manifest on every request
+# Using a mutable dict to avoid the need for a global statement in the accessor function
+_bundle_js_cache: dict[str, Optional[str]] = {"filename": None}
+
+
+def get_bundle_js_filename() -> str:
+    """Get the hashed bundle.js filename from Vite manifest.
+
+    Reads the Vite manifest file to get the current hashed bundle filename.
+    Falls back to scanning for bundle-*.js on disk if the manifest is unreadable.
+    Invalidates the cache when the cached bundle file no longer exists on disk.
+
+    Returns:
+        str: The bundle filename (e.g., 'bundle-abc123.js')
+    """
+    static_dir = Path(__file__).parent / "static"
+
+    # Use cache if the bundle file still exists on disk
+    cached = _bundle_js_cache["filename"]
+    if cached is not None and (static_dir / cached).exists():
+        return cached
+
+    manifest_path = static_dir / ".vite" / "manifest.json"
+    try:
+        if manifest_path.exists():
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = orjson.loads(f.read())
+                # The key is the input path relative to the project root
+                entry_key = "mcpgateway/admin_ui/index.js"
+                if entry_key in manifest and manifest[entry_key].get("file"):
+                    _bundle_js_cache["filename"] = manifest[entry_key]["file"]
+                    return _bundle_js_cache["filename"]  # type: ignore[return-value]
+    except Exception as e:
+        LOGGER.warning(f"Failed to read Vite manifest: {e}")
+
+    # Manifest unreadable or missing entry — find bundle file directly on disk
+    bundles = sorted(static_dir.glob("bundle-*.js"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if bundles:
+        _bundle_js_cache["filename"] = bundles[0].name
+        return _bundle_js_cache["filename"]  # type: ignore[return-value]
+
+    LOGGER.error("No bundle-*.js found in %s — admin UI will not load", static_dir)
+    return ""
+
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
     """Normalize UI hide values from CSV/list input into a validated set.
@@ -407,20 +450,26 @@ def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: O
     return normalized
 
 
-def get_ui_visibility_config(request: Request) -> Dict[str, Any]:
+def get_ui_visibility_config(request: Request, is_admin: bool = False) -> Dict[str, Any]:
     """Build final UI visibility settings for the current admin request.
 
     Args:
         request: Incoming FastAPI request.
+        is_admin: Whether the current user is an admin. Admins use separate
+            hide lists and are not affected by embedded-mode defaults.
 
     Returns:
         Dict[str, Any]: Hidden sections/header items/tabs plus cookie update intent.
     """
-    hidden_sections = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_sections", []), UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
-    hidden_header_items = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_header_items", []), UI_HIDABLE_HEADER_ITEMS)
+    if is_admin:
+        hidden_sections = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_sections_admin", []), UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
+        hidden_header_items = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_header_items_admin", []), UI_HIDABLE_HEADER_ITEMS)
+    else:
+        hidden_sections = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_sections", []), UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
+        hidden_header_items = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_header_items", []), UI_HIDABLE_HEADER_ITEMS)
 
-    if bool(getattr(settings, "mcpgateway_ui_embedded", False)):
-        hidden_header_items.update(UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS)
+        if bool(getattr(settings, "mcpgateway_ui_embedded", False)):
+            hidden_header_items.update(UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS)
 
     query_ui_hide_raw = request.query_params.get("ui_hide")
     query_ui_hide_values = _normalize_ui_hide_values(query_ui_hide_raw, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES) if query_ui_hide_raw is not None else set()
@@ -507,6 +556,7 @@ async def get_hidden_sections_for_user(
             user_email=user_email,
             team_id=None,  # Check across all teams
             include_all_teams=True,  # Include all team-scoped roles
+            token_teams=token_teams,  # SECURITY: Respect token narrowing for menu visibility
         )
         if inspect.isawaitable(maybe_permissions):
             user_permissions = await maybe_permissions
@@ -1091,8 +1141,7 @@ def _get_span_entity_performance(
     # Use database-native percentiles only if enabled in config and using PostgreSQL
     if dialect_name == "postgresql" and settings.use_postgresdb_percentiles:
         # Safe: uses SQLAlchemy's bindparam for the IN-list
-        stats_sql = text(
-            """
+        stats_sql = text("""
             SELECT
                 (attributes->> :json_key) AS entity,
                 COUNT(*) AS count,
@@ -1111,8 +1160,7 @@ def _get_span_entity_performance(
             GROUP BY entity
             ORDER BY avg_duration_ms DESC
             LIMIT :limit
-            """
-        ).bindparams(bindparam("names", expanding=True))
+            """).bindparams(bindparam("names", expanding=True))
 
         results = db.execute(
             stats_sql,
@@ -3509,7 +3557,8 @@ async def admin_ui(
     """
     LOGGER.debug(f"User {get_user_email(user)} accessed the admin UI (team_id={team_id})")
     user_email = get_user_email(user)
-    ui_visibility_config = get_ui_visibility_config(request)
+    is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    ui_visibility_config = get_ui_visibility_config(request, is_admin=is_admin)
     hidden_sections = set(ui_visibility_config["hidden_sections"])
     hidden_header_items = set(ui_visibility_config["hidden_header_items"])
 
@@ -3950,6 +3999,7 @@ async def admin_ui(
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
+            "bundle_js": get_bundle_js_filename(),
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
@@ -3962,7 +4012,7 @@ async def admin_ui(
             "performance_enabled": getattr(settings, "mcpgateway_performance_tracking", False),
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
-            "is_admin": bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)),
+            "is_admin": is_admin,
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "allow_public_visibility": settings.allow_public_visibility,
@@ -3982,7 +4032,7 @@ async def admin_ui(
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
-            "max_members_per_team": getattr(settings, "max_members_per_team", 100),
+            "max_members_per_team": settings.max_members_per_team,
         },
     )
 
@@ -4128,6 +4178,7 @@ async def admin_login_page(request: Request) -> Response:
     # Check if user is already authenticated via JWT cookie
     # Skip redirect when an error param is present — the user was sent here
     # intentionally (e.g. admin_required, account_disabled).
+    clear_invalid_cookies = False
     if not request.query_params.get("error"):
         jwt_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
         if jwt_token:
@@ -4141,8 +4192,8 @@ async def admin_login_page(request: Request) -> Response:
                     if is_admin:
                         return RedirectResponse(url=f"{root_path}/admin", status_code=303)
             except (HTTPException, jwt.PyJWTError):
-                # Token is invalid or expired, continue to show login page
-                pass
+                # Token is invalid or expired - mark for clearing to prevent redirect loop
+                clear_invalid_cookies = True
 
     # Only show secure cookie warning if there's a login error AND problematic config
     secure_cookie_warning = None
@@ -4166,7 +4217,16 @@ async def admin_login_page(request: Request) -> Response:
             "sri_hashes": load_sri_hashes(),
         },
     )
+
+    # Set CSRF cookie first, then clear invalid JWT cookies
+    # This ensures CSRF cookie appears in set-cookie header
     _set_admin_csrf_cookie(request, response)
+
+    # Clear invalid JWT cookies to prevent redirect loop
+    if clear_invalid_cookies:
+        response.delete_cookie("jwt_token", path="/")
+        response.delete_cookie("access_token", path="/")
+
     return response
 
 
@@ -5578,6 +5638,26 @@ async def admin_list_teams(
         return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading teams: {html.escape(str(e))}</p></div>', status_code=200)
 
 
+def _parse_form_max_members(raw: object) -> Optional[int]:
+    """Parse and validate a max_members value from a form field.
+
+    Args:
+        raw: The raw form value (typically a string or None).
+
+    Returns:
+        The parsed integer, or ``None`` when the field is blank or non-numeric.
+
+    Raises:
+        ValueError: When the parsed integer is less than 1.
+    """
+    if raw and str(raw).strip().isdigit():
+        parsed = int(str(raw).strip())
+        if parsed < 1:
+            raise ValueError("Maximum members must be at least 1")
+        return parsed
+    return None
+
+
 @admin_router.post("/teams")
 @require_permission("teams.create", allow_admin_bypass=False)
 async def admin_create_team(
@@ -5612,10 +5692,7 @@ async def admin_create_team(
         slug = form.get("slug") or None
         description = form.get("description") or None
         visibility = form.get("visibility", "private")
-        max_members_val = form.get("max_members")
-        max_members: Optional[int] = None
-        if max_members_val and str(max_members_val).strip().isdigit():
-            max_members = int(str(max_members_val).strip()) or None
+        max_members = _parse_form_max_members(form.get("max_members"))
 
         if not name:
             response = HTMLResponse(
@@ -5659,6 +5736,12 @@ async def admin_create_team(
             status_code=400,
         )
         return response
+    except ValueError as e:
+        LOGGER.warning(f"Validation error creating team: {e}")
+        return HTMLResponse(
+            content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">{html.escape(str(e))}</div>',
+            status_code=400,
+        )
     except IntegrityError as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
         if "UNIQUE constraint failed: email_teams.slug" in str(e):
@@ -5774,7 +5857,7 @@ async def admin_view_team_members(
                                 id="member-search-{team.id}"
                                 placeholder="Search members..."
                                 class="w-48 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
-                                oninput="debouncedMemberSearch('{team.id}', this.value)"
+                                oninput="Admin.debouncedMemberSearch('{team.id}', this.value)"
                             />
                         </div>
                         <div
@@ -5799,7 +5882,7 @@ async def admin_view_team_members(
                                 id="non-member-search-{team.id}"
                                 placeholder="Search users by name or email..."
                                 class="w-64 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white"
-                                oninput="debouncedNonMemberSearch('{team.id}', this.value)"
+                                oninput="Admin.debouncedNonMemberSearch('{team.id}', this.value)"
                             />
                         </div>
                         <div
@@ -6013,21 +6096,27 @@ async def admin_get_team_edit(
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
         is_admin_edit = isinstance(_user, dict) and _user.get("is_admin")
-        max_members_limit = getattr(settings, "max_members_per_team", 100)
-        current_exceeds_limit = bool(team.max_members and team.max_members > max_members_limit)
+        max_members_limit = settings.max_members_per_team
+        current_exceeds_limit = bool(team.max_members is not None and team.max_members > max_members_limit)
         max_attr = "" if is_admin_edit else f'max="{max_members_limit}"'
+        use_default_checked = "checked" if team.max_members is None else ""
+        max_members_disabled = "disabled" if team.max_members is None else ""
         # When the existing value exceeds the configured limit for a non-admin,
         # show an empty field to avoid browser validation blocking form submission.
         # Submitting empty preserves the current value server-side.
-        if is_admin_edit:
-            max_members_value = team.max_members if team.max_members else ""
-            max_members_hint = "Admins can set any limit. Leave empty to keep current value."
+        max_members_value: Union[str, int] = ""
+        if team.max_members is None:
+            max_members_value = ""
+            max_members_hint = f"Currently using global default ({max_members_limit})."
+        elif is_admin_edit:
+            max_members_value = team.max_members
+            max_members_hint = "Admins can set any limit."
         elif current_exceeds_limit:
             max_members_value = ""
             max_members_hint = f"Current: {team.max_members} (above max {max_members_limit}). Leave empty to keep, or set a new value \u2264 {max_members_limit}."
         else:
-            max_members_value = team.max_members if team.max_members else ""
-            max_members_hint = f"Max {max_members_limit}. Leave empty to keep current value."
+            max_members_value = team.max_members
+            max_members_hint = f"Max {max_members_limit}."
         edit_form = rf"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
@@ -6060,12 +6149,18 @@ async def admin_get_team_edit(
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Maximum Members</label>
-                    <input type="number" name="max_members" min="1" {max_attr} value="{max_members_value}"
+                    <div class="flex items-center mt-1 mb-2">
+                        <input type="checkbox" name="use_default_max_members" id="use-default-max-members" {use_default_checked}
+                               onchange="var mi = this.closest('div').parentElement.querySelector('input[name=max_members]'); mi.disabled = this.checked; if(this.checked) mi.value = '';"
+                               class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded">
+                        <label for="use-default-max-members" class="ml-2 text-sm text-gray-700 dark:text-gray-300">Use global default ({max_members_limit})</label>
+                    </div>
+                    <input type="number" name="max_members" min="1" {max_attr} value="{max_members_value}" {max_members_disabled}
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{max_members_hint}</p>
                 </div>
                 <div class="flex justify-end space-x-3">
-                    <button type="button" onclick="hideTeamEditModal()"
+                    <button type="button" onclick="Admin.hideTeamEditModal()"
                             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         Cancel
                     </button>
@@ -6116,14 +6211,12 @@ async def admin_update_team(
         name_val = form.get("name")
         desc_val = form.get("description")
         vis_val = form.get("visibility", "private")
-        max_members_val = form.get("max_members")
+        use_default_max_members = form.get("use_default_max_members")
         # Trim before presence check for consistent error messages
         name = name_val.strip() if isinstance(name_val, str) else None
         description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
-        max_members: Optional[int] = None
-        if max_members_val and str(max_members_val).strip().isdigit():
-            max_members = int(str(max_members_val).strip()) or None
+        max_members = _parse_form_max_members(form.get("max_members"))
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -6176,7 +6269,19 @@ async def admin_update_team(
         # Update team
         user_email = getattr(user, "email", None) or str(user)
         is_admin = isinstance(user, dict) and user.get("is_admin")
-        updated = await team_service.update_team(team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members, updated_by=user_email, skip_limits=bool(is_admin))
+        # Three-way max_members resolution:
+        #   checkbox checked  → None  (clear per-team override, revert to global default)
+        #   number provided   → int   (set explicit per-team limit)
+        #   neither           → UNSET (leave current value unchanged)
+        if use_default_max_members:
+            max_members_kwarg = None
+        elif max_members is not None:
+            max_members_kwarg = max_members
+        else:
+            max_members_kwarg = UNSET
+        updated = await team_service.update_team(
+            team_id=team_id, name=name, description=description, visibility=visibility, max_members=max_members_kwarg, updated_by=user_email, skip_limits=bool(is_admin)
+        )
 
         if not updated:
             is_htmx = request.headers.get("HX-Request") == "true"
@@ -7786,8 +7891,7 @@ async def admin_get_user_edit(
         # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
         if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
             pr_lines = []
-            pr_lines.append(
-                f"""                <!-- Password Requirements -->
+            pr_lines.append(f"""                <!-- Password Requirements -->
                 <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
                     <div class="flex items-start">
                         <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
@@ -7800,40 +7904,29 @@ async def admin_get_user_edit(
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
                                     <span>At least {settings.password_min_length} characters long</span>
                                 </div>
-            """
-            )
+            """)
             if settings.password_require_uppercase:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="edit-req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
-                """
-                )
+                """)
             if settings.password_require_lowercase:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="edit-req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
-                """
-                )
+                """)
             if settings.password_require_numbers:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="edit-req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
-                """
-                )
+                """)
             if settings.password_require_special:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="edit-req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
-                """
-                )
-            pr_lines.append(
-                """
+                """)
+            pr_lines.append("""
                             </div>
                         </div>
                     </div>
                 </div>
-            """
-            )
+            """)
             password_requirements_html = "".join(pr_lines)
         else:
             # Intentionally an empty string for HTML insertion when no requirements apply.
@@ -7842,7 +7935,7 @@ async def admin_get_user_edit(
 
         # Create edit form HTML
         edit_form = f"""
-        <div class="space-y-4">
+        <div id="user-edit-modal-content" class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
             <div id="edit-user-error"></div>
             <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
@@ -7872,13 +7965,13 @@ async def admin_get_user_edit(
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
                     <input type="password" name="password" id="password-field"
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
-                           oninput="validatePasswordRequirements(); validatePasswordMatch();">
+                           oninput="Admin.validatePasswordRequirements(); Admin.validatePasswordMatch();">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Confirm New Password</label>
                     <input type="password" name="confirm_password" id="confirm-password-field"
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
-                           oninput="validatePasswordMatch()">
+                           oninput="Admin.validatePasswordMatch()">
                     <div id="password-match-message" class="mt-1 text-sm text-red-600 hidden">Passwords do not match</div>
                 </div>
                 {password_requirements_html}
@@ -7892,7 +7985,7 @@ async def admin_get_user_edit(
                     data-require-special="{"true" if settings.password_require_special else "false"}"
                 ></div>
                 <div class="flex justify-end space-x-3">
-                    <button type="button" onclick="hideUserEditModal()"
+                    <button type="button" onclick="Admin.hideUserEditModal()"
                             class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                         Cancel
                     </button>
@@ -7987,6 +8080,9 @@ async def admin_update_user(
         success_html = """
         <div class="text-green-500 text-center p-4">
             <p>User updated successfully</p>
+            <button type="button" onclick="Admin.hideUserEditModal()" class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
+                Close
+            </button>
         </div>
         """
         response = HTMLResponse(content=success_html)
@@ -8680,9 +8776,11 @@ async def admin_tool_ops_partial(
 @admin_router.get("/tools/ids", response_class=JSONResponse)
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_get_all_tool_ids(
+    q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8692,9 +8790,11 @@ async def admin_get_all_tool_ids(
     This is used by "Select All" to get all tool IDs without loading full data.
 
     Args:
+        q (str): Search query to filter tools by name, ID, or description
         include_inactive (bool): Whether to include inactive tools in the results
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local tools).
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all platform-public tools when filtering by team.
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -8710,6 +8810,21 @@ async def admin_get_all_tool_ids(
 
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
+
+    # Apply search filter if provided
+    if q:
+        search_query = _normalize_search_query(q)
+        if search_query:
+            search_conditions = [
+                _like_contains(func.lower(DbTool.id), search_query),
+                _like_contains(func.lower(DbTool.original_name), search_query),
+                _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.description, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.url, "")), search_query),
+            ]
+            query = query.where(or_(*search_conditions))
+            LOGGER.debug(f"Filtering tool IDs by search query: {search_query}")
 
     # Apply optional gateway/server scoping (comma-separated ids). Accepts the
     # literal value 'null' to indicate NULL gateway_id (local tools).
@@ -8729,22 +8844,19 @@ async def admin_get_all_tool_ids(
                 LOGGER.debug(f"Filtering tools by gateway IDs: {non_null_ids}")
 
     # Build access conditions
-    # When team_id is specified, show items from that team plus all platform-public tools
-    # (visibility="public") so the "Select All" count and payload match what is actually
-    # visible in the edit UI. Public visibility is platform-wide regardless of team ownership.
+    # When team_id is specified, show items from that team; optionally include
+    # platform-public items when include_public is set (mirrors the partial endpoint).
     # Otherwise, show all accessible items (All Teams view).
     if team_id:
         if team_id in team_ids:
-            # Apply visibility check: team/public resources + user's own resources (including private)
-            # Also include all platform-public tools so they can be associated with team-owned
-            # virtual servers.
             team_access = [
                 and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
                 and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
-                DbTool.visibility == "public",
             ]
+            if include_public:
+                team_access.append(DbTool.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering tool IDs by team_id: {team_id}")
+            LOGGER.debug(f"Filtering tool IDs by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             LOGGER.warning(f"User {user_email} attempted to filter tool IDs by team {team_id} but is not a member")
             query = query.where(false())
@@ -9191,7 +9303,7 @@ async def admin_gateways_partial_html(
     team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
-    query = select(DbGateway).options(joinedload(DbGateway.email_team))
+    query = select(DbGateway).options(joinedload(DbGateway.email_team), selectinload(DbGateway.tools))
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
@@ -9924,9 +10036,11 @@ async def admin_resources_partial_html(
 @admin_router.get("/prompts/ids", response_class=JSONResponse)
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def admin_get_all_prompt_ids(
+    q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -9936,9 +10050,11 @@ async def admin_get_all_prompt_ids(
     of prompts the requesting user can access (owner, team, or public).
 
     Args:
+        q (str): Search query to filter prompts by name or description.
         include_inactive (bool): When True include prompts that are inactive.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local prompts).
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all platform-public prompts when filtering by team.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -9951,6 +10067,22 @@ async def admin_get_all_prompt_ids(
     team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbPrompt.id)
+
+    if not include_inactive:
+        query = query.where(DbPrompt.enabled.is_(True))
+
+    # Apply search filter if provided
+    if q:
+        search_query = _normalize_search_query(q)
+        if search_query:
+            search_conditions = [
+                _like_contains(func.lower(DbPrompt.id), search_query),
+                _like_contains(func.lower(DbPrompt.original_name), search_query),
+                _like_contains(func.lower(coalesce(DbPrompt.display_name, "")), search_query),
+                _like_contains(func.lower(coalesce(DbPrompt.description, "")), search_query),
+            ]
+            query = query.where(or_(*search_conditions))
+            LOGGER.debug(f"Filtering prompt IDs by search query: {search_query}")
 
     # Apply optional gateway/server scoping
     if gateway_id:
@@ -9968,27 +10100,20 @@ async def admin_get_all_prompt_ids(
                 query = query.where(DbPrompt.gateway_id.in_(non_null_ids))
                 LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
 
-    if not include_inactive:
-        query = query.where(DbPrompt.enabled.is_(True))
-
     # Build access conditions
-    # When team_id is specified, show items from that team plus all platform-public prompts
-    # (visibility="public") so the "Select All" count and payload match what is actually
-    # visible in the edit UI. Public visibility is platform-wide regardless of team ownership.
+    # When team_id is specified, show items from that team; optionally include
+    # platform-public items when include_public is set (mirrors the partial endpoint).
     # Otherwise, show all accessible items (All Teams view).
     if team_id:
-        # Team-specific view: show prompts from the specified team plus platform-public prompts
         if team_id in team_ids:
-            # Apply visibility check: team/public resources + user's own resources (including private)
-            # Also include all platform-public prompts so they can be associated with team-owned
-            # virtual servers.
             team_access = [
                 and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
                 and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
-                DbPrompt.visibility == "public",
             ]
+            if include_public:
+                team_access.append(DbPrompt.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering prompt IDs by team_id: {team_id}")
+            LOGGER.debug(f"Filtering prompt IDs by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
             LOGGER.warning(f"User {user_email} attempted to filter prompt IDs by team {team_id} but is not a member")
@@ -10009,9 +10134,11 @@ async def admin_get_all_prompt_ids(
 @admin_router.get("/resources/ids", response_class=JSONResponse)
 @require_permission("resources.read", allow_admin_bypass=False)
 async def admin_get_all_resource_ids(
+    q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
+    include_public: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -10021,9 +10148,11 @@ async def admin_get_all_resource_ids(
     of resources the requesting user can access (owner, team, or public).
 
     Args:
+        q (str): Search query to filter resources by name, URI, or description.
         include_inactive (bool): Whether to include inactive resources in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local resources).
         team_id (Optional[str]): Filter by team ID.
+        include_public (bool): Whether to include all platform-public resources when filtering by team.
         db (Session): Database session dependency.
         user: Authenticated user object from dependency injection.
 
@@ -10036,6 +10165,22 @@ async def admin_get_all_resource_ids(
     team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbResource.id)
+
+    if not include_inactive:
+        query = query.where(DbResource.enabled.is_(True))
+
+    # Apply search filter if provided
+    if q:
+        search_query = _normalize_search_query(q)
+        if search_query:
+            search_conditions = [
+                _like_contains(func.lower(DbResource.id), search_query),
+                _like_contains(func.lower(DbResource.name), search_query),
+                _like_contains(func.lower(coalesce(DbResource.uri, "")), search_query),
+                _like_contains(func.lower(coalesce(DbResource.description, "")), search_query),
+            ]
+            query = query.where(or_(*search_conditions))
+            LOGGER.debug(f"Filtering resource IDs by search query: {search_query}")
 
     # Apply optional gateway/server scoping
     if gateway_id:
@@ -10053,27 +10198,20 @@ async def admin_get_all_resource_ids(
                 query = query.where(DbResource.gateway_id.in_(non_null_ids))
                 LOGGER.debug(f"Filtering resources by gateway IDs: {non_null_ids}")
 
-    if not include_inactive:
-        query = query.where(DbResource.enabled.is_(True))
-
     # Build access conditions
-    # When team_id is specified, show items from that team plus all platform-public resources
-    # (visibility="public") so the "Select All" count and payload match what is actually
-    # visible in the edit UI. Public visibility is platform-wide regardless of team ownership.
+    # When team_id is specified, show items from that team; optionally include
+    # platform-public items when include_public is set (mirrors the partial endpoint).
     # Otherwise, show all accessible items (All Teams view).
     if team_id:
-        # Team-specific view: show resources from the specified team plus platform-public resources
         if team_id in team_ids:
-            # Apply visibility check: team/public resources + user's own resources (including private)
-            # Also include all platform-public resources so they can be associated with team-owned
-            # virtual servers.
             team_access = [
                 and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
                 and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
-                DbResource.visibility == "public",
             ]
+            if include_public:
+                team_access.append(DbResource.visibility == "public")
             query = query.where(or_(*team_access))
-            LOGGER.debug(f"Filtering resource IDs by team_id: {team_id}")
+            LOGGER.debug(f"Filtering resource IDs by team_id: {team_id}{' (include_public)' if include_public else ''}")
         else:
             # User is not a member of this team, return no results using SQLAlchemy's false()
             LOGGER.warning(f"User {user_email} attempted to filter resource IDs by team {team_id} but is not a member")
@@ -12499,7 +12637,18 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_add_resource: {ex}")
-            return ORJSONResponse(content={"message": str(ex), "success": False, "actual_size": ex.actual_size, "max_size": ex.max_size}, status_code=413)
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=413)
+        if isinstance(ex, ContentTypeError):
+            LOGGER.error(f"ContentTypeError in admin_add_resource: {ex}")
+            return ORJSONResponse(
+                content={
+                    "message": str(ex),
+                    "success": False,
+                    "mime_type": ex.mime_type,
+                    "allowed_types": ex.allowed_types,
+                },
+                status_code=415,
+            )
         LOGGER.error(f"Error in admin_add_resource: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -12598,6 +12747,14 @@ async def admin_edit_resource(
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
+        # Roll back to discard any dirty tracked state from the failed update.
+        try:
+            active_transaction = db.get_transaction() if hasattr(db, "get_transaction") else None
+            if db.is_active and active_transaction is not None:
+                db.rollback()
+        except (InvalidRequestError, OperationalError) as rollback_error:
+            LOGGER.warning("Rollback failed (ignoring for SQLite compatibility): %s", rollback_error)
+
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
@@ -12610,7 +12767,18 @@ async def admin_edit_resource(
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_edit_resource: {ex}")
-            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False, "actual_size": ex.actual_size, "max_size": ex.max_size})
+            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
+        if isinstance(ex, ContentTypeError):
+            LOGGER.error(f"ContentTypeError in admin_edit_resource: {ex}")
+            return ORJSONResponse(
+                status_code=415,
+                content={
+                    "message": str(ex),
+                    "success": False,
+                    "mime_type": ex.mime_type,
+                    "allowed_types": ex.allowed_types,
+                },
+            )
         LOGGER.error(f"Error in admin_edit_resource: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -12844,10 +13012,18 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, PromptArgumentsJSONError):
             LOGGER.error(f"PromptArgumentsJSONError in admin_add_prompt: {ex}")
-            return ORJSONResponse(status_code=422, content={"message": str(ex), "success": False, "field": ex.field_name})
+            return ORJSONResponse(
+                status_code=422,
+                content={
+                    "message": f"Invalid JSON in {ex.field_name}: {ex.json_error}",
+                    "field": ex.field_name,
+                    "success": False,
+                },
+            )
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_add_prompt: {ex}")
-            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False, "actual_size": ex.actual_size, "max_size": ex.max_size})
+            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
+
         LOGGER.error(f"Error in admin_add_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -12957,10 +13133,17 @@ async def admin_edit_prompt(
             return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         if isinstance(ex, PromptArgumentsJSONError):
             LOGGER.error(f"PromptArgumentsJSONError in admin_edit_prompt: {ex}")
-            return ORJSONResponse(status_code=422, content={"message": str(ex), "success": False, "field": ex.field_name})
+            return ORJSONResponse(
+                status_code=422,
+                content={
+                    "message": f"Invalid JSON in {ex.field_name}: {ex.json_error}",
+                    "field": ex.field_name,
+                    "success": False,
+                },
+            )
         if isinstance(ex, ContentSizeError):
             LOGGER.error(f"ContentSizeError in admin_edit_prompt: {ex}")
-            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False, "actual_size": ex.actual_size, "max_size": ex.max_size})
+            return ORJSONResponse(status_code=413, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_prompt: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -17614,8 +17797,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
         dict: Time-series percentile data
     """
     # PostgreSQL query with epoch-based bucketing (works for any interval including > 60 min)
-    stats_sql = text(
-        """
+    stats_sql = text("""
         SELECT
             TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
             percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
@@ -17626,8 +17808,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
         GROUP BY bucket
         ORDER BY bucket
-        """
-    )
+        """)
 
     interval_seconds = interval_minutes * 60
     results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
@@ -17778,8 +17959,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         dict: Time-series metrics data
     """
     # Use epoch-based bucketing (works for any interval including > 60 min)
-    stats_sql = text(
-        """
+    stats_sql = text("""
         SELECT
             TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
             COUNT(*) as total,
@@ -17789,8 +17969,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         WHERE start_time >= :cutoff_time
         GROUP BY bucket
         ORDER BY bucket
-        """
-    )
+        """)
 
     interval_seconds = interval_minutes * 60
     results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
@@ -17900,13 +18079,11 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
         dict: Heatmap data with time and latency dimensions
     """
     # First, get min/max durations
-    stats_query = text(
-        """
+    stats_query = text("""
         SELECT MIN(duration_ms) as min_d, MAX(duration_ms) as max_d
         FROM observability_traces
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
-    """
-    )
+    """)
     stats_row = db.execute(stats_query, {"cutoff_time": cutoff_time}).fetchone()
 
     if not stats_row or stats_row.min_d is None:
@@ -17925,8 +18102,7 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
     time_bucket_minutes = time_range_minutes / time_buckets
 
     # Use SQL arithmetic for 2D histogram bucketing
-    heatmap_query = text(
-        """
+    heatmap_query = text("""
         SELECT
             LEAST(GREATEST(
                 (EXTRACT(EPOCH FROM (start_time - :cutoff_time)) / 60.0 / :time_bucket_minutes)::int,
@@ -17940,8 +18116,7 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
         FROM observability_traces
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
         GROUP BY time_idx, latency_idx
-    """
-    )
+    """)
 
     rows = db.execute(
         heatmap_query,

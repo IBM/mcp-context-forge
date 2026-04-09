@@ -78,10 +78,10 @@ ContextForge: Full Project Overview
 - Selective pytest: `pytest -k "fragment"`, `pytest -m "not slow"`
 - Lint & static analysis:
   - Format & hooks: `make autoflake isort black pre-commit`
-  - Static: `make pylint flake8`, full lint: `make lint`
+  - Static: `make pylint ruff`, full lint: `make lint`
   - Security/docs QA (as configured): `make bandit interrogate verify check-manifest`
 - PR readiness (recommended):
-  - `make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint verify`
+  - `make doctest test htmlcov smoketest lint-web bandit interrogate pylint verify`
 - Structure & conventions:
   - Tests in `tests/{unit,integration,e2e,playwright}`; mark `slow|ui|api|smoke|e2e` to keep defaults fast.
   - Prefer editing existing test files; target coverage gaps first.

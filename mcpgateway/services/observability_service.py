@@ -16,13 +16,33 @@ It includes:
 - Query and filtering capabilities
 - Integration with FastAPI middleware
 
+Architecture (Issue #3883 - Separate Session Pattern):
+    Write operations (start_trace, end_trace, start_span, end_span, add_event,
+    record_token_usage, record_metric, delete_old_traces) use independent database
+    sessions that commit immediately on a best-effort basis. This allows observability
+    data to persist even when the main request transaction fails, providing visibility
+    into partial failures.
+
+    Query operations (get_trace, get_traces, get_spans, etc.) accept a session parameter
+    to use the request-scoped session with proper RBAC and token scoping.
+
+    This pattern matches the SQL query instrumentation approach in
+    mcpgateway/instrumentation/sqlalchemy.py:58-87.
+
+Transaction Semantics:
+    - Observability writes are NOT atomic with main request transaction
+    - Trace data persists independently (may show partial states for failed requests)
+    - This is intentional for best-effort observability visibility
+    - Context managers (trace_span, trace_tool_invocation, trace_a2a_request) create
+      a single independent session for the entire span lifecycle
+
 Examples:
     >>> from mcpgateway.services.observability_service import ObservabilityService  # doctest: +SKIP
     >>> service = ObservabilityService()  # doctest: +SKIP
-    >>> trace_id = service.start_trace(db, "GET /tools", http_method="GET", http_url="/tools")  # doctest: +SKIP
-    >>> span_id = service.start_span(db, trace_id, "database_query", resource_type="database")  # doctest: +SKIP
-    >>> service.end_span(db, span_id, status="ok")  # doctest: +SKIP
-    >>> service.end_trace(db, trace_id, status="ok", http_status_code=200)  # doctest: +SKIP
+    >>> trace_id = service.start_trace("GET /tools", http_method="GET", http_url="/tools")  # doctest: +SKIP
+    >>> span_id = service.start_span(trace_id, "database_query", resource_type="database")  # doctest: +SKIP
+    >>> service.end_span(span_id, status="ok")  # doctest: +SKIP
+    >>> service.end_trace(trace_id, status="ok", http_status_code=200)  # doctest: +SKIP
 """
 
 # Standard
@@ -32,7 +52,7 @@ from datetime import datetime, timezone
 import logging
 import re
 import traceback
-from typing import Any, Dict, List, Optional, Pattern, Tuple
+from typing import Any, Dict, Generator, List, Optional, Pattern, Tuple
 import uuid
 
 # Third-Party
@@ -41,7 +61,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
-from mcpgateway.db import ObservabilityEvent, ObservabilityMetric, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import ObservabilityEvent, ObservabilityMetric, ObservabilitySpan, ObservabilityTrace, SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -169,18 +189,58 @@ def format_traceparent(trace_id: str, span_id: str, sampled: bool = True) -> str
     return f"00-{trace_id}-{span_id}-{flags}"
 
 
+def _get_or_create_observability_session() -> tuple[Session, bool]:
+    """Get or create independent observability session (best-effort pattern).
+
+    Follows the established pattern from auth_middleware.py:65-99 for
+    consistent session ownership tracking.
+
+    This session is separate from the main request transaction to maintain
+    observability visibility even when the main request fails (issue #3883).
+    SQL query instrumentation (instrumentation/sqlalchemy.py:58-87) already
+    uses this pattern.
+
+    Returns:
+        tuple: (session, owned) where:
+            - session: New SQLAlchemy session for observability
+            - owned: Always True (caller must close it)
+
+    Note:
+        The tuple return pattern allows future optimization where callers could
+        optionally pass a session for reuse. Currently always returns (session, True)
+        but the "if owned:" guards in callers remain for forward compatibility.
+
+    Examples:
+        >>> obs_db, owned = _get_or_create_observability_session()  # doctest: +SKIP
+        >>> assert owned is True  # doctest: +SKIP
+        >>> obs_db.close()  # doctest: +SKIP
+    """
+    return SessionLocal(), True
+
+
 class ObservabilityService:
     """Service for managing observability traces, spans, events, and metrics.
 
     This service provides comprehensive observability capabilities similar to
     OpenTelemetry, allowing tracking of request flows through the system.
 
+    Observability write operations use independent database sessions (issue #3883)
+    that commit immediately on a best-effort basis, separate from main request
+    transactions. Query methods accept a session parameter for RBAC/token scoping.
+
     Examples:
         >>> service = ObservabilityService()  # doctest: +SKIP
-        >>> trace_id = service.start_trace(db, "POST /tools/invoke")  # doctest: +SKIP
-        >>> span_id = service.start_span(db, trace_id, "tool_execution")  # doctest: +SKIP
-        >>> service.end_span(db, span_id, status="ok")  # doctest: +SKIP
-        >>> service.end_trace(db, trace_id, status="ok")  # doctest: +SKIP
+        >>> # Write methods create independent sessions (no db parameter)
+        >>> trace_id = service.start_trace(
+        ...     "POST /tools/invoke",
+        ...     http_method="POST",
+        ...     http_url="https://api.example.com/tools/invoke"
+        ... )  # doctest: +SKIP
+        >>> span_id = service.start_span(trace_id, "tool_execution")  # doctest: +SKIP
+        >>> service.end_span(span_id, status="ok")  # doctest: +SKIP
+        >>> service.end_trace(trace_id, status="ok")  # doctest: +SKIP
+        >>> # Query methods accept db parameter for RBAC scoping
+        >>> traces = service.get_traces(db, limit=10)  # doctest: +SKIP
     """
 
     def _safe_commit(self, db: Session, context: str) -> bool:
@@ -208,9 +268,8 @@ class ObservabilityService:
     # Trace Management
     # ==============================
 
-    def start_trace(
+    def start_trace(  # pylint: disable=too-many-locals
         self,
-        db: Session,
         name: str,
         trace_id: Optional[str] = None,
         parent_span_id: Optional[str] = None,
@@ -224,8 +283,11 @@ class ObservabilityService:
     ) -> str:
         """Start a new trace.
 
+        Creates an independent observability session for best-effort recording.
+        Observability data persists independently of main request transaction
+        (issue #3883 - separate session pattern).
+
         Args:
-            db: Database session
             name: Trace name (e.g., "POST /tools/invoke")
             trace_id: External trace ID (for distributed tracing, W3C format)
             parent_span_id: Parent span ID from upstream service
@@ -240,46 +302,58 @@ class ObservabilityService:
         Returns:
             Trace ID (UUID string or W3C format)
 
+        Note:
+            Uses separate database session from main transaction (best-effort).
+            Follows pattern established in instrumentation/sqlalchemy.py:58-87.
+
         Examples:
             >>> trace_id = service.start_trace(  # doctest: +SKIP
-            ...     db,
             ...     "POST /tools/invoke",
             ...     http_method="POST",
             ...     http_url="https://api.example.com/tools/invoke",
             ...     user_email="user@example.com"
             ... )
         """
-        # Use provided trace_id or generate new UUID
-        if not trace_id:
-            trace_id = str(uuid.uuid4())
+        obs_db = None
+        owned = False
+        try:
+            obs_db, owned = _get_or_create_observability_session()
+            # Use provided trace_id or generate new UUID
+            if not trace_id:
+                trace_id = str(uuid.uuid4())
 
-        # Add parent context to attributes if provided
-        attrs = attributes or {}
-        if parent_span_id:
-            attrs["parent_span_id"] = parent_span_id
+            # Add parent context to attributes if provided
+            attrs = attributes or {}
+            if parent_span_id:
+                attrs["parent_span_id"] = parent_span_id
 
-        trace = ObservabilityTrace(
-            trace_id=trace_id,
-            name=name,
-            start_time=utc_now(),
-            status="unset",
-            http_method=http_method,
-            http_url=http_url,
-            user_email=user_email,
-            user_agent=user_agent,
-            ip_address=ip_address,
-            attributes=attrs,
-            resource_attributes=resource_attributes or {},
-            created_at=utc_now(),
-        )
-        db.add(trace)
-        self._safe_commit(db, "start_trace")
-        logger.debug(f"Started trace {trace_id}: {name}")
-        return trace_id
+            trace = ObservabilityTrace(
+                trace_id=trace_id,
+                name=name,
+                start_time=utc_now(),
+                status="unset",
+                http_method=http_method,
+                http_url=http_url,
+                user_email=user_email,
+                user_agent=user_agent,
+                ip_address=ip_address,
+                attributes=attrs,
+                resource_attributes=resource_attributes or {},
+                created_at=utc_now(),
+            )
+            obs_db.add(trace)
+            self._safe_commit(obs_db, "start_trace")
+            logger.debug(f"Started trace {trace_id}: {name}")
+            return trace_id
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     def end_trace(
         self,
-        db: Session,
         trace_id: str,
         status: str = "ok",
         status_message: Optional[str] = None,
@@ -288,41 +362,57 @@ class ObservabilityService:
     ) -> None:
         """End a trace.
 
+        Creates an independent observability session for best-effort recording.
+        Observability data persists independently of main request transaction
+        (issue #3883 - separate session pattern).
+
         Args:
-            db: Database session
             trace_id: Trace ID to end
             status: Trace status (ok, error)
             status_message: Optional status message
             http_status_code: HTTP response status code
             attributes: Additional attributes to merge
 
+        Note:
+            Uses separate database session from main transaction (best-effort).
+            Follows pattern established in instrumentation/sqlalchemy.py:58-87.
+
         Examples:
             >>> service.end_trace(  # doctest: +SKIP
-            ...     db,
             ...     trace_id,
             ...     status="ok",
             ...     http_status_code=200
             ... )
         """
-        trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).first()
-        if not trace:
-            logger.warning(f"Trace {trace_id} not found")
-            return
+        obs_db = None
+        owned = False
+        try:
+            obs_db, owned = _get_or_create_observability_session()
+            trace = obs_db.query(ObservabilityTrace).filter_by(trace_id=trace_id).first()
+            if not trace:
+                logger.warning(f"Trace {trace_id} not found")
+                return
 
-        end_time = utc_now()
-        duration_ms = (end_time - ensure_timezone_aware(trace.start_time)).total_seconds() * 1000
+            end_time = utc_now()
+            duration_ms = (end_time - ensure_timezone_aware(trace.start_time)).total_seconds() * 1000
 
-        trace.end_time = end_time
-        trace.duration_ms = duration_ms
-        trace.status = status
-        trace.status_message = status_message
-        if http_status_code is not None:
-            trace.http_status_code = http_status_code
-        if attributes:
-            trace.attributes = {**(trace.attributes or {}), **attributes}
+            trace.end_time = end_time
+            trace.duration_ms = duration_ms
+            trace.status = status
+            trace.status_message = status_message
+            if http_status_code is not None:
+                trace.http_status_code = http_status_code
+            if attributes:
+                trace.attributes = {**(trace.attributes or {}), **attributes}
 
-        self._safe_commit(db, "end_trace")
-        logger.debug(f"Ended trace {trace_id}: {status} ({duration_ms:.2f}ms)")
+            self._safe_commit(obs_db, "end_trace")
+            logger.debug(f"Ended trace {trace_id}: {status} ({duration_ms:.2f}ms)")
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     def get_trace(self, db: Session, trace_id: str, include_spans: bool = False) -> Optional[ObservabilityTrace]:
         """Get a trace by ID.
@@ -351,7 +441,6 @@ class ObservabilityService:
 
     def start_span(
         self,
-        db: Session,
         trace_id: str,
         name: str,
         parent_span_id: Optional[str] = None,
@@ -361,11 +450,14 @@ class ObservabilityService:
         resource_id: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
         commit: bool = True,
+        obs_db: Optional[Session] = None,
     ) -> str:
         """Start a new span within a trace.
 
+        Creates an independent observability session for best-effort recording
+        unless obs_db is provided by a context manager.
+
         Args:
-            db: Database session
             trace_id: Parent trace ID
             name: Span name (e.g., "database_query", "tool_invocation")
             parent_span_id: Parent span ID (for nested spans)
@@ -374,99 +466,136 @@ class ObservabilityService:
             resource_type: Resource type (tool, resource, prompt, etc.)
             resource_id: Resource ID
             attributes: Additional span attributes
-            commit: Whether to commit the transaction (default True).
-                Set to False when using fresh_db_session() which handles commits.
+            commit: Whether to commit immediately (default True).
+                Set to False when called from context managers.
+            obs_db: Optional observability session for context managers.
+                If not provided, creates a new independent session.
 
         Returns:
             Span ID (UUID string)
 
+        Note:
+            When obs_db is provided, caller owns session lifecycle.
+            When obs_db is None, this method creates and closes its own session.
+            Uses separate database session from main transaction (issue #3883).
+
         Examples:
             >>> span_id = service.start_span(  # doctest: +SKIP
-            ...     db,
             ...     trace_id,
             ...     "tool_invocation",
             ...     resource_type="tool",
             ...     resource_name="get_weather"
             ... )
         """
-        span_id = str(uuid.uuid4())
-        span = ObservabilitySpan(
-            span_id=span_id,
-            trace_id=trace_id,
-            parent_span_id=parent_span_id,
-            name=name,
-            kind=kind,
-            start_time=utc_now(),
-            status="unset",
-            resource_name=resource_name,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            attributes=attributes or {},
-            created_at=utc_now(),
-        )
-        db.add(span)
-        if commit:
-            self._safe_commit(db, "start_span")
-        logger.debug(f"Started span {span_id}: {name} (trace={trace_id})")
-        return span_id
+        session_owned = False
+        if obs_db is None:
+            obs_db, session_owned = _get_or_create_observability_session()
+
+        try:
+            span_id = str(uuid.uuid4())
+            span = ObservabilitySpan(
+                span_id=span_id,
+                trace_id=trace_id,
+                parent_span_id=parent_span_id,
+                name=name,
+                kind=kind,
+                start_time=utc_now(),
+                status="unset",
+                resource_name=resource_name,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                attributes=attributes or {},
+                created_at=utc_now(),
+            )
+            obs_db.add(span)
+            if commit:
+                self._safe_commit(obs_db, "start_span")
+            logger.debug(f"Started span {span_id}: {name} (trace={trace_id})")
+            return span_id
+        finally:
+            if session_owned:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     def end_span(
         self,
-        db: Session,
         span_id: str,
         status: str = "ok",
         status_message: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
         commit: bool = True,
+        obs_db: Optional[Session] = None,
     ) -> None:
         """End a span.
 
+        Creates an independent observability session for best-effort recording
+        unless obs_db is provided by a context manager.
+
         Args:
-            db: Database session
             span_id: Span ID to end
             status: Span status (ok, error)
             status_message: Optional status message
             attributes: Additional attributes to merge
-            commit: Whether to commit the transaction (default True).
-                Set to False when using fresh_db_session() which handles commits.
+            commit: Whether to commit immediately (default True).
+                Set to False when called from context managers.
+            obs_db: Optional observability session for context managers.
+                If not provided, creates a new independent session.
+
+        Note:
+            When obs_db is provided, caller owns session lifecycle.
+            When obs_db is None, this method creates and closes its own session.
+            Uses separate database session from main transaction (issue #3883).
 
         Examples:
-            >>> service.end_span(db, span_id, status="ok")  # doctest: +SKIP
+            >>> service.end_span(span_id, status="ok")  # doctest: +SKIP
         """
-        span = db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
-        if not span:
-            logger.warning(f"Span {span_id} not found")
-            return
+        session_owned = False
+        if obs_db is None:
+            obs_db, session_owned = _get_or_create_observability_session()
 
-        end_time = utc_now()
-        duration_ms = (end_time - ensure_timezone_aware(span.start_time)).total_seconds() * 1000
+        try:
+            span = obs_db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
+            if not span:
+                logger.warning(f"Span {span_id} not found")
+                return
 
-        span.end_time = end_time
-        span.duration_ms = duration_ms
-        span.status = status
-        span.status_message = status_message
-        if attributes:
-            span.attributes = {**(span.attributes or {}), **attributes}
+            end_time = utc_now()
+            duration_ms = (end_time - ensure_timezone_aware(span.start_time)).total_seconds() * 1000
 
-        if commit:
-            self._safe_commit(db, "end_span")
-        logger.debug(f"Ended span {span_id}: {status} ({duration_ms:.2f}ms)")
+            span.end_time = end_time
+            span.duration_ms = duration_ms
+            span.status = status
+            span.status_message = status_message
+            if attributes:
+                span.attributes = {**(span.attributes or {}), **attributes}
+
+            if commit:
+                self._safe_commit(obs_db, "end_span")
+            logger.debug(f"Ended span {span_id}: {status} ({duration_ms:.2f}ms)")
+        finally:
+            if session_owned:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     @contextmanager
     def trace_span(
         self,
-        db: Session,
         trace_id: str,
         name: str,
         parent_span_id: Optional[str] = None,
         resource_type: Optional[str] = None,
         resource_name: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> Generator[str, None, None]:
         """Context manager for automatic span lifecycle management.
 
+        Creates an independent observability session for the span lifecycle.
+
         Args:
-            db: Database session
             trace_id: Parent trace ID
             name: Span name
             parent_span_id: Parent span ID (optional)
@@ -480,34 +609,86 @@ class ObservabilityService:
         Raises:
             Exception: Re-raises any exception after logging it in the span
 
+        Note:
+            Uses separate database session from main transaction (issue #3883).
+
         Examples:
-            >>> with service.trace_span(db, trace_id, "database_query") as span_id:  # doctest: +SKIP
-            ...     results = db.query(Tool).all()  # doctest: +SKIP
+            >>> with service.trace_span(trace_id, "database_query") as span_id:  # doctest: +SKIP
+            ...     results = query_data()  # doctest: +SKIP
         """
-        span_id = self.start_span(db, trace_id, name, parent_span_id, resource_type=resource_type, resource_name=resource_name, attributes=attributes)
+        obs_db = None
+        owned = False
+        span_id = None
         try:
+            obs_db, owned = _get_or_create_observability_session()
+            span_id = self.start_span(
+                trace_id=trace_id,
+                name=name,
+                parent_span_id=parent_span_id,
+                resource_type=resource_type,
+                resource_name=resource_name,
+                attributes=attributes,
+                commit=False,  # Don't commit yet
+                obs_db=obs_db,  # Use our session
+            )
             yield span_id
-            self.end_span(db, span_id, status="ok")
+            # Success path
+            self.end_span(
+                span_id,
+                status="ok",
+                commit=False,  # Don't commit yet
+                obs_db=obs_db,  # Use our session
+            )
+            # Commit all changes atomically
+            self._safe_commit(obs_db, "trace_span")
         except Exception as e:
-            self.end_span(db, span_id, status="error", status_message=str(e))
-            self.add_event(db, span_id, "exception", severity="error", message=str(e), exception_type=type(e).__name__, exception_message=str(e), exception_stacktrace=traceback.format_exc())
+            # Error path
+            if span_id:
+                try:
+                    self.end_span(
+                        span_id,
+                        status="error",
+                        status_message=str(e),
+                        commit=False,  # Don't commit yet
+                        obs_db=obs_db,  # Use our session
+                    )
+                    # Add error event using same session for atomic commit
+                    self.add_event(
+                        span_id,
+                        name="exception",
+                        severity="error",
+                        message=str(e),
+                        exception_type=type(e).__name__,
+                        exception_message=str(e),
+                        exception_stacktrace=traceback.format_exc(),
+                        obs_db=obs_db,  # Use same session for atomicity
+                    )
+                    # Commit error state
+                    self._safe_commit(obs_db, "trace_span_error")
+                except Exception as end_error:
+                    logger.warning(f"Failed to end span on error: {end_error}")
             raise
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     @contextmanager
     def trace_tool_invocation(
         self,
-        db: Session,
         tool_name: str,
         arguments: Dict[str, Any],
         integration_type: Optional[str] = None,
-    ):
+    ) -> Generator[Tuple[Optional[str], Dict[str, Any]], None, None]:
         """Context manager for tracing MCP tool invocations.
 
         This automatically creates a span for tool execution, capturing timing,
-        arguments, results, and errors.
+        arguments, results, and errors. Creates an independent observability session
+        for the span lifecycle.
 
         Args:
-            db: Database session
             tool_name: Name of the tool being invoked
             arguments: Tool arguments (will be sanitized)
             integration_type: Integration type (MCP, REST, A2A, etc.)
@@ -518,8 +699,11 @@ class ObservabilityService:
         Raises:
             Exception: Re-raises any exception from tool invocation after logging
 
+        Note:
+            Uses separate database session from main transaction (issue #3883).
+
         Examples:
-            >>> with service.trace_tool_invocation(db, "weather", {"city": "NYC"}) as (span_id, result):  # doctest: +SKIP
+            >>> with service.trace_tool_invocation("weather", {"city": "NYC"}) as (span_id, result):  # doctest: +SKIP
             ...     response = await http_client.post(...)  # doctest: +SKIP
             ...     result["status_code"] = response.status_code  # doctest: +SKIP
             ...     result["response_size"] = len(response.content)  # doctest: +SKIP
@@ -534,50 +718,78 @@ class ObservabilityService:
         # Sanitize arguments (remove sensitive data)
         safe_args = {k: ("***REDACTED***" if any(sensitive in k.lower() for sensitive in ["password", "token", "key", "secret"]) else v) for k, v in arguments.items()}
 
-        # Start tool invocation span
-        span_id = self.start_span(
-            db=db,
-            trace_id=trace_id,
-            name=f"tool.invoke.{tool_name}",
-            kind="client",
-            resource_type="tool",
-            resource_name=tool_name,
-            attributes={
-                "tool.name": tool_name,
-                "tool.integration_type": integration_type,
-                "tool.argument_count": len(arguments),
-                "tool.arguments": safe_args,
-            },
-        )
-
+        obs_db = None
+        owned = False
+        span_id = None
         result_dict = {}
         try:
+            obs_db, owned = _get_or_create_observability_session()
+            # Start tool invocation span
+            span_id = self.start_span(
+                trace_id=trace_id,
+                name=f"tool.invoke.{tool_name}",
+                kind="client",
+                resource_type="tool",
+                resource_name=tool_name,
+                attributes={
+                    "tool.name": tool_name,
+                    "tool.integration_type": integration_type,
+                    "tool.argument_count": len(arguments),
+                    "tool.arguments": safe_args,
+                },
+                commit=False,  # Don't commit yet
+                obs_db=obs_db,  # Use our session
+            )
+
             yield (span_id, result_dict)
 
             # End span with results
             self.end_span(
-                db=db,
                 span_id=span_id,
                 status="ok",
                 attributes={
                     "tool.result": result_dict,
                 },
+                commit=False,  # Don't commit yet
+                obs_db=obs_db,  # Use our session
             )
+            # Commit all changes atomically
+            self._safe_commit(obs_db, "trace_tool_invocation")
         except Exception as e:
-            # Log error in span
-            self.end_span(db=db, span_id=span_id, status="error", status_message=str(e))
+            # Error path
+            if span_id:
+                try:
+                    # Log error in span
+                    self.end_span(
+                        span_id=span_id,
+                        status="error",
+                        status_message=str(e),
+                        commit=False,  # Don't commit yet
+                        obs_db=obs_db,  # Use our session
+                    )
 
-            self.add_event(
-                db=db,
-                span_id=span_id,
-                name="tool.error",
-                severity="error",
-                message=str(e),
-                exception_type=type(e).__name__,
-                exception_message=str(e),
-                exception_stacktrace=traceback.format_exc(),
-            )
+                    # Add error event using same session for atomic commit
+                    self.add_event(
+                        span_id=span_id,
+                        name="tool.error",
+                        severity="error",
+                        message=str(e),
+                        exception_type=type(e).__name__,
+                        exception_message=str(e),
+                        exception_stacktrace=traceback.format_exc(),
+                        obs_db=obs_db,  # Use same session for atomicity
+                    )
+                    # Commit error state
+                    self._safe_commit(obs_db, "trace_tool_invocation_error")
+                except Exception as end_error:
+                    logger.warning(f"Failed to end span on error: {end_error}")
             raise
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     # ==============================
     # Event Management
@@ -585,7 +797,6 @@ class ObservabilityService:
 
     def add_event(
         self,
-        db: Session,
         span_id: str,
         name: str,
         severity: Optional[str] = None,
@@ -594,11 +805,14 @@ class ObservabilityService:
         exception_message: Optional[str] = None,
         exception_stacktrace: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        obs_db: Optional[Session] = None,
     ) -> int:
         """Add an event to a span.
 
+        Creates an independent observability session for best-effort recording,
+        unless obs_db is provided for atomic operation with caller's session.
+
         Args:
-            db: Database session
             span_id: Parent span ID
             name: Event name
             severity: Log severity (debug, info, warning, error, critical)
@@ -607,37 +821,53 @@ class ObservabilityService:
             exception_message: Exception message
             exception_stacktrace: Exception stacktrace
             attributes: Additional event attributes
+            obs_db: Optional session for atomic operation (used by context managers)
 
         Returns:
-            Event ID
+            Event ID (or 0 on failure)
+
+        Note:
+            Uses separate database session from main transaction (issue #3883)
+            unless obs_db is provided. Context managers pass their session for
+            atomic commit of span and error event together.
 
         Examples:
             >>> event_id = service.add_event(  # doctest: +SKIP
-            ...     db,  # doctest: +SKIP
             ...     span_id,  # doctest: +SKIP
             ...     "database_connection_error",  # doctest: +SKIP
             ...     severity="error",  # doctest: +SKIP
             ...     message="Failed to connect to database"  # doctest: +SKIP
             ... )  # doctest: +SKIP
         """
-        event = ObservabilityEvent(
-            span_id=span_id,
-            name=name,
-            timestamp=utc_now(),
-            severity=severity,
-            message=message,
-            exception_type=exception_type,
-            exception_message=exception_message,
-            exception_stacktrace=exception_stacktrace,
-            attributes=attributes or {},
-            created_at=utc_now(),
-        )
-        db.add(event)
-        if not self._safe_commit(db, "add_event"):
+        # Use provided session or create new one
+        obs_db, owned = (obs_db, False) if obs_db else _get_or_create_observability_session()
+        try:
+            event = ObservabilityEvent(
+                span_id=span_id,
+                name=name,
+                timestamp=utc_now(),
+                severity=severity,
+                message=message,
+                exception_type=exception_type,
+                exception_message=exception_message,
+                exception_stacktrace=exception_stacktrace,
+                attributes=attributes or {},
+                created_at=utc_now(),
+            )
+            obs_db.add(event)
+            if self._safe_commit(obs_db, "add_event"):
+                # Only refresh and return ID if commit succeeded
+                obs_db.refresh(event)
+                logger.debug(f"Added event to span {span_id}: {name}")
+                return event.id
+            # Commit failed - return 0
             return 0
-        db.refresh(event)
-        logger.debug(f"Added event to span {span_id}: {name}")
-        return event.id
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     # ==============================
     # Token Usage Tracking
@@ -645,7 +875,6 @@ class ObservabilityService:
 
     def record_token_usage(
         self,
-        db: Session,
         span_id: Optional[str] = None,
         trace_id: Optional[str] = None,
         model: Optional[str] = None,
@@ -657,8 +886,9 @@ class ObservabilityService:
     ) -> None:
         """Record token usage for LLM calls.
 
+        Creates an independent observability session for best-effort recording.
+
         Args:
-            db: Database session
             span_id: Span ID to attach token usage to
             trace_id: Trace ID (will use current context if not provided)
             model: Model name (e.g., "gpt-4", "claude-3-opus")
@@ -668,9 +898,12 @@ class ObservabilityService:
             estimated_cost_usd: Estimated cost in USD
             provider: LLM provider (openai, anthropic, etc.)
 
+        Note:
+            Uses separate database session from main transaction (issue #3883).
+
         Examples:
             >>> service.record_token_usage(  # doctest: +SKIP
-            ...     db, span_id="abc123",
+            ...     span_id="abc123",
             ...     model="gpt-4",
             ...     input_tokens=100,
             ...     output_tokens=50,
@@ -694,26 +927,36 @@ class ObservabilityService:
 
         # Store in span attributes if span_id provided
         if span_id:
-            span = db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
-            if span:
-                attrs = span.attributes or {}
-                attrs.update(
-                    {
-                        "llm.model": model,
-                        "llm.provider": provider,
-                        "llm.input_tokens": input_tokens,
-                        "llm.output_tokens": output_tokens,
-                        "llm.total_tokens": total_tokens,
-                        "llm.estimated_cost_usd": estimated_cost_usd,
-                    }
-                )
-                span.attributes = attrs
-                self._safe_commit(db, "record_token_usage")
+            obs_db = None
+            owned = False
+            try:
+                obs_db, owned = _get_or_create_observability_session()
+                span = obs_db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
+                if span:
+                    attrs = span.attributes or {}
+                    attrs.update(
+                        {
+                            "llm.model": model,
+                            "llm.provider": provider,
+                            "llm.input_tokens": input_tokens,
+                            "llm.output_tokens": output_tokens,
+                            "llm.total_tokens": total_tokens,
+                            "llm.estimated_cost_usd": estimated_cost_usd,
+                        }
+                    )
+                    span.attributes = attrs
+                    self._safe_commit(obs_db, "record_token_usage")
+            finally:
+                if owned:
+                    try:
+                        obs_db.close()
+                    except Exception as close_error:
+                        logger.debug(f"Failed to close observability session: {close_error}")
 
         # Also record as metrics for aggregation
+        # Note: record_metric creates its own independent sessions
         if input_tokens > 0:
             self.record_metric(
-                db=db,
                 name="llm.tokens.input",
                 value=float(input_tokens),
                 metric_type="counter",
@@ -724,7 +967,6 @@ class ObservabilityService:
 
         if output_tokens > 0:
             self.record_metric(
-                db=db,
                 name="llm.tokens.output",
                 value=float(output_tokens),
                 metric_type="counter",
@@ -735,7 +977,6 @@ class ObservabilityService:
 
         if estimated_cost_usd:
             self.record_metric(
-                db=db,
                 name="llm.cost",
                 value=estimated_cost_usd,
                 metric_type="counter",
@@ -799,19 +1040,18 @@ class ObservabilityService:
     @contextmanager
     def trace_a2a_request(
         self,
-        db: Session,
         agent_id: str,
         agent_name: Optional[str] = None,
         operation: Optional[str] = None,
         request_data: Optional[Dict[str, Any]] = None,
-    ):
+    ) -> Generator[Tuple[Optional[str], Dict[str, Any]], None, None]:
         """Context manager for tracing Agent-to-Agent requests.
 
         This automatically creates a span for A2A communication, capturing timing,
-        request/response data, and errors.
+        request/response data, and errors. Creates an independent observability session
+        for the span lifecycle.
 
         Args:
-            db: Database session
             agent_id: Target agent ID
             agent_name: Human-readable agent name
             operation: Operation being performed (e.g., "query", "execute", "status")
@@ -823,8 +1063,11 @@ class ObservabilityService:
         Raises:
             Exception: Re-raises any exception from A2A call after logging
 
+        Note:
+            Uses separate database session from main transaction (issue #3883).
+
         Examples:
-            >>> with service.trace_a2a_request(db, "agent-123", "WeatherAgent", "query") as (span_id, result):  # doctest: +SKIP
+            >>> with service.trace_a2a_request("agent-123", "WeatherAgent", "query") as (span_id, result):  # doctest: +SKIP
             ...     response = await http_client.post(...)  # doctest: +SKIP
             ...     result["status_code"] = response.status_code  # doctest: +SKIP
             ...     result["response_time_ms"] = 45.2  # doctest: +SKIP
@@ -841,50 +1084,78 @@ class ObservabilityService:
         if request_data:
             safe_data = {k: ("***REDACTED***" if any(sensitive in k.lower() for sensitive in ["password", "token", "key", "secret", "auth"]) else v) for k, v in request_data.items()}
 
-        # Start A2A span
-        span_id = self.start_span(
-            db=db,
-            trace_id=trace_id,
-            name=f"a2a.call.{agent_name or agent_id}",
-            kind="client",
-            resource_type="agent",
-            resource_name=agent_name or agent_id,
-            attributes={
-                "a2a.agent_id": agent_id,
-                "a2a.agent_name": agent_name,
-                "a2a.operation": operation,
-                "a2a.request_data": safe_data,
-            },
-        )
-
+        obs_db = None
+        owned = False
+        span_id = None
         result_dict = {}
         try:
+            obs_db, owned = _get_or_create_observability_session()
+            # Start A2A span
+            span_id = self.start_span(
+                trace_id=trace_id,
+                name=f"a2a.call.{agent_name or agent_id}",
+                kind="client",
+                resource_type="agent",
+                resource_name=agent_name or agent_id,
+                attributes={
+                    "a2a.agent_id": agent_id,
+                    "a2a.agent_name": agent_name,
+                    "a2a.operation": operation,
+                    "a2a.request_data": safe_data,
+                },
+                commit=False,  # Don't commit yet
+                obs_db=obs_db,  # Use our session
+            )
+
             yield (span_id, result_dict)
 
             # End span with results
             self.end_span(
-                db=db,
                 span_id=span_id,
                 status="ok",
                 attributes={
                     "a2a.result": result_dict,
                 },
+                commit=False,  # Don't commit yet
+                obs_db=obs_db,  # Use our session
             )
+            # Commit all changes atomically
+            self._safe_commit(obs_db, "trace_a2a_request")
         except Exception as e:
-            # Log error in span
-            self.end_span(db=db, span_id=span_id, status="error", status_message=str(e))
+            # Error path
+            if span_id:
+                try:
+                    # Log error in span
+                    self.end_span(
+                        span_id=span_id,
+                        status="error",
+                        status_message=str(e),
+                        commit=False,  # Don't commit yet
+                        obs_db=obs_db,  # Use our session
+                    )
 
-            self.add_event(
-                db=db,
-                span_id=span_id,
-                name="a2a.error",
-                severity="error",
-                message=str(e),
-                exception_type=type(e).__name__,
-                exception_message=str(e),
-                exception_stacktrace=traceback.format_exc(),
-            )
+                    # Add error event using same session for atomic commit
+                    self.add_event(
+                        span_id=span_id,
+                        name="a2a.error",
+                        severity="error",
+                        message=str(e),
+                        exception_type=type(e).__name__,
+                        exception_message=str(e),
+                        exception_stacktrace=traceback.format_exc(),
+                        obs_db=obs_db,  # Use same session for atomicity
+                    )
+                    # Commit error state
+                    self._safe_commit(obs_db, "trace_a2a_request_error")
+                except Exception as end_error:
+                    logger.warning(f"Failed to end span on error: {end_error}")
             raise
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     # ==============================
     # Transport Metrics
@@ -892,7 +1163,6 @@ class ObservabilityService:
 
     def record_transport_activity(
         self,
-        db: Session,
         transport_type: str,
         operation: str,
         message_count: int = 1,
@@ -903,8 +1173,10 @@ class ObservabilityService:
     ) -> None:
         """Record transport-specific activity metrics.
 
+        Creates independent observability sessions for best-effort recording
+        via record_metric() calls.
+
         Args:
-            db: Database session
             transport_type: Transport type (sse, websocket, stdio, http)
             operation: Operation type (connect, disconnect, send, receive, error)
             message_count: Number of messages processed
@@ -913,9 +1185,12 @@ class ObservabilityService:
             connection_id: Connection/session identifier
             error: Error message if operation failed
 
+        Note:
+            Uses separate database sessions from main transaction (issue #3883).
+
         Examples:
             >>> service.record_transport_activity(  # doctest: +SKIP
-            ...     db, transport_type="sse",
+            ...     transport_type="sse",
             ...     operation="send",
             ...     message_count=1,
             ...     bytes_sent=1024
@@ -926,7 +1201,6 @@ class ObservabilityService:
         # Record message count
         if message_count > 0:
             self.record_metric(
-                db=db,
                 name=f"transport.{transport_type}.messages",
                 value=float(message_count),
                 metric_type="counter",
@@ -942,7 +1216,6 @@ class ObservabilityService:
         # Record bytes sent
         if bytes_sent:
             self.record_metric(
-                db=db,
                 name=f"transport.{transport_type}.bytes_sent",
                 value=float(bytes_sent),
                 metric_type="counter",
@@ -958,7 +1231,6 @@ class ObservabilityService:
         # Record bytes received
         if bytes_received:
             self.record_metric(
-                db=db,
                 name=f"transport.{transport_type}.bytes_received",
                 value=float(bytes_received),
                 metric_type="counter",
@@ -974,7 +1246,6 @@ class ObservabilityService:
         # Record errors
         if error:
             self.record_metric(
-                db=db,
                 name=f"transport.{transport_type}.errors",
                 value=1.0,
                 metric_type="counter",
@@ -996,7 +1267,6 @@ class ObservabilityService:
 
     def record_metric(
         self,
-        db: Session,
         name: str,
         value: float,
         metric_type: str = "gauge",
@@ -1008,8 +1278,9 @@ class ObservabilityService:
     ) -> int:
         """Record a metric.
 
+        Creates an independent observability session for best-effort recording.
+
         Args:
-            db: Database session
             name: Metric name (e.g., "http.request.duration")
             value: Metric value
             metric_type: Metric type (counter, gauge, histogram)
@@ -1020,11 +1291,13 @@ class ObservabilityService:
             attributes: Additional metric attributes/labels
 
         Returns:
-            Metric ID
+            Metric ID (or 0 on failure)
+
+        Note:
+            Uses separate database session from main transaction (issue #3883).
 
         Examples:
             >>> metric_id = service.record_metric(  # doctest: +SKIP
-            ...     db,  # doctest: +SKIP
             ...     "http.request.duration",  # doctest: +SKIP
             ...     123.45,  # doctest: +SKIP
             ...     metric_type="histogram",  # doctest: +SKIP
@@ -1032,24 +1305,36 @@ class ObservabilityService:
             ...     trace_id=trace_id  # doctest: +SKIP
             ... )  # doctest: +SKIP
         """
-        metric = ObservabilityMetric(
-            name=name,
-            value=value,
-            metric_type=metric_type,
-            timestamp=utc_now(),
-            unit=unit,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            trace_id=trace_id,
-            attributes=attributes or {},
-            created_at=utc_now(),
-        )
-        db.add(metric)
-        if not self._safe_commit(db, "record_metric"):
+        obs_db = None
+        owned = False
+        try:
+            obs_db, owned = _get_or_create_observability_session()
+            metric = ObservabilityMetric(
+                name=name,
+                value=value,
+                metric_type=metric_type,
+                timestamp=utc_now(),
+                unit=unit,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                trace_id=trace_id,
+                attributes=attributes or {},
+                created_at=utc_now(),
+            )
+            obs_db.add(metric)
+            if self._safe_commit(obs_db, "record_metric"):
+                # Only refresh and return ID if commit succeeded
+                obs_db.refresh(metric)
+                logger.debug(f"Recorded metric: {name} = {value} {unit or ''}")
+                return metric.id
+            # Commit failed - return 0
             return 0
-        db.refresh(metric)
-        logger.debug(f"Recorded metric: {name} = {value} {unit or ''}")
-        return metric.id
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")
 
     # ==============================
     # Query Methods
@@ -1414,24 +1699,39 @@ class ObservabilityService:
         """
         return db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
 
-    def delete_old_traces(self, db: Session, before_time: datetime) -> int:
+    def delete_old_traces(self, before_time: datetime) -> int:
         """Delete traces older than a given time.
 
+        Creates an independent observability session for best-effort deletion.
+
         Args:
-            db: Database session
             before_time: Delete traces before this time
 
         Returns:
-            Number of traces deleted
+            Number of traces deleted (or 0 on failure)
+
+        Note:
+            Uses separate database session from main transaction (issue #3883).
 
         Examples:
             >>> from datetime import timedelta  # doctest: +SKIP
             >>> cutoff = utc_now() - timedelta(days=30)  # doctest: +SKIP
-            >>> deleted = service.delete_old_traces(db, cutoff)  # doctest: +SKIP
+            >>> deleted = service.delete_old_traces(cutoff)  # doctest: +SKIP
             >>> print(f"Deleted {deleted} old traces")  # doctest: +SKIP
         """
-        deleted = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time < before_time).delete()
-        if not self._safe_commit(db, "delete_old_traces"):
+        obs_db = None
+        owned = False
+        try:
+            obs_db, owned = _get_or_create_observability_session()
+            deleted = obs_db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time < before_time).delete()
+            if self._safe_commit(obs_db, "delete_old_traces"):
+                logger.info(f"Deleted {deleted} traces older than {before_time}")
+                return deleted
+            # Commit failed - return 0
             return 0
-        logger.info(f"Deleted {deleted} traces older than {before_time}")
-        return deleted
+        finally:
+            if owned and obs_db is not None:
+                try:
+                    obs_db.close()
+                except Exception as close_error:
+                    logger.debug(f"Failed to close observability session: {close_error}")

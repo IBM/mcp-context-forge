@@ -36,7 +36,7 @@ Rules:
 - [ ] `make doctest`
 - [ ] `make test`
 - [ ] `make htmlcov`
-- [ ] `make flake8`
+- [ ] `make ruff RUFF_MODE=check`
 - [ ] `make bandit`
 - [ ] `make interrogate`
 - [ ] `make pylint`

@@ -13,8 +13,6 @@ including error handling, edge cases, and specific functionality scenarios.
 from __future__ import annotations
 
 # Standard
-import asyncio
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -22,11 +20,8 @@ import pytest
 
 # First-Party
 from mcpgateway.services.prompt_service import (
-    PromptError,
     PromptNameConflictError,
-    PromptNotFoundError,
     PromptService,
-    PromptValidationError,
 )
 
 
@@ -252,8 +247,8 @@ class TestPromptServiceExtended:
         """Test get_prompt method functionality (handles rendering)."""
         service = PromptService()
 
-        # Test plugin manager exists
-        assert hasattr(service, "_plugin_manager")
+        # Test plugin manager method exists
+        assert hasattr(service, "_get_plugin_manager")
 
         # Test method parameters
         # Standard

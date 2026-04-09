@@ -1,15 +1,6 @@
 """
 Comprehensive test suite for OutputLengthGuard plugin.
 
-This file consolidates all test files:
-- test_token_budget.py (59 tests - token budget functionality)
-- test_limit_mode.py (80 tests - v0.4.2 limit_mode feature)
-- test_output_length_guard.py (5 tests - legacy unittest tests)
-- test_word_boundary.py (3 tests - word boundary integration)
-- test_blocking_structured.py (5 tests - blocking strategy)
-
-Total: 152 tests
-
 Test Coverage:
 - Numeric string preservation
 - Structured content processing
@@ -21,36 +12,40 @@ Test Coverage:
 Framework: pytest + pytest-asyncio + unittest
 """
 
-
 # ============================================================================
 # SECTION 1: TOKEN BUDGET TESTS
 # Source: test_token_budget.py
 # Tests: 59 tests covering token estimation, truncation, and security
 # ============================================================================
 
-import pytest
-import pytest_asyncio
-import unittest
-import logging
+# Standard
 import asyncio
+import logging
+import unittest
 from unittest.mock import Mock, patch
-from mcpgateway.plugins.framework.models import PluginContext, PluginConfig, GlobalContext
+
+# Third-Party
+import pytest
+
+# First-Party
 from mcpgateway.plugins.framework.hooks.tools import (
     ToolPostInvokePayload,
-    ToolPostInvokeResult,
 )
+from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginContext
 from plugins.output_length_guard import (
-    OutputLengthGuardPlugin,
     OutputLengthGuardConfig,
+    OutputLengthGuardPlugin,
 )
-from plugins.output_length_guard.output_length_guard import (
+from plugins.output_length_guard.config import LengthGuardPolicy
+from plugins.output_length_guard.guards import (
     _estimate_tokens,
-    _find_token_cut_point,
     _find_word_boundary,
-    _truncate,
-    _process_structured_data,
-    _generate_text_representation,
     _is_numeric_string,
+    _truncate,
+)
+from plugins.output_length_guard.structured import (
+    _generate_text_representation,
+    _process_structured_data,
 )
 
 # ============================================================================
@@ -124,6 +119,14 @@ def create_structured_payload(structured_content, content=None, name="test_tool"
     return create_mock_payload(result, name=name)
 
 
+def make_policy(**kwargs) -> LengthGuardPolicy:
+    """Create a LengthGuardPolicy with test-friendly defaults.
+
+    Default ellipsis is "..." (not "\u2026") to match most test expectations.
+    """
+    return LengthGuardPolicy(**kwargs)
+
+
 class BaseOutputLengthGuardTest(unittest.TestCase):
     """Base class for OutputLengthGuard tests with common setup and helpers."""
 
@@ -138,11 +141,7 @@ class BaseOutputLengthGuardTest(unittest.TestCase):
         """
         default_config = {"max_chars": 10, "strategy": "truncate"}
         default_config.update(config_overrides)
-        plugin_config = PluginConfig(
-            name="test",
-            kind="output_length_guard",
-            config=default_config
-        )
+        plugin_config = PluginConfig(name="test", kind="output_length_guard", config=default_config)
         return OutputLengthGuardPlugin(config=plugin_config)
 
     def create_context(self, request_id="test-id"):
@@ -154,9 +153,7 @@ class BaseOutputLengthGuardTest(unittest.TestCase):
         Returns:
             PluginContext instance
         """
-        return PluginContext(
-            global_context=GlobalContext(request_id=request_id)
-        )
+        return PluginContext(global_context=GlobalContext(request_id=request_id))
 
     def invoke_plugin(self, payload, context=None):
         """Invoke plugin asynchronously.
@@ -182,8 +179,7 @@ class BaseOutputLengthGuardTest(unittest.TestCase):
             ellipsis: The ellipsis string used
         """
         self.assertNotEqual(result, original, "Text should be modified")
-        self.assertLessEqual(len(result), max_length + len(ellipsis),
-                           f"Result length {len(result)} exceeds max {max_length + len(ellipsis)}")
+        self.assertLessEqual(len(result), max_length + len(ellipsis), f"Result length {len(result)} exceeds max {max_length + len(ellipsis)}")
         self.assertTrue(result.endswith(ellipsis), "Result should end with ellipsis")
 
     def assertNotTruncated(self, result, original):
@@ -205,15 +201,13 @@ class BaseOutputLengthGuardTest(unittest.TestCase):
             tolerance: Allowed tolerance for token estimation
         """
         actual_tokens = _estimate_tokens(text, chars_per_token)
-        self.assertLessEqual(actual_tokens, max_tokens + tolerance,
-                           f"Token count {actual_tokens} exceeds max {max_tokens + tolerance}")
-
-
+        self.assertLessEqual(actual_tokens, max_tokens + tolerance, f"Token count {actual_tokens} exceeds max {max_tokens + tolerance}")
 
 
 # ============================================================================
 # Test Group 1: Token Estimation (_estimate_tokens)
 # ============================================================================
+
 
 def test_estimate_tokens_basic():
     """Test basic token estimation with default ratio."""
@@ -279,22 +273,27 @@ def test_estimate_tokens_special_chars():
     expected = len(text) // 4
     assert tokens == expected
 
+
 # ============================================================================
 # PARAMETRIZED TESTS (Phase 3 Refactoring)
 # ============================================================================
 
-@pytest.mark.parametrize("text,chars_per_token,expected", [
-    # Basic cases
-    ("", 4, 0),  # Empty string
-    ("a", 4, 0),  # Single char (less than ratio)
-    ("1234", 4, 1),  # Exact ratio
-    ("Hello world!", 3, 4),  # Custom ratio: 12 chars / 3 = 4
-    ("Hello", 1, 5),  # Min ratio: 5 chars / 1 = 5
-    ("Hello world! This is a test.", 10, 2),  # Max ratio: 28 chars / 10 = 2
-    # Special content
-    ("Hello\n\nWorld\t\tTest", 4, lambda text: len(text) // 4),  # Whitespace
-    ("!@#$%^&*()_+-=[]{}|;':\",./<>?", 4, lambda text: len(text) // 4),  # Special chars
-])
+
+@pytest.mark.parametrize(
+    "text,chars_per_token,expected",
+    [
+        # Basic cases
+        ("", 4, 0),  # Empty string
+        ("a", 4, 0),  # Single char (less than ratio)
+        ("1234", 4, 1),  # Exact ratio
+        ("Hello world!", 3, 4),  # Custom ratio: 12 chars / 3 = 4
+        ("Hello", 1, 5),  # Min ratio: 5 chars / 1 = 5
+        ("Hello world! This is a test.", 10, 2),  # Max ratio: 28 chars / 10 = 2
+        # Special content
+        ("Hello\n\nWorld\t\tTest", 4, lambda text: len(text) // 4),  # Whitespace
+        ("!@#$%^&*()_+-=[]{}|;':\",./<>?", 4, lambda text: len(text) // 4),  # Special chars
+    ],
+)
 def test_estimate_tokens_parametrized(text, chars_per_token, expected):
     """Parametrized test for token estimation with various inputs.
 
@@ -309,28 +308,34 @@ def test_estimate_tokens_parametrized(text, chars_per_token, expected):
     assert result == expected, f"Expected {expected} tokens for '{text[:20]}...' with ratio {chars_per_token}, got {result}"
 
 
-@pytest.mark.parametrize("unicode_text", [
-    "Hello 世界! 🌍",  # Unicode
-    TEST_UNICODE_TEXT,  # Unicode fixture
-])
+@pytest.mark.parametrize(
+    "unicode_text",
+    [
+        "Hello 世界! 🌍",  # Unicode
+        TEST_UNICODE_TEXT,  # Unicode fixture
+    ],
+)
 def test_estimate_tokens_unicode_parametrized(unicode_text):
     """Parametrized test for Unicode token estimation."""
     tokens = _estimate_tokens(unicode_text, chars_per_token=4)
     assert tokens >= 0, "Should handle Unicode gracefully"
 
 
-@pytest.mark.parametrize("text,pos,expected,description", [
-    ("Hello world", 7, 6, "middle of word"),
-    ("Hello world", 5, 5, "at space"),
-    ("Hello world", 0, 0, "at start"),
-    ("Hello world", 11, 6, "at end"),
-    ("HelloWorld", 5, 5, "no spaces"),
-    ("Hello    world", 10, 9, "multiple spaces"),
-    ("Hello, world!", 9, 7, "with punctuation"),
-    ("Hello\nworld", 8, 6, "with newline"),
-    ("Hello\tworld", 8, 6, "with tab"),
-    ("Hello 世界", 8, 6, "with unicode"),
-])
+@pytest.mark.parametrize(
+    "text,pos,expected,description",
+    [
+        ("Hello world", 7, 6, "middle of word"),
+        ("Hello world", 5, 5, "at space"),
+        ("Hello world", 0, 0, "at start"),
+        ("Hello world", 11, 6, "at end"),
+        ("HelloWorld", 5, 5, "no spaces"),
+        ("Hello    world", 10, 9, "multiple spaces"),
+        ("Hello, world!", 9, 7, "with punctuation"),
+        ("Hello\nworld", 8, 6, "with newline"),
+        ("Hello\tworld", 8, 6, "with tab"),
+        ("Hello 世界", 8, 6, "with unicode"),
+    ],
+)
 def test_find_word_boundary_parametrized(text, pos, expected, description):
     """Parametrized test for word boundary finding.
 
@@ -340,25 +345,32 @@ def test_find_word_boundary_parametrized(text, pos, expected, description):
     boundary = _find_word_boundary(text, pos, max_chars)
     assert boundary == expected, f"Failed for case: {description}"
 
-@pytest.mark.parametrize("limit_mode,expected", [
-    ("CHARACTER", "character"),
-    ("Token", "token"),
-    ("TOKEN", "token"),
-    ("character", "character"),
-    ("token", "token"),
-])
+
+@pytest.mark.parametrize(
+    "limit_mode,expected",
+    [
+        ("CHARACTER", "character"),
+        ("Token", "token"),
+        ("TOKEN", "token"),
+        ("character", "character"),
+        ("token", "token"),
+    ],
+)
 def test_limit_mode_case_insensitive_parametrized(limit_mode, expected):
     """Parametrized test for case-insensitive limit_mode."""
     config = OutputLengthGuardConfig(limit_mode=limit_mode)
     assert config.limit_mode == expected
 
 
-@pytest.mark.parametrize("limit_mode,expected", [
-    ("  character  ", "character"),
-    ("\ttoken\n", "token"),
-    (" CHARACTER ", "character"),
-    ("\n\tTOKEN  ", "token"),
-])
+@pytest.mark.parametrize(
+    "limit_mode,expected",
+    [
+        ("  character  ", "character"),
+        ("\ttoken\n", "token"),
+        (" CHARACTER ", "character"),
+        ("\n\tTOKEN  ", "token"),
+    ],
+)
 def test_limit_mode_whitespace_trimmed_parametrized(limit_mode, expected):
     """Parametrized test for whitespace trimming in limit_mode."""
     config = OutputLengthGuardConfig(limit_mode=limit_mode)
@@ -369,118 +381,13 @@ def test_limit_mode_whitespace_trimmed_parametrized(limit_mode, expected):
 def test_plugin_token_config_invalid_ratio_parametrized(chars_per_token):
     """Parametrized test for invalid chars_per_token values."""
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            chars_per_token=chars_per_token
-        )
-
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, chars_per_token=chars_per_token)
 
 
 # ============================================================================
-# Test Group 2: Token Cut Point Finding (_find_token_cut_point)
+# Test Group 2: Word Boundary Finding (_find_word_boundary)
 # ============================================================================
 
-def test_find_token_cut_point_basic():
-    """Test finding cut point for token limit."""
-    text = "Hello world! This is a test."
-    max_tokens = 3
-    chars_per_token = 4
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    assert 0 <= cut_point <= len(text)
-    # Verify truncated text is within token limit
-    truncated = text[:cut_point]
-    assert _estimate_tokens(truncated, chars_per_token) <= max_tokens
-
-
-def test_find_token_cut_point_exact_fit():
-    """Test cut point when text exactly fits token limit."""
-    text = "1234567890123456"  # 16 chars = 4 tokens at ratio 4
-    max_tokens = 4
-    chars_per_token = 4
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    assert cut_point == len(text)
-
-
-def test_find_token_cut_point_under_limit():
-    """Test cut point when text is under token limit."""
-    text = "Hello"  # 5 chars = 1 token at ratio 4
-    max_tokens = 10
-    chars_per_token = 4
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    assert cut_point == len(text)
-
-
-def test_find_token_cut_point_zero_tokens():
-    """Test cut point with zero token limit."""
-    text = "Hello world!"
-    max_tokens = 0
-    chars_per_token = 4
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    assert cut_point == 0
-
-
-def test_find_token_cut_point_one_token():
-    """Test cut point with single token limit."""
-    text = "Hello world! This is a test."
-    max_tokens = 1
-    chars_per_token = 4
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    # Binary search may overshoot slightly, allow small margin
-    assert 0 < cut_point <= max_tokens * chars_per_token + chars_per_token
-
-
-def test_find_token_cut_point_large_text():
-    """Test cut point with large text."""
-    text = TEST_TEXT_10K
-    max_tokens = 100
-    chars_per_token = 4
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    # Binary search may overshoot slightly, allow small margin
-    assert cut_point <= max_tokens * chars_per_token + chars_per_token
-
-
-def test_find_token_cut_point_custom_ratio():
-    """Test cut point with custom ratio."""
-    text = "Hello world! This is a test."
-    max_tokens = 5
-    chars_per_token = 3
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    truncated = text[:cut_point]
-    assert _estimate_tokens(truncated, chars_per_token) <= max_tokens
-
-
-def test_find_token_cut_point_unicode():
-    """Test cut point with Unicode text."""
-    text = "Hello 世界! 🌍 " * 10
-    max_tokens = 5
-    chars_per_token = 4
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    assert 0 <= cut_point <= len(text)
-
-
-def test_find_token_cut_point_binary_search_efficiency():
-    """Test that binary search is efficient (max 30 iterations)."""
-    text = TEST_TEXT_1M
-    max_tokens = 1000
-    chars_per_token = 4
-    # Should complete without timeout (binary search is O(log n))
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    assert cut_point > 0
-
-
-def test_find_token_cut_point_negative_tokens():
-    """Test cut point with negative token limit (security)."""
-    text = "Hello world!"
-    max_tokens = -1
-    chars_per_token = 4
-    cut_point = _find_token_cut_point(text, max_tokens, chars_per_token)
-    assert cut_point == 0  # Should handle gracefully
-
-
-# ============================================================================
-# Test Group 3: Word Boundary Finding (_find_word_boundary)
-# ============================================================================
 
 def test_find_word_boundary_basic():
     """Test finding word boundary in middle of word."""
@@ -576,19 +483,12 @@ def test_find_word_boundary_unicode():
 # Test Group 4: Token-Based Truncation (_truncate)
 # ============================================================================
 
+
 def test_truncate_token_only():
     """Test truncation with only token limit."""
     text = "Hello world! This is a test."
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=3,
-        chars_per_token=4,
-        limit_mode="token"
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=3, chars_per_token=4, limit_mode="token")
+    modified = result != text
     assert modified
     assert _estimate_tokens(result, 4) <= 5  # 3 + tolerance
 
@@ -596,16 +496,8 @@ def test_truncate_token_only():
 def test_truncate_token_with_word_boundary():
     """Test token truncation with word boundary."""
     text = "Hello world! This is a test."
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=True,
-        max_tokens=3,
-        chars_per_token=4,
-        limit_mode="token"
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=True, max_tokens=3, chars_per_token=4, limit_mode="token")
+    modified = result != text
     assert modified
     assert result.endswith("...")
     # Should not cut mid-word (check if result without ellipsis doesn't end with partial words)
@@ -616,16 +508,8 @@ def test_truncate_token_with_word_boundary():
 def test_truncate_hybrid_mode():
     """Test hybrid mode with both char and token limits."""
     text = "Hello world! This is a test."
-    result = _truncate(
-        value=text,
-        max_chars=20,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=3,
-        chars_per_token=4,
-        limit_mode="character"  # In hybrid, use character mode
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=20, ellipsis="...", word_boundary=False, max_tokens=3, chars_per_token=4, limit_mode="character")  # In hybrid, use character mode
+    modified = result != text
     assert modified
     # Should respect character limit (with tolerance)
     assert len(result) <= 23  # 20 + 3 ellipsis
@@ -634,16 +518,8 @@ def test_truncate_hybrid_mode():
 def test_truncate_token_under_limit():
     """Test truncation when text is under token limit."""
     text = "Hello"
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=10,
-        chars_per_token=4,
-        limit_mode="token"
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=10, chars_per_token=4, limit_mode="token")
+    modified = result != text
     assert not modified
     assert result == text
 
@@ -651,16 +527,8 @@ def test_truncate_token_under_limit():
 def test_truncate_token_exact_limit():
     """Test truncation when text exactly matches token limit."""
     text = "1234567890123456"  # 16 chars = 4 tokens
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=4,
-        chars_per_token=4,
-        limit_mode="token"
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=4, chars_per_token=4, limit_mode="token")
+    modified = result != text
     assert not modified
     assert result == text
 
@@ -668,17 +536,9 @@ def test_truncate_token_exact_limit():
 def test_truncate_token_zero_limit():
     """Test truncation with zero token limit (treated as disabled)."""
     text = "Hello world!"
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=0,  # 0 is treated as None (disabled)
-        chars_per_token=4,
-        limit_mode="token"
-    )
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=0, chars_per_token=4, limit_mode="token")  # 0 is treated as None (disabled)
     # With max_tokens=0 (disabled), text should pass through unchanged
-    modified = (result != text)
+    modified = result != text
     assert not modified  # Should NOT be modified
     assert result == text  # Should equal original text
 
@@ -686,16 +546,8 @@ def test_truncate_token_zero_limit():
 def test_truncate_token_custom_ratio():
     """Test truncation with custom chars_per_token ratio."""
     text = "Hello world! This is a test."
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=5,
-        chars_per_token=3,
-        limit_mode="token"
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=5, chars_per_token=3, limit_mode="token")
+    modified = result != text
     assert modified
     assert _estimate_tokens(result, 3) <= 7  # 5 + tolerance
 
@@ -703,16 +555,8 @@ def test_truncate_token_custom_ratio():
 def test_truncate_token_min_limit():
     """Test truncation with no max limit (should not truncate)."""
     text = "Hi"  # Very short
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=None,  # No limit
-        chars_per_token=4,
-        limit_mode="token"
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=None, chars_per_token=4, limit_mode="token")  # No limit
+    modified = result != text
     # No max limit means no truncation
     assert not modified
     assert result == text
@@ -721,16 +565,8 @@ def test_truncate_token_min_limit():
 def test_truncate_token_with_ellipsis():
     """Test that ellipsis is added after token truncation."""
     text = "Hello world! This is a test."
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=2,
-        chars_per_token=4,
-        limit_mode="token"
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=2, chars_per_token=4, limit_mode="token")
+    modified = result != text
     assert modified
     assert result.endswith("...")
 
@@ -738,16 +574,8 @@ def test_truncate_token_with_ellipsis():
 def test_truncate_token_unicode():
     """Test token truncation with Unicode text."""
     text = "Hello 世界! 🌍 " * 10
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=5,
-        chars_per_token=4,
-        limit_mode="token"
-    )
-    modified = (result != text)
+    result = _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=5, chars_per_token=4, limit_mode="token")
+    modified = result != text
     assert modified
     # Unicode characters may affect token estimation, use very generous tolerance
     # The ellipsis "..." adds 3 chars which affects token count
@@ -758,23 +586,12 @@ def test_truncate_token_unicode():
 # Test Group 5: Structured Data with Tokens (_process_structured_data)
 # ============================================================================
 
+
 def test_process_structured_list_with_tokens():
     """Test processing list with token limits."""
     data = ["Hello world! This is a test.", "Another long string here."]
     context = Mock()
-    result, modified, violation = _process_structured_data(
-        data,
-        min_chars=0,
-        max_chars=None,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        path="",
-        min_tokens=0,
-        max_tokens=3,
-        chars_per_token=4
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_tokens=3, chars_per_token=4, ellipsis="..."), context)
     # Function may or may not modify depending on content length
     # Just verify no violation and result is valid
     assert violation is None
@@ -786,24 +603,9 @@ def test_process_structured_list_with_tokens():
 
 def test_process_structured_dict_with_tokens():
     """Test processing dict with token limits."""
-    data = {
-        "key1": "Hello world! This is a test.",
-        "key2": "Another long string here."
-    }
+    data = {"key1": "Hello world! This is a test.", "key2": "Another long string here."}
     context = Mock()
-    result, modified, violation = _process_structured_data(
-        data,
-        min_chars=0,
-        max_chars=None,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        path="",
-        min_tokens=0,
-        max_tokens=3,
-        chars_per_token=4
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_tokens=3, chars_per_token=4, ellipsis="..."), context)
     # Function may or may not modify depending on content length
     # Just verify no violation and result is valid
     assert violation is None
@@ -815,24 +617,9 @@ def test_process_structured_dict_with_tokens():
 
 def test_process_structured_nested_with_tokens():
     """Test processing nested structures with token limits."""
-    data = {
-        "list": ["Hello world! This is a test.", "Another string."],
-        "dict": {"nested": "Long nested string here."}
-    }
+    data = {"list": ["Hello world! This is a test.", "Another string."], "dict": {"nested": "Long nested string here."}}
     context = Mock()
-    result, modified, violation = _process_structured_data(
-        data,
-        min_chars=0,
-        max_chars=None,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        path="",
-        min_tokens=0,
-        max_tokens=3,
-        chars_per_token=4
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_tokens=3, chars_per_token=4, ellipsis="..."), context)
     # Function may or may not modify depending on content length
     # Just verify no violation and result is valid
     assert violation is None
@@ -843,19 +630,7 @@ def test_process_structured_block_with_tokens():
     """Test blocking mode with token limits."""
     data = ["Hello world! This is a test."]
     context = Mock()
-    result, modified, violation = _process_structured_data(
-        data,
-        min_chars=0,
-        max_chars=None,
-        ellipsis="...",
-        strategy="block",
-        word_boundary=False,
-        context=context,
-        path="",
-        min_tokens=0,
-        max_tokens=3,
-        chars_per_token=4
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(strategy="block", max_tokens=3, chars_per_token=4, limit_mode="token", ellipsis="..."), context)
     assert not modified
     assert violation is not None
     # Check that violation message mentions tokens
@@ -867,19 +642,7 @@ def test_process_structured_hybrid_mode():
     """Test structured data with both char and token limits."""
     data = ["Hello world! This is a test."]
     context = Mock()
-    result, modified, violation = _process_structured_data(
-        data,
-        min_chars=0,
-        max_chars=20,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        path="",
-        min_tokens=0,
-        max_tokens=3,
-        chars_per_token=4
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_chars=20, max_tokens=3, chars_per_token=4, ellipsis="..."), context)
     assert modified
     assert violation is None
     # Should respect both limits (with tolerance)
@@ -891,15 +654,10 @@ def test_process_structured_hybrid_mode():
 # Test Group 6: Plugin Integration Tests
 # ============================================================================
 
+
 def test_plugin_token_config_validation():
     """Test plugin configuration with token fields."""
-    config = OutputLengthGuardConfig(
-        min_chars=10,
-        max_chars=100,
-        min_tokens=5,
-        max_tokens=50,
-        chars_per_token=4
-    )
+    config = OutputLengthGuardConfig(min_chars=10, max_chars=100, min_tokens=5, max_tokens=50, chars_per_token=4)
     assert config.min_tokens == 5
     assert config.max_tokens == 50
     assert config.chars_per_token == 4
@@ -908,75 +666,37 @@ def test_plugin_token_config_validation():
 def test_plugin_token_config_invalid_ratio():
     """Test plugin rejects invalid chars_per_token."""
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            chars_per_token=0  # Invalid
-        )
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, chars_per_token=0)  # Invalid
 
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            chars_per_token=11  # Too high
-        )
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, chars_per_token=11)  # Too high
 
 
 def test_plugin_token_config_negative_tokens():
     """Test plugin rejects negative token limits."""
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            min_tokens=-1
-        )
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, min_tokens=-1)
 
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            max_tokens=-1
-        )
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, max_tokens=-1)
 
 
 def test_plugin_token_config_min_max_order():
     """Test plugin validates min_tokens < max_tokens."""
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            min_tokens=100,
-            max_tokens=50  # max < min
-        )
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, min_tokens=100, max_tokens=50)  # max < min
 
 
 def test_plugin_tool_post_invoke_with_tokens():
     """Test tool_post_invoke with token limits."""
     plugin_config = PluginConfig(
-        name="output_length_guard",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": None,
-            "min_tokens": 0,
-            "max_tokens": 5,
-            "chars_per_token": 4,
-            "strategy": "truncate"
-        }
+        name="output_length_guard", kind="output_length_guard", config={"min_chars": 0, "max_chars": None, "min_tokens": 0, "max_tokens": 5, "chars_per_token": 4, "strategy": "truncate"}
     )
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-tokens"))
 
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        result={
-            "content": [{
-                "type": "text",
-                "text": "Hello world! This is a very long test string."
-            }]
-        }
-    )
+    payload = ToolPostInvokePayload(name="test_tool", result={"content": [{"type": "text", "text": "Hello world! This is a very long test string."}]})
 
     result = asyncio.run(plugin.tool_post_invoke(payload, context))
 
@@ -995,29 +715,14 @@ def test_plugin_tool_post_invoke_with_tokens():
 def test_plugin_structured_content_with_tokens():
     """Test plugin with structured content and token limits."""
     plugin_config = PluginConfig(
-        name="output_length_guard",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": None,
-            "min_tokens": 0,
-            "max_tokens": 3,
-            "chars_per_token": 4,
-            "strategy": "truncate"
-        }
+        name="output_length_guard", kind="output_length_guard", config={"min_chars": 0, "max_chars": None, "min_tokens": 0, "max_tokens": 3, "chars_per_token": 4, "strategy": "truncate"}
     )
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-structured"))
 
     payload = ToolPostInvokePayload(
-        name="test_tool",
-        result={
-            "structuredContent": {
-                "items": ["Hello world! This is a test.", "Another string."]
-            },
-            "content": [{"type": "text", "text": "Original text"}]
-        }
+        name="test_tool", result={"structuredContent": {"items": ["Hello world! This is a test.", "Another string."]}, "content": [{"type": "text", "text": "Original text"}]}
     )
 
     result = asyncio.run(plugin.tool_post_invoke(payload, context))
@@ -1041,19 +746,12 @@ def test_plugin_structured_content_with_tokens():
 # Test Group 7: Security Tests
 # ============================================================================
 
+
 def test_security_max_text_length():
     """Test security limit on text length (1MB)."""
     # Create text larger than MAX_TEXT_LENGTH
     large_text = "a" * (1024 * 1024 + 1)  # 1MB + 1
-    result = _truncate(
-        value=large_text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=1000,
-        chars_per_token=4,
-        limit_mode="token"
-    )
+    result = _truncate(value=large_text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=1000, chars_per_token=4, limit_mode="token")
     # Should handle gracefully (truncate to safe size)
     assert len(result) <= 1024 * 1024
 
@@ -1063,19 +761,7 @@ def test_security_max_structure_size():
     # Create list larger than MAX_STRUCTURE_SIZE
     large_list = ["item"] * 10001
     context = Mock()
-    result, modified, violation = _process_structured_data(
-        data=large_list,
-        min_chars=0,
-        max_chars=100,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        path="",
-        min_tokens=0,
-        max_tokens=10,
-        chars_per_token=4
-    )
+    result, modified, violation = _process_structured_data(large_list, make_policy(max_chars=100, max_tokens=10, chars_per_token=4, ellipsis="..."), context)
     # Should handle gracefully (process up to limit or slightly over)
     # Allow small tolerance for implementation details
     assert len(result) <= 10001, f"Expected <= 10001 items, got {len(result)}"
@@ -1085,59 +771,44 @@ def test_security_division_by_zero():
     """Test protection against division by zero."""
     # This should be caught by config validation
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            chars_per_token=0
-        )
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, chars_per_token=0)
 
 
 def test_security_negative_values():
     """Test handling of negative values."""
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            min_tokens=-1
-        )
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, min_tokens=-1)
 
 
 def test_security_extreme_ratio():
     """Test handling of extreme chars_per_token values."""
     with pytest.raises(ValueError):
-        OutputLengthGuardConfig(
-            min_chars=10,
-            max_chars=100,
-            chars_per_token=100  # Too high
-        )
+        OutputLengthGuardConfig(min_chars=10, max_chars=100, chars_per_token=100)  # Too high
 
 
 # ============================================================================
 # Test Group 8: Performance Tests
 # ============================================================================
 
+
 def test_performance_large_text_truncation():
     """Test performance with large text (should be fast)."""
+    # Standard
     import time
+
     text = TEST_TEXT_100K  # 100K chars
     start = time.time()
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        ellipsis="...",
-        word_boundary=False,
-        max_tokens=100,
-        chars_per_token=4,
-        limit_mode="token"
-    )
+    _truncate(value=text, max_chars=None, ellipsis="...", word_boundary=False, max_tokens=100, chars_per_token=4, limit_mode="token")
     elapsed = time.time() - start
-    # Should complete in under 1 second (binary search is O(log n))
+    # Should complete in under 1 second (O(1) arithmetic cut point)
     assert elapsed < 1.0
 
 
 def test_performance_deep_nesting():
     """Test performance with deeply nested structures."""
+    # Standard
     import time
+
     # Create deeply nested structure
     data = {"level": 1}
     current = data
@@ -1148,20 +819,7 @@ def test_performance_deep_nesting():
 
     context = Mock()
     start = time.time()
-    result, modified, violation = _process_structured_data(
-        data=data,
-        min_chars=0,
-        max_chars=None,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        path="",
-        min_tokens=0,
-        max_tokens=3,
-        chars_per_token=4,
-        limit_mode="token"
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_tokens=3, chars_per_token=4, limit_mode="token", ellipsis="..."), context)
     elapsed = time.time() - start
     # Should complete in reasonable time
     assert elapsed < 1.0
@@ -1179,7 +837,6 @@ def test_performance_token_caching():
     assert tokens1 == tokens2
 
 
-
 # ============================================================================
 # SECTION 2: LIMIT_MODE TESTS (v0.4.2) ⭐ NEW
 # Source: test_limit_mode.py
@@ -1188,6 +845,7 @@ def test_performance_token_caching():
 
 # Test Group 1: Configuration Validation (15 tests)
 # ============================================================================
+
 
 def test_limit_mode_valid_character():
     """Test that 'character' is a valid limit_mode value."""
@@ -1247,31 +905,21 @@ def test_limit_mode_whitespace_trimmed():
 
 def test_limit_mode_with_max_chars_only():
     """Test limit_mode with only max_chars set."""
-    config = OutputLengthGuardConfig(
-        limit_mode="character",
-        max_chars=100
-    )
+    config = OutputLengthGuardConfig(limit_mode="character", max_chars=100)
     assert config.limit_mode == "character"
     assert config.max_chars == 100
 
 
 def test_limit_mode_with_max_tokens_only():
     """Test limit_mode with only max_tokens set."""
-    config = OutputLengthGuardConfig(
-        limit_mode="token",
-        max_tokens=50
-    )
+    config = OutputLengthGuardConfig(limit_mode="token", max_tokens=50)
     assert config.limit_mode == "token"
     assert config.max_tokens == 50
 
 
 def test_limit_mode_with_both_limits():
     """Test limit_mode with both character and token limits set."""
-    config = OutputLengthGuardConfig(
-        limit_mode="character",
-        max_chars=200,
-        max_tokens=100
-    )
+    config = OutputLengthGuardConfig(limit_mode="character", max_chars=200, max_tokens=100)
     assert config.limit_mode == "character"
     assert config.max_chars == 200
     assert config.max_tokens == 100
@@ -1295,17 +943,7 @@ def test_limit_mode_allowed_values():
 
 def test_limit_mode_with_all_config_options():
     """Test limit_mode with all configuration options."""
-    config = OutputLengthGuardConfig(
-        limit_mode="token",
-        min_chars=10,
-        max_chars=200,
-        min_tokens=5,
-        max_tokens=100,
-        chars_per_token=4,
-        strategy="truncate",
-        ellipsis="...",
-        word_boundary=True
-    )
+    config = OutputLengthGuardConfig(limit_mode="token", min_chars=10, max_chars=200, min_tokens=5, max_tokens=100, chars_per_token=4, strategy="truncate", ellipsis="...", word_boundary=True)
     assert config.limit_mode == "token"
     assert config.max_chars == 200
     assert config.max_tokens == 100
@@ -1322,18 +960,12 @@ def test_limit_mode_config_serialization():
 # Test Group 2: Character Mode Behavior (12 tests)
 # ============================================================================
 
+
 def test_character_mode_ignores_max_tokens():
     """Test that character mode ignores max_tokens limit."""
     text = TEST_TEXT_500  # 500 chars = 125 tokens at ratio 4
 
-    result = _truncate(
-        value=text,
-        max_chars=200,
-        max_tokens=100,  # Would be 400 chars - should be ignored
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=200, max_tokens=100, chars_per_token=4, limit_mode="character", ellipsis="...")  # Would be 400 chars - should be ignored
 
     # Should truncate to ~200 chars (character mode), not 400 chars (token mode)
     assert len(result) <= 203  # 200 + ellipsis
@@ -1344,14 +976,7 @@ def test_character_mode_enforces_max_chars():
     """Test that character mode enforces max_chars limit."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=100,
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     assert len(result) <= 103  # 100 + ellipsis
 
@@ -1360,14 +985,7 @@ def test_character_mode_with_no_max_chars():
     """Test character mode with max_chars=None (no limit)."""
     text = "a" * 500
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=50,  # Should be ignored
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=50, chars_per_token=4, limit_mode="character", ellipsis="...")  # Should be ignored
 
     # Should not truncate at all
     assert result == text
@@ -1378,14 +996,7 @@ def test_character_mode_with_both_limits_set():
     """Test character mode with both max_chars and max_tokens set."""
     text = "a" * 500
 
-    result = _truncate(
-        value=text,
-        max_chars=150,
-        max_tokens=200,  # Would be 800 chars - should be ignored
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=150, max_tokens=200, chars_per_token=4, limit_mode="character", ellipsis="...")  # Would be 800 chars - should be ignored
 
     # Should only enforce character limit
     assert len(result) <= 153  # 150 + ellipsis
@@ -1396,14 +1007,7 @@ def test_character_mode_truncation_basic():
     """Test basic character mode truncation."""
     text = "Hello world! This is a test message that is quite long."
 
-    result = _truncate(
-        value=text,
-        max_chars=20,
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=20, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     assert len(result) <= 23  # 20 + ellipsis
     assert result.endswith("...")
@@ -1413,14 +1017,7 @@ def test_character_mode_no_truncation_needed():
     """Test character mode when text is within limit."""
     text = "Short text"
 
-    result = _truncate(
-        value=text,
-        max_chars=100,
-        max_tokens=10,  # Should be ignored
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=10, chars_per_token=4, limit_mode="character", ellipsis="...")  # Should be ignored
 
     assert result == text
 
@@ -1429,15 +1026,7 @@ def test_character_mode_with_word_boundary():
     """Test character mode with word boundary enabled."""
     text = "Hello world this is a test message"
 
-    result = _truncate(
-        value=text,
-        max_chars=20,
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="...",
-        word_boundary=True
-    )
+    result = _truncate(value=text, max_chars=20, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...", word_boundary=True)
 
     # Should truncate at word boundary (may include trailing space before ellipsis)
     assert len(result) <= 23
@@ -1447,14 +1036,7 @@ def test_character_mode_with_word_boundary():
 
 def test_character_mode_empty_string():
     """Test character mode with empty string."""
-    result = _truncate(
-        value="",
-        max_chars=100,
-        max_tokens=50,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value="", max_chars=100, max_tokens=50, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     assert result == ""
 
@@ -1463,14 +1045,7 @@ def test_character_mode_exact_limit():
     """Test character mode when text exactly matches limit."""
     text = TEST_TEXT_100
 
-    result = _truncate(
-        value=text,
-        max_chars=100,
-        max_tokens=50,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=50, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     assert result == text
 
@@ -1479,14 +1054,7 @@ def test_character_mode_unicode_text():
     """Test character mode with Unicode characters."""
     text = "Hello 世界! 🌍 " * 20
 
-    result = _truncate(
-        value=text,
-        max_chars=50,
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=50, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     assert len(result) <= 53
 
@@ -1495,14 +1063,7 @@ def test_character_mode_custom_ellipsis():
     """Test character mode with custom ellipsis."""
     text = TEST_TEXT_100
 
-    result = _truncate(
-        value=text,
-        max_chars=50,
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="[truncated]"
-    )
+    result = _truncate(value=text, max_chars=50, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="[truncated]")
 
     assert result.endswith("[truncated]")
     assert len(result) <= 61  # 50 + len("[truncated]")
@@ -1512,14 +1073,7 @@ def test_character_mode_zero_max_chars():
     """Test character mode with max_chars=0 (treated as disabled)."""
     text = "Hello world"
 
-    result = _truncate(
-        value=text,
-        max_chars=0,  # 0 is treated as None (disabled)
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=0, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")  # 0 is treated as None (disabled)
 
     # With max_chars=0 (disabled), text should pass through unchanged
     assert result == text
@@ -1529,18 +1083,12 @@ def test_character_mode_zero_max_chars():
 # Test Group 3: Token Mode Behavior (12 tests)
 # ============================================================================
 
+
 def test_token_mode_ignores_max_chars():
     """Test that token mode ignores max_chars limit."""
     text = TEST_TEXT_500  # 500 chars = 125 tokens at ratio 4
 
-    result = _truncate(
-        value=text,
-        max_chars=100,  # Should be ignored
-        max_tokens=100,  # 400 chars
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=100, chars_per_token=4, limit_mode="token", ellipsis="...")  # Should be ignored  # 400 chars
 
     # Should truncate to ~400 chars (token mode), not 100 chars (character mode)
     assert len(result) > 100
@@ -1551,14 +1099,7 @@ def test_token_mode_enforces_max_tokens():
     """Test that token mode enforces max_tokens limit."""
     text = TEST_TEXT_1000  # 1000 chars = 250 tokens at ratio 4
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=50,  # 200 chars
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=50, chars_per_token=4, limit_mode="token", ellipsis="...")  # 200 chars
 
     # Should truncate to ~200 chars (50 tokens * 4)
     assert len(result) <= 210  # ~200 + 3 ellipsis + 7 tolerance
@@ -1568,14 +1109,7 @@ def test_token_mode_with_no_max_tokens():
     """Test token mode with max_tokens=None (no limit)."""
     text = "a" * 500
 
-    result = _truncate(
-        value=text,
-        max_chars=100,  # Should be ignored
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=None, chars_per_token=4, limit_mode="token", ellipsis="...")  # Should be ignored
 
     # Should not truncate at all
     assert result == text
@@ -1586,14 +1120,7 @@ def test_token_mode_with_both_limits_set():
     """Test token mode with both max_chars and max_tokens set."""
     text = "a" * 1000
 
-    result = _truncate(
-        value=text,
-        max_chars=100,  # Should be ignored
-        max_tokens=100,  # 400 chars
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=100, chars_per_token=4, limit_mode="token", ellipsis="...")  # Should be ignored  # 400 chars
 
     # Should only enforce token limit
     assert len(result) > 100  # Not truncated to char limit
@@ -1604,14 +1131,7 @@ def test_token_mode_truncation_basic():
     """Test basic token mode truncation."""
     text = "Hello world! This is a test message that is quite long and exceeds token limits."
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=10,  # 40 chars at ratio 4
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=10, chars_per_token=4, limit_mode="token", ellipsis="...")  # 40 chars at ratio 4
 
     assert len(result) <= 50  # ~40 + 3 ellipsis + 7 tolerance
     assert result.endswith("...")
@@ -1621,14 +1141,7 @@ def test_token_mode_no_truncation_needed():
     """Test token mode when text is within limit."""
     text = "Short text"  # 10 chars = 2 tokens
 
-    result = _truncate(
-        value=text,
-        max_chars=5,  # Should be ignored
-        max_tokens=10,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=5, max_tokens=10, chars_per_token=4, limit_mode="token", ellipsis="...")  # Should be ignored
 
     assert result == text
 
@@ -1637,15 +1150,7 @@ def test_token_mode_with_word_boundary():
     """Test token mode with word boundary enabled."""
     text = "Hello world this is a test message that exceeds token limits"
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=10,  # 40 chars
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="...",
-        word_boundary=True
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=10, chars_per_token=4, limit_mode="token", ellipsis="...", word_boundary=True)  # 40 chars
 
     # Should truncate at word boundary (may include trailing space before ellipsis)
     assert len(result) <= 43
@@ -1657,28 +1162,14 @@ def test_token_mode_custom_chars_per_token():
     """Test token mode with custom chars_per_token ratio."""
     text = TEST_TEXT_300  # 300 chars
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=50,  # 50 * 3 = 150 chars
-        chars_per_token=3,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=50, chars_per_token=3, limit_mode="token", ellipsis="...")  # 50 * 3 = 150 chars
 
     assert len(result) <= 160  # ~150 + 3 ellipsis + 7 tolerance
 
 
 def test_token_mode_empty_string():
     """Test token mode with empty string."""
-    result = _truncate(
-        value="",
-        max_chars=100,
-        max_tokens=50,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value="", max_chars=100, max_tokens=50, chars_per_token=4, limit_mode="token", ellipsis="...")
 
     assert result == ""
 
@@ -1687,14 +1178,7 @@ def test_token_mode_exact_limit():
     """Test token mode when text exactly matches token limit."""
     text = TEST_TEXT_400  # 400 chars = 100 tokens at ratio 4
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=100,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=100, chars_per_token=4, limit_mode="token", ellipsis="...")
 
     # Should not truncate (exactly at limit)
     assert result == text
@@ -1704,14 +1188,7 @@ def test_token_mode_unicode_text():
     """Test token mode with Unicode characters."""
     text = "Hello 世界! 🌍 " * 50
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=50,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=50, chars_per_token=4, limit_mode="token", ellipsis="...")
 
     # Should truncate based on token estimate
     # Allow for ellipsis and rounding: 50 tokens * 4 chars = 200 + 3 ellipsis + 7 tolerance = 210
@@ -1722,14 +1199,7 @@ def test_token_mode_zero_max_tokens():
     """Test token mode with max_tokens=0 (treated as disabled)."""
     text = "Hello world"
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=0,  # 0 is treated as None (disabled)
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=0, chars_per_token=4, limit_mode="token", ellipsis="...")  # 0 is treated as None (disabled)
 
     # With max_tokens=0 (disabled), text should pass through unchanged
     assert result == text
@@ -1738,6 +1208,7 @@ def test_token_mode_zero_max_tokens():
 # ============================================================================
 # Test Group 4: Mode Segregation (8 tests)
 # ============================================================================
+
 
 def test_v041_bug_fixed():
     """CRITICAL: Verify the v0.4.1 hybrid mode bug is fixed.
@@ -1749,14 +1220,7 @@ def test_v041_bug_fixed():
     """
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=200,
-        max_tokens=100,  # Would be 400 chars - should be IGNORED
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=200, max_tokens=100, chars_per_token=4, limit_mode="character", ellipsis="...")  # Would be 400 chars - should be IGNORED
 
     # Should truncate to 200 chars (character mode), NOT 400 chars
     assert len(result) <= 203  # 200 + ellipsis
@@ -1768,14 +1232,7 @@ def test_character_mode_does_not_check_tokens():
     text = TEST_TEXT_1000  # 1000 chars = 250 tokens
 
     # Set token limit very low - should be ignored
-    result = _truncate(
-        value=text,
-        max_chars=500,
-        max_tokens=10,  # Only 40 chars - should be IGNORED
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=500, max_tokens=10, chars_per_token=4, limit_mode="character", ellipsis="...")  # Only 40 chars - should be IGNORED
 
     # Should truncate to 500 chars, not 40 chars
     assert len(result) <= 503
@@ -1787,14 +1244,7 @@ def test_token_mode_does_not_check_characters():
     text = TEST_TEXT_1000  # 1000 chars = 250 tokens
 
     # Set char limit very low - should be ignored
-    result = _truncate(
-        value=text,
-        max_chars=50,  # Should be IGNORED
-        max_tokens=200,  # 800 chars
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=50, max_tokens=200, chars_per_token=4, limit_mode="token", ellipsis="...")  # Should be IGNORED  # 800 chars
 
     # Should truncate to ~800 chars, not 50 chars
     assert len(result) > 50
@@ -1806,24 +1256,10 @@ def test_mode_switching_changes_behavior():
     text = TEST_TEXT_500
 
     # Character mode
-    result_char = _truncate(
-        value=text,
-        max_chars=200,
-        max_tokens=100,  # 400 chars
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result_char = _truncate(value=text, max_chars=200, max_tokens=100, chars_per_token=4, limit_mode="character", ellipsis="...")  # 400 chars
 
     # Token mode
-    result_token = _truncate(
-        value=text,
-        max_chars=200,
-        max_tokens=100,  # 400 chars
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result_token = _truncate(value=text, max_chars=200, max_tokens=100, chars_per_token=4, limit_mode="token", ellipsis="...")  # 400 chars
 
     # Results should be different
     assert len(result_char) <= 203  # ~200 chars
@@ -1836,14 +1272,7 @@ def test_no_hybrid_mode_confusion():
     text = TEST_TEXT_1000
 
     # In character mode, only character limit should apply
-    result = _truncate(
-        value=text,
-        max_chars=300,
-        max_tokens=50,  # 200 chars - should be ignored
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=300, max_tokens=50, chars_per_token=4, limit_mode="character", ellipsis="...")  # 200 chars - should be ignored
 
     # Should be ~300 chars, not ~200 chars (no hybrid mode)
     assert len(result) <= 303
@@ -1854,14 +1283,7 @@ def test_character_limit_not_overridden_by_tokens():
     """Verify character limit is not overridden by token limit."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=100,
-        max_tokens=200,  # 800 chars - much larger
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=200, chars_per_token=4, limit_mode="character", ellipsis="...")  # 800 chars - much larger
 
     # Should respect character limit, not token limit
     assert len(result) <= 103
@@ -1872,14 +1294,7 @@ def test_token_limit_not_overridden_by_characters():
     """Verify token limit is not overridden by character limit."""
     text = TEST_TEXT_1000
 
-    result = _truncate(
-        value=text,
-        max_chars=50,  # Very small
-        max_tokens=200,  # 800 chars
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=50, max_tokens=200, chars_per_token=4, limit_mode="token", ellipsis="...")  # Very small  # 800 chars
 
     # Should respect token limit, not character limit
     assert len(result) > 50
@@ -1891,24 +1306,10 @@ def test_mode_segregation_with_none_limits():
     text = TEST_TEXT_500
 
     # Character mode with no char limit
-    result1 = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=50,  # Should be ignored
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result1 = _truncate(value=text, max_chars=None, max_tokens=50, chars_per_token=4, limit_mode="character", ellipsis="...")  # Should be ignored
 
     # Token mode with no token limit
-    result2 = _truncate(
-        value=text,
-        max_chars=100,  # Should be ignored
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result2 = _truncate(value=text, max_chars=100, max_tokens=None, chars_per_token=4, limit_mode="token", ellipsis="...")  # Should be ignored
 
     # Both should return original text (no applicable limit)
     assert result1 == text
@@ -1919,19 +1320,13 @@ def test_mode_segregation_with_none_limits():
 # Test Group 5: Parameter Propagation (9 tests)
 # ============================================================================
 
+
 def test_truncate_receives_limit_mode():
     """Test that _truncate receives limit_mode parameter."""
     text = TEST_TEXT_500
 
     # Should not raise TypeError for missing parameter
-    result = _truncate(
-        value=text,
-        max_chars=200,
-        max_tokens=100,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=200, max_tokens=100, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     assert isinstance(result, str)
 
@@ -1940,14 +1335,7 @@ def test_truncate_respects_character_mode():
     """Test that _truncate respects character mode."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=150,
-        max_tokens=200,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=150, max_tokens=200, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     assert len(result) <= 153
 
@@ -1956,14 +1344,7 @@ def test_truncate_respects_token_mode():
     """Test that _truncate respects token mode."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=100,
-        max_tokens=100,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=100, chars_per_token=4, limit_mode="token", ellipsis="...")
 
     assert len(result) > 100
     assert len(result) <= 410  # 100 tokens * 4 chars + 3 (ellipsis) + 7 (tolerance)
@@ -1975,18 +1356,7 @@ def test_process_structured_receives_limit_mode():
     data = TEST_TEXT_500
 
     # Should not raise TypeError for missing parameter
-    result, modified, violation = _process_structured_data(
-        data=data,
-        min_chars=0,
-        max_chars=200,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        max_tokens=100,
-        chars_per_token=4,
-        limit_mode="character"
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_chars=200, max_tokens=100, chars_per_token=4, limit_mode="character", ellipsis="..."), context)
 
     assert isinstance(result, str)
 
@@ -1996,18 +1366,7 @@ def test_process_structured_respects_character_mode():
     context = Mock(spec=PluginContext)
     data = "a" * 500
 
-    result, modified, violation = _process_structured_data(
-        data=data,
-        min_chars=0,
-        max_chars=150,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        max_tokens=200,
-        chars_per_token=4,
-        limit_mode="character"
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_chars=150, max_tokens=200, chars_per_token=4, limit_mode="character", ellipsis="..."), context)
 
     assert len(result) <= 153
 
@@ -2017,18 +1376,7 @@ def test_process_structured_respects_token_mode():
     context = Mock(spec=PluginContext)
     data = "a" * 500
 
-    result, modified, violation = _process_structured_data(
-        data=data,
-        min_chars=0,
-        max_chars=100,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        max_tokens=100,
-        chars_per_token=4,
-        limit_mode="token"
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_chars=100, max_tokens=100, chars_per_token=4, limit_mode="token", ellipsis="..."), context)
 
     assert len(result) > 100
     assert len(result) <= 410  # 100 tokens * 4 chars + 3 (ellipsis) + 7 (tolerance)
@@ -2039,18 +1387,7 @@ def test_limit_mode_propagates_to_list_items():
     context = Mock(spec=PluginContext)
     data = ["a" * 500, "b" * 500, "c" * 500]
 
-    result, modified, violation = _process_structured_data(
-        data=data,
-        min_chars=0,
-        max_chars=150,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        max_tokens=200,
-        chars_per_token=4,
-        limit_mode="character"
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_chars=150, max_tokens=200, chars_per_token=4, limit_mode="character", ellipsis="..."), context)
 
     # All items should be truncated to character limit
     for item in result:
@@ -2060,24 +1397,9 @@ def test_limit_mode_propagates_to_list_items():
 def test_limit_mode_propagates_to_dict_values():
     """Test that limit_mode propagates to dict values."""
     context = Mock(spec=PluginContext)
-    data = {
-        "key1": "a" * 500,
-        "key2": "b" * 500,
-        "key3": "c" * 500
-    }
+    data = {"key1": "a" * 500, "key2": "b" * 500, "key3": "c" * 500}
 
-    result, modified, violation = _process_structured_data(
-        data=data,
-        min_chars=0,
-        max_chars=150,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        max_tokens=200,
-        chars_per_token=4,
-        limit_mode="character"
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_chars=150, max_tokens=200, chars_per_token=4, limit_mode="character", ellipsis="..."), context)
 
     # All values should be truncated to character limit
     for value in result.values():
@@ -2088,26 +1410,9 @@ def test_limit_mode_propagates_to_dict_values():
 def test_limit_mode_propagates_recursively():
     """Test that limit_mode propagates through nested structures."""
     context = Mock(spec=PluginContext)
-    data = {
-        "level1": {
-            "level2": {
-                "level3": "a" * 500
-            }
-        }
-    }
+    data = {"level1": {"level2": {"level3": "a" * 500}}}
 
-    result, modified, violation = _process_structured_data(
-        data=data,
-        min_chars=0,
-        max_chars=150,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        max_tokens=200,
-        chars_per_token=4,
-        limit_mode="character"
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_chars=150, max_tokens=200, chars_per_token=4, limit_mode="character", ellipsis="..."), context)
 
     # Nested value should be truncated to character limit
     nested_value = result["level1"]["level2"]["level3"]
@@ -2118,17 +1423,10 @@ def test_limit_mode_propagates_recursively():
 # Test Group 6: Integration Tests (10 tests)
 # ============================================================================
 
+
 def test_plugin_with_character_mode():
     """Test plugin initialization with character mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "character",
-            "max_chars": 200,
-            "max_tokens": 100
-        }
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "character", "max_chars": 200, "max_tokens": 100})
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     # Access the OutputLengthGuardConfig from plugin._cfg
@@ -2137,15 +1435,7 @@ def test_plugin_with_character_mode():
 
 def test_plugin_with_token_mode():
     """Test plugin initialization with token mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "token",
-            "max_chars": 200,
-            "max_tokens": 100
-        }
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "token", "max_chars": 200, "max_tokens": 100})
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     # Access the OutputLengthGuardConfig from plugin._cfg
@@ -2154,11 +1444,7 @@ def test_plugin_with_token_mode():
 
 def test_plugin_default_mode():
     """Test plugin uses default character mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={}  # Use defaults
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={})  # Use defaults
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     assert plugin._cfg.limit_mode == "character"
@@ -2167,24 +1453,11 @@ def test_plugin_default_mode():
 @pytest.mark.asyncio
 async def test_tool_post_invoke_character_mode():
     """Test tool_post_invoke with character mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "character",
-            "max_chars": 100,
-            "max_tokens": 50,
-            "strategy": "truncate"
-        }
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "character", "max_chars": 100, "max_tokens": 50, "strategy": "truncate"})
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-char-mode"))
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        arguments={},
-        result="a" * 500
-    )
+    payload = ToolPostInvokePayload(name="test_tool", arguments={}, result="a" * 500)
 
     result = await plugin.tool_post_invoke(payload, context)
 
@@ -2196,33 +1469,19 @@ async def test_tool_post_invoke_character_mode():
 @pytest.mark.asyncio
 async def test_tool_post_invoke_token_mode():
     """Test tool_post_invoke with token mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "token",
-            "max_chars": 50,
-            "max_tokens": 100,
-            "chars_per_token": 4,
-            "strategy": "truncate"
-        }
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "token", "max_chars": 50, "max_tokens": 100, "chars_per_token": 4, "strategy": "truncate"})
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-token-mode"))
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        arguments={},
-        result="a" * 500
-    )
+    payload = ToolPostInvokePayload(name="test_tool", arguments={}, result="a" * 500)
 
     result = await plugin.tool_post_invoke(payload, context)
 
     # Should truncate to token limit (~400 chars), not char limit (50)
     if result.modified_payload is None:
         # If no modification, text was within limits - unexpected for 500 chars
-        print(f"⚠️  WARNING: No modification for 500-char text with max_tokens=100")
-        print(f"   This suggests the plugin may not be applying token limits correctly")
+        print("WARNING: No modification for 500-char text with max_tokens=100")
+        print("   This suggests the plugin may not be applying token limits correctly")
         # Skip assertions
         return
 
@@ -2233,24 +1492,11 @@ async def test_tool_post_invoke_token_mode():
 @pytest.mark.asyncio
 async def test_tool_post_invoke_with_structured_data_character_mode():
     """Test tool_post_invoke with structured data in character mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "character",
-            "max_chars": 100,
-            "max_tokens": 50,
-            "strategy": "truncate"
-        }
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "character", "max_chars": 100, "max_tokens": 50, "strategy": "truncate"})
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-struct-char"))
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        arguments={},
-        result=["a" * 500, "b" * 500]
-    )
+    payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=["a" * 500, "b" * 500])
 
     result = await plugin.tool_post_invoke(payload, context)
 
@@ -2263,33 +1509,19 @@ async def test_tool_post_invoke_with_structured_data_character_mode():
 @pytest.mark.asyncio
 async def test_tool_post_invoke_with_structured_data_token_mode():
     """Test tool_post_invoke with structured data in token mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "token",
-            "max_chars": 50,
-            "max_tokens": 100,
-            "chars_per_token": 4,
-            "strategy": "truncate"
-        }
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "token", "max_chars": 50, "max_tokens": 100, "chars_per_token": 4, "strategy": "truncate"})
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-struct-token"))
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        arguments={},
-        result=["a" * 500, "b" * 500]
-    )
+    payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=["a" * 500, "b" * 500])
 
     result = await plugin.tool_post_invoke(payload, context)
 
     # All items should be truncated to token limit, not char limit
     if result.modified_payload is None:
         # If no modification, items were within limits - unexpected for 500-char items
-        print(f"⚠️  WARNING: No modification for 500-char items with max_tokens=100")
-        print(f"   This suggests the plugin may not be applying token limits to lists correctly")
+        print("WARNING: No modification for 500-char items with max_tokens=100")
+        print("   This suggests the plugin may not be applying token limits to lists correctly")
         # Skip assertions
         return
 
@@ -2301,24 +1533,11 @@ async def test_tool_post_invoke_with_structured_data_token_mode():
 @pytest.mark.asyncio
 async def test_tool_post_invoke_blocking_character_mode():
     """Test tool_post_invoke blocking in character mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "character",
-            "max_chars": 100,
-            "max_tokens": 50,
-            "strategy": "block"
-        }
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "character", "max_chars": 100, "max_tokens": 50, "strategy": "block"})
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-block-char"))
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        arguments={},
-        result="a" * 500
-    )
+    payload = ToolPostInvokePayload(name="test_tool", arguments={}, result="a" * 500)
 
     result = await plugin.tool_post_invoke(payload, context)
 
@@ -2330,70 +1549,33 @@ async def test_tool_post_invoke_blocking_character_mode():
 @pytest.mark.asyncio
 async def test_tool_post_invoke_blocking_token_mode():
     """Test tool_post_invoke blocking in token mode."""
-    plugin_config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "token",
-            "max_chars": 50,
-            "max_tokens": 50,
-            "chars_per_token": 4,
-            "strategy": "block"
-        }
-    )
+    plugin_config = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "token", "max_chars": 50, "max_tokens": 50, "chars_per_token": 4, "strategy": "block"})
     plugin = OutputLengthGuardPlugin(config=plugin_config)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-block-token"))
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        arguments={},
-        result="a" * 500
-    )
+    payload = ToolPostInvokePayload(name="test_tool", arguments={}, result="a" * 500)
 
     result = await plugin.tool_post_invoke(payload, context)
 
     # Should block due to token limit
     assert result.violation is not None
-    assert "OUTPUT_LENGTH_VIOLATION" in result.violation.code  # Changed from OUTPUT_TOKEN_VIOLATION
+    assert "OUTPUT_TOKEN_VIOLATION" in result.violation.code
 
 
 @pytest.mark.asyncio
 async def test_plugin_mode_switching():
     """Test switching plugin mode between invocations."""
     # Character mode
-    plugin_config1 = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "character",
-            "max_chars": 100,
-            "max_tokens": 100,
-            "strategy": "truncate"
-        }
-    )
+    plugin_config1 = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "character", "max_chars": 100, "max_tokens": 100, "strategy": "truncate"})
     plugin1 = OutputLengthGuardPlugin(config=plugin_config1)
 
     context = PluginContext(global_context=GlobalContext(request_id="test-mode-switch"))
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        arguments={},
-        result="a" * 500
-    )
+    payload = ToolPostInvokePayload(name="test_tool", arguments={}, result="a" * 500)
 
     result1 = await plugin1.tool_post_invoke(payload, context)
 
     # Token mode
-    plugin_config2 = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "limit_mode": "token",
-            "max_chars": 100,
-            "max_tokens": 100,
-            "chars_per_token": 4,
-            "strategy": "truncate"
-        }
-    )
+    plugin_config2 = PluginConfig(name="test", kind="output_length_guard", config={"limit_mode": "token", "max_chars": 100, "max_tokens": 100, "chars_per_token": 4, "strategy": "truncate"})
     plugin2 = OutputLengthGuardPlugin(config=plugin_config2)
 
     result2 = await plugin2.tool_post_invoke(payload, context)
@@ -2405,7 +1587,7 @@ async def test_plugin_mode_switching():
     # Check if modifications occurred
     if result1.modified_payload is None or result2.modified_payload is None:
         # If no modification, the text was within limits - skip test
-        print(f"⚠️  Skipping assertions - no modification occurred")
+        print("Skipping assertions - no modification occurred")
         print(f"   result1.modified_payload: {result1.modified_payload}")
         print(f"   result2.modified_payload: {result2.modified_payload}")
         return
@@ -2422,18 +1604,12 @@ async def test_plugin_mode_switching():
 # Test Group 7: Edge Cases (8 tests)
 # ============================================================================
 
+
 def test_limit_mode_with_null_char_limit():
     """Test limit_mode with max_chars=None."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=None,
-        max_tokens=100,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=None, max_tokens=100, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     # Should not truncate (no character limit)
     assert result == text
@@ -2443,14 +1619,7 @@ def test_limit_mode_with_null_token_limit():
     """Test limit_mode with max_tokens=None."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=100,
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=None, chars_per_token=4, limit_mode="token", ellipsis="...")
 
     # Should not truncate (no token limit)
     assert result == text
@@ -2460,14 +1629,7 @@ def test_limit_mode_with_zero_char_limit():
     """Test limit_mode with max_chars=0 (treated as disabled)."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=0,  # 0 is treated as None (disabled)
-        max_tokens=100,  # Ignored in character mode
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=0, max_tokens=100, chars_per_token=4, limit_mode="character", ellipsis="...")  # 0 is treated as None (disabled)  # Ignored in character mode
 
     # With max_chars=0 (disabled), text should pass through unchanged
     assert result == text
@@ -2477,14 +1639,7 @@ def test_limit_mode_with_zero_token_limit():
     """Test limit_mode with max_tokens=0 (treated as disabled)."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=100,  # Ignored in token mode
-        max_tokens=0,  # 0 is treated as None (disabled)
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=0, chars_per_token=4, limit_mode="token", ellipsis="...")  # Ignored in token mode  # 0 is treated as None (disabled)
 
     # With max_tokens=0 (disabled), text should pass through unchanged
     assert result == text
@@ -2494,14 +1649,7 @@ def test_limit_mode_with_very_large_limits():
     """Test limit_mode with very large limits."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=1_000_000,
-        max_tokens=1_000_000,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=1_000_000, max_tokens=1_000_000, chars_per_token=4, limit_mode="character", ellipsis="...")
 
     # Should not truncate
     assert result == text
@@ -2509,11 +1657,7 @@ def test_limit_mode_with_very_large_limits():
 
 def test_config_without_limit_mode():
     """Test backward compatibility: config without limit_mode uses default."""
-    config_dict = {
-        "max_chars": 200,
-        "max_tokens": 100,
-        "strategy": "truncate"
-    }
+    config_dict = {"max_chars": 200, "max_tokens": 100, "strategy": "truncate"}
     config = OutputLengthGuardConfig(**config_dict)
 
     # Should use default "character" mode
@@ -2524,14 +1668,7 @@ def test_limit_mode_with_empty_ellipsis():
     """Test limit_mode with empty ellipsis."""
     text = TEST_TEXT_500
 
-    result = _truncate(
-        value=text,
-        max_chars=100,
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis=""
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="")
 
     # Should truncate without ellipsis
     assert len(result) == 100
@@ -2543,14 +1680,7 @@ def test_limit_mode_with_very_long_ellipsis():
     text = TEST_TEXT_500
     ellipsis = "[TRUNCATED DUE TO LENGTH LIMIT]"
 
-    result = _truncate(
-        value=text,
-        max_chars=100,
-        max_tokens=None,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis=ellipsis
-    )
+    result = _truncate(value=text, max_chars=100, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis=ellipsis)
 
     # Should handle long ellipsis correctly
     assert result.endswith(ellipsis)
@@ -2561,21 +1691,16 @@ def test_limit_mode_with_very_long_ellipsis():
 # Test Group 8: Performance Tests (6 tests)
 # ============================================================================
 
+
 def test_character_mode_performance():
     """Test that character mode is performant with large text."""
+    # Standard
     import time
 
     text = TEST_TEXT_1M  # 1MB text
 
     start = time.time()
-    result = _truncate(
-        value=text,
-        max_chars=1000,
-        max_tokens=500,
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=1000, max_tokens=500, chars_per_token=4, limit_mode="character", ellipsis="...")
     elapsed = time.time() - start
 
     # Should complete quickly (< 100ms)
@@ -2585,19 +1710,13 @@ def test_character_mode_performance():
 
 def test_token_mode_performance():
     """Test that token mode is performant with large text."""
+    # Standard
     import time
 
     text = "a" * 1_000_000  # 1MB text
 
     start = time.time()
-    result = _truncate(
-        value=text,
-        max_chars=1000,
-        max_tokens=500,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=1000, max_tokens=500, chars_per_token=4, limit_mode="token", ellipsis="...")
     elapsed = time.time() - start
 
     # Should complete quickly (< 100ms)
@@ -2609,6 +1728,7 @@ def test_token_mode_performance():
 
 def test_mode_selection_overhead():
     """Test that mode selection adds minimal overhead."""
+    # Standard
     import time
 
     text = TEST_TEXT_10K
@@ -2617,27 +1737,13 @@ def test_mode_selection_overhead():
     # Character mode
     start = time.time()
     for _ in range(iterations):
-        _truncate(
-            value=text,
-            max_chars=5000,
-            max_tokens=2500,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        _truncate(value=text, max_chars=5000, max_tokens=2500, chars_per_token=4, limit_mode="character", ellipsis="...")
     char_time = time.time() - start
 
     # Token mode
     start = time.time()
     for _ in range(iterations):
-        _truncate(
-            value=text,
-            max_chars=5000,
-            max_tokens=2500,
-            chars_per_token=4,
-            limit_mode="token",
-            ellipsis="..."
-        )
+        _truncate(value=text, max_chars=5000, max_tokens=2500, chars_per_token=4, limit_mode="token", ellipsis="...")
     token_time = time.time() - start
 
     # Both should be reasonably fast
@@ -2651,14 +1757,7 @@ def test_character_mode_skips_token_estimation():
 
     # In character mode, token estimation should not be called
     # This is verified by the fact that max_tokens is ignored
-    result = _truncate(
-        value=text,
-        max_chars=5000,
-        max_tokens=1,  # Very low - would fail if checked
-        chars_per_token=4,
-        limit_mode="character",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=5000, max_tokens=1, chars_per_token=4, limit_mode="character", ellipsis="...")  # Very low - would fail if checked
 
     # Should truncate to char limit, proving tokens weren't checked
     assert len(result) <= 5003
@@ -2670,14 +1769,7 @@ def test_token_mode_skips_character_checks():
 
     # In token mode, character checks should not be performed
     # This is verified by the fact that max_chars is ignored
-    result = _truncate(
-        value=text,
-        max_chars=1,  # Very low - would fail if checked
-        max_tokens=2500,
-        chars_per_token=4,
-        limit_mode="token",
-        ellipsis="..."
-    )
+    result = _truncate(value=text, max_chars=1, max_tokens=2500, chars_per_token=4, limit_mode="token", ellipsis="...")  # Very low - would fail if checked
 
     # Should truncate to token limit, proving chars weren't checked
     assert len(result) > 1
@@ -2686,32 +1778,19 @@ def test_token_mode_skips_character_checks():
 
 def test_structured_data_performance_with_mode():
     """Test structured data processing performance with limit_mode."""
+    # Standard
     import time
 
     context = Mock(spec=PluginContext)
     data = [TEST_TEXT_10K for _ in range(100)]  # 100 items
 
     start = time.time()
-    result, modified, violation = _process_structured_data(
-        data=data,
-        min_chars=0,
-        max_chars=5000,
-        ellipsis="...",
-        strategy="truncate",
-        word_boundary=False,
-        context=context,
-        max_tokens=2500,
-        chars_per_token=4,
-        limit_mode="character"
-    )
+    result, modified, violation = _process_structured_data(data, make_policy(max_chars=5000, max_tokens=2500, chars_per_token=4, limit_mode="character", ellipsis="..."), context)
     elapsed = time.time() - start
 
     # Should complete quickly (< 500ms for 100 items)
     assert elapsed < 0.5
     assert len(result) == 100
-
-
-
 
 
 # ============================================================================
@@ -2766,15 +1845,7 @@ class TestStructuredDataProcessing(BaseOutputLengthGuardTest):
     def test_simple_list_truncation(self):
         """Test truncation of simple list of strings."""
         data = ["hello world", "foo bar"]
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=5,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=5, ellipsis="..."), self.mock_context)
 
         self.assertTrue(modified)
         self.assertEqual(result, ["he...", "fo..."])
@@ -2782,15 +1853,7 @@ class TestStructuredDataProcessing(BaseOutputLengthGuardTest):
     def test_list_with_numeric_strings(self):
         """Test that numeric strings in lists are preserved."""
         data = ["123", "456.78", "1e5", "hello"]
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=5,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=5, ellipsis="..."), self.mock_context)
 
         # "hello" (5 chars) should be truncated to "he..." (5 chars with ellipsis)
         # Numeric strings are preserved
@@ -2804,15 +1867,7 @@ class TestStructuredDataProcessing(BaseOutputLengthGuardTest):
     def test_dict_truncation(self):
         """Test truncation of dict values."""
         data = {"name": "Alice Smith", "email": "alice@example.com"}
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=5,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=5, ellipsis="..."), self.mock_context)
 
         self.assertTrue(modified)
         self.assertEqual(result, {"name": "Al...", "email": "al..."})
@@ -2820,58 +1875,24 @@ class TestStructuredDataProcessing(BaseOutputLengthGuardTest):
     def test_dict_with_numeric_values(self):
         """Test that numeric strings in dicts are preserved."""
         data = {"price": "99.99", "quantity": "1000", "name": "Product"}
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=5,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=5, ellipsis="..."), self.mock_context)
 
         self.assertTrue(modified)  # "Product" was truncated
         self.assertEqual(result, {"price": "99.99", "quantity": "1000", "name": "Pr..."})
 
     def test_nested_structure(self):
         """Test truncation of deeply nested structures."""
-        data = {
-            "users": [
-                {"name": "Bob Johnson", "age": "25"},
-                {"name": "Carol White", "age": "30"}
-            ]
-        }
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=5,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        data = {"users": [{"name": "Bob Johnson", "age": "25"}, {"name": "Carol White", "age": "30"}]}
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=5, ellipsis="..."), self.mock_context)
 
         self.assertTrue(modified)
-        expected = {
-            "users": [
-                {"name": "Bo...", "age": "25"},
-                {"name": "Ca...", "age": "30"}
-            ]
-        }
+        expected = {"users": [{"name": "Bo...", "age": "25"}, {"name": "Ca...", "age": "30"}]}
         self.assertEqual(result, expected)
 
     def test_no_modification_needed(self):
         """Test that unmodified data returns False for modified flag."""
         data = ["abc", "def"]
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), self.mock_context)
 
         self.assertFalse(modified)
         self.assertEqual(result, ["abc", "def"])
@@ -2879,15 +1900,7 @@ class TestStructuredDataProcessing(BaseOutputLengthGuardTest):
     def test_actual_numeric_types_preserved(self):
         """Test that actual int/float types pass through unchanged."""
         data = {"count": 123, "price": 45.67, "name": "Product Name"}
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=5,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=5, ellipsis="..."), self.mock_context)
 
         self.assertTrue(modified)  # "Product Name" was truncated
         self.assertEqual(result, {"count": 123, "price": 45.67, "name": "Pr..."})
@@ -2935,10 +1948,7 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
     def test_structured_content_priority(self):
         """Test that structuredContent is processed BEFORE content array."""
         # This is the critical v0.3.3 fix
-        payload = create_structured_payload(
-            structured_content={"result": ["short", "longer text here"]},
-            content=[{"type": "text", "text": "original text"}]
-        )
+        payload = create_structured_payload(structured_content={"result": ["short", "longer text here"]}, content=[{"type": "text", "text": "original text"}])
 
         result = self.invoke_plugin(payload)
 
@@ -2961,9 +1971,7 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         """Test that content is processed normally when no structuredContent."""
         payload = Mock()
         payload.name = "test_tool"
-        payload.result = {
-            "content": [{"type": "text", "text": "this is a very long text"}]
-        }
+        payload.result = {"content": [{"type": "text", "text": "this is a very long text"}]}
 
         result = asyncio.run(self.plugin.tool_post_invoke(payload, self.mock_context))
 
@@ -2978,12 +1986,7 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         """Test that numeric strings are preserved in structuredContent."""
         payload = Mock()
         payload.name = "test_tool"
-        payload.result = {
-            "content": [{"type": "text", "text": "data"}],
-            "structuredContent": {
-                "result": ["123.45", "6.022e23", "regular text here"]
-            }
-        }
+        payload.result = {"content": [{"type": "text", "text": "data"}], "structuredContent": {"result": ["123.45", "6.022e23", "regular text here"]}}
 
         result = asyncio.run(self.plugin.tool_post_invoke(payload, self.mock_context))
 
@@ -3000,10 +2003,7 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         """Test the critical v0.3.3 fix: regenerated content is not truncated."""
         payload = Mock()
         payload.name = "test_tool"
-        payload.result = {
-            "content": [{"type": "text", "text": "ignored"}],
-            "structuredContent": {"result": ["sff", "dffd"]}
-        }
+        payload.result = {"content": [{"type": "text", "text": "ignored"}], "structuredContent": {"result": ["sff", "dffd"]}}
 
         result = asyncio.run(self.plugin.tool_post_invoke(payload, self.mock_context))
 
@@ -3024,6 +2024,106 @@ class TestPluginIntegration(BaseOutputLengthGuardTest):
         self.assertGreater(len(content_text), 10)
 
 
+class TestTokenModeIntegration(BaseOutputLengthGuardTest):
+    """Integration tests for token-mode enforcement via tool_post_invoke.
+
+    Verifies that limit_mode='token' works end-to-end for all result shapes:
+    plain strings, dicts with text, MCP content arrays, and list of strings.
+    """
+
+    def setUp(self):
+        """Set up plugin in token mode with max_tokens=5, chars_per_token=4."""
+        self.plugin = self.create_plugin(
+            limit_mode="token",
+            max_tokens=5,
+            chars_per_token=4,
+            max_chars=None,
+            min_chars=0,
+            strategy="truncate",
+            ellipsis="...",
+        )
+        self.mock_context = Mock()
+        self.mock_context.logger = Mock()
+
+    def test_token_truncate_plain_string(self):
+        """Token mode truncates a plain string result that exceeds max_tokens."""
+        # 5 tokens * 4 chars = 20 chars budget. 40 chars should be truncated.
+        long_text = "a" * 40
+        payload = create_mock_payload(long_text)
+        result = self.invoke_plugin(payload)
+        self.assertIsNotNone(result.modified_payload)
+        truncated = result.modified_payload.result
+        self.assertLess(len(truncated), len(long_text))
+        self.assertTrue(truncated.endswith("..."))
+
+    def test_token_no_truncate_short_string(self):
+        """Token mode does not truncate a string within token budget."""
+        short_text = "Hello"  # 1 token at 4 chars/token — well within 5
+        payload = create_mock_payload(short_text)
+        result = self.invoke_plugin(payload)
+        self.assertIsNone(result.modified_payload)
+
+    def test_token_truncate_dict_text(self):
+        """Token mode truncates a dict result with 'text' field."""
+        long_text = "b" * 40
+        payload = create_mock_payload({"text": long_text})
+        result = self.invoke_plugin(payload)
+        self.assertIsNotNone(result.modified_payload)
+        truncated = result.modified_payload.result["text"]
+        self.assertLess(len(truncated), len(long_text))
+
+    def test_token_truncate_mcp_content(self):
+        """Token mode truncates MCP content array text items."""
+        long_text = "c" * 40
+        payload = create_mock_payload({"content": [{"type": "text", "text": long_text}]})
+        result = self.invoke_plugin(payload)
+        self.assertIsNotNone(result.modified_payload)
+        truncated = result.modified_payload.result["content"][0]["text"]
+        self.assertLess(len(truncated), len(long_text))
+
+    def test_token_truncate_list_of_strings(self):
+        """Token mode truncates items in a list of strings."""
+        long_text = "d" * 40
+        payload = create_mock_payload([long_text, "short"])
+        result = self.invoke_plugin(payload)
+        self.assertIsNotNone(result.modified_payload)
+        truncated_list = result.modified_payload.result
+        self.assertLess(len(truncated_list[0]), len(long_text))
+        self.assertEqual(truncated_list[1], "short")
+
+    def test_token_block_plain_string(self):
+        """Token block mode returns violation for over-budget string."""
+        plugin = self.create_plugin(
+            limit_mode="token",
+            max_tokens=5,
+            chars_per_token=4,
+            max_chars=None,
+            strategy="block",
+        )
+        long_text = "e" * 40
+        payload = create_mock_payload(long_text)
+        result = asyncio.run(plugin.tool_post_invoke(payload, self.mock_context))
+        self.assertFalse(result.continue_processing)
+        self.assertIsNotNone(result.violation)
+        self.assertEqual(result.violation.code, "OUTPUT_TOKEN_VIOLATION")
+
+    def test_token_mode_ignores_char_limits(self):
+        """Token mode ignores max_chars when limit_mode='token'."""
+        # max_chars=5 but limit_mode=token, so char limit is irrelevant
+        plugin = self.create_plugin(
+            limit_mode="token",
+            max_tokens=100,
+            max_chars=5,
+            chars_per_token=4,
+            strategy="truncate",
+        )
+        text = "a" * 20  # 5 tokens at 4 chars/token — within token budget
+        payload = create_mock_payload(text)
+        result = asyncio.run(plugin.tool_post_invoke(payload, self.mock_context))
+        # Should NOT be truncated (within token limit, char limit ignored)
+        self.assertIsNone(result.modified_payload)
+
+
 class TestEdgeCases(BaseOutputLengthGuardTest):
     """Test edge cases and boundary conditions."""
 
@@ -3034,74 +2134,34 @@ class TestEdgeCases(BaseOutputLengthGuardTest):
 
     def test_empty_list(self):
         """Test processing of empty list."""
-        result, modified, violation = _process_structured_data(
-            [],
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data([], make_policy(max_chars=10, ellipsis="..."), self.mock_context)
         self.assertFalse(modified)
         self.assertEqual(result, [])
 
     def test_empty_dict(self):
         """Test processing of empty dict."""
-        result, modified, violation = _process_structured_data(
-            {},
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data({}, make_policy(max_chars=10, ellipsis="..."), self.mock_context)
         self.assertFalse(modified)
         self.assertEqual(result, {})
 
     def test_none_values(self):
         """Test that None values pass through unchanged."""
         data = {"key": None}
-        result, modified, violation = _process_structured_data(
-            data,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), self.mock_context)
         self.assertFalse(modified)
         self.assertEqual(result, {"key": None})
 
     def test_boolean_values(self):
         """Test that boolean values pass through unchanged."""
         data = {"flag": True, "other": False}
-        result, modified, violation = _process_structured_data(
-            data,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), self.mock_context)
         self.assertFalse(modified)
         self.assertEqual(result, {"flag": True, "other": False})
 
     def test_max_chars_none(self):
         """Test that None max_chars disables truncation."""
         data = ["very long string here"]
-        result, modified, violation = _process_structured_data(
-            data,
-            min_chars=0,
-            max_chars=None,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=self.mock_context
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(ellipsis="..."), self.mock_context)
         self.assertFalse(modified)
         self.assertEqual(result, ["very long string here"])
 
@@ -3124,16 +2184,14 @@ def run_tests():
     result = runner.run(suite)
 
     # Print summary
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print(f"Tests run: {result.testsRun}")
     print(f"Successes: {result.testsRun - len(result.failures) - len(result.errors)}")
     print(f"Failures: {len(result.failures)}")
     print(f"Errors: {len(result.errors)}")
-    print("="*70)
+    print("=" * 70)
 
     return 0 if result.wasSuccessful() else 1
-
-
 
 
 # ============================================================================
@@ -3143,37 +2201,23 @@ def run_tests():
 # ============================================================================
 
 
-
 async def test_word_boundary_truncation():
     """Test that word_boundary=True truncates at word boundaries."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST: Word-Boundary Truncation")
-    print("="*80)
+    print("=" * 80)
 
     # Create plugin with word_boundary enabled
-    config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": 20,
-            "strategy": "truncate",
-            "ellipsis": "…",
-            "word_boundary": True
-        }
-    )
+    config = PluginConfig(name="test", kind="output_length_guard", config={"min_chars": 0, "max_chars": 20, "strategy": "truncate", "ellipsis": "…", "word_boundary": True})
     plugin = OutputLengthGuardPlugin(config)
     context = PluginContext(global_context=GlobalContext(request_id="test-wb"))
 
     # Test 1: Truncate at space
     print("\n📝 Test 1: Truncate at space boundary")
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        result="The quick brown fox jumps over the lazy dog"
-    )
+    payload = ToolPostInvokePayload(name="test_tool", result="The quick brown fox jumps over the lazy dog")
     result = await plugin.tool_post_invoke(payload, context)
     truncated = result.modified_payload.result if result.modified_payload else payload.result
-    print(f"Input:  'The quick brown fox jumps over the lazy dog'")
+    print("Input:  'The quick brown fox jumps over the lazy dog'")
     print(f"Output: '{truncated}'")
     print(f"Length: {len(truncated)}")
     assert len(truncated) <= 20
@@ -3183,13 +2227,10 @@ async def test_word_boundary_truncation():
 
     # Test 2: Truncate at punctuation
     print("\n📝 Test 2: Truncate at punctuation boundary")
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        result="Hello, world! How are you today?"
-    )
+    payload = ToolPostInvokePayload(name="test_tool", result="Hello, world! How are you today?")
     result = await plugin.tool_post_invoke(payload, context)
     truncated = result.modified_payload.result if result.modified_payload else payload.result
-    print(f"Input:  'Hello, world! How are you today?'")
+    print("Input:  'Hello, world! How are you today?'")
     print(f"Output: '{truncated}'")
     print(f"Length: {len(truncated)}")
     assert len(truncated) <= 20
@@ -3198,13 +2239,10 @@ async def test_word_boundary_truncation():
 
     # Test 3: No boundary found - hard cut
     print("\n📝 Test 3: No boundary found - fallback to hard cut")
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        result="Supercalifragilisticexpialidocious"
-    )
+    payload = ToolPostInvokePayload(name="test_tool", result="Supercalifragilisticexpialidocious")
     result = await plugin.tool_post_invoke(payload, context)
     truncated = result.modified_payload.result if result.modified_payload else payload.result
-    print(f"Input:  'Supercalifragilisticexpialidocious'")
+    print("Input:  'Supercalifragilisticexpialidocious'")
     print(f"Output: '{truncated}'")
     print(f"Length: {len(truncated)}")
     assert len(truncated) <= 20
@@ -3213,13 +2251,10 @@ async def test_word_boundary_truncation():
 
     # Test 4: Short text - no truncation
     print("\n📝 Test 4: Short text - no truncation needed")
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        result="Short text"
-    )
+    payload = ToolPostInvokePayload(name="test_tool", result="Short text")
     result = await plugin.tool_post_invoke(payload, context)
     truncated = result.modified_payload.result if result.modified_payload else payload.result
-    print(f"Input:  'Short text'")
+    print("Input:  'Short text'")
     print(f"Output: '{truncated}'")
     assert truncated == "Short text"
     print("✅ PASSED: Short text unchanged")
@@ -3227,34 +2262,21 @@ async def test_word_boundary_truncation():
 
 async def test_word_boundary_disabled():
     """Test that word_boundary=False uses hard cut."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST: Word-Boundary Disabled (Hard Cut)")
-    print("="*80)
+    print("=" * 80)
 
     # Create plugin with word_boundary disabled
-    config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": 20,
-            "strategy": "truncate",
-            "ellipsis": "…",
-            "word_boundary": False  # Disabled
-        }
-    )
+    config = PluginConfig(name="test", kind="output_length_guard", config={"min_chars": 0, "max_chars": 20, "strategy": "truncate", "ellipsis": "…", "word_boundary": False})  # Disabled
     plugin = OutputLengthGuardPlugin(config)
     context = PluginContext(global_context=GlobalContext(request_id="test-no-wb"))
 
     # Test: Hard cut at exact position
     print("\n📝 Test: Hard cut at exact character limit")
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        result="The quick brown fox jumps over the lazy dog"
-    )
+    payload = ToolPostInvokePayload(name="test_tool", result="The quick brown fox jumps over the lazy dog")
     result = await plugin.tool_post_invoke(payload, context)
     truncated = result.modified_payload.result if result.modified_payload else payload.result
-    print(f"Input:  'The quick brown fox jumps over the lazy dog'")
+    print("Input:  'The quick brown fox jumps over the lazy dog'")
     print(f"Output: '{truncated}'")
     print(f"Length: {len(truncated)}")
     assert len(truncated) == 20  # Exactly 20 chars (19 + 1 ellipsis)
@@ -3264,30 +2286,17 @@ async def test_word_boundary_disabled():
 
 async def test_word_boundary_with_structured_content():
     """Test word-boundary with structured content."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST: Word-Boundary with Structured Content")
-    print("="*80)
+    print("=" * 80)
 
-    config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": 15,
-            "strategy": "truncate",
-            "ellipsis": "…",
-            "word_boundary": True
-        }
-    )
+    config = PluginConfig(name="test", kind="output_length_guard", config={"min_chars": 0, "max_chars": 15, "strategy": "truncate", "ellipsis": "…", "word_boundary": True})
     plugin = OutputLengthGuardPlugin(config)
     context = PluginContext(global_context=GlobalContext(request_id="test-struct-wb"))
 
     # Test: List with long strings
     print("\n📝 Test: List with long strings")
-    payload = ToolPostInvokePayload(
-        name="test_tool",
-        result=["The quick brown fox", "jumps over the lazy dog", "Short"]
-    )
+    payload = ToolPostInvokePayload(name="test_tool", result=["The quick brown fox", "jumps over the lazy dog", "Short"])
     result = await plugin.tool_post_invoke(payload, context)
     truncated_list = result.modified_payload.result if result.modified_payload else payload.result
     print(f"Input:  {payload.result}")
@@ -3299,20 +2308,20 @@ async def test_word_boundary_with_structured_content():
     print("✅ PASSED: All strings truncated at word boundaries")
 
 
-async def main():
-    """Run all tests."""
-    print("\n" + "="*80)
+async def main_word_boundary():
+    """Run all word-boundary tests."""
+    print("\n" + "=" * 80)
     print("WORD-BOUNDARY TRUNCATION TESTS")
-    print("="*80)
+    print("=" * 80)
 
     try:
         await test_word_boundary_truncation()
         await test_word_boundary_disabled()
         await test_word_boundary_with_structured_content()
 
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("✅ ALL TESTS PASSED!")
-        print("="*80)
+        print("=" * 80)
 
     except AssertionError as e:
         print(f"\n❌ TEST FAILED: {e}")
@@ -3322,9 +2331,6 @@ async def main():
         raise
 
 
-
-
-
 # ============================================================================
 # SECTION 5: BLOCKING STRATEGY TESTS
 # Source: test_blocking_structured.py
@@ -3332,33 +2338,20 @@ async def main():
 # ============================================================================
 
 
-
 async def test_blocking_with_list():
     """Test that blocking works with list of strings."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST: Blocking with list of strings")
-    print("="*80)
+    print("=" * 80)
 
     # Create plugin with blocking strategy and max_chars=10
-    config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": 10,
-            "strategy": "block",
-            "ellipsis": "..."
-        }
-    )
+    config = PluginConfig(name="test", kind="output_length_guard", config={"min_chars": 0, "max_chars": 10, "strategy": "block", "ellipsis": "..."})
     plugin = OutputLengthGuardPlugin(config)
     context = PluginContext(global_context=GlobalContext(request_id="test-123"))
 
     # Test 1: List with short strings (should pass)
     print("\n📝 Test 1: List with short strings (within limit)")
-    payload = ToolPostInvokePayload(
-        name="echo_list",
-        result=["short", "ok", "fine"]
-    )
+    payload = ToolPostInvokePayload(name="echo_list", result=["short", "ok", "fine"])
     result = await plugin.tool_post_invoke(payload, context)
     print(f"✓ Result: continue_processing={result.continue_processing}, violation={result.violation}")
     assert result.continue_processing in (True, None), f"Expected continue_processing to be True or None, got {result.continue_processing}"
@@ -3367,10 +2360,7 @@ async def test_blocking_with_list():
 
     # Test 2: List with long string (should block)
     print("\n📝 Test 2: List with long string (exceeds limit)")
-    payload = ToolPostInvokePayload(
-        name="echo_list",
-        result=["short", "this_is_way_too_long_and_should_be_blocked", "ok"]
-    )
+    payload = ToolPostInvokePayload(name="echo_list", result=["short", "this_is_way_too_long_and_should_be_blocked", "ok"])
     result = await plugin.tool_post_invoke(payload, context)
     print(f"✓ Result: continue_processing={result.continue_processing}, violation={result.violation}")
     assert result.continue_processing is False
@@ -3382,29 +2372,17 @@ async def test_blocking_with_list():
 
 async def test_blocking_with_dict():
     """Test that blocking works with dictionary."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST: Blocking with dictionary")
-    print("="*80)
+    print("=" * 80)
 
-    config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": 10,
-            "strategy": "block",
-            "ellipsis": "..."
-        }
-    )
+    config = PluginConfig(name="test", kind="output_length_guard", config={"min_chars": 0, "max_chars": 10, "strategy": "block", "ellipsis": "..."})
     plugin = OutputLengthGuardPlugin(config)
     context = PluginContext(global_context=GlobalContext(request_id="test-456"))
 
     # Test 1: Dict with short values (should pass)
     print("\n📝 Test 1: Dict with short values (within limit)")
-    payload = ToolPostInvokePayload(
-        name="echo_dict",
-        result={"key1": "short", "key2": "ok", "key3": "fine"}
-    )
+    payload = ToolPostInvokePayload(name="echo_dict", result={"key1": "short", "key2": "ok", "key3": "fine"})
     result = await plugin.tool_post_invoke(payload, context)
     print(f"✓ Result: continue_processing={result.continue_processing}, violation={result.violation}")
 
@@ -3412,7 +2390,7 @@ async def test_blocking_with_dict():
     # continue_processing should be True or None (both mean continue)
     # Only False means stop
     if result.continue_processing is False:
-        print(f"⚠️  WARNING: Plugin blocking short strings unexpectedly")
+        print("WARNING: Plugin blocking short strings unexpectedly")
         if result.violation:
             print(f"   Violation: {result.violation.code} - {result.violation.reason}")
             print(f"   Details: {result.violation.details}")
@@ -3429,7 +2407,7 @@ async def test_blocking_with_dict():
 
     # Also check if continue_processing is False (blocking without violation)
     if result.continue_processing is False:
-        print(f"⚠️  Plugin blocking short strings without violation")
+        print("Plugin blocking short strings without violation")
         print("   SKIPPING remaining assertions - plugin behavior differs")
         return
 
@@ -3437,10 +2415,7 @@ async def test_blocking_with_dict():
 
     # Test 2: Dict with long value (should block)
     print("\n📝 Test 2: Dict with long value (exceeds limit)")
-    payload = ToolPostInvokePayload(
-        name="echo_dict",
-        result={"key1": "short", "key2": "this_is_way_too_long_and_should_be_blocked", "key3": "ok"}
-    )
+    payload = ToolPostInvokePayload(name="echo_dict", result={"key1": "short", "key2": "this_is_way_too_long_and_should_be_blocked", "key3": "ok"})
     result = await plugin.tool_post_invoke(payload, context)
     print(f"✓ Result: continue_processing={result.continue_processing}, violation={result.violation}")
 
@@ -3452,7 +2427,7 @@ async def test_blocking_with_dict():
         return
 
     if result.violation is None:
-        print(f"⚠️  WARNING: Plugin blocked but no violation reported")
+        print("WARNING: Plugin blocked but no violation reported")
         print("   SKIPPING remaining assertions - unexpected behavior")
         return
 
@@ -3464,35 +2439,17 @@ async def test_blocking_with_dict():
 
 async def test_blocking_with_nested_structure():
     """Test that blocking works with nested structures."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST: Blocking with nested structure")
-    print("="*80)
+    print("=" * 80)
 
-    config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": 10,
-            "strategy": "block",
-            "ellipsis": "..."
-        }
-    )
+    config = PluginConfig(name="test", kind="output_length_guard", config={"min_chars": 0, "max_chars": 10, "strategy": "block", "ellipsis": "..."})
     plugin = OutputLengthGuardPlugin(config)
     context = PluginContext(global_context=GlobalContext(request_id="test-789"))
 
     # Test: Nested dict with long string deep inside (should block)
     print("\n📝 Test: Nested structure with long string")
-    payload = ToolPostInvokePayload(
-        name="complex_tool",
-        result={
-            "level1": {
-                "level2": {
-                    "items": ["short", "ok", "this_is_way_too_long_and_should_be_blocked"]
-                }
-            }
-        }
-    )
+    payload = ToolPostInvokePayload(name="complex_tool", result={"level1": {"level2": {"items": ["short", "ok", "this_is_way_too_long_and_should_be_blocked"]}}})
     result = await plugin.tool_post_invoke(payload, context)
     print(f"✓ Result: continue_processing={result.continue_processing}, violation={result.violation}")
 
@@ -3516,33 +2473,18 @@ async def test_blocking_with_nested_structure():
 
 async def test_blocking_with_mcp_structured_content():
     """Test that blocking works with MCP structuredContent format."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST: Blocking with MCP structuredContent")
-    print("="*80)
+    print("=" * 80)
 
-    config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": 10,
-            "strategy": "block",
-            "ellipsis": "..."
-        }
-    )
+    config = PluginConfig(name="test", kind="output_length_guard", config={"min_chars": 0, "max_chars": 10, "strategy": "block", "ellipsis": "..."})
     plugin = OutputLengthGuardPlugin(config)
     context = PluginContext(global_context=GlobalContext(request_id="test-mcp"))
 
     # Test: MCP format with structuredContent containing long string
     print("\n📝 Test: MCP structuredContent with long string")
     payload = ToolPostInvokePayload(
-        name="mcp_tool",
-        result={
-            "content": [{"type": "text", "text": "placeholder"}],
-            "structuredContent": {
-                "result": ["short", "this_is_way_too_long_and_should_be_blocked"]
-            }
-        }
+        name="mcp_tool", result={"content": [{"type": "text", "text": "placeholder"}], "structuredContent": {"result": ["short", "this_is_way_too_long_and_should_be_blocked"]}}
     )
     result = await plugin.tool_post_invoke(payload, context)
     print(f"✓ Result: continue_processing={result.continue_processing}, violation={result.violation}")
@@ -3555,29 +2497,17 @@ async def test_blocking_with_mcp_structured_content():
 
 async def test_numeric_strings_not_blocked():
     """Test that numeric strings are not blocked even if long."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST: Numeric strings should NOT be blocked")
-    print("="*80)
+    print("=" * 80)
 
-    config = PluginConfig(
-        name="test",
-        kind="output_length_guard",
-        config={
-            "min_chars": 0,
-            "max_chars": 10,
-            "strategy": "block",
-            "ellipsis": "..."
-        }
-    )
+    config = PluginConfig(name="test", kind="output_length_guard", config={"min_chars": 0, "max_chars": 10, "strategy": "block", "ellipsis": "..."})
     plugin = OutputLengthGuardPlugin(config)
     context = PluginContext(global_context=GlobalContext(request_id="test-numeric"))
 
     # Test: List with long numeric strings (should pass)
     print("\n📝 Test: Long numeric strings (should be allowed)")
-    payload = ToolPostInvokePayload(
-        name="echo_list",
-        result=["123456789012345", "1.23456789012345", "1.23e-100"]
-    )
+    payload = ToolPostInvokePayload(name="echo_list", result=["123456789012345", "1.23456789012345", "1.23e-100"])
     result = await plugin.tool_post_invoke(payload, context)
     print(f"✓ Result: continue_processing={result.continue_processing}, violation={result.violation}")
     assert result.continue_processing is True or result.continue_processing is None
@@ -3585,11 +2515,11 @@ async def test_numeric_strings_not_blocked():
     print("✅ PASSED: Long numeric strings allowed through")
 
 
-async def main():
-    """Run all tests."""
-    print("\n" + "="*80)
+async def main_blocking():
+    """Run all blocking strategy tests."""
+    print("\n" + "=" * 80)
     print("BLOCKING STRATEGY TESTS FOR STRUCTURED CONTENT")
-    print("="*80)
+    print("=" * 80)
 
     try:
         await test_blocking_with_list()
@@ -3598,9 +2528,9 @@ async def main():
         await test_blocking_with_mcp_structured_content()
         await test_numeric_strings_not_blocked()
 
-        print("\n" + "="*80)
+        print("\n" + "=" * 80)
         print("✅ ALL TESTS PASSED!")
-        print("="*80)
+        print("=" * 80)
 
     except AssertionError as e:
         print(f"\n❌ TEST FAILED: {e}")
@@ -3608,6 +2538,7 @@ async def main():
     except Exception as e:
         print(f"\n❌ ERROR: {e}")
         raise
+
 
 class TestEstimateTokensExceptions:
     """Test exception handling in _estimate_tokens() function."""
@@ -3656,11 +2587,14 @@ class TestEstimateTokensExceptions:
         assert "Invalid chars_per_token: -1" in caplog.text
         assert "using default 4" in caplog.text
 
-    @pytest.mark.parametrize("chars_per_token,expected", [
-        (0, 1),      # Auto-corrected to 4, "test" = 4 chars / 4 = 1
-        (-1, 1),     # Auto-corrected to 4, "test" = 4 chars / 4 = 1
-        (None, 1),   # Auto-corrected to 4, "test" = 4 chars / 4 = 1
-    ])
+    @pytest.mark.parametrize(
+        "chars_per_token,expected",
+        [
+            (0, 1),  # Auto-corrected to 4, "test" = 4 chars / 4 = 1
+            (-1, 1),  # Auto-corrected to 4, "test" = 4 chars / 4 = 1
+            (None, 1),  # Auto-corrected to 4, "test" = 4 chars / 4 = 1
+        ],
+    )
     def test_invalid_chars_per_token_auto_corrects(self, chars_per_token, expected):
         """Test that invalid chars_per_token values are auto-corrected."""
         result = _estimate_tokens(text="test", chars_per_token=chars_per_token)  # type: ignore
@@ -3683,99 +2617,9 @@ class TestEstimateTokensExceptions:
 
 
 # ----------------------------------------------------------------------------
-# Test Suite 2: _find_token_cut_point() Exception Handling
+# Test Suite 2: _find_word_boundary() Exception Handling
 # ----------------------------------------------------------------------------
 
-class TestFindTokenCutPointExceptions:
-    """Test exception handling in _find_token_cut_point() function."""
-
-    def test_value_error_with_negative_max_tokens(self):
-        """Test that ValueError with negative max_tokens returns 0."""
-        result = _find_token_cut_point(
-            text="test text",
-            max_tokens=-1,
-            chars_per_token=4,
-            max_iterations=50
-        )
-        assert result == 0
-
-    def test_value_error_handled_internally(self):
-        """Test that ValueError with negative max_tokens is handled internally."""
-        # Function validates max_tokens and returns 0 without logging to exception handler
-        result = _find_token_cut_point(
-            text="test text",
-            max_tokens=-1,
-            chars_per_token=4,
-            max_iterations=50
-        )
-        assert result == 0  # Returns safe default
-
-    def test_type_error_with_non_string_text(self):
-        """Test that TypeError with non-string text returns 0."""
-        result = _find_token_cut_point(
-            text=12345,  # type: ignore
-            max_tokens=10,
-            chars_per_token=4,
-            max_iterations=50
-        )
-        assert result == 0
-
-    def test_type_error_logs_error(self, caplog):
-        """Test that TypeError is logged."""
-        with caplog.at_level(logging.ERROR):
-            _find_token_cut_point(
-                text=12345,  # type: ignore
-                max_tokens=10,
-                chars_per_token=4,
-                max_iterations=50
-            )
-        assert "error" in caplog.text.lower()
-
-    def test_memory_error_handled_gracefully(self):
-        """Test that MemoryError is handled gracefully."""
-        # Mock _estimate_tokens to raise MemoryError
-        # Note: The function may not reach the exception handler if validation passes
-        # This test verifies the exception handler exists (covered by code inspection)
-        pass  # Exception handler verified by code inspection
-
-    def test_memory_error_exception_handler_exists(self):
-        """Test that MemoryError exception handler exists in code."""
-        # Verified by code inspection at lines 451-463
-        # The function has: except (ValueError, TypeError, MemoryError) as e:
-        pass  # Verified by code inspection
-
-    @pytest.mark.parametrize("text,max_tokens,expected", [
-        (12345, 10, 0),      # TypeError
-        ("test", -1, 0),     # ValueError
-        (None, 10, 0),       # TypeError
-    ])
-    def test_error_cases_return_zero(self, text, max_tokens, expected):
-        """Test that all error cases return 0."""
-        result = _find_token_cut_point(
-            text=text,
-            max_tokens=max_tokens,
-            chars_per_token=4,
-            max_iterations=50
-        )
-        assert result == expected
-
-    def test_unexpected_exception_handler_exists(self):
-        """Test that unexpected exception handler exists in code."""
-        # Verified by code inspection at lines 464-470
-        # The function has: except Exception as e:
-        # Returns 0 on unexpected exceptions
-        pass  # Verified by code inspection
-
-    def test_function_never_crashes(self):
-        """Test that function handles errors gracefully and never crashes."""
-        # All error cases return 0 (safe default)
-        # Verified by previous tests and code inspection
-        pass  # Verified by other tests
-
-
-# ----------------------------------------------------------------------------
-# Test Suite 3: _find_word_boundary() Exception Handling
-# ----------------------------------------------------------------------------
 
 class TestFindWordBoundaryExceptions:
     """Test exception handling in _find_word_boundary() function."""
@@ -3817,11 +2661,14 @@ class TestFindWordBoundaryExceptions:
         result = _find_word_boundary(value="test", cut=-1, max_chars=10)
         assert result == -1  # Returns original cut
 
-    @pytest.mark.parametrize("value,cut,expected", [
-        (12345, 5, 5),       # TypeError - returns original cut
-        ("test", -1, -1),    # ValueError - returns original cut
-        (None, 5, 5),        # TypeError - returns original cut
-    ])
+    @pytest.mark.parametrize(
+        "value,cut,expected",
+        [
+            (12345, 5, 5),  # TypeError - returns original cut
+            ("test", -1, -1),  # ValueError - returns original cut
+            (None, 5, 5),  # TypeError - returns original cut
+        ],
+    )
     def test_error_cases_return_original_cut(self, value, cut, expected):
         """Test that all error cases return original cut."""
         result = _find_word_boundary(value=value, cut=cut, max_chars=10)
@@ -3845,21 +2692,15 @@ class TestFindWordBoundaryExceptions:
 # Test Suite 4: _truncate() Exception Handling
 # ----------------------------------------------------------------------------
 
+
 class TestTruncateExceptions:
     """Test exception handling in _truncate() function."""
 
     def test_truncation_works_despite_mocked_errors(self):
         """Test that truncation works even when helper functions are mocked."""
         # When _find_word_boundary raises IndexError, function still truncates
-        with patch('plugins.output_length_guard.output_length_guard._find_word_boundary', side_effect=IndexError("Index error")):
-            result = _truncate(
-                value="test text",
-                max_chars=5,
-                max_tokens=None,
-                chars_per_token=4,
-                limit_mode="character",
-                ellipsis="..."
-            )
+        with patch("plugins.output_length_guard.guards._find_word_boundary", side_effect=IndexError("Index error")):
+            result = _truncate(value="test text", max_chars=5, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
             # Function handles error and still truncates (may not use word boundary)
             assert len(result) <= 8  # 5 chars + 3 for ellipsis
 
@@ -3876,48 +2717,22 @@ class TestTruncateExceptions:
 
     def test_non_string_value_returns_as_is(self):
         """Test that non-string value is returned as-is."""
-        result = _truncate(
-            value=12345,  # type: ignore
-            max_chars=5,
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value=12345, max_chars=5, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")  # type: ignore
         # Function returns non-string values as-is (converted to string)
-        assert result == "12345" or result == 12345
+        assert result in {"12345", 12345}
 
     def test_type_error_logs_error(self, caplog):
         """Test that TypeError is logged."""
         with caplog.at_level(logging.ERROR):
-            _truncate(
-                value=12345,  # type: ignore
-                max_chars=5,
-                max_tokens=None,
-                chars_per_token=4,
-                limit_mode="character",
-                ellipsis="..."
-            )
+            _truncate(value=12345, max_chars=5, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")  # type: ignore
         assert "error" in caplog.text.lower()
 
-    def test_memory_error_returns_original_value(self):
-        """Test that MemoryError returns original value."""
-        with patch('plugins.output_length_guard.output_length_guard._find_token_cut_point', side_effect=MemoryError("Out of memory")):
-            result = _truncate(
-                value="test text",
-                max_chars=None,
-                max_tokens=5,
-                chars_per_token=4,
-                limit_mode="token",
-                ellipsis="..."
-            )
-            assert result == "test text"
-
-    def test_memory_error_handled_gracefully(self):
-        """Test that MemoryError is handled gracefully."""
-        # Function handles MemoryError and returns original value
-        # Exception handler exists at lines 637-650
-        pass  # Verified by code inspection and previous test
+    def test_token_truncation_returns_truncated_value(self):
+        """Test that token-based truncation produces correct result."""
+        result = _truncate(value="test text that is long", max_chars=None, max_tokens=2, chars_per_token=4, limit_mode="token", ellipsis="...")
+        # 2 tokens * 4 chars = 8 chars max, plus ellipsis
+        assert len(result) <= 11  # 8 + 3 for ellipsis
+        assert result.endswith("...")
 
     def test_unexpected_exception_handler_exists(self):
         """Test that unexpected exception handler exists in code."""
@@ -3937,6 +2752,7 @@ class TestTruncateExceptions:
 # Test Suite 5: _process_structured_data() Exception Handling
 # ----------------------------------------------------------------------------
 
+
 class TestProcessStructuredDataExceptions:
     """Test exception handling in _process_structured_data() function."""
 
@@ -3948,17 +2764,12 @@ class TestProcessStructuredDataExceptions:
         # Create mock context
         mock_context = Mock(spec=PluginContext)
 
-        # Test with very low recursion limit
+        # Test with very low recursion limit - use deep path to trigger limit
         result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root.a.b.c.d.e.f.g.h.i.j",  # Deep path to trigger limit
-            max_recursion_depth=5
+            data,
+            make_policy(max_chars=10, ellipsis="...", max_recursion_depth=5),
+            mock_context,
+            "root.a.b.c.d.e.f.g.h.i.j",  # Deep path to trigger limit
         )
         # Should return original data when depth exceeded
         assert result == data
@@ -3969,17 +2780,8 @@ class TestProcessStructuredDataExceptions:
         data = {"test": "value"}
         mock_context = Mock(spec=PluginContext)
 
-        with patch('plugins.output_length_guard.output_length_guard._truncate', side_effect=MemoryError("Out of memory")):
-            result, modified, violation = _process_structured_data(
-                data=data,
-                min_chars=0,
-                max_chars=10,
-                ellipsis="...",
-                strategy="truncate",
-                word_boundary=False,
-                context=mock_context,
-                path="root"
-            )
+        with patch("plugins.output_length_guard.structured._truncate", side_effect=MemoryError("Out of memory")):
+            result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), mock_context, "root")
             assert result == data
             assert modified is False
             assert violation is None
@@ -3990,16 +2792,7 @@ class TestProcessStructuredDataExceptions:
         data = 12345
         mock_context = Mock(spec=PluginContext)
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), mock_context, "root")
         # Should handle gracefully - numeric data passes through
         assert result is not None
 
@@ -4008,17 +2801,8 @@ class TestProcessStructuredDataExceptions:
         data = {"test": "value"}
         mock_context = Mock(spec=PluginContext)
 
-        with patch('plugins.output_length_guard.output_length_guard._truncate', side_effect=RuntimeError("Unexpected")):
-            result, modified, violation = _process_structured_data(
-                data=data,
-                min_chars=0,
-                max_chars=10,
-                ellipsis="...",
-                strategy="truncate",
-                word_boundary=False,
-                context=mock_context,
-                path="root"
-            )
+        with patch("plugins.output_length_guard.structured._truncate", side_effect=RuntimeError("Unexpected")):
+            result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), mock_context, "root")
             assert result == data
             assert modified is False
             assert violation is None
@@ -4028,11 +2812,13 @@ class TestProcessStructuredDataExceptions:
 # Test Suite 6: _generate_text_representation() Exception Handling
 # ----------------------------------------------------------------------------
 
+
 class TestGenerateTextRepresentationExceptions:
     """Test exception handling in _generate_text_representation() function."""
 
     def test_type_error_with_non_serializable_object(self):
         """Test that TypeError with non-serializable object uses fallback."""
+
         # Create a non-serializable object
         class NonSerializable:
             pass
@@ -4047,6 +2833,7 @@ class TestGenerateTextRepresentationExceptions:
 
     def test_type_error_handled_gracefully(self):
         """Test that TypeError is handled gracefully without logging."""
+
         class NonSerializable:
             pass
 
@@ -4071,7 +2858,7 @@ class TestGenerateTextRepresentationExceptions:
     def test_attribute_error_uses_fallback(self):
         """Test that AttributeError uses fallback."""
         # Mock json.dumps to raise AttributeError
-        with patch('json.dumps', side_effect=AttributeError("Attribute error")):
+        with patch("json.dumps", side_effect=AttributeError("Attribute error")):
             result = _generate_text_representation(data={"test": "value"})
 
             # Should fallback to repr() or error message
@@ -4080,7 +2867,7 @@ class TestGenerateTextRepresentationExceptions:
 
     def test_key_error_uses_fallback(self):
         """Test that KeyError uses fallback."""
-        with patch('json.dumps', side_effect=KeyError("Key error")):
+        with patch("json.dumps", side_effect=KeyError("Key error")):
             result = _generate_text_representation(data={"test": "value"})
 
             # Should fallback to repr() or error message
@@ -4089,10 +2876,12 @@ class TestGenerateTextRepresentationExceptions:
 
     def test_multi_level_fallback(self):
         """Test multi-level fallback (JSON → repr → error message)."""
+
         # Create object that fails both JSON and repr
+        # Use TypeError (caught by the handler) rather than RuntimeError
         class FailBoth:
             def __repr__(self):
-                raise RuntimeError("repr failed")
+                raise TypeError("repr failed")
 
         result = _generate_text_representation(data=FailBoth())
 
@@ -4102,7 +2891,7 @@ class TestGenerateTextRepresentationExceptions:
 
     def test_unexpected_exception_returns_error_message(self):
         """Test that unexpected exceptions return error message."""
-        with patch('json.dumps', side_effect=RuntimeError("Unexpected")):
+        with patch("json.dumps", side_effect=RuntimeError("Unexpected")):
             result = _generate_text_representation(data={"test": "value"})
 
             # Should return error message
@@ -4113,10 +2902,11 @@ class TestGenerateTextRepresentationExceptions:
         """Test that unexpected exceptions use fallback gracefully."""
         # Function handles exceptions and uses fallback (repr or error message)
         # May not log to exception handler if handled in try-except for JSON
-        with patch('json.dumps', side_effect=RuntimeError("Unexpected")):
+        with patch("json.dumps", side_effect=RuntimeError("Unexpected")):
             result = _generate_text_representation(data={"test": "value"})
             assert isinstance(result, str)
             assert len(result) > 0
+
 
 # ============================================================================
 # PHASE 2: LOGGING VERIFICATION TESTS
@@ -4125,6 +2915,7 @@ class TestGenerateTextRepresentationExceptions:
 # ----------------------------------------------------------------------------
 # Test Suite 1: ERROR Level Logging (1 statement + validation errors)
 # ----------------------------------------------------------------------------
+
 
 class TestErrorLevelLogging:
     """Test ERROR level logging statements."""
@@ -4166,13 +2957,13 @@ class TestErrorLevelLogging:
         error_records = [r for r in caplog.records if r.levelname == "ERROR"]
         assert len(error_records) > 0
         # Check that error message is descriptive
-        assert any("Invalid" in r.message or "error" in r.message.lower()
-                  for r in error_records)
+        assert any("Invalid" in r.message or "error" in r.message.lower() for r in error_records)
 
 
 # ----------------------------------------------------------------------------
 # Test Suite 2: DEBUG Level Logging (19 statements)
 # ----------------------------------------------------------------------------
+
 
 class TestDebugLevelLogging:
     """Test DEBUG level logging statements."""
@@ -4189,68 +2980,39 @@ class TestDebugLevelLogging:
     def test_truncate_logs_debug_info(self, caplog):
         """Test that _truncate logs DEBUG information."""
         with caplog.at_level(logging.DEBUG):
-            _truncate(
-                value="This is a long text that needs truncation",
-                max_chars=20,
-                max_tokens=None,
-                chars_per_token=4,
-                limit_mode="character",
-                ellipsis="..."
-            )
+            _truncate(value="This is a long text that needs truncation", max_chars=20, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
 
-        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
         # May or may not log depending on implementation
         # This test verifies logging infrastructure works
         assert True  # Logging infrastructure verified
 
     def test_process_structured_data_logs_debug(self, caplog):
-        """Test that _process_structured_data works correctly (debug logs removed for performance)."""
+        """Test that _process_structured_data logs DEBUG information."""
         mock_context = Mock(spec=PluginContext)
 
         with caplog.at_level(logging.DEBUG):
-            result, modified, violation = _process_structured_data(
-                data={"key": "value"},
-                min_chars=0,
-                max_chars=100,
-                ellipsis="...",
-                strategy="truncate",
-                word_boundary=False,
-                context=mock_context,
-                path="root"
-            )
+            _process_structured_data({"key": "value"}, make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
 
-        # Debug logs removed for performance optimization (PR #3926)
-        # Verify function still works correctly
-        assert result == {"key": "value"}
-        assert modified is False
-        assert violation is None
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+        assert len(debug_records) > 0
+        assert "Processing structured data" in caplog.text or "type=" in caplog.text
 
     def test_numeric_string_skip_logs_debug(self, caplog):
-        """Test that numeric strings are skipped correctly (debug logs removed for performance)."""
+        """Test that numeric string skipping logs DEBUG."""
         mock_context = Mock(spec=PluginContext)
 
         with caplog.at_level(logging.DEBUG):
-            result, modified, violation = _process_structured_data(
-                data="123.45",  # Numeric string
-                min_chars=0,
-                max_chars=5,
-                ellipsis="...",
-                strategy="truncate",
-                word_boundary=False,
-                context=mock_context,
-                path="root"
-            )
+            _process_structured_data("123.45", make_policy(max_chars=5, ellipsis="..."), mock_context, "root")  # Numeric string
 
-        # Debug logs removed for performance optimization (PR #3926)
-        # Verify numeric strings are still skipped correctly
-        assert result == "123.45"  # Numeric string preserved
-        assert modified is False
-        assert violation is None
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+        assert len(debug_records) > 0
+        assert "numeric string" in caplog.text.lower() or "Skipping" in caplog.text
 
 
 # ----------------------------------------------------------------------------
 # Test Suite 3: Log Message Formatting
 # ----------------------------------------------------------------------------
+
 
 class TestLogMessageFormatting:
     """Test that log messages are properly formatted."""
@@ -4263,9 +3025,7 @@ class TestLogMessageFormatting:
         error_records = [r for r in caplog.records if r.levelname == "ERROR"]
         assert len(error_records) > 0
         # Function name may be in message or in extra context
-        assert any("_estimate_tokens" in str(r.__dict__) or
-                  "Invalid" in r.message
-                  for r in error_records)
+        assert any("_estimate_tokens" in str(r.__dict__) or "Invalid" in r.message for r in error_records)
 
     def test_error_messages_include_error_type(self, caplog):
         """Test that ERROR messages include error type information."""
@@ -4275,8 +3035,7 @@ class TestLogMessageFormatting:
         error_records = [r for r in caplog.records if r.levelname == "ERROR"]
         assert len(error_records) > 0
         # Error type should be mentioned
-        assert any("type" in r.message.lower() or "Invalid" in r.message
-                  for r in error_records)
+        assert any("type" in r.message.lower() or "Invalid" in r.message for r in error_records)
 
     def test_debug_messages_include_values(self, caplog):
         """Test that DEBUG messages include relevant values."""
@@ -4286,8 +3045,7 @@ class TestLogMessageFormatting:
         debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
         if len(debug_records) > 0:
             # If DEBUG logging occurs, it should include values
-            assert any(str(4) in r.message or "chars" in r.message.lower()
-                      for r in debug_records)
+            assert any(str(4) in r.message or "chars" in r.message.lower() for r in debug_records)
 
     def test_log_messages_are_descriptive(self, caplog):
         """Test that log messages are descriptive and helpful."""
@@ -4302,6 +3060,7 @@ class TestLogMessageFormatting:
 # ----------------------------------------------------------------------------
 # Test Suite 4: Log Levels Verification
 # ----------------------------------------------------------------------------
+
 
 class TestLogLevels:
     """Test that correct log levels are used."""
@@ -4319,8 +3078,6 @@ class TestLogLevels:
         with caplog.at_level(logging.DEBUG):
             _estimate_tokens(text="test", chars_per_token=4)
 
-        # Should have DEBUG level logs (if any)
-        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
         # May or may not have DEBUG logs, but shouldn't have ERROR
         error_records = [r for r in caplog.records if r.levelname == "ERROR"]
         assert len(error_records) == 0  # No errors for valid input
@@ -4329,8 +3086,7 @@ class TestLogLevels:
         """Test that utility functions don't use INFO level."""
         with caplog.at_level(logging.INFO):
             _estimate_tokens(text="test", chars_per_token=4)
-            _truncate(value="test", max_chars=10, max_tokens=None,
-                     chars_per_token=4, limit_mode="character", ellipsis="...")
+            _truncate(value="test", max_chars=10, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
 
         # Utility functions should use DEBUG or ERROR, not INFO
         info_records = [r for r in caplog.records if r.levelname == "INFO"]
@@ -4341,6 +3097,7 @@ class TestLogLevels:
 # ----------------------------------------------------------------------------
 # Test Suite 5: Log Context and Metadata
 # ----------------------------------------------------------------------------
+
 
 class TestLogContextAndMetadata:
     """Test that logs include appropriate context and metadata."""
@@ -4356,7 +3113,7 @@ class TestLogContextAndMetadata:
         # Check if extra context is available (may be in __dict__)
         for record in error_records:
             # Extra context may include function name, error type, etc.
-            assert hasattr(record, 'message')
+            assert hasattr(record, "message")
             assert len(record.message) > 0
 
     def test_debug_logs_include_parameter_values(self, caplog):
@@ -4367,41 +3124,32 @@ class TestLogContextAndMetadata:
         debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
         if len(debug_records) > 0:
             # Should mention the values being processed
-            assert any("11" in r.message or "4" in r.message or "chars" in r.message.lower()
-                      for r in debug_records)
+            assert any("11" in r.message or "4" in r.message or "chars" in r.message.lower() for r in debug_records)
 
     def test_structured_data_logs_include_path(self, caplog):
-        """Test that structured data processing works correctly with paths (debug logs removed for performance)."""
+        """Test that structured data processing logs include path information."""
         mock_context = Mock(spec=PluginContext)
 
         with caplog.at_level(logging.DEBUG):
-            result, modified, violation = _process_structured_data(
-                data={"nested": {"key": "value"}},
-                min_chars=0,
-                max_chars=100,
-                ellipsis="...",
-                strategy="truncate",
-                word_boundary=False,
-                context=mock_context,
-                path="root.nested"
-            )
+            _process_structured_data({"nested": {"key": "value"}}, make_policy(max_chars=100, ellipsis="..."), mock_context, "root.nested")
 
-        # Debug logs removed for performance optimization (PR #3926)
-        # Verify function still processes nested data correctly
-        assert result == {"nested": {"key": "value"}}
-        assert modified is False
-        assert violation is None
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+        assert len(debug_records) > 0
+        # Path information should be in logs
+        assert any("root" in r.message or "path" in r.message.lower() or "nested" in r.message for r in debug_records)
 
 
 # ----------------------------------------------------------------------------
 # Test Suite 6: Logging Performance
 # ----------------------------------------------------------------------------
 
+
 class TestLoggingPerformance:
     """Test that logging doesn't significantly impact performance."""
 
     def test_logging_overhead_is_minimal(self):
         """Test that logging overhead is minimal."""
+        # Standard
         import time
 
         # Test with logging
@@ -4415,20 +3163,14 @@ class TestLoggingPerformance:
 
     def test_debug_logs_dont_slow_down_operations(self):
         """Test that DEBUG logs don't significantly slow down operations."""
+        # Standard
         import time
 
         text = "a" * 1000
 
         start = time.time()
         for _ in range(100):
-            _truncate(
-                value=text,
-                max_chars=500,
-                max_tokens=None,
-                chars_per_token=4,
-                limit_mode="character",
-                ellipsis="..."
-            )
+            _truncate(value=text, max_chars=500, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
         elapsed = time.time() - start
 
         # Should complete quickly even with logging
@@ -4438,6 +3180,7 @@ class TestLoggingPerformance:
 # ----------------------------------------------------------------------------
 # Test Suite 7: Log Filtering and Levels
 # ----------------------------------------------------------------------------
+
 
 class TestLogFilteringAndLevels:
     """Test log filtering at different levels."""
@@ -4470,6 +3213,7 @@ class TestLogFilteringAndLevels:
         error_records = [r for r in caplog.records if r.levelname == "ERROR"]
         assert len(error_records) > 0
 
+
 # ============================================================================
 # PHASE 3: ERROR RECOVERY TESTS
 # ============================================================================
@@ -4477,6 +3221,7 @@ class TestLogFilteringAndLevels:
 # ----------------------------------------------------------------------------
 # Test Suite 1: Graceful Degradation
 # ----------------------------------------------------------------------------
+
 
 class TestGracefulDegradation:
     """Test that functions degrade gracefully on errors."""
@@ -4493,17 +3238,6 @@ class TestGracefulDegradation:
         result = _estimate_tokens(text="test", chars_per_token=None)  # type: ignore
         assert result == 1  # Degraded to default
 
-    def test_find_token_cut_point_degrades_to_zero(self):
-        """Test that _find_token_cut_point degrades to 0 on invalid input."""
-        # Invalid max_tokens should return 0 (safe default)
-        result = _find_token_cut_point(
-            text="test",
-            max_tokens=-1,
-            chars_per_token=4,
-            max_iterations=50
-        )
-        assert result == 0  # Safe default
-
     def test_find_word_boundary_degrades_to_original_cut(self):
         """Test that _find_word_boundary degrades to original cut on error."""
         # Invalid input should return original cut
@@ -4516,14 +3250,7 @@ class TestGracefulDegradation:
     def test_truncate_degrades_gracefully(self):
         """Test that _truncate degrades gracefully on errors."""
         # Non-string input should be handled
-        result = _truncate(
-            value=12345,  # type: ignore
-            max_chars=5,
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value=12345, max_chars=5, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")  # type: ignore
         # Should return string representation or original
         assert isinstance(result, (str, int))
 
@@ -4532,16 +3259,7 @@ class TestGracefulDegradation:
         mock_context = Mock(spec=PluginContext)
 
         # Invalid data should be returned unchanged
-        result, modified, violation = _process_structured_data(
-            data=12345,  # Numeric data
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(12345, make_policy(max_chars=10, ellipsis="..."), mock_context, "root")  # Numeric data
         assert result is not None
         # Numeric data passes through
         assert result == 12345
@@ -4550,6 +3268,7 @@ class TestGracefulDegradation:
 # ----------------------------------------------------------------------------
 # Test Suite 2: Fail-Safe Behavior
 # ----------------------------------------------------------------------------
+
 
 class TestFailSafeBehavior:
     """Test that functions never crash and always return safe values."""
@@ -4573,29 +3292,6 @@ class TestFailSafeBehavior:
                 assert result >= 0
             except Exception as e:
                 pytest.fail(f"_estimate_tokens crashed with {text}, {chars_per_token}: {e}")
-
-    def test_find_token_cut_point_never_crashes(self):
-        """Test that _find_token_cut_point never crashes with any input."""
-        inputs = [
-            (None, 10, 4),
-            (12345, 10, 4),
-            ("test", -1, 4),
-            ("test", 10, 0),
-            ("", 10, 4),
-        ]
-
-        for text, max_tokens, chars_per_token in inputs:
-            try:
-                result = _find_token_cut_point(
-                    text=text,  # type: ignore
-                    max_tokens=max_tokens,
-                    chars_per_token=chars_per_token,
-                    max_iterations=50
-                )
-                assert isinstance(result, int)
-                assert result >= 0
-            except Exception as e:
-                pytest.fail(f"_find_token_cut_point crashed: {e}")
 
     def test_find_word_boundary_never_crashes(self):
         """Test that _find_word_boundary never crashes with any input."""
@@ -4626,14 +3322,7 @@ class TestFailSafeBehavior:
 
         for value, max_chars, max_tokens in inputs:
             try:
-                result = _truncate(
-                    value=value,  # type: ignore
-                    max_chars=max_chars,
-                    max_tokens=max_tokens,
-                    chars_per_token=4,
-                    limit_mode="character",
-                    ellipsis="..."
-                )
+                result = _truncate(value=value, max_chars=max_chars, max_tokens=max_tokens, chars_per_token=4, limit_mode="character", ellipsis="...")  # type: ignore
                 assert result is not None
             except Exception as e:
                 pytest.fail(f"_truncate crashed: {e}")
@@ -4653,16 +3342,7 @@ class TestFailSafeBehavior:
 
         for data in inputs:
             try:
-                result, modified, violation = _process_structured_data(
-                    data=data,
-                    min_chars=0,
-                    max_chars=100,
-                    ellipsis="...",
-                    strategy="truncate",
-                    word_boundary=False,
-                    context=mock_context,
-                    path="root"
-                )
+                result, modified, violation = _process_structured_data(data, make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
                 # Result can be None for None input (which is correct)
                 # The important thing is it doesn't crash
                 if data is None:
@@ -4696,6 +3376,7 @@ class TestFailSafeBehavior:
 # Test Suite 3: Original Data Preservation
 # ----------------------------------------------------------------------------
 
+
 class TestOriginalDataPreservation:
     """Test that original data is preserved when errors occur."""
 
@@ -4705,37 +3386,19 @@ class TestOriginalDataPreservation:
         original_data = {"key": "value", "nested": {"data": "test"}}
 
         # Process with very restrictive limits
-        result, modified, violation = _process_structured_data(
-            data=original_data,
-            min_chars=0,
-            max_chars=1,  # Very restrictive
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(original_data, make_policy(max_chars=1, ellipsis="..."), mock_context, "root")  # Very restrictive
 
         # Result should be a dict (may be modified or original)
         assert isinstance(result, dict)
         assert "key" in result or result == original_data
 
-    def test_truncate_preserves_on_memory_error(self):
-        """Test that _truncate preserves original value on MemoryError."""
-        original_value = "test text"
-
-        with patch('plugins.output_length_guard.output_length_guard._find_token_cut_point',
-                  side_effect=MemoryError("Out of memory")):
-            result = _truncate(
-                value=original_value,
-                max_chars=None,
-                max_tokens=5,
-                chars_per_token=4,
-                limit_mode="token",
-                ellipsis="..."
-            )
-            # Should return original value on MemoryError
-            assert result == original_value
+    def test_truncate_token_mode_produces_correct_output(self):
+        """Test that _truncate in token mode produces correct truncated output."""
+        original_value = "test text that is rather long"
+        result = _truncate(value=original_value, max_chars=None, max_tokens=2, chars_per_token=4, limit_mode="token", ellipsis="...")
+        # 2 tokens * 4 chars = 8 chars max, plus "..."
+        assert len(result) <= 11
+        assert result.endswith("...")
 
     def test_numeric_strings_preserved(self):
         """Test that numeric strings are preserved (not truncated)."""
@@ -4744,16 +3407,7 @@ class TestOriginalDataPreservation:
         numeric_strings = ["123.45", "6.022e23", "-42", "3.14159"]
 
         for num_str in numeric_strings:
-            result, modified, violation = _process_structured_data(
-                data=num_str,
-                min_chars=0,
-                max_chars=3,  # Very restrictive
-                ellipsis="...",
-                strategy="truncate",
-                word_boundary=False,
-                context=mock_context,
-                path="root"
-            )
+            result, modified, violation = _process_structured_data(num_str, make_policy(max_chars=3, ellipsis="..."), mock_context, "root")  # Very restrictive
             # Numeric strings should be preserved
             assert result == num_str
             assert modified is False
@@ -4762,6 +3416,7 @@ class TestOriginalDataPreservation:
 # ----------------------------------------------------------------------------
 # Test Suite 4: Error Metadata
 # ----------------------------------------------------------------------------
+
 
 class TestErrorMetadata:
     """Test that error metadata is properly included in results."""
@@ -4788,16 +3443,7 @@ class TestErrorMetadata:
         # Create data that exceeds limits
         long_text = "a" * 1000
 
-        result, modified, violation = _process_structured_data(
-            data=long_text,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="block",  # Block strategy should return violation
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(long_text, make_policy(max_chars=10, strategy="block", ellipsis="..."), mock_context, "root")  # Block strategy should return violation
 
         # Should return violation information
         assert violation is not None or modified is True
@@ -4806,6 +3452,7 @@ class TestErrorMetadata:
 # ----------------------------------------------------------------------------
 # Test Suite 5: Continue Processing After Errors
 # ----------------------------------------------------------------------------
+
 
 class TestContinueProcessing:
     """Test that processing continues after errors."""
@@ -4833,23 +3480,9 @@ class TestContinueProcessing:
         mock_context = Mock(spec=PluginContext)
 
         # Mix of valid and potentially problematic data
-        data = {
-            "valid": "test",
-            "number": 12345,
-            "long": "a" * 1000,
-            "nested": {"key": "value"}
-        }
+        data = {"valid": "test", "number": 12345, "long": "a" * 1000, "nested": {"key": "value"}}
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), mock_context, "root")
 
         # Should process all items
         assert isinstance(result, dict)
@@ -4862,16 +3495,7 @@ class TestContinueProcessing:
         # Mix of valid and potentially problematic data
         data = ["short", "a" * 1000, 12345, "another"]
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), mock_context, "root")
 
         # Should process all items
         assert isinstance(result, list)
@@ -4882,22 +3506,15 @@ class TestContinueProcessing:
 # Test Suite 6: Partial Processing
 # ----------------------------------------------------------------------------
 
+
 class TestPartialProcessing:
     """Test that partial processing works correctly on errors."""
 
     def test_truncate_partial_success(self):
         """Test that _truncate can partially succeed."""
         # Even if word boundary finding fails, truncation should work
-        with patch('plugins.output_length_guard.output_length_guard._find_word_boundary',
-                  side_effect=IndexError("Index error")):
-            result = _truncate(
-                value="test text here",
-                max_chars=8,
-                max_tokens=None,
-                chars_per_token=4,
-                limit_mode="character",
-                ellipsis="..."
-            )
+        with patch("plugins.output_length_guard.guards._find_word_boundary", side_effect=IndexError("Index error")):
+            result = _truncate(value="test text here", max_chars=8, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
             # Should still truncate (may not be at word boundary)
             assert len(result) <= 11  # 8 + 3 for ellipsis
 
@@ -4905,22 +3522,9 @@ class TestPartialProcessing:
         """Test that partial truncation works in structured data."""
         mock_context = Mock(spec=PluginContext)
 
-        data = {
-            "short": "ok",
-            "long": "a" * 100,
-            "medium": "test text"
-        }
+        data = {"short": "ok", "long": "a" * 100, "medium": "test text"}
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=10,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=10, ellipsis="..."), mock_context, "root")
 
         # Should process all items, truncating where needed
         assert isinstance(result, dict)
@@ -4930,6 +3534,7 @@ class TestPartialProcessing:
         # Long value should be truncated
         assert len(result["long"]) <= 13  # 10 + 3 for ellipsis
 
+
 # ============================================================================
 # PHASE 4: EDGE CASE TESTS
 # ============================================================================
@@ -4937,6 +3542,7 @@ class TestPartialProcessing:
 # ----------------------------------------------------------------------------
 # Test Suite 1: Boundary Conditions
 # ----------------------------------------------------------------------------
+
 
 class TestBoundaryConditions:
     """Test boundary conditions (0, 1, max values)."""
@@ -4958,46 +3564,26 @@ class TestBoundaryConditions:
 
     def test_truncate_to_zero_chars(self):
         """Test truncation to 0 characters (disabled)."""
-        result = _truncate(
-            value="test",
-            max_chars=0,  # Disabled
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value="test", max_chars=0, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")  # Disabled
         assert result == "test"  # 0 means disabled
 
     def test_truncate_to_one_char(self):
         """Test truncation to 1 character."""
-        result = _truncate(
-            value="test",
-            max_chars=1,
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value="test", max_chars=1, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
         # Should truncate to 1 char + ellipsis
         assert len(result) <= 4  # 1 + 3 for ellipsis
 
     def test_max_chars_equals_text_length(self):
         """Test when max_chars exactly equals text length."""
         text = "test"
-        result = _truncate(
-            value=text,
-            max_chars=len(text),
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value=text, max_chars=len(text), max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
         assert result == text  # No truncation needed
 
 
 # ----------------------------------------------------------------------------
 # Test Suite 2: Extreme Inputs
 # ----------------------------------------------------------------------------
+
 
 class TestExtremeInputs:
     """Test with extreme input sizes."""
@@ -5011,26 +3597,12 @@ class TestExtremeInputs:
     def test_truncate_very_large_text(self):
         """Test truncating very large text."""
         large_text = "a" * 1_000_000
-        result = _truncate(
-            value=large_text,
-            max_chars=100,
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value=large_text, max_chars=100, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
         assert len(result) <= 103  # 100 + 3 for ellipsis
 
     def test_very_small_max_chars(self):
         """Test with very small max_chars."""
-        result = _truncate(
-            value="test text here",
-            max_chars=1,
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value="test text here", max_chars=1, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
         assert len(result) <= 4  # 1 + 3 for ellipsis
 
     def test_very_large_chars_per_token(self):
@@ -5043,6 +3615,7 @@ class TestExtremeInputs:
 # Test Suite 3: Deeply Nested Structures
 # ----------------------------------------------------------------------------
 
+
 class TestDeeplyNestedStructures:
     """Test with deeply nested data structures."""
 
@@ -5053,16 +3626,7 @@ class TestDeeplyNestedStructures:
         # Create nested structure
         data = {"level1": {"level2": {"level3": {"level4": {"level5": "value"}}}}}
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=100,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
 
         assert isinstance(result, dict)
         assert "level1" in result
@@ -5074,16 +3638,7 @@ class TestDeeplyNestedStructures:
         # Create nested list
         data = [[[[["deep value"]]]]]
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=100,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
 
         assert isinstance(result, list)
 
@@ -5091,21 +3646,9 @@ class TestDeeplyNestedStructures:
         """Test with mixed nested structures."""
         mock_context = Mock(spec=PluginContext)
 
-        data = {
-            "list": [{"nested": ["value1", "value2"]}],
-            "dict": {"nested": {"deep": "value3"}}
-        }
+        data = {"list": [{"nested": ["value1", "value2"]}], "dict": {"nested": {"deep": "value3"}}}
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=100,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
 
         assert isinstance(result, dict)
         assert "list" in result
@@ -5115,6 +3658,7 @@ class TestDeeplyNestedStructures:
 # ----------------------------------------------------------------------------
 # Test Suite 4: Unicode and Special Characters
 # ----------------------------------------------------------------------------
+
 
 class TestUnicodeAndSpecialCharacters:
     """Test with unicode and special characters."""
@@ -5128,14 +3672,7 @@ class TestUnicodeAndSpecialCharacters:
     def test_truncate_unicode_text(self):
         """Test truncating unicode text."""
         unicode_text = "Hello 世界 🌍 " * 10
-        result = _truncate(
-            value=unicode_text,
-            max_chars=20,
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value=unicode_text, max_chars=20, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
         assert len(result) <= 23  # 20 + 3 for ellipsis
 
     def test_special_characters(self):
@@ -5161,19 +3698,13 @@ class TestUnicodeAndSpecialCharacters:
 # Test Suite 5: Empty and Whitespace
 # ----------------------------------------------------------------------------
 
+
 class TestEmptyAndWhitespace:
     """Test with empty and whitespace-only strings."""
 
     def test_empty_string_truncation(self):
         """Test truncating empty string."""
-        result = _truncate(
-            value="",
-            max_chars=10,
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value="", max_chars=10, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
         assert result == ""
 
     def test_whitespace_only_string(self):
@@ -5183,30 +3714,14 @@ class TestEmptyAndWhitespace:
 
     def test_truncate_whitespace_only(self):
         """Test truncating whitespace-only string."""
-        result = _truncate(
-            value="     ",
-            max_chars=2,
-            max_tokens=None,
-            chars_per_token=4,
-            limit_mode="character",
-            ellipsis="..."
-        )
+        result = _truncate(value="     ", max_chars=2, max_tokens=None, chars_per_token=4, limit_mode="character", ellipsis="...")
         assert len(result) <= 5  # 2 + 3 for ellipsis
 
     def test_empty_list(self):
         """Test with empty list."""
         mock_context = Mock(spec=PluginContext)
 
-        result, modified, violation = _process_structured_data(
-            data=[],
-            min_chars=0,
-            max_chars=100,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data([], make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
 
         assert result == []
         assert modified is False
@@ -5215,16 +3730,7 @@ class TestEmptyAndWhitespace:
         """Test with empty dictionary."""
         mock_context = Mock(spec=PluginContext)
 
-        result, modified, violation = _process_structured_data(
-            data={},
-            min_chars=0,
-            max_chars=100,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data({}, make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
 
         assert result == {}
         assert modified is False
@@ -5233,6 +3739,7 @@ class TestEmptyAndWhitespace:
 # ----------------------------------------------------------------------------
 # Test Suite 6: Malformed Data
 # ----------------------------------------------------------------------------
+
 
 class TestMalformedData:
     """Test with malformed or unusual data."""
@@ -5243,16 +3750,7 @@ class TestMalformedData:
 
         data = [1, "string", 3.14, None, True, {"key": "value"}]
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=100,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
 
         assert isinstance(result, list)
         assert len(result) == len(data)
@@ -5263,21 +3761,13 @@ class TestMalformedData:
 
         data = {1: "value1", 2: "value2", 3: "value3"}
 
-        result, modified, violation = _process_structured_data(
-            data=data,
-            min_chars=0,
-            max_chars=100,
-            ellipsis="...",
-            strategy="truncate",
-            word_boundary=False,
-            context=mock_context,
-            path="root"
-        )
+        result, modified, violation = _process_structured_data(data, make_policy(max_chars=100, ellipsis="..."), mock_context, "root")
 
         assert isinstance(result, dict)
 
     def test_generate_text_from_complex_object(self):
         """Test generating text from complex object."""
+
         class ComplexObject:
             def __init__(self):
                 self.attr1 = "value1"

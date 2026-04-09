@@ -1,5 +1,5 @@
 <!-- htmlhint doctype-first:false, tag-pair:false -->
-<script>
+<script defer>
 window.createPromptsController = function() {
   return {
     timeRange: 24,
@@ -20,7 +20,7 @@ window.createPromptsController = function() {
      */
     destroyAllCharts() {
       // Use global registry for centralized cleanup
-      window.chartRegistry.destroyByPrefix('prompts-');
+      Admin.chartRegistry.destroyByPrefix('prompts-');
       this.charts = {};
     },
 
@@ -153,7 +153,7 @@ window.createPromptsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('prompts-usage');
+      Admin.chartRegistry.destroy('prompts-usage');
 
       // Handle empty data
       if (!data.prompts || data.prompts.length === 0) {
@@ -208,7 +208,8 @@ window.createPromptsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const prompt = data.prompts[context.dataIndex];
+                  const prompt = data.prompts?.[context?.dataIndex];
+                  if (!prompt) return 'No data';
                   return [
                     `Renders: ${prompt.count}`,
                     `Percentage: ${prompt.percentage}%`
@@ -244,7 +245,7 @@ window.createPromptsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('prompts-usage', chart);
+          Admin.chartRegistry.register('prompts-usage', chart);
           this.charts.promptUsage = chart;
         } catch (e) {
           console.error('Failed to create prompt usage chart:', e);
@@ -285,7 +286,7 @@ window.createPromptsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('prompts-slowness');
+      Admin.chartRegistry.destroy('prompts-slowness');
 
       // Handle empty data
       if (!data.prompts || data.prompts.length === 0) {
@@ -356,7 +357,8 @@ window.createPromptsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const prompt = sortedPrompts[context.dataIndex];
+                  const prompt = sortedPrompts?.[context?.dataIndex];
+                  if (!prompt) return 'No data';
                   return [
                     `${context.dataset.label}: ${context.parsed.x} ms`,
                     `Avg: ${prompt.avg_duration_ms} ms`,
@@ -394,7 +396,7 @@ window.createPromptsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('prompts-slowness', chart);
+          Admin.chartRegistry.register('prompts-slowness', chart);
           this.charts.promptSlowness = chart;
         } catch (e) {
           console.error('Failed to create prompt slowness chart:', e);
@@ -412,7 +414,7 @@ window.createPromptsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('prompts-errorprone');
+      Admin.chartRegistry.destroy('prompts-errorprone');
 
       // Handle empty data
       if (!data.prompts || data.prompts.length === 0) {
@@ -488,7 +490,8 @@ window.createPromptsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const prompt = sortedPrompts[context.dataIndex];
+                  const prompt = sortedPrompts?.[context?.dataIndex];
+                  if (!prompt) return 'No data';
                   return [
                     `Error Rate: ${prompt.error_rate}%`,
                     `Errors: ${prompt.error_count}`,
@@ -527,7 +530,7 @@ window.createPromptsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('prompts-errorprone', chart);
+          Admin.chartRegistry.register('prompts-errorprone', chart);
           this.charts.promptErrorProne = chart;
         } catch (e) {
           console.error('Failed to create prompt error-prone chart:', e);

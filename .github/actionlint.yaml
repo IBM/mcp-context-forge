@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - ubuntu-24.04-s390x
+    - ubuntu-24.04-ppc64le

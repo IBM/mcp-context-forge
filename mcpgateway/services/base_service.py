@@ -8,10 +8,13 @@ from abc import ABC
 from typing import Any, List, Optional
 
 # Third-Party
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
+from sqlalchemy import exists as sa_exists
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.plugins.framework import get_plugin_manager
 from mcpgateway.services.team_management_service import TeamManagementService
 
 
@@ -32,6 +35,22 @@ class BaseService(ABC):
         super().__init_subclass__(**kwargs)
         if not isinstance(cls.__dict__.get("_visibility_model_cls"), type):
             raise TypeError(f"{cls.__name__} must set _visibility_model_cls to a model class")
+
+    async def entity_exists(self, db: Session, entity_id: str) -> bool:
+        """Check whether an entity exists in the database by primary key.
+
+        Uses a lightweight ``EXISTS`` subquery — no row data is loaded.
+        All ``BaseService`` subclasses inherit this via ``_visibility_model_cls``.
+
+        Args:
+            db: Database session.
+            entity_id: Primary-key value to look up.
+
+        Returns:
+            True if a row with the given id exists, False otherwise.
+        """
+        model = self._visibility_model_cls
+        return db.execute(select(sa_exists().where(model.id == entity_id))).scalar()
 
     async def _apply_access_control(
         self,
@@ -131,3 +150,14 @@ class BaseService(ABC):
             access_conditions.append(and_(model_cls.team_id.in_(token_teams), model_cls.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
+
+    async def _get_plugin_manager(self, server_id: str | None) -> Any:
+        """Return the context-scoped plugin manager from the global factory.
+
+        Args:
+            server_id: Context identifier used to resolve a specific plugin manager.
+
+        Returns:
+            Plugin manager instance when plugins are enabled, otherwise ``None``.
+        """
+        return await get_plugin_manager(server_id)

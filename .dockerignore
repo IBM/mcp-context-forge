@@ -191,7 +191,6 @@ podman-compose*.yaml
 # Testing configurations
 .coveragerc
 .pylintrc
-.flake8
 pytest.ini
 tox.ini
 .pytest.ini
@@ -303,6 +302,7 @@ docs/build/
 # PyBuilder
 target/
 **/target/
+**/target/**
 
 # Jupyter Notebook
 .ipynb_checkpoints

@@ -46,26 +46,18 @@ def upgrade() -> None:
 
     if dialect == "postgresql":
         # PostgreSQL: Use RTRIM to remove trailing slashes
-        op.execute(
-            sa.text(
-                """
+        op.execute(sa.text("""
                 UPDATE registered_oauth_clients
                 SET issuer = RTRIM(issuer, '/')
                 WHERE issuer LIKE '%/'
-                """
-            )
-        )
+                """))
     else:
         # SQLite: RTRIM works the same way
-        op.execute(
-            sa.text(
-                """
+        op.execute(sa.text("""
                 UPDATE registered_oauth_clients
                 SET issuer = RTRIM(issuer, '/')
                 WHERE issuer LIKE '%/'
-                """
-            )
-        )
+                """))
 
 
 def downgrade() -> None:

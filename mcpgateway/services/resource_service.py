@@ -57,11 +57,12 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
-from mcpgateway.observability import create_span
+from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
-from mcpgateway.services.content_security import ContentSizeError, get_content_security_service
+from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, get_content_security_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
@@ -76,17 +77,10 @@ from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.trace_context import format_trace_team_scope
+from mcpgateway.utils.trace_redaction import is_input_capture_enabled, is_output_capture_enabled, serialize_trace_payload
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
-
-# Plugin support imports (conditional)
-try:
-    # First-Party
-    from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
-
-    PLUGINS_AVAILABLE = True
-except ImportError:
-    PLUGINS_AVAILABLE = False
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -209,17 +203,6 @@ class ResourceService(BaseService):
         self._template_cache: Dict[str, ResourceTemplate] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
 
-        # Initialize plugin manager if plugins are enabled in settings
-        self._plugin_manager = None
-        if PLUGINS_AVAILABLE:
-            try:
-                self._plugin_manager = get_plugin_manager()
-                if self._plugin_manager:
-                    logger.info("Plugin manager initialized for ResourceService with config: %s", settings.plugins.config_file)
-            except Exception as e:
-                logger.warning("Plugin manager initialization failed in ResourceService: %s", e)
-                self._plugin_manager = None
-
         # Initialize mime types
         mimetypes.init()
 
@@ -275,7 +258,7 @@ class ResourceService(BaseService):
         from mcpgateway.services.metrics_query_service import get_top_performers_combined  # pylint: disable=import-outside-toplevel
 
         results = get_top_performers_combined(
-            db=db,
+            db,
             metric_type="resource",
             entity_model=DbResource,
             limit=effective_limit,
@@ -380,6 +363,7 @@ class ResourceService(BaseService):
         resource_dict["created_at"] = getattr(resource, "created_at", None)
         resource_dict["updated_at"] = getattr(resource, "updated_at", None)
         resource_dict["version"] = getattr(resource, "version", None)
+        resource_dict["gateway_id"] = getattr(resource, "gateway_id", None)
         return ResourceRead.model_validate(resource_dict)
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
@@ -414,6 +398,11 @@ class ResourceService(BaseService):
     ) -> ResourceRead:
         """Register a new resource.
 
+        MIME Type Resolution Priority:
+        1. **User-provided type** (highest priority) - Caller explicitly declares content type
+        2. **URI-detected type** - Fallback via ``mimetypes.guess_type(uri)``
+        3. **Content-based fallback** - ``text/plain`` for strings, ``application/octet-stream`` for bytes
+
         Args:
             db: Database session
             resource: Resource creation schema
@@ -435,19 +424,24 @@ class ResourceService(BaseService):
             ResourceURIConflictError: If a resource with the same URI already exists.
             ResourceError: For other resource registration errors
             ContentSizeError: For content size exceed
+            ContentTypeError: If the MIME type is not allowed
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> from mcpgateway.schemas import ResourceRead
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> resource = MagicMock()
+            >>> resource.uri = "test://example"
+            >>> resource.content = "test content"
+            >>> resource.mime_type = None
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> db.add = MagicMock()
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_resource_added = AsyncMock()
+            >>> service._detect_mime_type_from_uri = MagicMock(return_value=None)
             >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
@@ -473,6 +467,24 @@ class ResourceService(BaseService):
 
             content_security.validate_resource_size(content=content_to_validate, uri=resource.uri, user_email=created_by, ip_address=created_from_ip)
 
+            # MIME type resolution priority:
+            # 1. User-provided type (caller explicitly declares the content type)
+            # 2. URI-detected type (fallback when user omits the field)
+            # 3. Content-based fallback (text/plain for str, application/octet-stream for bytes)
+            if resource.mime_type:
+                mime_type = resource.mime_type
+            else:
+                mime_type = self._detect_mime_type(resource.uri, resource.content)
+                logger.info(f"Auto-detected MIME type for {resource.uri}: {mime_type}")
+
+            # Validate MIME type against allowlist
+            content_security.validate_resource_mime_type(
+                mime_type=mime_type,
+                uri=resource.uri,
+                user_email=created_by,
+                ip_address=created_from_ip,
+            )
+
             # Extract gateway_id from resource if present
             gateway_id = getattr(resource, "gateway_id", None)
 
@@ -491,18 +503,14 @@ class ResourceService(BaseService):
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
-            # Detect mime type if not provided
-            mime_type = resource.mime_type
-            if not mime_type:
-                mime_type = self._detect_mime_type(resource.uri, resource.content)
-
-            # Determine content storage
+            # Determine content storage (mime_type already detected above)
             is_text = mime_type and mime_type.startswith("text/") or isinstance(resource.content, str)
 
             # Create DB model
             db_resource = DbResource(
                 uri=resource.uri,
                 name=resource.name,
+                title=resource.title,
                 description=resource.description,
                 mime_type=mime_type,
                 uri_template=resource.uri_template,
@@ -615,7 +623,7 @@ class ResourceService(BaseService):
             )
             raise rce
         except ContentSizeError as cse:
-            db.rollback()
+
             structured_logger.log(
                 level="ERROR",
                 message=f"Resource content size limit exceeded: {cse.actual_size} bytes (max: {cse.max_size} bytes)",
@@ -629,6 +637,22 @@ class ResourceService(BaseService):
                 },
             )
             raise cse
+        except ContentTypeError as cte:
+
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource MIME type not allowed: {cte.mime_type}",
+                event_type="resource_mime_type_rejected",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "mime_type": cte.mime_type,
+                    "visibility": visibility,
+                },
+            )
+            raise cte
         except Exception as e:
             db.rollback()
 
@@ -743,14 +767,29 @@ class ResourceService(BaseService):
                 for resource in chunk:
                     try:
                         # Validate content size before processing
+                        content_security = get_content_security_service()
                         if hasattr(resource, "content") and resource.content:
-                            content_security = get_content_security_service()
                             content_security.validate_resource_size(
                                 content=resource.content,
                                 uri=resource.uri,
                                 user_email=created_by,
                                 ip_address=created_from_ip,
                             )
+
+                        # MIME type resolution (same priority as register_resource):
+                        # user-provided > URI-detected > content-based fallback
+                        if getattr(resource, "mime_type", None):
+                            bulk_mime_type = resource.mime_type
+                        else:
+                            bulk_mime_type = self._detect_mime_type(resource.uri, getattr(resource, "content", "") or "")
+
+                        # Validate MIME type against allowlist
+                        content_security.validate_resource_mime_type(
+                            mime_type=bulk_mime_type,
+                            uri=resource.uri,
+                            user_email=created_by,
+                            ip_address=created_from_ip,
+                        )
 
                         # Use provided parameters or schema values
                         resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
@@ -769,8 +808,9 @@ class ResourceService(BaseService):
                             if conflict_strategy == "update":
                                 # Update existing resource
                                 existing_resource.name = resource.name
+                                existing_resource.title = getattr(resource, "title", None)
                                 existing_resource.description = resource.description
-                                existing_resource.mime_type = resource.mime_type
+                                existing_resource.mime_type = bulk_mime_type
                                 existing_resource.size = getattr(resource, "size", None)
                                 existing_resource.uri_template = resource.uri_template
                                 existing_resource.tags = resource.tags or []
@@ -789,8 +829,9 @@ class ResourceService(BaseService):
                                 db_resource = DbResource(
                                     uri=new_uri,
                                     name=resource.name,
+                                    title=getattr(resource, "title", None),
                                     description=resource.description,
-                                    mime_type=resource.mime_type,
+                                    mime_type=bulk_mime_type,
                                     size=getattr(resource, "size", None),
                                     uri_template=resource.uri_template,
                                     gateway_id=getattr(resource, "gateway_id", None),
@@ -817,8 +858,9 @@ class ResourceService(BaseService):
                             db_resource = DbResource(
                                 uri=resource.uri,
                                 name=resource.name,
+                                title=getattr(resource, "title", None),
                                 description=resource.description,
-                                mime_type=resource.mime_type,
+                                mime_type=bulk_mime_type,
                                 size=getattr(resource, "size", None),
                                 uri_template=resource.uri_template,
                                 gateway_id=getattr(resource, "gateway_id", None),
@@ -991,6 +1033,7 @@ class ResourceService(BaseService):
         include_inactive: bool = False,
         cursor: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        gateway_id: Optional[str] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
@@ -1013,6 +1056,7 @@ class ResourceService(BaseService):
             cursor (Optional[str], optional): An opaque cursor token for pagination.
                 Opaque base64-encoded string containing last item's ID and created_at.
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            gateway_id (Optional[str]): Filter resources by gateway ID. Accepts the literal value 'null' to match NULL gateway_id.
             limit (Optional[int]): Maximum number of resources to return. Use 0 for all resources (no limit).
                 If not specified, uses pagination_default_page_size.
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
@@ -1051,97 +1095,119 @@ class ResourceService(BaseService):
             >>> isinstance(result2, list)
             True
         """
-        # Check cache for first page only (cursor=None)
-        # Skip caching when:
-        # - user_email is provided (team-filtered results are user-specific)
-        # - token_teams is set (scoped access, e.g., public-only or team-scoped tokens)
-        # - page-based pagination is used
-        # This prevents cache poisoning where admin results could leak to public-only requests
-        cache = _get_registry_cache()
-        if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, limit=limit, visibility=visibility)
-            cached = await cache.get("resources", filters_hash)
-            if cached is not None:
-                # Reconstruct ResourceRead objects from cached dicts
-                cached_resources = [ResourceRead.model_validate(r) for r in cached["resources"]]
-                return (cached_resources, cached.get("next_cursor"))
+        with create_span(
+            "resource.list",
+            {
+                "include_inactive": include_inactive,
+                "tags.count": len(tags) if tags else 0,
+                "gateway_id": gateway_id,
+                "limit": limit,
+                "page": page,
+                "per_page": per_page,
+                "user.email": user_email,
+                "team.scope": format_trace_team_scope(token_teams) if token_teams is not None else None,
+                "team.filter": team_id,
+                "visibility": visibility,
+            },
+        ):
+            # Check cache for first page only (cursor=None)
+            # Skip caching when:
+            # - user_email is provided (team-filtered results are user-specific)
+            # - token_teams is set (scoped access, e.g., public-only or team-scoped tokens)
+            # - page-based pagination is used
+            # This prevents cache poisoning where admin results could leak to public-only requests
+            cache = _get_registry_cache()
+            if cursor is None and user_email is None and token_teams is None and page is None:
+                filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit, visibility=visibility)
+                cached = await cache.get("resources", filters_hash)
+                if cached is not None:
+                    # Reconstruct ResourceRead objects from cached dicts
+                    cached_resources = [ResourceRead.model_validate(r) for r in cached["resources"]]
+                    return (cached_resources, cached.get("next_cursor"))
 
-        # Build base query with ordering
-        query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(desc(DbResource.created_at), desc(DbResource.id))
+            # Build base query with ordering
+            query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(desc(DbResource.created_at), desc(DbResource.id))
 
-        # Apply active/inactive filter
-        if not include_inactive:
-            query = query.where(DbResource.enabled)
+            # Apply active/inactive filter
+            if not include_inactive:
+                query = query.where(DbResource.enabled)
 
-        query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
+            query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
-        if visibility:
-            query = query.where(DbResource.visibility == visibility)
+            if visibility:
+                query = query.where(DbResource.visibility == visibility)
 
-        # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
-        if tags:
-            query = query.where(json_contains_tag_expr(db, DbResource.tags, tags, match_any=True))
+            # Add gateway_id filtering if provided
+            if gateway_id:
+                if gateway_id.lower() == "null":
+                    query = query.where(DbResource.gateway_id.is_(None))
+                else:
+                    query = query.where(DbResource.gateway_id == gateway_id)
 
-        # Use unified pagination helper - handles both page and cursor pagination
-        pag_result = await unified_paginate(
-            db=db,
-            query=query,
-            page=page,
-            per_page=per_page,
-            cursor=cursor,
-            limit=limit,
-            base_url="/admin/resources",  # Used for page-based links
-            query_params={"include_inactive": include_inactive} if include_inactive else {},
-        )
+            # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
+            if tags:
+                query = query.where(json_contains_tag_expr(db, DbResource.tags, tags, match_any=True))
 
-        next_cursor = None
-        # Extract servers based on pagination type
-        if page is not None:
-            # Page-based: pag_result is a dict
-            resources_db = pag_result["data"]
-        else:
-            # Cursor-based: pag_result is a tuple
-            resources_db, next_cursor = pag_result
+            # Use unified pagination helper - handles both page and cursor pagination
+            pag_result = await unified_paginate(
+                db,
+                query=query,
+                page=page,
+                per_page=per_page,
+                cursor=cursor,
+                limit=limit,
+                base_url="/admin/resources",  # Used for page-based links
+                query_params={"include_inactive": include_inactive} if include_inactive else {},
+            )
 
-        # Fetch team names for the resources (common for both pagination types)
-        team_ids_set = {s.team_id for s in resources_db if s.team_id}
-        team_map = {}
-        if team_ids_set:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
-            team_map = {team.id: team.name for team in teams}
+            next_cursor = None
+            # Extract servers based on pagination type
+            if page is not None:
+                # Page-based: pag_result is a dict
+                resources_db = pag_result["data"]
+            else:
+                # Cursor-based: pag_result is a tuple
+                resources_db, next_cursor = pag_result
 
-        db.commit()  # Release transaction to avoid idle-in-transaction
+            # Fetch team names for the resources (common for both pagination types)
+            team_ids_set = {s.team_id for s in resources_db if s.team_id}
+            team_map = {}
+            if team_ids_set:
+                teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+                team_map = {team.id: team.name for team in teams}
 
-        # Convert to ResourceRead (common for both pagination types)
-        result = []
-        for s in resources_db:
-            try:
-                s.team = team_map.get(s.team_id) if s.team_id else None
-                result.append(self.convert_resource_to_read(s, include_metrics=False))
-            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert resource {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
-                # Continue with remaining resources instead of failing completely
-        # Return appropriate format based on pagination type
-        if page is not None:
-            # Page-based format
-            return {
-                "data": result,
-                "pagination": pag_result["pagination"],
-                "links": pag_result["links"],
-            }
+            db.commit()  # Release transaction to avoid idle-in-transaction
 
-        # Cursor-based format
+            # Convert to ResourceRead (common for both pagination types)
+            result = []
+            for s in resources_db:
+                try:
+                    s.team = team_map.get(s.team_id) if s.team_id else None
+                    result.append(self.convert_resource_to_read(s, include_metrics=False))
+                except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                    logger.exception(f"Failed to convert resource {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                    # Continue with remaining resources instead of failing completely
+            # Return appropriate format based on pagination type
+            if page is not None:
+                # Page-based format
+                return {
+                    "data": result,
+                    "pagination": pag_result["pagination"],
+                    "links": pag_result["links"],
+                }
 
-        # Cache first page results - only for non-user-specific/non-scoped queries
-        # Must match the same conditions as cache lookup to prevent cache poisoning
-        if cursor is None and user_email is None and token_teams is None:
-            try:
-                cache_data = {"resources": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
-                await cache.set("resources", cache_data, filters_hash)
-            except AttributeError:
-                pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+            # Cursor-based format
 
-        return (result, next_cursor)
+            # Cache first page results - only for non-user-specific/non-scoped queries
+            # Must match the same conditions as cache lookup to prevent cache poisoning
+            if cursor is None and user_email is None and token_teams is None:
+                try:
+                    cache_data = {"resources": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
+                    await cache.set("resources", cache_data, filters_hash)
+                except AttributeError:
+                    pass  # Skip caching if result objects don't support model_dump (e.g., in doctests)
+
+            return (result, next_cursor)
 
     async def list_resources_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -1313,71 +1379,81 @@ class ResourceService(BaseService):
             >>> isinstance(result, list)
             True
         """
-        logger.debug(f"Listing resources for server_id: {server_id}, include_inactive: {include_inactive}")
-        query = (
-            select(DbResource)
-            .join(server_resource_association, DbResource.id == server_resource_association.c.resource_id)
-            .where(DbResource.uri_template.is_(None))
-            .where(server_resource_association.c.server_id == server_id)
-        )
+        with create_span(
+            "resource.list",
+            {
+                "server_id": server_id,
+                "include_inactive": include_inactive,
+                "include_metrics": include_metrics,
+                "user.email": user_email,
+                "team.scope": format_trace_team_scope(token_teams) if token_teams is not None else None,
+            },
+        ):
+            logger.debug(f"Listing resources for server_id: {server_id}, include_inactive: {include_inactive}")
+            query = (
+                select(DbResource)
+                .join(server_resource_association, DbResource.id == server_resource_association.c.resource_id)
+                .where(DbResource.uri_template.is_(None))
+                .where(server_resource_association.c.server_id == server_id)
+            )
 
-        # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
-        if include_metrics:
-            query = query.options(selectinload(DbResource.metrics), selectinload(DbResource.metrics_hourly))
-        if not include_inactive:
-            query = query.where(DbResource.enabled)
+            # Eager load metrics relationships to prevent N+1 queries when include_metrics=true
+            if include_metrics:
+                query = query.options(selectinload(DbResource.metrics), selectinload(DbResource.metrics_hourly))
+            if not include_inactive:
+                query = query.where(DbResource.enabled)
 
-        # Add visibility filtering if user context OR token_teams provided
-        # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                team_ids = token_teams
-            elif user_email:
-                # First-Party
-                from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+            # Add visibility filtering if user context OR token_teams provided
+            # This ensures unauthenticated requests with token_teams=[] only see public resources
+            if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
+                # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+                if token_teams is not None:
+                    team_ids = token_teams
+                elif user_email:
+                    # First-Party
+                    from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
+                    team_service = TeamManagementService(db)
+                    user_teams = await team_service.get_user_teams(user_email)
+                    team_ids = [team.id for team in user_teams]
+                else:
+                    team_ids = []
 
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
+                # Check if this is a public-only token (empty teams array)
+                # Public-only tokens can ONLY see public resources - no owner access
+                is_public_only_token = token_teams is not None and len(token_teams) == 0
 
-            access_conditions = [
-                DbResource.visibility == "public",
-            ]
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(DbResource.owner_email == user_email)
-            if team_ids:
-                access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
-            query = query.where(or_(*access_conditions))
+                access_conditions = [
+                    DbResource.visibility == "public",
+                ]
+                # Only include owner access for non-public-only tokens with user_email
+                if not is_public_only_token and user_email:
+                    access_conditions.append(DbResource.owner_email == user_email)
+                if team_ids:
+                    access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
 
-        # Cursor-based pagination logic can be implemented here in the future.
-        resources = db.execute(query).scalars().all()
+            # Cursor-based pagination logic can be implemented here in the future.
+            resources = db.execute(query).scalars().all()
 
-        # Batch fetch team names to avoid N+1 queries
-        resource_team_ids = {r.team_id for r in resources if r.team_id}
-        team_map = {}
-        if resource_team_ids:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(resource_team_ids), EmailTeam.is_active.is_(True))).all()
-            team_map = {str(team.id): team.name for team in teams}
+            # Batch fetch team names to avoid N+1 queries
+            resource_team_ids = {r.team_id for r in resources if r.team_id}
+            team_map = {}
+            if resource_team_ids:
+                teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(resource_team_ids), EmailTeam.is_active.is_(True))).all()
+                team_map = {str(team.id): team.name for team in teams}
 
-        db.commit()  # Release transaction to avoid idle-in-transaction
+            db.commit()  # Release transaction to avoid idle-in-transaction
 
-        result = []
-        for t in resources:
-            try:
-                t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                result.append(self.convert_resource_to_read(t, include_metrics=include_metrics))
-            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
-                # Continue with remaining resources instead of failing completely
-        return result
+            result = []
+            for t in resources:
+                try:
+                    t.team = team_map.get(str(t.team_id)) if t.team_id else None
+                    result.append(self.convert_resource_to_read(t, include_metrics=include_metrics))
+                except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                    logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                    # Continue with remaining resources instead of failing completely
+            return result
 
     async def _record_resource_metric(self, db: Session, resource: DbResource, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
@@ -1622,7 +1698,6 @@ class ResourceService(BaseService):
                 if trace_id and observability_service:
                     try:
                         db_span_id = observability_service.start_span(
-                            db=db,
                             trace_id=trace_id,
                             name="invoke.resource",
                             attributes={
@@ -1638,16 +1713,17 @@ class ResourceService(BaseService):
                         logger.warning(f"Failed to start the observability span for invoking resource: {e}")
                         db_span_id = None
 
-                with create_span(
-                    "invoke.resource",
-                    {
-                        "resource.name": resource_name if resource_name else "unknown",
-                        "resource.id": str(resource_id) if resource_id else "unknown",
-                        "resource.uri": str(uri) or "unknown",
-                        "gateway.transport": getattr(gateway, "transport") or "uknown",
-                        "gateway.url": getattr(gateway, "url") or "unknown",
-                    },
-                ) as span:
+                span_attributes = {
+                    "resource.name": resource_name if resource_name else "unknown",
+                    "resource.id": str(resource_id) if resource_id else "unknown",
+                    "resource.uri": str(uri) or "unknown",
+                    "gateway.transport": getattr(gateway, "transport") or "uknown",
+                    "gateway.url": getattr(gateway, "url") or "unknown",
+                }
+                if is_input_capture_enabled("invoke.resource"):
+                    span_attributes["langfuse.observation.input"] = serialize_trace_payload({"uri": str(uri) if uri else "unknown"})
+
+                with create_span("invoke.resource", span_attributes) as span:
                     valid = False
                     if gateway.ca_certificate:
                         if settings.enable_ed25519_signing:
@@ -1752,14 +1828,14 @@ class ResourceService(BaseService):
                                         headers["Authorization"] = f"Bearer {access_token}"
                                     else:
                                         if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", "No valid OAuth token for user")
+                                            set_span_attribute(span, "health.status", "unhealthy")
+                                            set_span_error(span, "No valid OAuth token for user")
 
                                 except Exception as e:
                                     logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
                                     if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, "Failed to obtain stored OAuth token")
                             else:
                                 # For Client Credentials flow, get token directly (makes network calls)
                                 try:
@@ -1767,8 +1843,8 @@ class ResourceService(BaseService):
                                     headers["Authorization"] = f"Bearer {access_token}"
                                 except Exception as e:
                                     if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", str(e))
+                                        set_span_attribute(span, "health.status", "unhealthy")
+                                        set_span_error(span, e)
                         else:
                             # Handle non-OAuth authentication (existing logic)
                             auth_data = gateway_auth_value or {}
@@ -1944,8 +2020,8 @@ class ResourceService(BaseService):
                                 return None
 
                         if span:
-                            span.set_attribute("success", True)
-                            span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                            set_span_attribute(span, "success", True)
+                            set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
                         resource_text = ""
                         if (gateway_transport).lower() == "sse":
@@ -1954,6 +2030,8 @@ class ResourceService(BaseService):
                         else:
                             # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
+                        if span and resource_text is not None and is_output_capture_enabled("invoke.resource"):
+                            set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload({"content": resource_text}))
                         success = True  # Mark as successful before returning
                         return resource_text
                     except Exception as e:
@@ -1968,13 +2046,11 @@ class ResourceService(BaseService):
                         # before making HTTP calls to prevent connection pool exhaustion
                         if db_span_id and observability_service and not db_span_ended:
                             try:
-                                with fresh_db_session() as fresh_db:
-                                    observability_service.end_span(
-                                        db=fresh_db,
-                                        span_id=db_span_id,
-                                        status="ok" if success else "error",
-                                        status_message=error_message if error_message else None,
-                                    )
+                                observability_service.end_span(
+                                    span_id=db_span_id,
+                                    status="ok" if success else "error",
+                                    status_message=error_message if error_message else None,
+                                )
                                 db_span_ended = True
                                 logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
                             except Exception as e:
@@ -2087,7 +2163,6 @@ class ResourceService(BaseService):
         if trace_id and observability_service:
             try:
                 db_span_id = observability_service.start_span(
-                    db=db,
                     trace_id=trace_id,
                     name="resource.read",
                     attributes={
@@ -2104,17 +2179,18 @@ class ResourceService(BaseService):
                 logger.warning(f"Failed to start observability span for resource reading: {e}")
                 db_span_id = None
 
-        with create_span(
-            "resource.read",
-            {
-                "resource.uri": resource_uri or "unknown",
-                "user": user or "anonymous",
-                "server_id": server_id,
-                "request_id": request_id,
-                "http.url": uri if uri is not None and uri.startswith("http") else None,
-                "resource.type": "template" if (uri is not None and "{" in uri and "}" in uri) else "static",
-            },
-        ) as span:
+        span_attributes = {
+            "resource.uri": resource_uri or "unknown",
+            "user": user or "anonymous",
+            "server_id": server_id,
+            "request_id": request_id,
+            "http.url": uri if uri is not None and uri.startswith("http") else None,
+            "resource.type": "template" if (uri is not None and "{" in uri and "}" in uri) else "static",
+        }
+        if is_input_capture_enabled("resource.read"):
+            span_attributes["langfuse.observation.input"] = serialize_trace_payload({"uri": resource_uri or resource_id or "unknown"})
+
+        with create_span("resource.read", span_attributes) as span:
             try:
                 # Generate request ID if not provided
                 if not request_id:
@@ -2124,17 +2200,12 @@ class ResourceService(BaseService):
                 contexts = None
 
                 # Check if plugin manager is available and eligible for this request
-                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
-
-                # Initialize plugin manager if needed (lazy init must happen before has_hooks_for check)
-                # pylint: disable=protected-access
-                if plugin_eligible and not self._plugin_manager._initialized:
-                    await self._plugin_manager.initialize()
-                # pylint: enable=protected-access
+                plugin_manager = await self._get_plugin_manager(server_id)
+                plugin_eligible = bool(plugin_manager and uri and ("://" in uri))
 
                 # Check if any resource hooks are registered to avoid unnecessary context creation
-                has_pre_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
-                has_post_fetch = plugin_eligible and self._plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
+                has_pre_fetch = plugin_eligible and plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_PRE_FETCH)
+                has_post_fetch = plugin_eligible and plugin_manager.has_hooks_for(ResourceHookType.RESOURCE_POST_FETCH)
 
                 # Initialize plugin context variables only if hooks are registered
                 global_context = None
@@ -2169,7 +2240,7 @@ class ResourceService(BaseService):
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
                     # Execute pre-fetch hooks with context from previous hooks
-                    pre_result, contexts = await self._plugin_manager.invoke_hook(
+                    pre_result, contexts = await plugin_manager.invoke_hook(
                         ResourceHookType.RESOURCE_PRE_FETCH,
                         pre_payload,
                         global_context,
@@ -2361,10 +2432,10 @@ class ResourceService(BaseService):
 
                 # Set success attributes on span
                 if span:
-                    span.set_attribute("success", True)
-                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                    set_span_attribute(span, "success", True)
+                    set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
                     if content:
-                        span.set_attribute("content.size", len(str(content)))
+                        set_span_attribute(span, "content.size", len(str(content)))
 
                 success = True
                 # Return standardized content without breaking callers that expect passthrough
@@ -2385,7 +2456,7 @@ class ResourceService(BaseService):
                 if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
-                        db=db,
+                        db,
                         resource_id=getattr(content, "id"),
                         resource_uri=getattr(content, "uri") or None,
                         resource_template_uri=getattr(content, "text") or None,
@@ -2402,7 +2473,7 @@ class ResourceService(BaseService):
                     # Metrics are recorded in read_resource finally block for all resources
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
-                            db=db,
+                            db,
                             resource_id=getattr(content, "id"),
                             resource_uri=getattr(content, "uri") or None,
                             resource_template_uri=getattr(content, "blob") or None,
@@ -2416,7 +2487,7 @@ class ResourceService(BaseService):
                             setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
-                            db=db,
+                            db,
                             resource_id=getattr(content, "id"),
                             resource_uri=getattr(content, "uri") or None,
                             resource_template_uri=getattr(content, "text") or None,
@@ -2442,9 +2513,12 @@ class ResourceService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if has_post_fetch:
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-                    post_result, _ = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
+                    post_result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
+
+                if span and content is not None and is_output_capture_enabled("resource.read"):
+                    set_span_attribute(span, "langfuse.observation.output", serialize_trace_payload(content))
 
                 return content
             except Exception as e:
@@ -2486,13 +2560,11 @@ class ResourceService(BaseService):
                 # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource
                 if db_span_id and observability_service and not db_span_ended:
                     try:
-                        with fresh_db_session() as fresh_db:
-                            observability_service.end_span(
-                                db=fresh_db,
-                                span_id=db_span_id,
-                                status="ok" if success else "error",
-                                status_message=error_message if error_message else None,
-                            )
+                        observability_service.end_span(
+                            span_id=db_span_id,
+                            status="ok" if success else "error",
+                            status_message=error_message if error_message else None,
+                        )
                         db_span_ended = True
                         logger.debug(f"✓ Ended resource.read span: {db_span_id}")
                     except Exception as e:
@@ -2754,6 +2826,15 @@ class ResourceService(BaseService):
         """
         Update a resource.
 
+        MIME Type Resolution Priority:
+        1. **User-provided type** (highest priority) - Caller explicitly declares content type
+        2. **URI-detected type** - Fallback when empty string provided
+        3. **Content-based fallback** - If empty string and no URI detection
+        4. **Preserve existing** - If None/not provided
+
+        This ensures accuracy by preferring URL-detected types (e.g., .md → text/markdown)
+        over potentially incorrect user input.
+
         Args:
             db: Database session
             resource_id: Resource ID
@@ -2775,22 +2856,27 @@ class ResourceService(BaseService):
             IntegrityError: If a database integrity error occurs.
             Exception: For unexpected errors
             ContentSizeError: For content size exceed
+            ContentTypeError: If the MIME type is not allowed
 
         Example:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock, AsyncMock
-            >>> from mcpgateway.schemas import ResourceRead
+            >>> from mcpgateway.schemas import ResourceRead, ResourceUpdate
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> resource = MagicMock()
+            >>> resource.uri = "test://example"
+            >>> resource.visibility = "private"
+            >>> resource.team_id = None
             >>> db.get.return_value = resource
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
             >>> service._notify_resource_updated = AsyncMock()
+            >>> service._detect_mime_type_from_uri = MagicMock(return_value=None)
             >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.update_resource(db, 'resource_id', MagicMock()))
+            >>> asyncio.run(service.update_resource(db, 'resource_id', ResourceUpdate()))
             'resource_read'
         """
         try:
@@ -2832,8 +2918,40 @@ class ResourceService(BaseService):
                 resource.name = resource_update.name
             if resource_update.description is not None:
                 resource.description = resource_update.description
+            if resource_update.title is not None:
+                resource.title = resource_update.title
+            # Resolve the new MIME type into a local variable and validate
+            # BEFORE writing to the tracked model to avoid dirty session state.
+            # Priority: user-provided > URI-detected > content-based fallback.
+            resolved_mime_type = None
             if resource_update.mime_type is not None:
-                resource.mime_type = resource_update.mime_type
+                if resource_update.mime_type:
+                    # Non-empty: user explicitly provided a type — trust it
+                    resolved_mime_type = resource_update.mime_type
+                else:
+                    # Empty string: auto-detect from URI/content
+                    content_for_detection = resource_update.content if resource_update.content is not None else (resource.text_content or resource.binary_content)
+                    uri_for_detection = resource_update.uri if resource_update.uri is not None else resource.uri
+                    resolved_mime_type = self._detect_mime_type(uri_for_detection, content_for_detection)
+                    logger.info(f"Auto-detected MIME type for resource {resource_id}: {resolved_mime_type}")
+            elif resource_update.uri is not None:
+                # URI changed but no MIME type provided — try URI detection as fallback
+                url_detected_mime = self._detect_mime_type_from_uri(resource_update.uri)
+                if url_detected_mime:
+                    resolved_mime_type = url_detected_mime
+
+            # Validate the candidate MIME type BEFORE mutating the model
+            content_security = get_content_security_service()
+            if resolved_mime_type is not None:
+                content_security.validate_resource_mime_type(
+                    mime_type=resolved_mime_type,
+                    uri=resource_update.uri or resource.uri,
+                    user_email=modified_by or user_email,
+                    ip_address=modified_from_ip,
+                )
+                # Validation passed — safe to assign
+                resource.mime_type = resolved_mime_type
+
             if resource_update.uri_template is not None:
                 resource.uri_template = resource_update.uri_template
             if resource_update.visibility is not None:
@@ -2846,7 +2964,6 @@ class ResourceService(BaseService):
             # Update content if provided
             if resource_update.content is not None:
                 # Validate content size before updating
-                content_security = get_content_security_service()
                 content_security.validate_resource_size(
                     content=resource_update.content,
                     uri=resource_update.uri or resource.uri,
@@ -3004,6 +3121,23 @@ class ResourceService(BaseService):
                 error=cse,
             )
             raise cse
+        except ContentTypeError as cte:
+            db.rollback()
+            structured_logger.log(
+                level="ERROR",
+                message=f"Resource MIME type not allowed: {cte.mime_type}",
+                event_type="resource_mime_type_rejected",
+                component="resource_service",
+                resource_type="resource",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_id=str(resource_id),
+                error=cte,
+                custom_fields={
+                    "mime_type": cte.mime_type,
+                },
+            )
+            raise cte
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
 
@@ -3240,40 +3374,41 @@ class ResourceService(BaseService):
             >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))
             'resource_read'
         """
-        query = select(DbResource).where(DbResource.id == resource_id)
+        with create_span("resource.get", {"resource.id": resource_id, "include_inactive": include_inactive}):
+            query = select(DbResource).where(DbResource.id == resource_id)
 
-        if not include_inactive:
-            query = query.where(DbResource.enabled)
-
-        resource = db.execute(query).scalar_one_or_none()
-
-        if not resource:
             if not include_inactive:
-                # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.enabled))).scalar_one_or_none()
+                query = query.where(DbResource.enabled)
 
-                if inactive_resource:
-                    raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
+            resource = db.execute(query).scalar_one_or_none()
 
-            raise ResourceNotFoundError(f"Resource not found: {resource_id}")
+            if not resource:
+                if not include_inactive:
+                    # Check if inactive resource exists
+                    inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.enabled))).scalar_one_or_none()
 
-        resource_read = self.convert_resource_to_read(resource)
+                    if inactive_resource:
+                        raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
 
-        structured_logger.log(
-            level="INFO",
-            message="Resource retrieved successfully",
-            event_type="resource_viewed",
-            component="resource_service",
-            team_id=getattr(resource, "team_id", None),
-            resource_type="resource",
-            resource_id=str(resource.id),
-            custom_fields={
-                "resource_uri": resource.uri,
-                "include_inactive": include_inactive,
-            },
-        )
+                raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
-        return resource_read
+            resource_read = self.convert_resource_to_read(resource)
+
+            structured_logger.log(
+                level="INFO",
+                message="Resource retrieved successfully",
+                event_type="resource_viewed",
+                component="resource_service",
+                team_id=getattr(resource, "team_id", None),
+                resource_type="resource",
+                resource_id=str(resource.id),
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "include_inactive": include_inactive,
+                },
+            )
+
+            return resource_read
 
     async def _notify_resource_activated(self, resource: DbResource) -> None:
         """
@@ -3409,22 +3544,52 @@ class ResourceService(BaseService):
             if await self._event_visible_to_subscriber(event, user_email, token_teams):
                 yield event
 
+    def _detect_mime_type_from_uri(self, uri: str) -> Optional[str]:
+        """Detect MIME type from URI only (no fallback).
+
+        Args:
+            uri: Resource URI
+
+        Returns:
+            Detected MIME type from URI, or None if cannot be determined
+
+        Examples:
+            >>> service = ResourceService()
+            >>> service._detect_mime_type_from_uri("https://example.com/file.md")
+            'text/markdown'
+            >>> service._detect_mime_type_from_uri("https://example.com/unknown")
+
+        """
+        mime_type, _ = mimetypes.guess_type(uri)
+        return mime_type
+
     def _detect_mime_type(self, uri: str, content: Union[str, bytes]) -> str:
-        """Detect mime type from URI and content.
+        """Detect mime type from URI and content with fallback.
+
+        Priority:
+        1. Try to detect from URI extension
+        2. Fallback to content-based detection
 
         Args:
             uri: Resource URI
             content: Resource content
 
         Returns:
-            Detected mime type
+            Detected mime type (always returns a value)
+
+        Examples:
+            >>> service = ResourceService()
+            >>> service._detect_mime_type("file.txt", "content")
+            'text/plain'
+            >>> service._detect_mime_type("unknown", "text content")
+            'text/plain'
         """
         # Try from URI first
-        mime_type, _ = mimetypes.guess_type(uri)
+        mime_type = self._detect_mime_type_from_uri(uri)
         if mime_type:
             return mime_type
 
-        # Check content type
+        # Fallback based on content type
         if isinstance(content, str):
             return "text/plain"
 
@@ -3684,42 +3849,51 @@ class ResourceService(BaseService):
             ...     result == ['resource_template']
             True
         """
-        query = select(DbResource).where(DbResource.uri_template.isnot(None))
+        with create_span(
+            "resource_template.list",
+            {
+                "include_inactive": include_inactive,
+                "server_id": server_id,
+                "tags.count": len(tags) if tags else 0,
+                "visibility": visibility,
+            },
+        ):
+            query = select(DbResource).where(DbResource.uri_template.isnot(None))
 
-        # Filter by server_id if provided (same pattern as list_server_resources)
-        if server_id:
-            query = query.join(server_resource_association, DbResource.id == server_resource_association.c.resource_id).where(server_resource_association.c.server_id == server_id)
+            # Filter by server_id if provided (same pattern as list_server_resources)
+            if server_id:
+                query = query.join(server_resource_association, DbResource.id == server_resource_association.c.resource_id).where(server_resource_association.c.server_id == server_id)
 
-        if not include_inactive:
-            query = query.where(DbResource.enabled)
+            if not include_inactive:
+                query = query.where(DbResource.enabled)
 
-        # Apply visibility filtering when token_teams is set (non-admin access)
-        if token_teams is not None:
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public templates - no owner access
-            is_public_only_token = len(token_teams) == 0
+            # Apply visibility filtering when token_teams is set (non-admin access)
+            if token_teams is not None:
+                # Check if this is a public-only token (empty teams array)
+                # Public-only tokens can ONLY see public templates - no owner access
+                is_public_only_token = len(token_teams) == 0
 
-            conditions = [DbResource.visibility == "public"]
+                conditions = [DbResource.visibility == "public"]
 
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                conditions.append(DbResource.owner_email == user_email)
+                # Only include owner access for non-public-only tokens with user_email
+                if not is_public_only_token and user_email:
+                    conditions.append(DbResource.owner_email == user_email)
 
-            if token_teams:
-                conditions.append(and_(DbResource.team_id.in_(token_teams), DbResource.visibility.in_(["team", "public"])))
+                if token_teams:
+                    conditions.append(and_(DbResource.team_id.in_(token_teams), DbResource.visibility.in_(["team", "public"])))
 
-            query = query.where(or_(*conditions))
+                query = query.where(or_(*conditions))
 
-        # Cursor-based pagination logic can be implemented here in the future.
-        if visibility:
-            query = query.where(DbResource.visibility == visibility)
+            # Cursor-based pagination logic can be implemented here in the future.
+            if visibility:
+                query = query.where(DbResource.visibility == visibility)
 
-        if tags:
-            query = query.where(json_contains_tag_expr(db, DbResource.tags, tags, match_any=True))
+            if tags:
+                query = query.where(json_contains_tag_expr(db, DbResource.tags, tags, match_any=True))
 
-        templates = db.execute(query).scalars().all()
-        result = [ResourceTemplate.model_validate(t) for t in templates]
-        return result
+            templates = db.execute(query).scalars().all()
+            result = [ResourceTemplate.model_validate(t) for t in templates]
+            return result
 
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> ResourceMetrics:

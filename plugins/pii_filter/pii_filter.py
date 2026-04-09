@@ -77,8 +77,6 @@ class PIIType(str, Enum):
     DRIVER_LICENSE = "driver_license"
     BANK_ACCOUNT = "bank_account"
     MEDICAL_RECORD = "medical_record"
-    AWS_KEY = "aws_key"
-    API_KEY = "api_key"
     CUSTOM = "custom"
 
 
@@ -117,8 +115,6 @@ class PIIFilterConfig(BaseModel):
     detect_driver_license: bool = Field(default=True, description="Detect driver's license numbers")
     detect_bank_account: bool = Field(default=True, description="Detect bank account numbers")
     detect_medical_record: bool = Field(default=True, description="Detect medical record numbers")
-    detect_aws_keys: bool = Field(default=True, description="Detect AWS access keys")
-    detect_api_keys: bool = Field(default=True, description="Detect generic API keys")
 
     # Masking configuration
     default_mask_strategy: MaskingStrategy = Field(default=MaskingStrategy.REDACT, description="Default masking strategy")
@@ -128,6 +124,11 @@ class PIIFilterConfig(BaseModel):
     block_on_detection: bool = Field(default=False, description="Block request if PII is detected")
     log_detections: bool = Field(default=True, description="Log PII detections")
     include_detection_details: bool = Field(default=True, description="Include detection details in metadata")
+
+    # Resource limits for the Rust implementation
+    max_text_bytes: int = Field(default=10 * 1024 * 1024, gt=0, le=100 * 1024 * 1024, description="Maximum text payload size accepted by the Rust detector (max 100MB)")
+    max_nested_depth: int = Field(default=32, gt=0, le=1000, description="Maximum nested depth accepted by the Rust detector (max 1000)")
+    max_collection_items: int = Field(default=4096, gt=0, le=1_000_000, description="Maximum list or mapping size accepted by the Rust detector (max 1M)")
 
     # Custom patterns
     custom_patterns: List[PIIPattern] = Field(default_factory=list, description="Custom PII patterns to detect")
@@ -265,26 +266,6 @@ class PIIDetector:
         if self.config.detect_medical_record:
             patterns.append(
                 PIIPattern(type=PIIType.MEDICAL_RECORD, pattern=r"\b(?:MRN|Medical Record)[#:\s]+[A-Z0-9]{6,12}\b", description="Medical record number", mask_strategy=MaskingStrategy.REDACT)
-            )
-
-        # AWS Access Key patterns
-        if self.config.detect_aws_keys:
-            patterns.extend(
-                [
-                    PIIPattern(type=PIIType.AWS_KEY, pattern=r"\bAKIA[0-9A-Z]{16}\b", description="AWS Access Key ID", mask_strategy=MaskingStrategy.REDACT),
-                    PIIPattern(type=PIIType.AWS_KEY, pattern=r"\b[A-Za-z0-9/+=]{40}\b", description="AWS Secret Access Key", mask_strategy=MaskingStrategy.REDACT),
-                ]
-            )
-
-        # Generic API Key patterns
-        if self.config.detect_api_keys:
-            patterns.append(
-                PIIPattern(
-                    type=PIIType.API_KEY,
-                    pattern=r'\b(?:api[_-]?key|apikey|api_token|access[_-]?token)[:\s]+[\'"]?[A-Za-z0-9\-_]{20,}[\'"]?\b',
-                    description="Generic API key",
-                    mask_strategy=MaskingStrategy.REDACT,
-                )
             )
 
         # Add custom patterns

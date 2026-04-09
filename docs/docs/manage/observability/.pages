@@ -1,4 +1,5 @@
 nav:
   - Overview: observability.md
   - Internal Observability: internal-observability.md
+  - Langfuse Integration: langfuse.md
   - Phoenix Integration: phoenix.md

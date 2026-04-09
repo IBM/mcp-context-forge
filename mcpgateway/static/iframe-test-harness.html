@@ -465,7 +465,7 @@ test('B. Team Selector', 'search error retry button has data-action (onclick str
       <div>
         <p>Search failed</p>
         <button data-action="retry-team-search"
-                onclick="searchTeamSelector('')">Try again</button>
+                onclick="Admin.searchTeamSelector('')">Try again</button>
       </div>
     \`;
     const btn = container.querySelector('[data-action="retry-team-search"]');
@@ -549,13 +549,13 @@ test('C. Tool Table', 'delegation listener dispatches view-tool click to viewToo
 
 // ── Group D: Metrics Retry ─────────────────────────────────
 
-test('D. Metrics Retry', 'showMetricsError() retry button has data-action (onclick stripped)', async () => {
+test('D. Metrics Retry', 'Admin.showMetricsError() retry button has data-action (onclick stripped)', async () => {
   const r = await iframeEval(`
     let c = document.getElementById('aggregated-metrics-content');
     const created = !c;
     if (!c) { c = document.createElement('div'); c.id = 'aggregated-metrics-content'; document.body.appendChild(c); }
     try {
-      showMetricsError(new Error('harness error'));
+      Admin.showMetricsError(new Error('harness error'));
       const btn = c.querySelector('[data-action="retry-metrics"]');
       if (!btn) return { found: false };
       return { found: true, hasOnclick: btn.hasAttribute('onclick'), text: btn.textContent.trim() };
@@ -568,7 +568,7 @@ test('D. Metrics Retry', 'showMetricsError() retry button has data-action (oncli
   return { pass: true, detail: `onclick stripped ✓  data-action="retry-metrics" survived ✓  text: "${r.text}"` };
 });
 
-test('D. Metrics Retry', 'showMetricsError() retry button click calls retryLoadMetrics()', async () => {
+test('D. Metrics Retry', 'Admin.showMetricsError() retry button click calls Admin.retryLoadMetrics()', async () => {
   const r = await iframeEval(`
     let c = document.getElementById('aggregated-metrics-content');
     const created = !c;
@@ -577,7 +577,7 @@ test('D. Metrics Retry', 'showMetricsError() retry button click calls retryLoadM
     const orig = window.retryLoadMetrics;
     window.retryLoadMetrics = () => { retryCalled = true; };
     try {
-      showMetricsError(new Error('harness retry'));
+      Admin.showMetricsError(new Error('harness retry'));
       const btn = c.querySelector('[data-action="retry-metrics"]');
       if (!btn) return { found: false };
       btn.click();
@@ -588,11 +588,11 @@ test('D. Metrics Retry', 'showMetricsError() retry button click calls retryLoadM
     }
   `);
   if (!r.found)         return { pass: false, detail: 'Retry button not found' };
-  if (!r.retryCalled)   return { pass: false, detail: 'retryLoadMetrics() NOT called on click' };
-  return { pass: true, detail: 'retryLoadMetrics() called on click ✓' };
+  if (!r.retryCalled)   return { pass: false, detail: 'Admin.retryLoadMetrics() NOT called on click' };
+  return { pass: true, detail: 'Admin.retryLoadMetrics() called on click ✓' };
 });
 
-test('D. Metrics Retry', 'displayMetrics({}) empty-state button has data-action (onclick stripped)', async () => {
+test('D. Metrics Retry', 'Admin.displayMetrics({}) empty-state button has data-action (onclick stripped)', async () => {
   const r = await iframeEval(`
     let section = document.getElementById('aggregated-metrics-section');
     const sCreated = !section;
@@ -601,7 +601,7 @@ test('D. Metrics Retry', 'displayMetrics({}) empty-state button has data-action 
     const cCreated = !c;
     if (!c) { c = document.createElement('div'); c.id = 'aggregated-metrics-content'; section.appendChild(c); }
     try {
-      displayMetrics({});
+      Admin.displayMetrics({});
       const btn = c.querySelector('[data-action="retry-metrics"]');
       if (!btn) return { found: false };
       return { found: true, hasOnclick: btn.hasAttribute('onclick'), text: btn.textContent.trim() };
@@ -646,13 +646,13 @@ test('E. Global Search', 'search result buttons have data-action (onclick stripp
 
 // ── Group F: XSS Prevention ────────────────────────────────
 
-test('F. XSS Prevention', 'error message in showMetricsError() is HTML-escaped', async () => {
+test('F. XSS Prevention', 'error message in Admin.showMetricsError() is HTML-escaped', async () => {
   const r = await iframeEval(`
     let c = document.getElementById('aggregated-metrics-content');
     const created = !c;
     if (!c) { c = document.createElement('div'); c.id = 'aggregated-metrics-content'; document.body.appendChild(c); }
     try {
-      showMetricsError(new Error('<scr' + 'ipt>window.__xss3=true;<\/scr' + 'ipt>'));
+      Admin.showMetricsError(new Error('<scr' + 'ipt>window.__xss3=true;<\/scr' + 'ipt>'));
       const html = c.innerHTML;
       const xssFired = !!window.__xss3;
       const hasRaw = html.includes('<script');

@@ -54,7 +54,13 @@ from mcpgateway.schemas import (
     EventMessage,
     ListFilters,
     PromptCreate,
+    PromptMetrics,
+    PromptRead,
+    PromptUpdate,
     ResourceCreate,
+    ResourceMetrics,
+    ResourceRead,
+    ResourceUpdate,
     ServerCreate,
     ServerMetrics,
     ServerRead,
@@ -64,6 +70,7 @@ from mcpgateway.schemas import (
     TeamCreateRequest,
     TeamUpdateRequest,
     ToolCreate,
+    ToolRead,
     ToolUpdate,
 )
 
@@ -1225,6 +1232,37 @@ class TestSchemaValidators:
         )
         assert gateway.gateway_mode == "direct_proxy"
 
+    def test_gateway_read_tool_count_defaults_to_zero(self):
+        """GatewayRead.tool_count should default to 0 and serialize as toolCount."""
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(
+            id="gw-tc",
+            name="Tool Count GW",
+            slug="tool-count-gw",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+        )
+        assert gateway.tool_count == 0
+        dumped = gateway.model_dump(by_alias=True)
+        assert dumped["toolCount"] == 0
+
+    def test_gateway_read_tool_count_set_explicitly(self):
+        """GatewayRead.tool_count should accept an explicit value."""
+        from mcpgateway.schemas import GatewayRead
+
+        gateway = GatewayRead(
+            id="gw-tc2",
+            name="Tool Count GW 2",
+            slug="tool-count-gw-2",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+            tool_count=5,
+        )
+        assert gateway.tool_count == 5
+        dumped = gateway.model_dump(by_alias=True)
+        assert dumped["toolCount"] == 5
+
     def test_resource_subscription_rejects_empty_subscriber_id(self):
         """ResourceSubscription should reject empty subscriber IDs."""
         from mcpgateway.schemas import ResourceSubscription
@@ -1354,3 +1392,108 @@ class TestGatewayCreateCamelCase:
         update_keys = set(update.model_dump(by_alias=True, exclude_none=True).keys())
         for key in update_keys:
             assert key in create_keys, f"GatewayUpdate alias '{key}' missing from GatewayCreate"
+
+
+class TestTitleSchemas:
+    """Test title field in schema models."""
+
+    def test_tool_schemas_with_title(self):
+        """Test ToolCreate, ToolUpdate, and ToolRead pass title field."""
+        tool_create = ToolCreate(name="test-tool", url="http://example.com", title="My Custom Tool Title")
+        assert tool_create.title == "My Custom Tool Title"
+
+        tool_update = ToolUpdate(title="Updated Title")
+        assert tool_update.title == "Updated Title"
+
+        tool_read = ToolRead(
+            id="1",
+            name="test-tool",
+            originalName="test-tool-original",
+            url="http://example.com",
+            title="Read Tool Title",
+            description="Test Tool Description",
+            requestType="rpc",
+            integrationType="JSON",
+            headers={},
+            inputSchema={},
+            annotations={},
+            jsonpathFilter="",
+            auth={"type": "none"},
+            enabled=True,
+            reachable=True,
+            gatewayId="gw-1",
+            gatewaySlug="gw-1-slug",
+            customName="test-tool-custom",
+            customNameSlug="test-tool-custom-slug",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=ServerMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0,
+            ),
+        )
+        assert tool_read.title == "Read Tool Title"
+
+    def test_resource_schemas_with_title(self):
+        """Test ResourceCreate, ResourceUpdate, and ResourceRead pass title field."""
+        resource_create = ResourceCreate(uri="test://uri", name="test-resource", content="data", title="My Custom Resource Title")
+        assert resource_create.title == "My Custom Resource Title"
+
+        resource_update = ResourceUpdate(title="Updated Resource Title")
+        assert resource_update.title == "Updated Resource Title"
+
+        resource_read = ResourceRead(
+            id="1",
+            uri="test://uri",
+            name="test-resource",
+            title="Read Resource Title",
+            description="Test Resource Description",
+            mimeType="text/plain",
+            size=1024,
+            enabled=True,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=ResourceMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0,
+            ),
+        )
+        assert resource_read.title == "Read Resource Title"
+
+    def test_prompt_schemas_with_title(self):
+        """Test PromptCreate, PromptUpdate, and PromptRead pass title field."""
+        prompt_create = PromptCreate(
+            name="test-prompt",
+            title="My Custom Prompt Title",
+            template="Hello {{name}}"
+        )
+        assert prompt_create.title == "My Custom Prompt Title"
+
+        prompt_update = PromptUpdate(title="Updated Prompt Title")
+        assert prompt_update.title == "Updated Prompt Title"
+
+        prompt_read = PromptRead(
+            id="1",
+            name="test-prompt",
+            originalName="test-prompt-original",
+            customName="test-prompt-custom",
+            customNameSlug="test-prompt-custom-slug",
+            description="Test Prompt Description",
+            template="Hello {{name}}",
+            arguments=[],
+            enabled=True,
+            title="Read Prompt Title",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            metrics=PromptMetrics(
+                total_executions=0,
+                successful_executions=0,
+                failed_executions=0,
+                failure_rate=0.0,
+            ),
+        )
+        assert prompt_read.title == "Read Prompt Title"

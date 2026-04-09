@@ -10,7 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
@@ -71,21 +71,24 @@ class TestPoolInitAutoAlignment:
         """Verify init_mcp_session_pool receives the calculated parameters."""
         # First-Party
         from mcpgateway.services.mcp_session_pool import (
-            MCPSessionPool,
             close_mcp_session_pool,
             init_mcp_session_pool,
         )
 
-        # Create pool with specific values
+        # Create pool with specific values including new global capacity limits
         pool = init_mcp_session_pool(
             health_check_interval_seconds=30.0,
             default_transport_timeout_seconds=7.5,
+            max_total_keys=100,
+            max_total_sessions=500,
         )
 
         try:
             # Verify the pool received the correct values
             assert pool._health_check_interval == 30.0
             assert pool._default_transport_timeout == 7.5
+            assert pool._max_total_keys == 100
+            assert pool._max_total_sessions == 500
         finally:
             await close_mcp_session_pool()
 
