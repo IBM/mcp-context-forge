@@ -2873,6 +2873,31 @@ load-test-mcp-protocol-heavy:              ## MCP Streamable HTTP protocol heavy
 OCP_NS ?=
 OCP_VALUES ?= charts/mcp-stack/values-ocp-pgo.yaml
 OCP_SECRETS ?= charts/mcp-stack/values-ocp-pgo-secrets.yaml
+OCP_PG_CR ?= charts/mcp-stack/crunchydata-postgres-cr.yaml
+
+ocp-setup:                                   ## Set up OCP namespace and CrunchyData Postgres (requires OCP_NS)
+	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-setup OCP_NS=<namespace>"; exit 1; fi
+	@echo "=== OCP Setup ==="
+	@echo "Checking CrunchyData PGO operator..."
+	@/bin/bash -c 'oc get csv -A 2>/dev/null | grep -qi crunchy || \
+		(echo "ERROR: CrunchyData PGO operator not installed. Install it via OperatorHub first." && exit 1)'
+	@echo "   PGO operator: installed"
+	@echo "Checking namespace $(OCP_NS)..."
+	@oc get namespace $(OCP_NS) >/dev/null 2>&1 && \
+		echo "   Namespace: already exists" || \
+		(echo "   Creating namespace $(OCP_NS)..." && oc new-project $(OCP_NS))
+	@echo "Checking PostgresCluster..."
+	@oc get pods -n $(OCP_NS) -l postgres-operator.crunchydata.com/cluster --no-headers 2>/dev/null | grep -q Running && \
+		echo "   PostgresCluster: already running" || \
+		(echo "   Applying PostgresCluster CR..." && \
+		oc apply -n $(OCP_NS) -f $(OCP_PG_CR) && \
+		echo "   Waiting for Postgres pods (this may take a few minutes)..." && \
+		oc -n $(OCP_NS) wait --for=condition=Ready pod -l postgres-operator.crunchydata.com/role=master --timeout=300s 2>/dev/null || \
+		echo "   Postgres pods still starting. Check: oc get pods -n $(OCP_NS)")
+	@echo ""
+	@echo "=== Setup complete ==="
+	@echo "Next: create secrets file at $(OCP_SECRETS) (see values file header for required keys)"
+	@echo "Then: make ocp-deploy OCP_NS=$(OCP_NS)"
 
 ocp-deploy:                                  ## Deploy ContextForge on OCP (requires OCP_NS)
 	@if [ -z "$(OCP_NS)" ]; then echo "Usage: make ocp-deploy OCP_NS=<namespace>"; exit 1; fi
