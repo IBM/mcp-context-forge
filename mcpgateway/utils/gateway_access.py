@@ -82,6 +82,29 @@ async def check_gateway_access(
     if token_teams is None and user_email is None:
         return True
 
+    # Admin bypass: check if user is an admin in the database
+    if user_email:
+        # Third-Party
+        from sqlalchemy import select
+
+        # First-Party
+        from mcpgateway.config import settings
+        from mcpgateway.db import EmailUser
+
+        # Special case for platform admin
+        if user_email == getattr(settings, "platform_admin_email", ""):
+            return True
+        
+        # Check database (fail-closed on any error)
+        try:
+            user = db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
+            # Explicitly check for is_admin attribute and that it's True (not just truthy)
+            if user is not None and hasattr(user, 'is_admin') and user.is_admin is True:
+                return True
+        except Exception:  # pylint: disable=broad-except
+            # Fail-closed: if we can't verify admin status, continue with normal checks
+            pass
+
     # No user context (but not admin) = deny access to non-public gateways
     if not user_email:
         return False

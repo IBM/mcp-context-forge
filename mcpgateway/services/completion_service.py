@@ -161,7 +161,7 @@ class CompletionService:
         user_teams = await team_service.get_user_teams(user_email)
         return [team.id for team in user_teams]
 
-    def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str]):
+    def _apply_visibility_scope(self, stmt, model, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str], db: Optional[Session] = None):
         """Apply token/user visibility scope to a SQLAlchemy statement.
 
         Args:
@@ -170,12 +170,34 @@ class CompletionService:
             user_email: Caller email used for owner visibility
             token_teams: Explicit token team scope when present
             team_ids: Effective team IDs for team visibility
+            db: Database session for admin check (optional)
 
         Returns:
             Scoped SQLAlchemy statement.
         """
+        # Admin bypass: no auth context
         if token_teams is None and user_email is None:
             return stmt
+
+        # Admin bypass: check if user is an admin in the database
+        if user_email and db:
+            # First-Party
+            from mcpgateway.config import settings
+            from mcpgateway.db import EmailUser
+
+            # Special case for platform admin
+            if user_email == getattr(settings, "platform_admin_email", ""):
+                return stmt
+
+            # Check database (fail-closed on any error)
+            try:
+                user = db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
+                # Explicitly check for is_admin attribute and that it's True (not just truthy)
+                if user is not None and hasattr(user, 'is_admin') and user.is_admin is True:
+                    return stmt
+            except Exception:  # pylint: disable=broad-except
+                # Fail-closed: if we can't verify admin status, continue with normal checks
+                pass
 
         is_public_only_token = token_teams is not None and len(token_teams) == 0
         access_conditions = [model.visibility == "public"]
@@ -247,7 +269,7 @@ class CompletionService:
         # Only consider prompts that are enabled and visible to caller
         team_ids = await self._resolve_team_ids(db, user_email, token_teams)
         stmt = select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)  # pylint: disable=comparison-with-callable
-        stmt = self._apply_visibility_scope(stmt, DbPrompt, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+        stmt = self._apply_visibility_scope(stmt, DbPrompt, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
         stmt = stmt.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id)).limit(1)
         prompt = db.execute(stmt).scalar_one_or_none()
 
@@ -349,7 +371,7 @@ class CompletionService:
         # List matching resources visible to caller
         team_ids = await self._resolve_team_ids(db, user_email, token_teams)
         stmt = select(DbResource).where(DbResource.enabled)
-        stmt = self._apply_visibility_scope(stmt, DbResource, user_email=user_email, token_teams=token_teams, team_ids=team_ids)
+        stmt = self._apply_visibility_scope(stmt, DbResource, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
         resources = db.execute(stmt).scalars().all()
 
         # Filter by URI pattern

@@ -52,6 +52,39 @@ class BaseService(ABC):
         model = self._visibility_model_cls
         return db.execute(select(sa_exists().where(model.id == entity_id))).scalar()
 
+    async def _is_user_admin(self, db: Session, user_email: str) -> bool:
+        """Check if user is admin by looking up user record in database.
+
+        This method provides admin bypass for visibility filtering, aligning
+        Layer 1 (token scoping) with Layer 2 (RBAC) behavior.
+
+        Args:
+            db: Database session for user lookup.
+            user_email: Email address of the user to check.
+
+        Returns:
+            True if user has is_admin=True in database, False otherwise.
+            Fail-closed: returns False if database query fails or user not found.
+        """
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+        # Special case for platform admin (virtual user)
+        if user_email == getattr(settings, "platform_admin_email", ""):
+            return True
+
+        # Look up user in database (fail-closed on any error)
+        try:
+            user = db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
+            # Explicitly check for is_admin attribute and that it's True (not just truthy)
+            # This handles mock objects that return MagicMock for any attribute
+            return user is not None and hasattr(user, 'is_admin') and user.is_admin is True
+        except Exception:  # pylint: disable=broad-except
+            # Fail-closed: if we can't verify admin status, assume not admin
+            # This handles mock databases in tests and any database errors
+            return False
+
     async def _apply_access_control(
         self,
         query: Any,
@@ -64,9 +97,10 @@ class BaseService(ABC):
 
         Handles the full access-control flow for list endpoints:
         1. Returns query unmodified when no auth context is present (admin bypass)
-        2. Resolves effective teams from JWT token_teams or DB lookup
-        3. Suppresses owner matching for public-only tokens (token_teams=[])
-        4. Delegates to _apply_visibility_filter for SQL WHERE construction
+        2. Checks if user is an admin and grants bypass if true
+        3. Resolves effective teams from JWT token_teams or DB lookup
+        4. Suppresses owner matching for public-only tokens (token_teams=[])
+        5. Delegates to _apply_visibility_filter for SQL WHERE construction
 
         Args:
             query: SQLAlchemy query to filter
@@ -80,9 +114,14 @@ class BaseService(ABC):
 
         Returns:
             Query with visibility WHERE clauses applied, or unmodified
-            if no auth context is present.
+            if no auth context is present or user is admin.
         """
+        # Admin bypass: no auth context (both None)
         if user_email is None and token_teams is None:
+            return query
+
+        # Admin bypass: check if user is an admin in the database
+        if user_email and await self._is_user_admin(db, user_email):
             return query
 
         effective_teams: List[str] = []

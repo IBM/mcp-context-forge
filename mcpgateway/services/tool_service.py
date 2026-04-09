@@ -1151,6 +1151,10 @@ class ToolService(BaseService):
         if token_teams is None and user_email is None:
             return True
 
+        # Admin bypass: check if user is an admin in the database
+        if user_email and await self._is_user_admin(db, user_email):
+            return True
+
         # No user context (but not admin) = deny access to non-public tools
         if not user_email:
             return False

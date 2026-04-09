@@ -1089,6 +1089,10 @@ class ResourceService(BaseService):
         if token_teams is None and user_email is None:
             return True
 
+        # Admin bypass: check if user is an admin in the database
+        if user_email and await self._is_user_admin(db, user_email):
+            return True
+
         # No user context (but not admin) = deny access to non-public resources
         if not user_email:
             return False
@@ -3666,8 +3670,15 @@ class ResourceService(BaseService):
         Yields:
             Resource event messages.
         """
+        # Check admin status once at subscription time (not per-event for performance)
+        is_admin_user = False
+        if user_email:
+            with fresh_db_session() as db:
+                is_admin_user = await self._is_user_admin(db, user_email)
+
         async for event in self._event_service.subscribe_events():
-            if user_email is None and token_teams is None:
+            # Admin bypass: no auth context OR admin user
+            if (user_email is None and token_teams is None) or is_admin_user:
                 yield event
                 continue
 
