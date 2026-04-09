@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useIntl } from "react-intl";
 import { useAuth } from "../auth/useAuth";
 import { useRouter } from "../router";
 import { ApiError } from "../api/client";
 
 export function Login() {
+  const intl = useIntl();
   const { login } = useAuth();
   const { navigate } = useRouter();
   const [email, setEmail] = useState("");
@@ -20,9 +22,13 @@ export function Login() {
       navigate("/app/");
     } catch (err) {
       if (err instanceof ApiError) {
-        setError(err.status === 401 ? "Invalid credentials." : `Login failed (${err.status}).`);
+        setError(
+          err.status === 401
+            ? intl.formatMessage({ id: "auth.login.error.invalidCredentials" })
+            : intl.formatMessage({ id: "auth.login.error.failed" }, { status: err.status }),
+        );
       } else {
-        setError("An unexpected error occurred.");
+        setError(intl.formatMessage({ id: "auth.login.error.unexpected" }));
       }
     } finally {
       setLoading(false);
@@ -32,11 +38,13 @@ export function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-neutral-50">
       <div className="w-full max-w-sm bg-white border border-neutral-200 rounded-lg p-8 shadow-sm">
-        <h1 className="text-xl font-semibold text-neutral-900 mb-6">Sign in to ContextForge</h1>
+        <h1 className="text-xl font-semibold text-neutral-900 mb-6">
+          {intl.formatMessage({ id: "auth.login.title" })}
+        </h1>
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-neutral-700 mb-1">
-              Email
+              {intl.formatMessage({ id: "auth.login.email" })}
             </label>
             <input
               id="email"
@@ -50,7 +58,7 @@ export function Login() {
           </div>
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-neutral-700 mb-1">
-              Password
+              {intl.formatMessage({ id: "auth.login.password" })}
             </label>
             <input
               id="password"
@@ -72,7 +80,9 @@ export function Login() {
             disabled={loading}
             className="w-full bg-neutral-900 text-white rounded px-3 py-2 text-sm font-medium hover:bg-neutral-700 disabled:opacity-50 transition-colors"
           >
-            {loading ? "Signing in…" : "Sign in"}
+            {loading
+              ? intl.formatMessage({ id: "auth.login.submitting" })
+              : intl.formatMessage({ id: "auth.login.submit" })}
           </button>
         </form>
         <div className="mt-4 text-center">
@@ -80,7 +90,7 @@ export function Login() {
             onClick={() => navigate("/app/forgot-password")}
             className="text-sm text-neutral-500 hover:text-neutral-900 transition-colors"
           >
-            Forgot password?
+            {intl.formatMessage({ id: "auth.login.forgotPassword" })}
           </button>
         </div>
       </div>

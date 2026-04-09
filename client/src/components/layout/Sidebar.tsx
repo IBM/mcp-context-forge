@@ -1,3 +1,4 @@
+import { useIntl } from "react-intl";
 import { useRouter } from "../../router";
 import {
   Sidebar,
@@ -12,32 +13,33 @@ import {
 } from "../ui/sidebar";
 
 interface NavItem {
-  label: string;
+  labelKey: string;
   path: string;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard", path: "/app/" },
-  { label: "Gateways", path: "/app/gateways" },
-  { label: "Servers", path: "/app/servers" },
-  { label: "Tools", path: "/app/tools" },
-  { label: "Resources", path: "/app/resources" },
-  { label: "Prompts", path: "/app/prompts" },
-  { label: "Agents", path: "/app/agents" },
-  { label: "Users", path: "/app/users" },
-  { label: "Teams", path: "/app/teams" },
-  { label: "Tokens", path: "/app/tokens" },
-  { label: "LLM Providers", path: "/app/llm/providers" },
-  { label: "LLM Models", path: "/app/llm/models" },
-  { label: "Metrics", path: "/app/metrics" },
-  { label: "Observability", path: "/app/observability" },
-  { label: "Plugins", path: "/app/plugins" },
-  { label: "Performance", path: "/app/performance" },
-  { label: "Maintenance", path: "/app/maintenance" },
-  { label: "Settings", path: "/app/settings" },
+  { labelKey: "navigation.dashboard", path: "/app/" },
+  { labelKey: "navigation.gateways", path: "/app/gateways" },
+  { labelKey: "navigation.servers", path: "/app/servers" },
+  { labelKey: "navigation.tools", path: "/app/tools" },
+  { labelKey: "navigation.resources", path: "/app/resources" },
+  { labelKey: "navigation.prompts", path: "/app/prompts" },
+  { labelKey: "navigation.agents", path: "/app/agents" },
+  { labelKey: "navigation.users", path: "/app/users" },
+  { labelKey: "navigation.teams", path: "/app/teams" },
+  { labelKey: "navigation.tokens", path: "/app/tokens" },
+  { labelKey: "navigation.llmProviders", path: "/app/llm/providers" },
+  { labelKey: "navigation.llmModels", path: "/app/llm/models" },
+  { labelKey: "navigation.metrics", path: "/app/metrics" },
+  { labelKey: "navigation.observability", path: "/app/observability" },
+  { labelKey: "navigation.plugins", path: "/app/plugins" },
+  { labelKey: "navigation.performance", path: "/app/performance" },
+  { labelKey: "navigation.maintenance", path: "/app/maintenance" },
+  { labelKey: "navigation.settings", path: "/app/settings" },
 ];
 
 export function AppSidebar() {
+  const intl = useIntl();
   const { path, navigate } = useRouter();
 
   return (
@@ -49,10 +51,12 @@ export function AppSidebar() {
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel>
+            {intl.formatMessage({ id: "navigation.label" })}
+          </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV_ITEMS.map(({ label, path: itemPath }) => {
+              {NAV_ITEMS.map(({ labelKey, path: itemPath }) => {
                 const isActive =
                   path === itemPath ||
                   (itemPath !== "/app/" && path.startsWith(itemPath));
@@ -62,7 +66,7 @@ export function AppSidebar() {
                       isActive={isActive}
                       onClick={() => navigate(itemPath)}
                     >
-                      <span>{label}</span>
+                      <span>{intl.formatMessage({ id: labelKey })}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );
