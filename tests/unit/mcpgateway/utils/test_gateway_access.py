@@ -227,6 +227,42 @@ class TestCheckGatewayAccess:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_platform_admin_bypass(self, monkeypatch):
+        """Platform admin email should bypass all access checks."""
+        from mcpgateway.config import settings
+
+        db = MagicMock()
+        gateway = MagicMock()
+        gateway.visibility = "private"
+        gateway.team_id = "team1"
+        gateway.owner_email = "owner@example.com"
+
+        # Mock platform admin email
+        monkeypatch.setattr(settings, "platform_admin_email", "platform-admin@example.com")
+
+        # Platform admin should have full access
+        result = await check_gateway_access(db, gateway, "platform-admin@example.com", ["some-team"])
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_database_exception_handling(self):
+        """Database exceptions during admin check should be handled gracefully."""
+        db = MagicMock()
+        gateway = MagicMock()
+        gateway.visibility = "private"
+        gateway.team_id = "team1"
+        gateway.owner_email = "owner@example.com"
+
+        # Mock database to raise exception
+        db.execute.side_effect = Exception("Database error")
+
+        # Should not raise exception, should continue with normal checks
+        result = await check_gateway_access(db, gateway, "user@example.com", ["team1"])
+
+        # Exception was caught and handled, access denied due to team mismatch
+        assert result is False
+
+    @pytest.mark.asyncio
     async def test_private_gateway_owner_access(self):
         """Private gateway owner should have access."""
         db = MagicMock()
@@ -430,6 +466,7 @@ class TestCheckGatewayAccess:
         # No owner, so no one can access private gateway
         result = await check_gateway_access(db, gateway, "user@example.com", ["team1"])
         assert result is False
+
 
 from mcpgateway.utils.gateway_access import extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 

@@ -937,6 +937,56 @@ class TestGatewayService:
         assert test_db.execute.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_list_gateways_platform_admin_bypass(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """Platform admin email should bypass visibility filtering."""
+        from mcpgateway.config import settings
+
+        # Mock platform admin email
+        original_admin = getattr(settings, "platform_admin_email", "")
+        monkeypatch.setattr(settings, "platform_admin_email", "platform-admin@example.com")
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalars_list=[mock_gateway]))
+
+        mock_model = Mock()
+        mock_model.masked.return_value = mock_model
+        mock_model.name = "test_gateway"
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda x: mock_model)
+
+        # Platform admin should see all gateways
+        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="platform-admin@example.com", token_teams=["some-team"])
+
+        assert len(result) == 1
+        assert result[0].name == "test_gateway"
+        # Restore original value
+        if original_admin:
+            monkeypatch.setattr(settings, "platform_admin_email", original_admin)
+
+    @pytest.mark.asyncio
+    async def test_list_gateways_database_exception_handling(self, gateway_service, mock_gateway, test_db, monkeypatch):
+        """Database exceptions during admin check should be handled gracefully."""
+
+        # Track call count
+        call_count = [0]
+
+        def mock_execute(stmt):
+            call_count[0] += 1
+            # Raise exception on first call (admin check)
+            if call_count[0] == 1:
+                raise Exception("Database error")
+            # Return empty result on second call (actual query)
+            return _make_execute_result(scalars_list=[])
+
+        test_db.execute = Mock(side_effect=mock_execute)
+
+        # Should not raise exception, should continue with normal filtering
+        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", token_teams=["team-1"])
+
+        # Exception was caught and handled, query continued
+        assert call_count[0] == 2
+        assert result == []
+
+    @pytest.mark.asyncio
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
         """Gateway is fetched and returned by ID."""
         mock_gateway.masked = Mock(return_value=mock_gateway)
@@ -3985,7 +4035,6 @@ async def test_register_gateway_creates_new_resources_and_prompts(gateway_servic
     assert federated_prompt.original_name == "Prompt"
     assert federated_prompt.custom_name == "Prompt"
     assert federated_prompt.display_name == "Prompt"
-
 
 @pytest.mark.asyncio
 async def test_shutdown_releases_redis_leader_success():
