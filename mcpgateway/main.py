@@ -12265,7 +12265,7 @@ if ADMIN_API_ENABLED:
 
     set_logging_service(logging_service)
     app.include_router(admin_router)  # Admin routes imported from admin.py
-    app.include_router(app_spa_router)  #
+    app.include_router(app_spa_router)  # Admin UI routes imported from app_spa.py
 
     # Validate section-to-permission mapping consistency at startup
     validate_section_permissions(admin_router)
@@ -12552,6 +12552,10 @@ if UI_ENABLED:
             settings.static_dir,
             exc,
         )
+    
+    # Mount React SPA router (requires static files to be available)
+    app.include_router(app_spa_router)  # React SPA at /app/* (no prefix, no CSRF)
+    logger.info("React SPA router mounted at /app/*")
 
     # Redirect root path to admin UI
     @app.get("/")
