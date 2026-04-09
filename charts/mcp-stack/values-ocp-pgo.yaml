@@ -318,6 +318,7 @@ redis:
 # --- NGINX Proxy ---
 nginxProxy:
   enabled: true
+  replicaCount: 3
   image:
     repository: registry.access.redhat.com/ubi9/nginx-126
     tag: latest
