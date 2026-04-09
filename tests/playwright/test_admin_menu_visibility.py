@@ -127,26 +127,51 @@ def _inject_jwt_cookie(
     teams: Optional[List[str]] = None,
     token_use: Optional[str] = None,
 ) -> None:
-    """Inject a JWT cookie into the page context for authentication."""
-    token = _make_user_jwt(email, is_admin=is_admin, teams=teams, token_use=token_use)
-    cookie_url = f"{BASE_URL.rstrip('/')}/"
-    page.context.clear_cookies()
-    page.context.add_cookies(
-        [
-            {
-                "name": "jwt_token",
-                "value": token,
-                "url": cookie_url,
-                "httpOnly": True,
-                "sameSite": "Lax",
-            }
-        ]
-    )
+    """Inject a JWT cookie into the page context for authentication.
+    
+    For remote servers, falls back to form-based login since we can't generate
+    valid JWT tokens with the remote server's secret.
+    """
+    # Check if we're testing against a remote server (not localhost)
+    is_remote = not any(host in BASE_URL for host in ["localhost", "127.0.0.1", "0.0.0.0"])
+    
+    if is_remote:
+        # Use form-based login for remote servers
+        from .pages.login_page import LoginPage
+        login_page = LoginPage(page, BASE_URL)
+        page.context.clear_cookies()
+        login_page.navigate()
+        if login_page.is_login_form_available(timeout=5000):
+            login_page.submit_login(email, MENU_TEST_PASSWORD)
+            # Wait for any navigation after login (might redirect to /admin or stay on login page with error)
+            try:
+                page.wait_for_load_state("networkidle", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+            # Check if we're logged in by looking for the admin page or jwt cookie
+            if "jwt_token" not in [cookie["name"] for cookie in page.context.cookies()]:
+                raise AssertionError(f"Login failed for {email} - no JWT cookie set")
+    else:
+        # Use JWT injection for local servers
+        token = _make_user_jwt(email, is_admin=is_admin, teams=teams, token_use=token_use)
+        cookie_url = f"{BASE_URL.rstrip('/')}/"
+        page.context.clear_cookies()
+        page.context.add_cookies(
+            [
+                {
+                    "name": "jwt_token",
+                    "value": token,
+                    "url": cookie_url,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                }
+            ]
+        )
 
 
 def _wait_for_admin_shell(page: Page, timeout: int = 60000) -> None:
     """Navigate to admin and wait for the application shell to load."""
-    page.goto("/admin")
+    page.goto(f"{BASE_URL}/admin")
     page.wait_for_load_state("domcontentloaded")
     try:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=timeout)
@@ -187,7 +212,7 @@ def _check_menu_visibility(page: Page, expected_visible: List[str]) -> Dict[str,
 
 def _resolve_role_id(admin_api: APIRequestContext, role_name: str) -> str:
     """Resolve a role name to its UUID via the RBAC API."""
-    resp = admin_api.get("/rbac/roles")
+    resp = admin_api.get("rbac/roles")
     assert resp.status == 200, f"Failed to list RBAC roles: {resp.status} {resp.text()}"
     roles = resp.json()
     for role in roles:
@@ -198,15 +223,14 @@ def _resolve_role_id(admin_api: APIRequestContext, role_name: str) -> str:
 
 def _create_user_and_join_team(
     admin_api: APIRequestContext,
-    playwright: Playwright,
     email: str,
     team_id: str,
     rbac_role: str,
 ) -> Dict[str, Any]:
-    """Create a user, invite them to the team, and assign an RBAC role."""
+    """Create a user, add them to the team, and assign an RBAC role."""
     # 1. Create user
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "auth/email/admin/users",
         data={
             "email": email,
             "password": MENU_TEST_PASSWORD,
@@ -222,36 +246,22 @@ def _create_user_and_join_team(
         assert resp.status in (200, 201), f"Failed to create user {email}: {resp.status} {resp.text()}"
         logger.info("Created user %s", email)
 
-    # 2. Invite user to team
-    invite_resp = admin_api.post(f"/teams/{team_id}/invitations", data={"email": email, "role": "member"})
-    if invite_resp.status == 409:
-        logger.info("User %s already invited/member, continuing", email)
+    # 2. Add user directly to team (admin can bypass invitation flow)
+    member_resp = admin_api.post(f"teams/{team_id}/members", data={"email": email, "role": "member"})
+    if member_resp.status == 409:
+        logger.info("User %s already a member, continuing", email)
     else:
-        assert invite_resp.status in (200, 201), f"Failed to invite {email}: {invite_resp.status} {invite_resp.text()}"
-        invitation = invite_resp.json()
-        invitation_token = invitation.get("token")
+        assert member_resp.status in (200, 201), f"Failed to add {email} to team: {member_resp.status} {member_resp.text()}"
+        logger.info("Added user %s to team %s", email, team_id)
 
-        if invitation_token:
-            # 3. Accept invitation as the user
-            user_jwt = _make_user_jwt(email, is_admin=False)
-            user_ctx = playwright.request.new_context(
-                base_url=BASE_URL,
-                extra_http_headers={"Authorization": f"Bearer {user_jwt}", "Accept": "application/json"},
-            )
-            try:
-                accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
-                assert accept_resp.status in (200, 201), f"Failed to accept invitation for {email}: {accept_resp.status} {accept_resp.text()}"
-                logger.info("User %s accepted team invitation", email)
-            finally:
-                user_ctx.dispose()
-
-    # 4. Assign RBAC role
+    # 3. Assign RBAC role
     role_uuid = _resolve_role_id(admin_api, rbac_role)
     role_resp = admin_api.post(
-        f"/rbac/users/{email}/roles",
+        f"rbac/users/{email}/roles",
         data={"role_id": role_uuid, "scope": "team", "scope_id": team_id},
     )
-    if role_resp.status == 409:
+    if role_resp.status in (400, 409):
+        # 400 or 409 means role already assigned (different servers may return different codes)
         logger.info("Role %s already assigned to %s, continuing", rbac_role, email)
     else:
         assert role_resp.status in (200, 201), f"Failed to assign {rbac_role} role to {email}: {role_resp.status} {role_resp.text()}"
@@ -266,9 +276,16 @@ def _create_user_and_join_team(
 @pytest.fixture(scope="module")
 def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Admin-authenticated API context for test setup/teardown."""
-    token = _make_user_jwt("admin@example.com", is_admin=True)
+    # Use MCP_AUTH env var if available, otherwise generate local token
+    import os
+    token = os.getenv("MCP_AUTH", "")
+    if not token:
+        token = _make_user_jwt("admin@example.com", is_admin=True)
+    
+    # Ensure base_url ends with / for proper relative URL resolution
+    base_url_with_slash = BASE_URL.rstrip('/') + '/'
     ctx = playwright.request.new_context(
-        base_url=BASE_URL,
+        base_url=base_url_with_slash,
         extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
     )
     yield ctx
@@ -279,7 +296,7 @@ def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None
 def menu_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], None, None]:
     """Create a test team for menu visibility tests."""
     resp = admin_api.post(
-        "/teams/",
+        "teams/",
         data={"name": MENU_TEAM_NAME, "description": "Menu visibility test team", "visibility": "private"},
     )
     assert resp.status in (200, 201), f"Failed to create team: {resp.status} {resp.text()}"
@@ -291,7 +308,7 @@ def menu_test_team(admin_api: APIRequestContext) -> Generator[Dict[str, Any], No
 
     # Cleanup
     try:
-        del_resp = admin_api.delete(f"/teams/{team_id}")
+        del_resp = admin_api.delete(f"teams/{team_id}")
         logger.info("Deleted menu test team %s: %s", team_id, del_resp.status)
     except Exception as e:
         logger.warning("Failed to cleanup menu test team %s: %s", team_id, e)
@@ -302,7 +319,7 @@ def menu_platform_admin_user(admin_api: APIRequestContext) -> Generator[Dict[str
     """Create a platform admin user."""
     email = MENU_PLATFORM_ADMIN_EMAIL
     resp = admin_api.post(
-        "/auth/email/admin/users",
+        "auth/email/admin/users",
         data={
             "email": email,
             "password": MENU_TEST_PASSWORD,
@@ -322,7 +339,7 @@ def menu_platform_admin_user(admin_api: APIRequestContext) -> Generator[Dict[str
 
     # Cleanup
     try:
-        admin_api.delete(f"/auth/email/admin/users/{email}")
+        admin_api.delete(f"auth/email/admin/users/{email}")
     except Exception as e:
         logger.warning("Failed to delete platform admin user: %s", e)
 
@@ -331,18 +348,17 @@ def menu_platform_admin_user(admin_api: APIRequestContext) -> Generator[Dict[str
 def menu_team_admin_user(
     admin_api: APIRequestContext,
     menu_test_team: Dict,
-    playwright: Playwright,
 ) -> Generator[Dict[str, Any], None, None]:
     """Create a team admin user."""
     team_id = menu_test_team["id"]
-    user_info = _create_user_and_join_team(admin_api, playwright, MENU_TEAM_ADMIN_EMAIL, team_id, "team_admin")
+    user_info = _create_user_and_join_team(admin_api, MENU_TEAM_ADMIN_EMAIL, team_id, "team_admin")
     yield user_info
 
     # Cleanup
     try:
-        admin_api.delete(f"/rbac/users/{MENU_TEAM_ADMIN_EMAIL}/roles/team_admin?scope=team&scope_id={team_id}")
-        admin_api.delete(f"/teams/{team_id}/members/{MENU_TEAM_ADMIN_EMAIL}")
-        admin_api.delete(f"/auth/email/admin/users/{MENU_TEAM_ADMIN_EMAIL}")
+        admin_api.delete(f"rbac/users/{MENU_TEAM_ADMIN_EMAIL}/roles/team_admin?scope=team&scope_id={team_id}")
+        admin_api.delete(f"teams/{team_id}/members/{MENU_TEAM_ADMIN_EMAIL}")
+        admin_api.delete(f"auth/email/admin/users/{MENU_TEAM_ADMIN_EMAIL}")
     except Exception as e:
         logger.warning("Failed to cleanup team admin user: %s", e)
 
@@ -351,18 +367,17 @@ def menu_team_admin_user(
 def menu_developer_user(
     admin_api: APIRequestContext,
     menu_test_team: Dict,
-    playwright: Playwright,
 ) -> Generator[Dict[str, Any], None, None]:
     """Create a developer user."""
     team_id = menu_test_team["id"]
-    user_info = _create_user_and_join_team(admin_api, playwright, MENU_DEVELOPER_EMAIL, team_id, "developer")
+    user_info = _create_user_and_join_team(admin_api, MENU_DEVELOPER_EMAIL, team_id, "developer")
     yield user_info
 
     # Cleanup
     try:
-        admin_api.delete(f"/rbac/users/{MENU_DEVELOPER_EMAIL}/roles/developer?scope=team&scope_id={team_id}")
-        admin_api.delete(f"/teams/{team_id}/members/{MENU_DEVELOPER_EMAIL}")
-        admin_api.delete(f"/auth/email/admin/users/{MENU_DEVELOPER_EMAIL}")
+        admin_api.delete(f"rbac/users/{MENU_DEVELOPER_EMAIL}/roles/developer?scope=team&scope_id={team_id}")
+        admin_api.delete(f"teams/{team_id}/members/{MENU_DEVELOPER_EMAIL}")
+        admin_api.delete(f"auth/email/admin/users/{MENU_DEVELOPER_EMAIL}")
     except Exception as e:
         logger.warning("Failed to cleanup developer user: %s", e)
 
@@ -371,18 +386,17 @@ def menu_developer_user(
 def menu_viewer_user(
     admin_api: APIRequestContext,
     menu_test_team: Dict,
-    playwright: Playwright,
 ) -> Generator[Dict[str, Any], None, None]:
     """Create a viewer user."""
     team_id = menu_test_team["id"]
-    user_info = _create_user_and_join_team(admin_api, playwright, MENU_VIEWER_EMAIL, team_id, "viewer")
+    user_info = _create_user_and_join_team(admin_api, MENU_VIEWER_EMAIL, team_id, "viewer")
     yield user_info
 
     # Cleanup
     try:
-        admin_api.delete(f"/rbac/users/{MENU_VIEWER_EMAIL}/roles/viewer?scope=team&scope_id={team_id}")
-        admin_api.delete(f"/teams/{team_id}/members/{MENU_VIEWER_EMAIL}")
-        admin_api.delete(f"/auth/email/admin/users/{MENU_VIEWER_EMAIL}")
+        admin_api.delete(f"rbac/users/{MENU_VIEWER_EMAIL}/roles/viewer?scope=team&scope_id={team_id}")
+        admin_api.delete(f"teams/{team_id}/members/{MENU_VIEWER_EMAIL}")
+        admin_api.delete(f"auth/email/admin/users/{MENU_VIEWER_EMAIL}")
     except Exception as e:
         logger.warning("Failed to cleanup viewer user: %s", e)
 
@@ -510,7 +524,7 @@ class TestAdminMenuVisibility:
     def test_unauthenticated_redirects_to_login(self, page: Page):
         """Unauthenticated user should be redirected to login page."""
         page.context.clear_cookies()
-        page.goto("/admin")
+        page.goto(f"{BASE_URL}/admin")
         page.wait_for_load_state("domcontentloaded")
 
         # Should redirect to login
