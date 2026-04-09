@@ -77,6 +77,62 @@ For the manual YAML deployment approach (without Helm or PGO), see [openshift.md
 
 ---
 
+## Quick Start
+
+If you have the PGO operator already installed on your cluster, you can deploy and benchmark in 4 commands.
+
+**1. Create a secrets file** at `charts/mcp-stack/values-ocp-pgo-secrets.yaml` (gitignored):
+
+```yaml
+mcpContextForge:
+  secret:
+    JWT_SECRET_KEY: "<min 32 bytes, for signing JWT tokens>"
+    AUTH_ENCRYPTION_SECRET: "<for encrypting stored secrets in DB>"
+    BASIC_AUTH_PASSWORD: "<admin login password>"
+    PLATFORM_ADMIN_PASSWORD: "<platform admin password>"
+    REQUIRE_STRONG_SECRETS: "true"
+
+testing:
+  registration:
+    jwt:
+      secret: "<same as JWT_SECRET_KEY above>"
+```
+
+**2. Set up namespace and Postgres:**
+
+```bash
+make ocp-setup OCP_NS=<namespace>
+```
+
+This checks the PGO operator is installed, creates the namespace if needed, and applies the PostgresCluster CR. Safe to run multiple times.
+
+**3. Deploy the full stack:**
+
+```bash
+make ocp-deploy OCP_NS=<namespace>
+```
+
+This runs `helm install` with the PGO values and secrets files. Deploys gateway (3 pods), NGINX (3 pods), Redis, Locust (1 master + 3 workers), and connects to the PGO-managed Postgres.
+
+**4. Run the MCP benchmark:**
+
+```bash
+make ocp-benchmark-setup OCP_NS=<namespace>
+make ocp-benchmark OCP_NS=<namespace>
+```
+
+`ocp-benchmark-setup` auto-fetches the virtual server ID and configures Locust (run once after deploy). `ocp-benchmark` triggers the benchmark (125 users, 30/s spawn, 60s) — repeatable anytime.
+
+For step-by-step details, troubleshooting, or if the Make commands don't work as expected, see the detailed manual steps below.
+
+---
+
+## Detailed Manual Steps
+
+The sections below explain each step in detail — what the Make commands do internally, how to run things individually, and how to troubleshoot.
+
+---
+
 ## Prerequisites
 
 - **OCP cluster** with `oc` CLI access (developer or admin)
