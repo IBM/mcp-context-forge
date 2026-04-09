@@ -1914,6 +1914,7 @@ testing:
     runTime: 5m
     expectWorkers: 1
     host: ""
+    mcpServerID: ""              # Set to virtual server UUID for MCP protocol benchmarks
     worker:
       enabled: true
       replicaCount: 1

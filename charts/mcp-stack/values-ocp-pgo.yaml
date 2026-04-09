@@ -405,3 +405,10 @@ testing:
       enabled: false
   a2aEchoAgent:
     enabled: false
+  locust:
+    users: 125
+    spawnRate: 30
+    runTime: 60s
+    expectWorkers: 3
+    worker:
+      replicaCount: 3
