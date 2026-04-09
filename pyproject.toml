@@ -53,7 +53,7 @@ maintainers = [
 dependencies = [
     "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
-    "cryptography>=46.0.5",
+    "cryptography>=46.0.6",
     "fastapi>=0.135.1",
     "filelock>=3.25.2",
     "gunicorn>=25.1.0",
@@ -76,6 +76,7 @@ dependencies = [
     "python-json-logger>=4.0.0",
     "python-multipart>=0.0.22", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
+    "requests==2.33.0", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.48",
     "sse-starlette>=3.3.3",
