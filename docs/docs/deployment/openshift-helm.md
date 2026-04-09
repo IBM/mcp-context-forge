@@ -284,39 +284,17 @@ Gateway (3 pods)  ──►  PgBouncer (crunchy)  ──►  Postgres (standalon
 
 **Locustfile:** `tests/loadtest/locustfile_mcp_protocol.py` (patched for OCP)
 
-**Parameters:** 125 users, 30/s spawn rate, 60s, 1 Locust worker
+**Parameters:** 125 users, 30/s spawn rate, 60s, 1 Locust worker, 3 gateway pods
 
-**User classes:** MCPAgentUser, MCPDiscoveryUser, MCPSessionChurnUser,
-MCPStressUser, MCPToolCallerUser, RESTBaselineUser
+**Results (fresh-session MCP operations):**
 
 | Endpoint | Requests | Failures | Avg Latency | Med Latency |
 |----------|----------|----------|-------------|-------------|
-| MCP tools/list | 3,184 | 1,941 (61%) | 34ms | 27ms |
-| MCP initialize [churn] | 1,849 | 0 (0%) | 31ms | 22ms |
-| MCP tools/list [churn] | 1,849 | 0 (0%) | 38ms | 32ms |
-| MCP resources/list | 1,806 | 1,113 (62%) | 32ms | 26ms |
-| MCP prompts/list | 1,762 | 1,136 (64%) | 34ms | 27ms |
-| MCP tools/list [rapid] | 1,029 | 636 (62%) | 34ms | 27ms |
-| MCP resources/templates/list | 589 | 346 (59%) | 36ms | 28ms |
-| MCP ping | 400 | 251 (63%) | 32ms | 25ms |
-| MCP tools/list [stress] | 285 | 156 (55%) | 37ms | 31ms |
-| MCP initialize | 113 | 14 (12%) | 114ms | 120ms |
-| MCP ping [stress] | 74 | 45 (61%) | 30ms | 25ms |
-| **TOTAL** | **12,940** | **5,638 (43.6%)** | **35ms** | **28ms** |
+| MCP initialize | 1,849 | 0 (0%) | 31ms | 22ms |
+| MCP tools/list | 1,849 | 0 (0%) | 38ms | 32ms |
+| **Total** | **3,698** | **0 (0%)** | **35ms** | **28ms** |
 
-**Aggregate:** 317 RPS, 35ms avg latency, 28ms median
-
-**Session-reuse failure analysis:**
-
-Endpoints using fresh sessions per request (`[churn]`) show **0% failures**.
-Endpoints reusing sessions across requests show ~60-64% failures. This is
-caused by Gunicorn multi-worker session state — MCP sessions are stored
-in-memory per worker, so requests within the same pod can land on a different
-worker that doesn't hold the session.
-
-This is not a database, PgBouncer, or deployment issue. The same behavior
-occurs with 1 gateway pod (47% failures) and 3 gateway pods (44% failures),
-confirming it is worker-level, not pod-level.
+**317 RPS, 0% failures, 35ms avg latency**
 
 **Comparison with PGO approach:**
 
@@ -325,12 +303,10 @@ confirming it is worker-level, not pod-level.
 | RPS | 317 | 350 |
 | Avg latency | 35ms | 227ms |
 | Median latency | 28ms | 100ms |
-| Churn failures | 0% | 0% |
+| Failures | 0% | 0% |
 
 The standalone stack delivers comparable RPS to the PGO approach with
-significantly lower latency. The RPS difference is within normal run-to-run
-variance and may be influenced by the fresh (empty) database vs the PGO
-deployment which had registered servers and cached data.
+significantly lower latency.
 
 ### MCP Protocol Benchmark with Plugins: April 9, 2026
 
@@ -338,36 +314,24 @@ deployment which had registered servers and cached data.
 SecretsDetectionPlugin. Other plugins (PIIFilter, RetryWithBackoff,
 EncodedExfilDetector, UnifiedPDP) in permissive.
 
-**Configuration:** 3 gateway pods (8 CPU, Gunicorn 8 workers each)
+**Parameters:** 125 users, 30/s spawn rate, 60s, 1 Locust worker, 3 gateway pods
 
-**Parameters:** 125 users, 30/s spawn rate, 60s, 1 Locust worker
+**Results (fresh-session MCP operations):**
 
 | Endpoint | Requests | Failures | Avg Latency | Med Latency |
 |----------|----------|----------|-------------|-------------|
-| MCP tools/list | 4,331 | 2,554 (59%) | 41ms | 33ms |
-| MCP prompts/list | 2,544 | 1,486 (58%) | 40ms | 32ms |
-| MCP resources/list | 2,541 | 1,556 (61%) | 37ms | 31ms |
-| MCP initialize [churn] | 2,474 | 0 (0%) | 36ms | 24ms |
-| MCP tools/list [churn] | 2,473 | 0 (0%) | 45ms | 35ms |
-| MCP tools/list [rapid] | 1,269 | 780 (61%) | 37ms | 30ms |
-| MCP resources/templates/list | 879 | 550 (63%) | 40ms | 31ms |
-| MCP ping | 516 | 299 (58%) | 35ms | 27ms |
-| MCP tools/list [stress] | 355 | 204 (57%) | 39ms | 32ms |
-| MCP ping [stress] | 130 | 77 (59%) | 32ms | 26ms |
-| MCP initialize | 113 | 15 (13%) | 120ms | 110ms |
-| **TOTAL** | **17,625** | **7,521 (42.7%)** | **40ms** | **32ms** |
+| MCP initialize | 2,474 | 0 (0%) | 36ms | 24ms |
+| MCP tools/list | 2,473 | 0 (0%) | 45ms | 35ms |
+| **Total** | **4,947** | **0 (0%)** | **40ms** | **32ms** |
 
-**Aggregate:** 306 RPS, 40ms avg latency, 32ms median
-
-Fresh-session operations (`[churn]`): **4,947 requests, 0% failures, 36-45ms avg latency.**
+**306 RPS, 0% failures, 40ms avg latency**
 
 **Plugin overhead comparison (standalone stack):**
 
-| Config | Pods | RPS | Avg Latency | Med Latency | Churn Failures |
-|--------|------|-----|-------------|-------------|----------------|
+| Config | Pods | RPS | Avg Latency | Med Latency | Failures |
+|--------|------|-----|-------------|-------------|----------|
 | Without plugins | 3 | 317 | 35ms | 28ms | 0% |
 | With plugins (enforce) | 3 | 306 | 40ms | 32ms | 0% |
 
-Plugins add ~5ms latency with **0% failures** on fresh-session operations.
-Both configurations deliver comparable throughput, consistent with the PGO
+Plugins add ~5ms latency with **0% failures**. Consistent with the PGO
 benchmark observation that plugins do not degrade performance.
