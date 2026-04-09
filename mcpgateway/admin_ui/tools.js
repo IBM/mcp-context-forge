@@ -3520,7 +3520,7 @@ export const cleanupToolTestModal = function () {
  * @param {string} toolName - The name of the tool to fetch
  * @returns {Promise<Object>} The tool object
  */
-async function fetchToolDetails(toolName) {
+export async function fetchToolDetails(toolName) {
   const response = await fetchWithTimeout(
     `${window.ROOT_PATH}/admin/tools/${encodeURIComponent(toolName)}`,
     {
@@ -3548,7 +3548,7 @@ async function fetchToolDetails(toolName) {
  * @param {boolean} isRequired - Whether the field is required
  * @returns {HTMLElement} The input element
  */
-function createFormInput(key, schema, isRequired) {
+export function createFormInput(key, schema, isRequired) {
   let input;
   const baseInputClass =
     "mt-1 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:text-gray-200";
@@ -3601,7 +3601,7 @@ function createFormInput(key, schema, isRequired) {
  * Generate form fields from tool input schema.
  * @param {Object} tool - The tool object with input_schema
  */
-function generateToolFormFields(tool) {
+export function generateToolFormFields(tool) {
   const formFields = safeGetElement("tool-test-form-fields");
   if (!formFields) return;
 
