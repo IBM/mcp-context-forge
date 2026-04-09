@@ -393,13 +393,10 @@ testing:
       enabled: true
       createVirtualServer: true
   fastTestServer:
-    enabled: true
-    image:
-      repository: image-registry.openshift-image-registry.svc:5000/contextforge-images/fast-test-server
-      tag: latest
+    enabled: false                         # image not available in OCP shared registry
   fastTest:
     register:
-      enabled: true
+      enabled: false                       # depends on fastTestServer
   a2a:
     register:
       enabled: false
