@@ -183,118 +183,58 @@ The chart includes an OCP-specific values override file: `charts/mcp-stack/value
 
 ---
 
-## Step 5: Deploy with Helm (two-step install)
+## Step 5: Deploy with Helm
 
-ContextForge requires a two-step install because Alembic database migrations through PgBouncer hang with multiple replicas. Start with 1 replica, let migration complete, then scale up.
-
-**Step 5a: Install with 1 replica**
+A single `helm install` deploys the full stack — gateway pods acquire an advisory lock internally to serialize migration, so no two-step install is needed.
 
 ```bash
 helm install contextforge charts/mcp-stack \
   -n contextforge \
   -f charts/mcp-stack/values-ocp-pgo.yaml \
-  -f charts/mcp-stack/values-ocp-pgo-secrets.yaml \
-  --set mcpContextForge.replicaCount=1
-```
-
-Wait for the single gateway pod to be **1/1 Ready**:
-
-> **Note:** The install may report `INSTALLATION FAILED` due to registration hook timeouts.
-> This is expected — the gateway pod still starts successfully. Verify with `oc get pods`.
-
-```bash
-oc get pods -n contextforge -l app=contextforge-mcp-stack-mcpgateway -w
-# Wait until READY shows 1/1
-```
-
-**Step 5b: Scale to 3 replicas**
-
-```bash
-helm upgrade contextforge charts/mcp-stack \
-  -n contextforge \
-  -f charts/mcp-stack/values-ocp-pgo.yaml \
   -f charts/mcp-stack/values-ocp-pgo-secrets.yaml
 ```
 
-Verify all pods are running:
+Wait for pods to be ready:
 
 ```bash
-oc get pods -n contextforge
+oc get pods -n contextforge -w
 # Expect:
 #   3 gateway pods (1/1 Running)
-#   1 NGINX pod (1/1 Running)
+#   3 NGINX pods (1/1 Running)
 #   1 Redis pod (1/1 Running)
 #   2 fast-time-server pods (1/1 Running)
-#   1 fast-test-server pod (1/1 Running)
+#   1 Locust master + 3 workers (1/1 Running)
 ```
+
+Registration hooks run automatically — the fast-time server is registered and a virtual server is created.
 
 ---
 
-## Step 6: Post-install manual steps
+## Step 6: Verify
 
-These steps are needed until the Helm chart templates are updated to handle them automatically.
-
-**Scale NGINX to 3 replicas** (the template currently hardcodes replicas to 1):
-
-```bash
-oc -n contextforge scale deploy/contextforge-mcp-stack-nginx --replicas=3
-```
-
-**Verify the gateway health:**
+**Gateway health:**
 
 ```bash
 oc -n contextforge exec deploy/contextforge-mcp-stack-mcpgateway -- \
   curl -s http://localhost:4444/health | python3 -m json.tool
 ```
 
-**Verify external access** (if Route is enabled):
+**External access** (if Route is enabled):
 
 ```bash
 ROUTE=$(oc -n contextforge get route contextforge -o jsonpath='{.spec.host}')
 curl -sk https://$ROUTE/health
 ```
 
----
-
-## Step 7: Register MCP servers
-
-The Helm chart includes registration hook jobs, but if they timeout you can register manually.
-
-First, port-forward to access the gateway API from your laptop:
+**Registered servers:**
 
 ```bash
-oc -n contextforge port-forward deploy/contextforge-mcp-stack-mcpgateway 4444:4444 &
-```
-
-Then register the servers:
-
-```bash
-# Get a JWT token
 TOKEN=$(oc -n contextforge exec deploy/contextforge-mcp-stack-mcpgateway -- \
   python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com --exp 60 \
   --secret "<your-jwt-key>")
 
-# Register fast-test-server
-curl -X POST http://localhost:4444/gateways \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"fast_test","url":"http://contextforge-mcp-stack-fast-test-server:8880/mcp","transport":"STREAMABLEHTTP"}'
-
-# Register fast-time-server
-curl -X POST http://localhost:4444/gateways \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"fast_time","url":"http://contextforge-mcp-stack-mcp-fast-time-server:80/http","transport":"STREAMABLEHTTP"}'
-
-# Create a virtual server
-curl -X POST http://localhost:4444/servers \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"server":{"name":"Test Server","protocolVersion":"2024-11-05","visibility":"public"}}'
-
-# Verify tools are registered
-curl -s http://localhost:4444/tools -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
+curl -s http://localhost:4444/servers -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
 ```
 
 ---
@@ -354,55 +294,37 @@ To validate the deployment with an MCP protocol benchmark using Locust.
 
 </details>
 
-**Standardized benchmark configuration:**
+The Helm chart deploys Locust with the MCP protocol locustfile and standardized configuration from `values-ocp-pgo.yaml`:
 
-The Helm chart deploys Locust with the following settings from `values-ocp-pgo.yaml`:
-
-- 3 Locust workers (`testing.locust.worker.replicaCount: 3`)
+- 3 Locust workers (auto-connected via ZeroMQ)
 - 125 users, 30/s spawn rate, 60s runtime
-- ZeroMQ ports 5557/5558 included in the Locust Service (workers connect automatically)
-- MCP_SERVER_ID passed via `--set` at install time
+- OCP-patched locustfile deployed from `charts/mcp-stack/tests/locustfile_mcp_protocol_ocp.py`
 
-**1. Pass the virtual server ID at install time:**
+**1. Pass the virtual server ID:**
+
+After the initial install (Step 5), registration hooks create the virtual server. Get its ID and update the deployment:
 
 ```bash
-# Get the virtual server UUID (after registration)
-SERVER_ID=$(curl -s http://localhost:4444/servers \
-  -H "Authorization: Bearer $TOKEN" | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['id'])")
+# Get the virtual server UUID
+SERVER_ID=$(oc -n <namespace> exec deploy/<release>-mcp-stack-mcpgateway -- \
+  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4444/servers | \
+  python3 -c "import json,sys; print(json.load(sys.stdin)[0]['id'])")
 
-# Include in helm install/upgrade
+# Update Locust with the server ID
 helm upgrade <release> charts/mcp-stack \
   -n <namespace> \
   -f charts/mcp-stack/values-ocp-pgo.yaml \
   -f charts/mcp-stack/values-ocp-pgo-secrets.yaml \
-  --set testing.locust.mcpServerID=$SERVER_ID \
-  --no-hooks
+  --set testing.locust.mcpServerID=$SERVER_ID
 ```
 
-**2. Deploy the MCP protocol locustfile:**
-
-The locustfile at `tests/loadtest/locustfile_mcp_protocol.py` needs two patches for OCP:
-- Wrap `_load_env_file()` in `try/except (PermissionError, OSError)` (OCP restricted SCC blocks `Path.home()/.env`)
-- Replace `import jwt` / `jwt.encode()` with stdlib `hmac/hashlib` JWT generation (pyjwt not available in Locust container)
-
-```bash
-# After patching the locustfile:
-oc -n <namespace> create configmap <release>-mcp-stack-locust-script \
-  --from-file=locustfile.py=tests/loadtest/locustfile_mcp_protocol.py \
-  --dry-run=client -o yaml | oc replace -f -
-
-# Restart Locust pods to pick up new locustfile
-oc -n <namespace> delete pods -l app=<release>-mcp-stack-locust
-oc -n <namespace> delete pods -l app=<release>-mcp-stack-locust-worker
-```
-
-**3. Run the benchmark:**
+**2. Run the benchmark:**
 
 ```bash
 make benchmark-ocp OCP_NS=<namespace>
 ```
 
-This triggers the MCP protocol benchmark (125 users, 30/s spawn, 60s) on the Locust pod via its API. Results appear in the Locust web UI or pod logs after ~60s.
+Results appear in the Locust web UI or pod logs after ~60s.
 
 **Benchmark results (OCP 4.20, 3 gateway pods, 3 NGINX, PGO Postgres):**
 
@@ -443,14 +365,14 @@ To enforce a plugin, change its `mode` from `"permissive"` to `"enforce"` in the
 
 | Issue | Solution |
 |-------|----------|
-| Gateway pods stuck at 0/1 Running | Migration hang through PgBouncer. Ensure only 1 replica during first install. Scale to 3 after pod is Ready. |
-| `ErrImagePull` on fast-test-server | Image pull auth failed. Grant pull access: `oc policy add-role-to-group system:image-puller system:serviceaccounts:<namespace> -n contextforge-images` |
+| Gateway pods stuck at 0/1 Running | Check `oc logs` for DB connectivity. Verify PGO Postgres and PgBouncer pods are Running. |
+| Gateway pod Pending | Insufficient CPU on worker nodes. Check `oc describe pod` for scheduling errors. Free resources from other namespaces or reduce CPU requests. |
 | Redis PVC stuck in Pending | No dynamic PV provisioner. Set `redis.persistence.enabled: false` in values, or provision a PV manually. |
 | Locust workers not connecting | Ensure `testing.enabled: true` in values. ZeroMQ ports 5557/5558 are included in the Locust Service template. If workers still fail, check DNS resolution to `<release>-mcp-stack-locust`. |
-| Locust crashes with PermissionError | OCP restricted SCC blocks `Path.home()/.env`. Patch `_load_env_file()` with try/except. |
 | `helm upgrade` fails with field conflicts | Manual `oc` patches create field manager conflicts. Use `helm uninstall` + `helm install` instead. |
-| Route returns 503 | Gateway pods not Ready yet, or NGINX not scaled. Check `oc get pods` and scale NGINX to 3. |
+| Route returns 503 | Gateway pods not Ready yet. Check `oc get pods` and wait for 1/1 Running. |
 | Rate limiter not blocking | Plugin mode is `permissive` (default). Change to `enforce` in the plugin ConfigMap and restart gateways. |
+| Benchmark shows high failure rate | Check `testing.locust.mcpServerID` matches an existing virtual server. Get the correct ID from `/servers` API. |
 
 ---
 
@@ -465,6 +387,7 @@ The `values-ocp-pgo.yaml` file includes these OCP-specific settings:
 | `postgres.external.enabled` | `true` | Connect to CrunchyData PGO instead of Helm-managed Postgres |
 | `pgbouncer.enabled` | `false` | CrunchyData provides its own PgBouncer |
 | `nginxProxy.enabled` | `true` | NGINX proxy layer for load balancing |
+| `nginxProxy.replicaCount` | `3` | Match gateway replica count |
 | `nginxProxy.containerPort` | `8080` | Unprivileged port (restricted SCC) |
 | `nginxProxy.tls.enabled` | `true` | TLS for re-encrypt Route termination |
 | `route.enabled` | `true` | OpenShift Route for external access |
