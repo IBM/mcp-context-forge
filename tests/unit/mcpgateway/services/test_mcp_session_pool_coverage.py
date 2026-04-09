@@ -424,9 +424,10 @@ class TestAcquireOwnershipCheck:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value="other-worker:5678"):
-                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker:1234"):
-                    with pytest.raises(RuntimeError, match="Session owned by another worker"):
-                        await pool.acquire(url, headers={"x-mcp-session-id": "validid123"})
+                with patch.object(pool, "_is_worker_alive", new_callable=AsyncMock, return_value=True):
+                    with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker:1234"):
+                        with pytest.raises(RuntimeError, match=r"Session owned by another worker"):
+                            await pool.acquire(url, headers={"x-mcp-session-id": "validid123"})
         await pool.close_all()
 
 

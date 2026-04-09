@@ -355,8 +355,16 @@ async def register(registration_request: PublicRegistrationRequest, request: Req
             auth_provider="local",
         )
 
-        # Create access token
-        access_token, expires_in = await create_access_token(user)
+        # Create HTTP auth session (Issue #541)
+        # CRITICAL: When session tracking is enabled, session creation MUST succeed
+        # to maintain security guarantees. A None jti claim would bypass session validation.
+        # First-Party
+        from mcpgateway.services.http_auth_session_service import create_http_auth_session
+
+        session_id = await create_http_auth_session(db, user.email, request, context="registration")
+
+        # Create access token (include session_id in JWT for validation)
+        access_token, expires_in = await create_access_token(user, jti=session_id)
 
         logger.info(f"New user registered: {SecurityValidator.sanitize_log_message(user.email)}")
 

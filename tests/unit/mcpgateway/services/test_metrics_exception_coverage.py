@@ -217,12 +217,17 @@ class TestToolServiceMetricsException:
             request_type="GET",
         )
 
+        # Mock the tool lookup cache to return our mock tool
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=mock_tool)
+
         with (
             patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.logger") as mock_logger,
             patch("mcpgateway.services.http_client_service.get_http_client") as mock_http_client,
             patch("mcpgateway.services.tool_service.PydanticTool.model_validate", return_value=valid_tool),
             patch("mcpgateway.services.tool_service.PydanticGateway.model_validate", return_value=MagicMock()),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=mock_cache),
         ):
 
             mock_client = AsyncMock()

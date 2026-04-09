@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 security_logger = get_security_logger()
 
 # HTTPException detail strings that indicate security-critical rejections
-# (revoked tokens, disabled accounts, fail-secure validation errors).
+# (revoked tokens, disabled accounts, fail-secure validation errors, session invalidation).
 # Only these trigger a hard JSON deny in the auth middleware; all other
 # 401/403s fall through to route-level auth for backwards compatibility.
-_HARD_DENY_DETAILS = frozenset({"Token has been revoked", "Account disabled", "Token validation failed"})
+_HARD_DENY_DETAILS = frozenset({"Token has been revoked", "Account disabled", "Token validation failed", "Session expired or invalid"})
 
 
 def _should_log_auth_success() -> bool:
@@ -250,29 +250,41 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                             except Exception as close_error:
                                 logger.warning(f"Failed to close auth session: {close_error}")
 
-                # Browser/admin requests with stale cookies: let the request continue
+                # Browser/admin requests with stale cookies: clear cookies and let the request continue
                 # without user context so the RBAC layer can redirect to /admin/login.
-                # API requests: return a hard JSON 401/403 deny.
+                # API requests: return a hard JSON 401/403 deny with cookie clearing.
                 # Detection must match rbac.py's is_browser_request logic (Accept,
                 # HX-Request, and Referer: /admin) to avoid breaking admin UI flows.
                 accept_header = request.headers.get("accept", "")
                 is_htmx = request.headers.get("hx-request") == "true"
                 referer = request.headers.get("referer", "")
                 is_browser = "text/html" in accept_header or is_htmx or "/admin" in referer
-                if is_browser:
-                    logger.debug("Browser request with rejected auth — continuing without user for redirect")
-                    return await call_next(request)
 
-                # Include essential security headers since this response bypasses
-                # SecurityHeadersMiddleware (it returns before call_next).
-                resp_headers = dict(e.headers) if e.headers else {}
-                resp_headers.setdefault("X-Content-Type-Options", "nosniff")
-                resp_headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-                return JSONResponse(
-                    status_code=e.status_code,
-                    content={"detail": e.detail},
-                    headers=resp_headers,
-                )
+                # Clear authentication cookies to unblock the browser
+                # This prevents the browser from repeatedly sending invalid tokens
+                response = None
+                if is_browser:
+                    logger.debug("Browser request with rejected auth — clearing cookies and continuing without user for redirect")
+                    response = await call_next(request)
+                else:
+                    # Include essential security headers since this response bypasses
+                    # SecurityHeadersMiddleware (it returns before call_next).
+                    resp_headers = dict(e.headers) if e.headers else {}
+                    resp_headers.setdefault("X-Content-Type-Options", "nosniff")
+                    resp_headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+                    response = JSONResponse(
+                        status_code=e.status_code,
+                        content={"detail": e.detail},
+                        headers=resp_headers,
+                    )
+
+                # Clear authentication cookies for both browser and API requests
+                # to prevent the client from retrying with the same invalid token
+                response.delete_cookie(key="jwt_token", path="/")
+                response.delete_cookie(key="access_token", path="/")
+                logger.info(f"Cleared authentication cookies due to: {e.detail}")
+
+                return response
 
             # Non-security HTTP errors (e.g. 500 from a downstream service) — continue as anonymous
             logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")

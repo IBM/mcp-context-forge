@@ -1305,8 +1305,50 @@ async def get_current_user(
 
         logger.debug("JWT authentication successful for email: %s", email)
 
-        # Extract JTI for revocation check
+        # Extract JTI for revocation check and session validation
         jti = payload.get("jti")
+
+        # === HTTP AUTH SESSION VALIDATION (Issue #541) ===
+        # If JWT contains jti claim and session tracking is enabled, validate the session
+        if jti and settings.session_tracking_enabled:
+            logger.debug(f"[SESSION_VALIDATION] Validating session {jti} for user {email}")
+            try:
+                # First-Party
+                from mcpgateway.services.http_auth_session_service import HttpAuthSessionService
+
+                # Extract client info from request for session binding validation
+                client_ip = request.client.host if request and request.client else None
+                user_agent = request.headers.get("user-agent") if request else None
+
+                logger.debug(f"[SESSION_VALIDATION] Client IP: {client_ip}, User-Agent: {user_agent[:50] if user_agent else 'None'}...")
+
+                # Validate session with timeout checks
+                with fresh_db_session() as session_db:
+                    session_service = HttpAuthSessionService(session_db)
+                    is_valid = await session_service.validate_session(session_id=jti, client_ip=client_ip, user_agent=user_agent)
+
+                    if not is_valid:
+                        logger.warning(f"[SESSION_VALIDATION] Session {jti} validation failed for user {email}")
+                        # Raise 401 - middleware will handle redirect and cookie clearing for browser requests
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Session expired or invalid",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                    logger.debug(f"[SESSION_VALIDATION] Session {jti} validated successfully for user {email}")
+
+            except HTTPException:
+                # Re-raise HTTP exceptions (session expired, invalid, etc.)
+                raise
+            except Exception as session_error:
+                # Log but don't fail on session validation errors (fail-open for backward compatibility)
+                logger.warning(f"[SESSION_VALIDATION] Session validation error for {jti}: {session_error}")
+                # Continue with authentication - session validation is supplementary
+        elif jti:
+            logger.debug(f"[SESSION_VALIDATION] Session tracking disabled, skipping validation for jti {jti}")
+        else:
+            logger.debug("[SESSION_VALIDATION] No jti claim in JWT, skipping session validation")
 
         # === AUTH CACHING: Check cache before DB queries ===
         if settings.auth_cache_enabled:

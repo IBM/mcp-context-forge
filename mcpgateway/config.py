@@ -850,6 +850,37 @@ class Settings(BaseSettings):
     llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")
     llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
     llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
+    # ===================================
+    # HTTP Auth Session Management (Issue #541)
+    # ===================================
+
+    # Enable HTTP auth session tracking
+    session_tracking_enabled: bool = Field(default=True, description="Enable HTTP authentication session tracking with timeouts and limits")
+
+    # Session idle timeout in minutes (0 = disabled)
+    session_idle_timeout_minutes: int = Field(default=30, description="Minutes of inactivity before session expires (0 = disabled)")
+
+    # Session absolute timeout in minutes (0 = disabled)
+    session_absolute_timeout_minutes: int = Field(default=480, description="Maximum session lifetime in minutes regardless of activity (0 = disabled)")
+
+    # Maximum concurrent sessions per user (0 = unlimited)
+    max_sessions_per_user: int = Field(default=5, description="Maximum concurrent sessions per user, oldest evicted when exceeded (0 = unlimited)")
+
+    # Session binding for anti-hijacking protection
+    session_bind_to_ip: bool = Field(default=False, description="Bind sessions to client IP address (invalidates on IP change)")
+
+    session_bind_to_user_agent: bool = Field(default=False, description="Bind sessions to user-agent string (invalidates on UA change)")
+
+    # Session rotation on re-authentication
+    session_rotation_enabled: bool = Field(default=True, description="Rotate session ID on re-authentication for security")
+
+    # Session cleanup background task
+    session_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of expired sessions via background task")
+
+    session_cleanup_interval_minutes: int = Field(default=60, description="Interval in minutes for running session cleanup background task")
+
+    # Session activity update throttling (reduces DB writes)
+    session_activity_update_interval_seconds: int = Field(default=60, description="Minimum seconds between session activity timestamp updates (throttling)")
 
     @field_validator("allowed_roots", mode="before")
     @classmethod

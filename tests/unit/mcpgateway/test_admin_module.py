@@ -449,6 +449,8 @@ async def test_admin_login_handler_default_password(monkeypatch):
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", True)
     monkeypatch.setattr(admin.settings, "detect_default_password_on_login", True)
     monkeypatch.setattr(admin.settings, "require_password_change_for_default_password", True)
+    # Disable session tracking to avoid session creation failure from mock_db.commit exception
+    monkeypatch.setattr(admin.settings, "session_tracking_enabled", False)
 
     request.form = AsyncMock(return_value={"email": "admin@example.com", "password": "pw"})
 

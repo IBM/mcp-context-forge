@@ -167,8 +167,16 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         if settings.sso_enabled and settings.sso_preserve_admin_auth and not bool(getattr(user, "is_admin", False)):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password authentication is restricted to admin accounts while SSO is enabled.")
 
-        # Create session JWT token (Tier 1 authentication)
-        access_token, expires_in = await create_access_token(user)
+        # Create HTTP auth session (Issue #541)
+        # CRITICAL: When session tracking is enabled, session creation MUST succeed
+        # to maintain security guarantees. A None jti claim would bypass session validation.
+        # First-Party
+        from mcpgateway.services.http_auth_session_service import create_http_auth_session
+
+        session_id = await create_http_auth_session(db, user.email, request, context="login")
+
+        # Create session JWT token (Tier 1 authentication) - include session_id in JWT for validation
+        access_token, expires_in = await create_access_token(user, jti=session_id)
 
         logger.info(f"User {email} authenticated successfully")
 

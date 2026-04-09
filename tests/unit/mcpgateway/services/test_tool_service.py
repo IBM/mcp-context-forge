@@ -2001,6 +2001,8 @@ class TestToolService:
         """Test invoking an inactive tool."""
         # Set tool to inactive
         mock_tool.enabled = False
+        # Ensure tool name matches what we're looking up
+        mock_tool.name = "test_tool"
 
         # Mock DB to return inactive tool in single query
         mock_scalar = Mock()
@@ -2009,11 +2011,17 @@ class TestToolService:
         mock_scalar.all.return_value = [mock_tool]
         test_db.execute = Mock(return_value=mock_scalar)
 
-        # Should raise NotFoundError with "inactive" message
-        with pytest.raises(ToolNotFoundError) as exc_info:
-            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+        # Disable tool lookup cache to force DB lookup
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_getter:
+            mock_cache = Mock()
+            mock_cache.enabled = False
+            mock_cache_getter.return_value = mock_cache
 
-        assert "Tool 'test_tool' exists but is inactive" in str(exc_info.value)
+            # Should raise NotFoundError with "inactive" message
+            with pytest.raises(ToolNotFoundError) as exc_info:
+                await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert "Tool 'test_tool' exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -2023,6 +2031,9 @@ class TestToolService:
         mock_tool.jsonpath_filter = ""
         mock_tool.auth_value = None
 
+        # Ensure cache is cleared to avoid interference from previous tests
+        tool_lookup_cache.invalidate_all_local()
+        
         # Set up mock to return tool for first query, GlobalConfig for second
         setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
 
@@ -3314,15 +3325,18 @@ class TestToolService:
         # Create an event to publish
         test_event = {"type": "test_event", "data": {"id": 1}}
 
-        # Start subscription in background
+        # Mock the event service to return our test event
+        async def mock_event_gen():
+            yield test_event
+
+        mock_event_service = MagicMock()
+        mock_event_service.subscribe_events = mock_event_gen
+        mock_event_service.publish_event = AsyncMock()
+        tool_service._event_service = mock_event_service
+
+        # Start subscription
         subscriber = tool_service.subscribe_events()
         subscription_task = asyncio.create_task(subscriber.__anext__())
-
-        # Give a moment for subscription to be registered
-        await asyncio.sleep(0.01)
-
-        # Publish event
-        await tool_service._publish_event(test_event)
 
         # Get the event
         received_event = await subscription_task

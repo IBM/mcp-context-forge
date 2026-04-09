@@ -1773,6 +1773,53 @@ class EmailAuthEvent(Base):
         return cls(user_email=user_email, event_type="password_change", success=success, ip_address=ip_address, user_agent=user_agent)
 
 
+class HttpAuthSession(Base):
+    """HTTP authentication session tracking model (Issue #541).
+
+    Tracks active HTTP authentication sessions with timeout enforcement,
+    client binding, and audit trail support. Implements the SessionRegistry
+    pattern for managing user sessions with security features.
+
+    Attributes:
+        session_id (str): Unique session identifier (UUID)
+        user_id (str): User identifier (email)
+        user_email (str): User email address
+        created_at (datetime): Session creation timestamp
+        last_activity (datetime): Last activity timestamp for idle timeout
+        ip_address (str): Client IP address for binding validation
+        user_agent (str): Client user-agent string for binding validation
+        device_info (dict): Parsed device metadata (browser, OS, device type)
+    """
+
+    __tablename__ = "http_auth_sessions"
+
+    # Primary key
+    session_id: Mapped[str] = mapped_column(String(36), primary_key=True, index=True)
+
+    # User identification
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Timestamps for timeout enforcement
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    last_activity: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+    # Client binding for anti-hijacking protection
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 max length
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Device metadata (parsed from user-agent)
+    device_info: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True, default=dict)
+
+    def __repr__(self) -> str:
+        """String representation of the session.
+
+        Returns:
+            str: String representation of HttpAuthSession instance
+        """
+        return f"<HttpAuthSession(session_id={self.session_id}, user_email={self.user_email}, created_at={self.created_at})>"
+
+
 class PasswordResetToken(Base):
     """One-time password reset token record.
 

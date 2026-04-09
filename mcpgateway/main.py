@@ -141,6 +141,7 @@ from mcpgateway.services.content_security import ContentSizeError, ContentTypeEr
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
+from mcpgateway.services.http_auth_session_service import HttpAuthSessionService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -1881,6 +1882,42 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             aggregation_loop_task = asyncio.create_task(run_log_aggregation_loop())
         elif settings.metrics_aggregation_enabled:
             logger.info("Metrics aggregation auto-start disabled; performance metrics will be generated on-demand when requested.")
+        # Start HTTP auth session cleanup background task if enabled
+        if settings.session_tracking_enabled and settings.session_cleanup_enabled:
+
+            async def run_session_cleanup_loop():
+                """Background task to periodically clean up expired HTTP auth sessions.
+
+                Raises:
+                    asyncio.CancelledError: When the task is cancelled during shutdown
+                """
+
+                cleanup_interval = settings.session_cleanup_interval_minutes * 60  # Convert to seconds
+                logger.info(f"Starting HTTP auth session cleanup loop (interval: {settings.session_cleanup_interval_minutes} minutes)")
+
+                while True:
+                    try:
+                        # Run cleanup in a separate database session
+                        with SessionLocal() as db:
+                            session_service = HttpAuthSessionService(db)
+                            deleted_count = await session_service.cleanup_expired_sessions()
+                            if deleted_count > 0:
+                                logger.info(f"Cleaned up {deleted_count} expired HTTP auth sessions")
+
+                        # Sleep after cleanup so first run happens immediately on startup
+                        await asyncio.sleep(cleanup_interval)
+                    except asyncio.CancelledError:
+                        logger.debug("Session cleanup loop cancelled")
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error in session cleanup loop: {e}")
+                        # Continue running despite errors
+                        await asyncio.sleep(60)  # Wait 1 minute before retrying
+
+            asyncio.create_task(run_session_cleanup_loop())
+            logger.info("HTTP auth session cleanup background task started")
+        else:
+            logger.info("HTTP auth session cleanup disabled")
 
         yield
     except Exception as e:
@@ -2503,6 +2540,63 @@ async def content_type_exception_handler(_request: Request, exc: ContentTypeErro
                 "allowed_types": exc.allowed_types[:5],  # Limit to first 5
             }
         },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_request: Request, exc: HTTPException):
+    """Handle HTTPException with cookie clearing for authentication failures.
+
+    When redirecting to login (302 with Location header), this handler clears
+    authentication cookies to prevent the browser from getting stuck with invalid tokens.
+
+    Args:
+        _request: The incoming request
+        exc: The HTTPException being handled
+
+    Returns:
+        Response with cookies cleared if redirecting to login, otherwise default handling
+    """
+    # Check if this is a redirect to login page
+    if exc.status_code in (302, 303) and exc.headers and "Location" in exc.headers:
+        location = exc.headers.get("Location", "")
+        if "/admin/login" in location or "/login" in location:
+            # First-Party
+            from mcpgateway.utils.security_cookies import clear_auth_cookie
+
+            # Create redirect response (RedirectResponse imported at module top)
+            response = RedirectResponse(url=location, status_code=exc.status_code)
+
+            # Clear authentication cookies
+            clear_auth_cookie(response)
+
+            # Also clear access_token cookie (alternative cookie name)
+            use_secure = (settings.environment == "production") or settings.secure_cookies
+            response.delete_cookie(
+                key="access_token",
+                path=settings.app_root_path or "/",
+                secure=use_secure,
+                httponly=True,
+                samesite=settings.cookie_samesite,
+            )
+
+            # Clear CSRF token for admin
+            response.delete_cookie(
+                key="mcpgateway_csrf_token",
+                path=f"{settings.app_root_path}/admin" if settings.app_root_path else "/admin",
+                secure=use_secure,
+                httponly=False,
+                samesite="strict",
+            )
+
+            logger.info("Cleared authentication cookies on redirect to login")
+            return response
+
+    # Default handling for other HTTPExceptions
+    return ORJSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=exc.headers,
     )
 
 
@@ -11028,6 +11122,20 @@ if settings.email_auth_enabled:
         app.include_router(email_auth_router, prefix="/auth/email", tags=["Email Authentication"])
         app.include_router(auth_router, tags=["Main Authentication"])
         logger.info("Authentication routers included - Auth enabled")
+
+        # Include HTTP Auth Session Management router if session tracking is enabled
+        if settings.session_tracking_enabled:
+            try:
+                # First-Party
+                from mcpgateway.routers.http_auth_sessions import router_admin, router_user
+
+                app.include_router(router_user, tags=["HTTP Auth Sessions - User"])
+                app.include_router(router_admin, tags=["HTTP Auth Sessions - Admin"])
+                logger.info("HTTP Auth Session Management routers included - Session tracking enabled")
+            except ImportError as e:
+                logger.error(f"HTTP Auth Session Management routers not available: {e}")
+        else:
+            logger.info("HTTP Auth Session Management routers not included - Session tracking disabled")
 
         # Include SSO router if enabled
         if settings.sso_enabled:

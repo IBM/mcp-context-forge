@@ -5670,6 +5670,75 @@ class AuthenticationResponse(BaseModel):
     user: EmailUserResponse = Field(..., description="User information")
 
 
+# ===================================
+# HTTP Auth Session Management Schemas (Issue #541)
+# ===================================
+
+
+class HttpAuthSessionResponse(BaseModel):
+    """Response schema for HTTP auth session information.
+
+    Attributes:
+        session_id: Unique session identifier
+        user_email: User's email address
+        created_at: Session creation timestamp
+        last_activity: Last activity timestamp
+        ip_address: Client IP address
+        user_agent: Client user-agent string
+        device_info: Parsed device metadata
+        is_current: Whether this is the current session
+    """
+
+    session_id: str = Field(..., description="Unique session identifier")
+    user_email: str = Field(..., description="User's email address")
+    created_at: datetime = Field(..., description="Session creation timestamp")
+    last_activity: datetime = Field(..., description="Last activity timestamp")
+    ip_address: Optional[str] = Field(None, description="Client IP address")
+    user_agent: Optional[str] = Field(None, description="Client user-agent string")
+    device_info: Optional[Dict] = Field(default_factory=dict, description="Parsed device metadata")
+    is_current: bool = Field(default=False, description="Whether this is the current session")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class HttpAuthSessionListResponse(BaseModel):
+    """Response schema for list of HTTP auth sessions.
+
+    Attributes:
+        sessions: List of active sessions
+        total_count: Total number of sessions
+        user_email: User email (for filtered lists)
+    """
+
+    sessions: List[HttpAuthSessionResponse] = Field(..., description="List of active sessions")
+    total_count: int = Field(..., description="Total number of sessions")
+    user_email: Optional[str] = Field(None, description="User email (for filtered lists)")
+
+
+class HttpAuthSessionTerminateRequest(BaseModel):
+    """Request schema for terminating a session.
+
+    Attributes:
+        reason: Reason for termination
+    """
+
+    reason: Optional[str] = Field(default="user_revoke", description="Reason for termination")
+
+
+class HttpAuthSessionTerminateResponse(BaseModel):
+    """Response schema for session termination.
+
+    Attributes:
+        success: Whether termination was successful
+        session_id: Terminated session ID
+        message: Success message
+    """
+
+    success: bool = Field(..., description="Whether termination was successful")
+    session_id: str = Field(..., description="Terminated session ID")
+    message: str = Field(..., description="Success message")
+
+
 class AuthEventResponse(BaseModel):
     """Response schema for authentication events.
 

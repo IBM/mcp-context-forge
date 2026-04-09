@@ -4062,13 +4062,17 @@ async def admin_ui(
                 if isinstance(provider_from_user, str) and provider_from_user.strip():
                     auth_provider = provider_from_user.strip()
 
-            # get_current_user_with_permissions may not include auth_provider in its dict.
-            # Fall back to the current jwt_token cookie payload before refreshing it.
+            # Preserve session_id (jti) from existing token to maintain HTTP auth session continuity (Issue #541)
+            # Also preserve auth_provider for SSO logout detection
+            existing_jti = None
             if auth_provider == "local":
                 jwt_cookie = request.cookies.get("jwt_token")
                 if isinstance(jwt_cookie, str) and jwt_cookie:
                     try:
                         existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
+                        # Preserve jti for session continuity
+                        existing_jti = existing_payload.get("jti")
+                        # Preserve auth_provider
                         existing_user = existing_payload.get("user")
                         provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
                         if not provider_from_token:
@@ -4080,7 +4084,7 @@ async def admin_ui(
                         if settings.sso_keycloak_enabled:
                             auth_provider = "keycloak"
 
-            # Generate a lightweight session JWT token
+            # Generate a lightweight session JWT token (preserve jti for session continuity)
             now = datetime.now(timezone.utc)
             payload = {
                 "sub": admin_email,
@@ -4088,7 +4092,7 @@ async def admin_ui(
                 "aud": settings.jwt_audience,
                 "iat": int(now.timestamp()),
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
-                "jti": str(uuid.uuid4()),
+                "jti": existing_jti or str(uuid.uuid4()),
                 "auth_provider": auth_provider,
                 "user": {"email": admin_email, "full_name": full_name, "is_admin": is_admin_flag, "auth_provider": auth_provider},
                 "token_use": "session",  # nosec B105 - token type marker, not a password
@@ -4346,8 +4350,24 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if needs_password_change:
                 LOGGER.info(f"User {email} requires password change - redirecting to change password page")
 
-                # Create temporary JWT token for password change process
-                token, _ = await create_access_token(user)
+                # Create HTTP auth session FIRST for password change flow (Issue #541)
+                # CRITICAL: When session tracking is enabled, session creation MUST succeed
+                # to maintain security guarantees. A None jti claim would bypass session validation.
+                try:
+                    # First-Party
+                    from mcpgateway.services.http_auth_session_service import create_http_auth_session
+
+                    session_id = await create_http_auth_session(db, user.email, request, context="admin_password_change")
+                except Exception as exc:
+                    LOGGER.error(f"Failed to create session for user {user.email}: {exc}")
+                    root_path = _resolve_root_path(request)
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=session_creation_failed",
+                        status_code=303,
+                    )
+
+                # Create temporary JWT token with session ID for password change process
+                token, _ = await create_access_token(user, jti=session_id)
 
                 # Create redirect response to password change page
                 root_path = _resolve_root_path(request)
@@ -4366,8 +4386,25 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 _set_admin_csrf_cookie(request, response)
                 return response
 
-            # Create JWT token with proper audience and issuer claims
-            token, _ = await create_access_token(user)  # expires_seconds not needed here
+            # Create HTTP auth session FIRST (Issue #541)
+            # Session ID must be created before JWT token so it can be included as jti claim
+            # CRITICAL: When session tracking is enabled, session creation MUST succeed
+            # to maintain security guarantees. A None jti claim would bypass session validation.
+            try:
+                # First-Party
+                from mcpgateway.services.http_auth_session_service import create_http_auth_session
+
+                session_id = await create_http_auth_session(db, user.email, request, context="admin_login")
+            except Exception as exc:
+                LOGGER.error(f"Failed to create session for admin user {user.email}: {exc}")
+                root_path = _resolve_root_path(request)
+                return RedirectResponse(
+                    url=f"{root_path}/admin/login?error=session_creation_failed",
+                    status_code=303,
+                )
+
+            # Create JWT token with session ID as jti claim for validation
+            token, _ = await create_access_token(user, jti=session_id)
 
             # Create redirect response
             root_path = _resolve_root_path(request)
