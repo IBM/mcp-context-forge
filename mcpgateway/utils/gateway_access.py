@@ -94,7 +94,7 @@ async def check_gateway_access(
         # Special case for platform admin
         if user_email == getattr(settings, "platform_admin_email", ""):
             return True
-        
+
         # Check database (fail-closed on any error)
         try:
             user = db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()

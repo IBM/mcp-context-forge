@@ -1760,6 +1760,26 @@ class TestPromptAccessAuthorization:
         assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email=None, token_teams=None) is True
 
     @pytest.mark.asyncio
+    async def test_check_prompt_access_database_admin_bypass(self, prompt_service, mock_db):
+        """User with is_admin=True in database should have full access."""
+        from mcpgateway.db import EmailUser
+
+        private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        # Mock database user with is_admin=True
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@test.com"
+        admin_user.is_admin = True
+
+        # Mock the database query to return admin user
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        mock_db.execute.return_value = mock_result
+
+        # Admin user should have full access to private prompt
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="admin@test.com", token_teams=["some-team"]) is True
+
+    @pytest.mark.asyncio
     async def test_check_prompt_access_private_denied_to_unauthenticated(self, prompt_service, mock_db):
         """Private prompts should be denied to unauthenticated users."""
         private_prompt = self._create_mock_prompt(visibility="private", owner_email="owner@test.com")

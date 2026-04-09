@@ -18,7 +18,7 @@ import logging
 from typing import Dict, List, Optional
 
 # Third-Party
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -378,40 +378,12 @@ class TagService:
         Returns:
             Scoped SQLAlchemy statement.
         """
-        # Admin bypass: no auth context
-        if token_teams is None and user_email is None:
-            return stmt
+        # First-Party
+        from mcpgateway.services.base_service import BaseService  # pylint: disable=import-outside-toplevel
 
-        # Admin bypass: check if user is an admin in the database
-        if user_email and db:
-            # First-Party
-            from mcpgateway.config import settings
-            from mcpgateway.db import EmailUser
-
-            # Special case for platform admin
-            if user_email == getattr(settings, "platform_admin_email", ""):
-                return stmt
-
-            # Check database (fail-closed on any error)
-            try:
-                user = db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
-                # Explicitly check for is_admin attribute and that it's True (not just truthy)
-                if user is not None and hasattr(user, 'is_admin') and user.is_admin is True:
-                    return stmt
-            except Exception:  # pylint: disable=broad-except
-                # Fail-closed: if we can't verify admin status, continue with normal checks
-                pass
-
-        is_public_only_token = token_teams is not None and len(token_teams) == 0
-        access_conditions = [model.visibility == "public"]
-
-        if not is_public_only_token and user_email:
-            access_conditions.append(model.owner_email == user_email)
-
-        if team_ids:
-            access_conditions.append(and_(model.team_id.in_(team_ids), model.visibility.in_(["team", "public"])))
-
-        return stmt.where(or_(*access_conditions))
+        # Delegate to BaseService implementation to avoid code duplication
+        base_service = BaseService.__new__(BaseService)
+        return base_service._apply_visibility_scope(stmt, model, user_email, token_teams, team_ids, db)  # pylint: disable=protected-access
 
     async def get_entities_by_tag(
         self,

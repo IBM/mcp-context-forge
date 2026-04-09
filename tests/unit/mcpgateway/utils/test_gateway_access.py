@@ -202,6 +202,31 @@ class TestCheckGatewayAccess:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_database_admin_bypass(self):
+        """User with is_admin=True in database should have unrestricted access."""
+        from mcpgateway.db import EmailUser
+
+        db = MagicMock()
+        gateway = MagicMock()
+        gateway.visibility = "private"
+        gateway.team_id = "team1"
+        gateway.owner_email = "owner@example.com"
+
+        # Mock database user with is_admin=True
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@test.com"
+        admin_user.is_admin = True
+
+        # Mock the database query to return admin user
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        db.execute.return_value = mock_result
+
+        # Admin user should have full access to private gateway
+        result = await check_gateway_access(db, gateway, "admin@test.com", ["some-team"])
+        assert result is True
+
+    @pytest.mark.asyncio
     async def test_private_gateway_owner_access(self):
         """Private gateway owner should have access."""
         db = MagicMock()

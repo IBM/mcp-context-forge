@@ -190,6 +190,62 @@ class BaseService(ABC):
 
         return query.where(or_(*access_conditions))
 
+    def _apply_visibility_scope(self, stmt: Any, model: type, user_email: Optional[str], token_teams: Optional[List[str]], team_ids: List[str], db: Optional[Session] = None) -> Any:
+        """Apply token/user visibility scope to a SQLAlchemy statement.
+
+        Semantics mirror list/read endpoints:
+        - token_teams is None and user_email is None -> unrestricted (admin bypass)
+        - user with is_admin=True -> unrestricted (admin bypass)
+        - token_teams == [] -> public-only
+        - token_teams == [...] -> public + matching-team (+ owner if user_email present)
+        - token_teams is None and user_email present -> use DB team memberships
+
+        Args:
+            stmt: SQLAlchemy statement to constrain
+            model: ORM model that includes visibility/team/owner columns
+            user_email: Caller email used for owner visibility
+            token_teams: Explicit token team scope when present
+            team_ids: Effective team IDs for team visibility
+            db: Database session for admin check (optional)
+
+        Returns:
+            Scoped SQLAlchemy statement.
+        """
+        # Admin bypass: no auth context
+        if token_teams is None and user_email is None:
+            return stmt
+
+        # Admin bypass: check if user is an admin in the database
+        if user_email and db:
+            # First-Party
+            from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+            # Special case for platform admin
+            if user_email == getattr(settings, "platform_admin_email", ""):
+                return stmt
+
+            # Check database (fail-closed on any error)
+            try:
+                user = db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
+                # Explicitly check for is_admin attribute and that it's True (not just truthy)
+                if user is not None and hasattr(user, 'is_admin') and user.is_admin is True:
+                    return stmt
+            except Exception:  # pylint: disable=broad-except
+                # Fail-closed: if we can't verify admin status, continue with normal checks
+                pass
+
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        access_conditions = [model.visibility == "public"]
+
+        if not is_public_only_token and user_email:
+            access_conditions.append(model.owner_email == user_email)
+
+        if team_ids:
+            access_conditions.append(and_(model.team_id.in_(team_ids), model.visibility.in_(["team", "public"])))
+
+        return stmt.where(or_(*access_conditions))
+
     async def _get_plugin_manager(self, server_id: str | None) -> Any:
         """Return the context-scoped plugin manager from the global factory.
 
