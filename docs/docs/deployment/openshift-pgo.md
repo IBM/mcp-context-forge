@@ -2,6 +2,18 @@
 
 Deploy ContextForge on OpenShift using the **CrunchyData Postgres Operator (PGO)** for managed PostgreSQL. This approach uses the `mcp-stack` Helm chart with an OCP-specific values override file and provides a production-ready deployment with benchmarked MCP performance.
 
+## Why use the CrunchyData PGO operator?
+
+The Helm chart can deploy a standalone Postgres pod on its own, but for production workloads the CrunchyData PGO operator adds capabilities that a single Helm-managed pod cannot provide:
+
+- **High availability** — automatic failover with a standby replica. If the primary Postgres pod goes down, PGO promotes the standby with no manual intervention and minimal downtime.
+- **Automated backups** — pgBackRest handles WAL archiving and scheduled full/differential backups. Point-in-time recovery is built in.
+- **Managed PgBouncer** — the operator deploys and configures PgBouncer as a sidecar, handling connection pooling, credential rotation, and health monitoring automatically.
+- **Rolling updates** — Postgres minor version upgrades and config changes are applied without downtime.
+- **Monitoring integration** — built-in Prometheus metrics exporter for Postgres and PgBouncer.
+
+If you don't need HA or automated backups (dev/test, POCs, teams without cluster-admin access to install operators), see [openshift.md](openshift.md) for the manual approach or use the chart's built-in Postgres via `values-ocp.yaml`.
+
 For the manual YAML deployment approach (without Helm or PGO), see [openshift.md](openshift.md).
 
 ---
