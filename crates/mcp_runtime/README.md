@@ -258,6 +258,92 @@ That means:
 See [TESTING-DESIGN.md](TESTING-DESIGN.md) for the threat model and
 compose-backed isolation coverage.
 
+## Security Configuration
+
+The Rust MCP runtime includes comprehensive security protections to prevent Server-Side Request Forgery (SSRF) attacks and other security vulnerabilities.
+
+### SSRF Protection
+
+SSRF protection validates all backend HTTP requests to prevent:
+- Access to cloud metadata endpoints (AWS/GCP/Azure credentials)
+- Internal network access and port scanning
+- Localhost access (unless explicitly allowed)
+- Private network access (RFC 1918)
+
+**Environment Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SSRF_PROTECTION_ENABLED` | `true` | Enable/disable SSRF protection |
+| `SSRF_BLOCKED_NETWORKS` | See below | CIDR ranges always blocked |
+| `SSRF_BLOCKED_HOSTS` | See below | Hostnames always blocked |
+| `SSRF_ALLOW_LOCALHOST` | `false` | Allow localhost/127.0.0.0/8 |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | `false` | Allow RFC 1918 private networks |
+| `SSRF_ALLOWED_NETWORKS` | `[]` | Allowlist for specific private ranges |
+| `SSRF_DNS_FAIL_CLOSED` | `true` | Fail closed on DNS resolution errors |
+| `MAX_URL_LENGTH` | `2048` | Maximum URL length in characters |
+
+**Default Blocked Networks (always blocked):**
+- `169.254.169.254/32` - AWS/GCP/Azure instance metadata
+- `169.254.169.123/32` - AWS NTP service
+- `fd00::1/128` - IPv6 cloud metadata
+- `169.254.0.0/16` - Link-local IPv4 range
+- `fe80::/10` - IPv6 link-local
+
+**Default Blocked Hosts (always blocked):**
+- `metadata.google.internal` - GCP metadata hostname
+- `metadata.internal` - Generic cloud metadata
+
+**Examples:**
+
+Production mode (strict security, default):
+```bash
+SSRF_PROTECTION_ENABLED=true \
+SSRF_ALLOW_LOCALHOST=false \
+SSRF_ALLOW_PRIVATE_NETWORKS=false \
+cargo run --release
+```
+
+Development mode (allow localhost for local backend):
+```bash
+SSRF_ALLOW_LOCALHOST=true \
+cargo run --release -- \
+  --backend-rpc-url http://localhost:4444/_internal/mcp/rpc \
+  --listen-http 127.0.0.1:8787
+```
+
+Testing mode (allow specific private network):
+```bash
+SSRF_ALLOW_PRIVATE_NETWORKS=false \
+SSRF_ALLOWED_NETWORKS=192.168.1.0/24,10.0.1.0/24 \
+cargo run --release
+```
+
+### Deserialization Protection
+
+The runtime limits request body sizes to prevent denial-of-service attacks via large or deeply nested JSON payloads:
+
+- **Maximum request size**: 10MB (enforced by Axum's `DefaultBodyLimit`)
+- **Automatic rejection**: Requests exceeding the limit receive `413 Payload Too Large`
+
+### Security Testing
+
+Run the comprehensive security test suite:
+
+```bash
+cd tools_rust/mcp_runtime
+cargo test --test security_tests
+```
+
+The test suite validates:
+- SSRF protection against cloud metadata endpoints
+- Private network blocking
+- Localhost blocking
+- Dangerous URL scheme blocking (javascript:, data:, file:)
+- CRLF injection prevention
+- XSS pattern detection
+- Configuration behavior (strict vs permissive modes)
+
 ## Running the crate directly
 
 Compose users should prefer the `make testing-*` targets above. The examples

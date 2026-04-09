@@ -184,6 +184,45 @@ pub struct RuntimeConfig {
 
     #[arg(long, env = "MCP_RUST_EXIT_AFTER_STARTUP_MS", hide = true)]
     pub exit_after_startup_ms: Option<u64>,
+
+    // SSRF Protection Configuration
+    #[arg(long, env = "SSRF_PROTECTION_ENABLED", default_value_t = true)]
+    pub ssrf_protection_enabled: bool,
+
+    #[arg(
+        long,
+        env = "SSRF_BLOCKED_NETWORKS",
+        value_delimiter = ',',
+        default_value = "169.254.169.254/32,169.254.169.123/32,fd00::1/128,169.254.0.0/16,fe80::/10"
+    )]
+    pub ssrf_blocked_networks: Vec<String>,
+
+    #[arg(
+        long,
+        env = "SSRF_BLOCKED_HOSTS",
+        value_delimiter = ',',
+        default_value = "metadata.google.internal,metadata.internal"
+    )]
+    pub ssrf_blocked_hosts: Vec<String>,
+
+    #[arg(long, env = "SSRF_ALLOW_LOCALHOST", default_value_t = false)]
+    pub ssrf_allow_localhost: bool,
+
+    #[arg(long, env = "SSRF_ALLOW_PRIVATE_NETWORKS", default_value_t = false)]
+    pub ssrf_allow_private_networks: bool,
+
+    #[arg(
+        long,
+        env = "SSRF_ALLOWED_NETWORKS",
+        value_delimiter = ','
+    )]
+    pub ssrf_allowed_networks: Vec<String>,
+
+    #[arg(long, env = "SSRF_DNS_FAIL_CLOSED", default_value_t = true)]
+    pub ssrf_dns_fail_closed: bool,
+
+    #[arg(long, env = "MAX_URL_LENGTH", default_value_t = 2048)]
+    pub max_url_length: usize,
 }
 
 #[derive(Debug, Clone)]

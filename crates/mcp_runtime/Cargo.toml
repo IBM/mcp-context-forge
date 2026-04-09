@@ -19,6 +19,8 @@ base64.workspace = true
 bytes.workspace = true
 clap.workspace = true
 deadpool-postgres = "0.14.1"
+hickory-resolver = "0.25.0"
+ipnetwork = "0.21.0"
 futures-util.workspace = true
 opentelemetry = "0.31.0"
 opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-client", "trace"] }

@@ -10,11 +10,12 @@
 
 pub mod config;
 pub mod observability;
+pub mod url_validator;
 
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{ConnectInfo, FromRequestParts, Path as AxumPath, State},
+    extract::{ConnectInfo, DefaultBodyLimit, FromRequestParts, Path as AxumPath, State},
     http::request::Parts,
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::CONTENT_TYPE},
     response::{
@@ -188,6 +189,7 @@ pub struct AppState {
     session_auth_reuse_ttl: Duration,
     public_ingress_enabled: bool,
     runtime_stats: Arc<RuntimeStats>,
+    url_validator: Arc<url_validator::UrlValidator>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -839,6 +841,10 @@ impl AppState {
             session_auth_reuse_ttl: Duration::from_secs(config.session_auth_reuse_ttl_seconds),
             public_ingress_enabled: config.public_listen_http.is_some(),
             runtime_stats: Arc::new(RuntimeStats::default()),
+            url_validator: Arc::new(
+                url_validator::UrlValidator::from_config(config)
+                    .map_err(|e| RuntimeError::Config(format!("URL validator initialization failed: {}", e)))?,
+            ),
         })
     }
 
@@ -1334,6 +1340,8 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(transport_delete_server_scoped)
                 .post(rpc_server_scoped),
         )
+        // 🔒 DESERIALIZATION PROTECTION: Limit request body size to 10MB
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -1363,6 +1371,8 @@ fn build_public_router(state: AppState) -> Router {
                 .delete(transport_delete_server_scoped)
                 .post(rpc_server_scoped),
         )
+        // 🔒 DESERIALIZATION PROTECTION: Limit request body size to 10MB
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -4497,6 +4507,22 @@ async fn send_to_backend_url(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
+    // 🔒 SSRF PROTECTION: Validate URL before request
+    if let Err(e) = state.url_validator.validate_url(backend_url, "Backend URL").await {
+        error!("SSRF protection blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32600,
+                    "message": format!("Invalid backend URL: {}", e),
+                }
+            }),
+        ));
+    }
+
     state
         .client
         .post(backend_url)
@@ -4507,6 +4533,61 @@ async fn send_to_backend_url(
         .map_err(|err| {
             error!("backend MCP dispatch failed: {err}");
             backend_jsonrpc_error_response(None, "Backend MCP dispatch failed")
+        })
+}
+
+/// Helper function to make a validated POST request to a backend URL.
+///
+/// This function validates the URL using SSRF protection before making the request.
+/// It should be used by all functions that make direct HTTP POST calls to backend URLs.
+///
+/// # Errors
+///
+/// Returns an error response if URL validation fails or the HTTP request fails.
+async fn validated_backend_post(
+    state: &AppState,
+    backend_url: &str,
+    incoming_headers: HeaderMap,
+    body: Bytes,
+    error_message: &str,
+) -> Result<reqwest::Response, Response> {
+    // 🔒 SSRF PROTECTION: Validate URL before request
+    if let Err(e) = state.url_validator.validate_url(backend_url, "Backend URL").await {
+        error!("SSRF protection blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32600,
+                    "message": format!("Invalid backend URL: {}", e),
+                }
+            }),
+        ));
+    }
+
+    state
+        .client
+        .post(backend_url)
+        .headers(build_forwarded_headers(&incoming_headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|err| {
+            error!("{}: {}", error_message, err);
+            json_response(
+                StatusCode::BAD_GATEWAY,
+                json!({
+                    "jsonrpc": JSONRPC_VERSION,
+                    "id": Value::Null,
+                    "error": {
+                        "code": -32000,
+                        "message": error_message,
+                        "data": CLIENT_ERROR_DETAIL,
+                    }
+                }),
+            )
         })
 }
 
@@ -7807,7 +7888,21 @@ async fn send_transport_to_backend(
     // runtime session, it marks that fact in forwarded headers so Python can
     // skip repeating the same session-ownership check on the internal hop.
     let target_url = build_backend_transport_url(state.backend_transport_url(), uri);
-    let mut request = state.client.request(method, target_url).headers(
+
+    // 🔒 SSRF PROTECTION: Validate URL before request
+    if let Err(e) = state.url_validator.validate_url(&target_url, "Backend URL").await {
+        error!("SSRF protection blocked request to {}: {}", target_url, e);
+        return Err(json_response(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "error": "Bad Request",
+                "message": format!("Invalid backend URL: {}", e),
+                "data": CLIENT_ERROR_DETAIL,
+            }),
+        ));
+    }
+
+    let mut request = state.client.request(method, &target_url).headers(
         build_forwarded_headers_with_session_validation(incoming_headers, session_validated),
     );
     if let Some(body) = body {
@@ -7831,9 +7926,22 @@ async fn send_session_delete_to_backend(
     incoming_headers: &HeaderMap,
     session_validated: bool,
 ) -> Result<reqwest::Response, Response> {
+    // 🔒 SSRF PROTECTION: Validate URL before request
+    let backend_url = derive_backend_session_delete_url(state.backend_rpc_url());
+    if let Err(e) = state.url_validator.validate_url(&backend_url, "Backend URL").await {
+        error!("SSRF protection blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "detail": format!("Invalid backend URL: {}", e),
+                "data": CLIENT_ERROR_DETAIL,
+            }),
+        ));
+    }
+
     state
         .client
-        .delete(derive_backend_session_delete_url(state.backend_rpc_url()))
+        .delete(&backend_url)
         .headers(build_forwarded_headers_with_session_validation(
             incoming_headers,
             session_validated,
@@ -7859,9 +7967,27 @@ async fn send_tools_list_to_backend(
     // The helpers below are thin, method-specific bridges to Python's internal
     // MCP handlers. They keep the runtime's public response shaping separate
     // from the actual HTTP dispatch and error translation.
+
+    // 🔒 SSRF PROTECTION: Validate URL before request
+    let backend_url = state.backend_tools_list_url();
+    if let Err(e) = state.url_validator.validate_url(backend_url, "Backend URL").await {
+        error!("SSRF protection blocked request to {}: {}", backend_url, e);
+        return Err(json_response(
+            StatusCode::BAD_REQUEST,
+            json!({
+                "jsonrpc": JSONRPC_VERSION,
+                "id": Value::Null,
+                "error": {
+                    "code": -32600,
+                    "message": format!("Invalid backend URL: {}", e),
+                }
+            }),
+        ));
+    }
+
     state
         .client
-        .post(state.backend_tools_list_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(&incoming_headers))
         .send()
         .await
@@ -7887,28 +8013,13 @@ async fn send_resources_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_resources_list_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP resources/list dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/list dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_resources_list_url(),
+        incoming_headers,
+        body,
+        "Backend MCP resources/list dispatch failed",
+    ).await
 }
 
 async fn send_resources_read_to_backend(
@@ -7916,28 +8027,13 @@ async fn send_resources_read_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_resources_read_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP resources/read dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/read dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_resources_read_url(),
+        incoming_headers,
+        body,
+        "Backend MCP resources/read dispatch failed",
+    ).await
 }
 
 async fn send_resources_subscribe_to_backend(
@@ -7945,28 +8041,13 @@ async fn send_resources_subscribe_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_resources_subscribe_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP resources/subscribe dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/subscribe dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_resources_subscribe_url(),
+        incoming_headers,
+        body,
+        "Backend MCP resources/subscribe dispatch failed",
+    ).await
 }
 
 async fn send_resources_unsubscribe_to_backend(
@@ -7974,28 +8055,13 @@ async fn send_resources_unsubscribe_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_resources_unsubscribe_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP resources/unsubscribe dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/unsubscribe dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_resources_unsubscribe_url(),
+        incoming_headers,
+        body,
+        "Backend MCP resources/unsubscribe dispatch failed",
+    ).await
 }
 
 async fn send_resource_templates_list_to_backend(
@@ -8003,28 +8069,13 @@ async fn send_resource_templates_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_resource_templates_list_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP resources/templates/list dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP resources/templates/list dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_resource_templates_list_url(),
+        incoming_headers,
+        body,
+        "Backend MCP resources/templates/list dispatch failed",
+    ).await
 }
 
 async fn send_roots_list_to_backend(
@@ -8032,28 +8083,13 @@ async fn send_roots_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_roots_list_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP roots/list dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP roots/list dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_roots_list_url(),
+        incoming_headers,
+        body,
+        "Backend MCP roots/list dispatch failed",
+    ).await
 }
 
 async fn send_completion_complete_to_backend(
@@ -8061,28 +8097,13 @@ async fn send_completion_complete_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_completion_complete_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP completion/complete dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP completion/complete dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_completion_complete_url(),
+        incoming_headers,
+        body,
+        "Backend MCP completion/complete dispatch failed",
+    ).await
 }
 
 async fn send_sampling_create_message_to_backend(
@@ -8090,19 +8111,14 @@ async fn send_sampling_create_message_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_sampling_create_message_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP sampling/createMessage dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
+    validated_backend_post(
+        state,
+        state.backend_sampling_create_message_url(),
+        incoming_headers,
+        body,
+        "Backend MCP sampling/createMessage dispatch failed",
+    ).await
+}
                     "id": Value::Null,
                     "error": {
                         "code": -32000,
@@ -8119,28 +8135,13 @@ async fn send_logging_set_level_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_logging_set_level_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP logging/setLevel dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP logging/setLevel dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_logging_set_level_url(),
+        incoming_headers,
+        body,
+        "Backend MCP logging/setLevel dispatch failed",
+    ).await
 }
 
 async fn send_prompts_list_to_backend(
@@ -8148,28 +8149,13 @@ async fn send_prompts_list_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_prompts_list_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP prompts/list dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP prompts/list dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_prompts_list_url(),
+        incoming_headers,
+        body,
+        "Backend MCP prompts/list dispatch failed",
+    ).await
 }
 
 async fn send_prompts_get_to_backend(
@@ -8177,18 +8163,14 @@ async fn send_prompts_get_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_prompts_get_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP prompts/get dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
+    validated_backend_post(
+        state,
+        state.backend_prompts_get_url(),
+        incoming_headers,
+        body,
+        "Backend MCP prompts/get dispatch failed",
+    ).await
+}
                     "jsonrpc": JSONRPC_VERSION,
                     "id": Value::Null,
                     "error": {
@@ -8457,28 +8439,13 @@ async fn send_tools_call_to_backend(
     incoming_headers: HeaderMap,
     body: Bytes,
 ) -> Result<reqwest::Response, Response> {
-    state
-        .client
-        .post(state.backend_tools_call_url())
-        .headers(build_forwarded_headers(&incoming_headers))
-        .body(body)
-        .send()
-        .await
-        .map_err(|err| {
-            error!("backend MCP tools/call dispatch failed: {err}");
-            json_response(
-                StatusCode::BAD_GATEWAY,
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": Value::Null,
-                    "error": {
-                        "code": -32000,
-                        "message": "Backend MCP tools/call dispatch failed",
-                        "data": CLIENT_ERROR_DETAIL,
-                    }
-                }),
-            )
-        })
+    validated_backend_post(
+        state,
+        state.backend_tools_call_url(),
+        incoming_headers,
+        body,
+        "Backend MCP tools/call dispatch failed",
+    ).await
 }
 
 async fn send_tools_call_metric_to_backend(
@@ -8486,9 +8453,16 @@ async fn send_tools_call_metric_to_backend(
     incoming_headers: &HeaderMap,
     payload: &ToolsCallMetricRecordRequest,
 ) -> Result<(), String> {
+    // 🔒 SSRF PROTECTION: Validate URL before request
+    let backend_url = state.backend_tools_call_metric_url();
+    if let Err(e) = state.url_validator.validate_url(backend_url, "Backend URL").await {
+        error!("SSRF protection blocked request to {}: {}", backend_url, e);
+        return Err(format!("Invalid backend URL: {}", e));
+    }
+
     let response = state
         .client
-        .post(state.backend_tools_call_metric_url())
+        .post(backend_url)
         .headers(build_forwarded_headers(incoming_headers))
         .json(payload)
         .send()

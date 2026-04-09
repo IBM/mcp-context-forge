@@ -343,6 +343,77 @@ Coverage guidance:
 - use runtime-local `coverage` when you are explicitly improving Rust crate
   coverage
 
+## Security Testing
+
+The Rust MCP runtime includes comprehensive security tests to validate SSRF protection, URL validation, and deserialization hardening.
+
+### Running Security Tests
+
+```bash
+cd tools_rust/mcp_runtime
+cargo test --test security_tests
+```
+
+This runs the full security test suite covering:
+- **SSRF Protection**: Cloud metadata endpoint blocking, private network blocking, localhost blocking
+- **URL Validation**: Scheme validation, dangerous protocol blocking, CRLF injection prevention
+- **XSS Prevention**: HTML tag and script pattern detection
+- **Configuration Modes**: Strict (production) vs permissive (development)
+
+### Selective Security Test Execution
+
+Run specific test categories:
+
+```bash
+# Test SSRF protection only
+cargo test --test security_tests ssrf
+
+# Test URL validation only
+cargo test --test security_tests url_validation
+
+# Test configuration behavior
+cargo test --test security_tests config
+```
+
+### When to Run Security Tests
+
+Run security tests when:
+- Changing `url_validator.rs` or security-related code
+- Modifying backend HTTP request handling
+- Updating SSRF configuration or defaults
+- Adding new HTTP client calls
+- Before merging security-related PRs
+
+### Security Test Coverage Expectations
+
+The security test suite includes:
+- **75+ test cases** covering:
+  - SSRF attack scenarios (cloud metadata, private networks, localhost)
+  - All dangerous URL schemes (javascript:, data:, file:, vbscript:)
+  - IPv6 blocking
+  - CRLF injection attempts
+  - Credential exposure in URLs
+  - XSS pattern detection
+  - Configuration permutations (strict, permissive, development)
+  - Real-world scenarios (production vs development backends)
+
+### Verifying SSRF Protection in Integration Tests
+
+When validating SSRF protection in compose-backed tests:
+
+```bash
+# Start stack in Rust mode with strict SSRF protection
+make testing-rebuild-rust-full
+
+# Verify backend URL validation is active
+# (These should be rejected by SSRF protection if misconfigured)
+curl -X POST http://localhost:8080/_internal/mcp/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{"test": "request"}'
+```
+
+The runtime logs should show SSRF protection activity when invalid URLs are detected.
+
 ## Benchmarking
 
 Benchmark from the repository root against a compose-backed testing stack.
