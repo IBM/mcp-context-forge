@@ -280,8 +280,14 @@ class CircuitBreakerPlugin(Plugin):
                 st.half_open_started = 0.0  # Clear probe start time
                 st.open_until = now + max(1, int(cfg.cooldown_seconds))
                 try:
+                    from mcpgateway.config import settings
                     from mcpgateway.services.metrics import circuit_breaker_open_counter
-                    circuit_breaker_open_counter.labels(tool_name=tool).inc()
+                    # Note: server_id not available in plugin hook context
+                    # Use placeholder value for graceful degradation when feature is enabled
+                    if settings.prometheus_server_scoped_metrics:
+                        circuit_breaker_open_counter.labels(tool_name=tool, server_id="unknown").inc()
+                    else:
+                        circuit_breaker_open_counter.labels(tool_name=tool).inc()
                 except Exception:
                     pass
         else:
@@ -309,8 +315,14 @@ class CircuitBreakerPlugin(Plugin):
             if should_open:
                 st.open_until = now + max(1, int(cfg.cooldown_seconds))
                 try:
+                    from mcpgateway.config import settings
                     from mcpgateway.services.metrics import circuit_breaker_open_counter
-                    circuit_breaker_open_counter.labels(tool_name=tool).inc()
+                    # Note: server_id not available in plugin hook context
+                    # Use placeholder value for graceful degradation when feature is enabled
+                    if settings.prometheus_server_scoped_metrics:
+                        circuit_breaker_open_counter.labels(tool_name=tool, server_id="unknown").inc()
+                    else:
+                        circuit_breaker_open_counter.labels(tool_name=tool).inc()
                 except Exception:
                     pass
 

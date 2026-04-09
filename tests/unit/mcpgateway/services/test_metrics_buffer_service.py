@@ -220,7 +220,7 @@ class TestImmediateWritesWhenDisabled:
         with patch.object(service, "_write_tool_metric_with_duration_immediately") as mock_write:
             service.record_tool_metric_with_duration("tool-1", 0.25, True, None)
 
-        mock_write.assert_called_once_with("tool-1", 0.25, True, None)
+        mock_write.assert_called_once_with("tool-1", 0.25, True, None, None)
 
     def test_server_metric_with_duration_immediate_write_called(self):
         """record_server_metric_with_duration should call immediate write when disabled."""
@@ -644,8 +644,8 @@ def test_flush_to_db_writes_batches(monkeypatch):
 
     monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: DummySession())
 
-    tool_metric = SimpleNamespace(tool_id="t1", timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
-    resource_metric = SimpleNamespace(resource_id="r1", timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
+    tool_metric = SimpleNamespace(tool_id="t1", server_id=None, timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
+    resource_metric = SimpleNamespace(resource_id="r1", server_id=None, timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
 
     service._flush_to_db([tool_metric], [resource_metric], [], [], [])
     assert holder["db"].committed is True
@@ -683,11 +683,11 @@ def test_flush_to_db_writes_all_metric_types(monkeypatch):
 
     monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: DummySession())
 
-    tool_metric = SimpleNamespace(tool_id="t1", timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
-    resource_metric = SimpleNamespace(resource_id="r1", timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
-    prompt_metric = SimpleNamespace(prompt_id="p1", timestamp=time.time(), response_time=0.3, is_success=True, error_message=None)
+    tool_metric = SimpleNamespace(tool_id="t1", server_id=None, timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
+    resource_metric = SimpleNamespace(resource_id="r1", server_id=None, timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
+    prompt_metric = SimpleNamespace(prompt_id="p1", server_id=None, timestamp=time.time(), response_time=0.3, is_success=True, error_message=None)
     server_metric = SimpleNamespace(server_id="s1", timestamp=time.time(), response_time=0.4, is_success=True, error_message=None)
-    a2a_metric = SimpleNamespace(a2a_agent_id="a1", timestamp=time.time(), response_time=0.5, is_success=True, interaction_type="invoke", error_message=None)
+    a2a_metric = SimpleNamespace(a2a_agent_id="a1", server_id=None, timestamp=time.time(), response_time=0.5, is_success=True, interaction_type="invoke", error_message=None)
 
     service._flush_to_db([tool_metric], [resource_metric], [prompt_metric], [server_metric], [a2a_metric])
 

@@ -101,6 +101,7 @@ class HourlyAggregation:
     p95_response_time: Optional[float]
     p99_response_time: Optional[float]
     interaction_type: Optional[str] = None  # For A2A agents
+    server_id: Optional[str] = None  # For server-scoped metrics
 
 
 class MetricsRollupService:
@@ -593,6 +594,11 @@ class MetricsRollupService:
                     entity_name_attr,
                 ]
 
+                # Add server_id for server-scoped metrics (nullable for legacy/admin invocations)
+                if hasattr(raw_model, "server_id"):
+                    select_cols.append(raw_model.server_id.label("server_id"))  # pragma: no cover - Requires PostgreSQL integration tests
+                    group_by_cols.append(raw_model.server_id)  # pragma: no cover - Requires PostgreSQL integration tests
+
                 if is_a2a:
                     select_cols.append(raw_model.interaction_type.label("interaction_type"))
                     group_by_cols.append(raw_model.interaction_type)
@@ -632,14 +638,19 @@ class MetricsRollupService:
                             p95_response_time=row.p95_rt,
                             p99_response_time=row.p99_rt,
                             interaction_type=row.interaction_type if is_a2a else None,
+                            server_id=row.server_id if hasattr(row, "server_id") else None,
                         )
                     )
             else:
                 # Build group by columns
+                group_cols = [entity_id_attr]
+
+                # Add server_id for server-scoped metrics (nullable for legacy/admin invocations)
+                if hasattr(raw_model, "server_id"):
+                    group_cols.append(raw_model.server_id)  # pragma: no cover - Requires PostgreSQL integration tests
+
                 if is_a2a:
-                    group_cols = [entity_id_attr, raw_model.interaction_type]
-                else:
-                    group_cols = [entity_id_attr]
+                    group_cols.append(raw_model.interaction_type)
 
                 # Time filter for this hour
                 time_filter = and_(
@@ -663,14 +674,28 @@ class MetricsRollupService:
                 )
 
                 # Store aggregation results by entity key
+                # Row structure depends on group_cols: [entity_id, server_id?, interaction_type?]
+                has_server_id = hasattr(raw_model, "server_id")
                 agg_results = {}
                 for row in db.execute(agg_query).yield_per(settings.yield_batch_size):
                     entity_id = row[0]
-                    interaction_type = row[1] if is_a2a else None
-                    key = (entity_id, interaction_type) if is_a2a else entity_id
+                    col_idx = 1
+
+                    server_id = None
+                    if has_server_id:
+                        server_id = row[col_idx]  # pragma: no cover - Requires PostgreSQL integration tests
+                        col_idx += 1  # pragma: no cover - Requires PostgreSQL integration tests
+
+                    interaction_type = None
+                    if is_a2a:
+                        interaction_type = row[col_idx]
+
+                    # Build composite key: (entity_id, server_id, interaction_type)
+                    key = (entity_id, server_id, interaction_type)
 
                     agg_results[key] = {
                         "entity_id": entity_id,
+                        "server_id": server_id,
                         "interaction_type": interaction_type,
                         "total_count": row.total_count or 0,
                         "success_count": row.success_count or 0,
@@ -704,9 +729,21 @@ class MetricsRollupService:
                 response_times_by_entity: Dict[Any, List[float]] = {}
                 for row in db.execute(rt_query).yield_per(settings.yield_batch_size):
                     entity_id = row[0]
-                    interaction_type = row[1] if is_a2a else None
-                    key = (entity_id, interaction_type) if is_a2a else entity_id
-                    rt = row.response_time if not is_a2a else row[2]
+                    col_idx = 1
+
+                    server_id = None
+                    if has_server_id:
+                        server_id = row[col_idx]  # pragma: no cover - Requires PostgreSQL integration tests
+                        col_idx += 1  # pragma: no cover - Requires PostgreSQL integration tests
+
+                    interaction_type = None
+                    if is_a2a:
+                        interaction_type = row[col_idx]
+                        col_idx += 1
+
+                    key = (entity_id, server_id, interaction_type)
+                    # response_time is always the last column after entity_id, server_id (optional), interaction_type (optional)
+                    rt = row[col_idx]
 
                     if key not in response_times_by_entity:
                         response_times_by_entity[key] = []
@@ -717,6 +754,7 @@ class MetricsRollupService:
                 aggregations = []
                 for key, agg in agg_results.items():
                     entity_id = agg["entity_id"]
+                    server_id = agg.get("server_id")
                     interaction_type = agg["interaction_type"]
 
                     # Get entity name
@@ -748,6 +786,7 @@ class MetricsRollupService:
                             p95_response_time=p95_rt,
                             p99_response_time=p99_rt,
                             interaction_type=interaction_type,
+                            server_id=server_id,
                         )
                     )
             return aggregations
@@ -826,6 +865,12 @@ class MetricsRollupService:
             # Normalizing
             hour_start = agg.hour_start.replace(minute=0, second=0, microsecond=0)
 
+            # IMPORTANT: Use empty string as sentinel for NULL server_id
+            # SQLite's ON CONFLICT doesn't match NULL values (NULL != NULL),
+            # causing duplicate inserts. Empty string provides a concrete value
+            # that can match in the unique constraint.
+            rollup_server_id = agg.server_id if agg.server_id else ""
+
             values = {
                 entity_id_col: agg.entity_id,
                 name_col: agg.entity_name,
@@ -841,6 +886,11 @@ class MetricsRollupService:
                 "p99_response_time": agg.p99_response_time,
             }
 
+            # Only add server_id if it's not already the entity column
+            # (for server_metrics_hourly, entity_id_col IS "server_id")
+            if entity_id_col != "server_id":
+                values["server_id"] = rollup_server_id
+
             if is_a2a:
                 values["interaction_type"] = agg.interaction_type
 
@@ -849,6 +899,11 @@ class MetricsRollupService:
                 getattr(hourly_model, entity_id_col),
                 hourly_model.hour_start,
             ]
+
+            # Only add server_id if it's not already the entity column
+            # (for server_metrics_hourly, entity_id_col IS "server_id")
+            if entity_id_col != "server_id":
+                conflict_cols.insert(1, hourly_model.server_id)
 
             if is_a2a:
                 conflict_cols.append(hourly_model.interaction_type)
@@ -869,7 +924,7 @@ class MetricsRollupService:
                 # PostgreSQL
                 # =======================
                 stmt = pg_insert(hourly_model).values(**values)
-                update_cols = {k: stmt.excluded[k] for k in values if k not in (entity_id_col, "hour_start", "interaction_type")}
+                update_cols = {k: stmt.excluded[k] for k in values if k not in (entity_id_col, "server_id", "hour_start", "interaction_type")}
                 stmt = stmt.on_conflict_do_update(
                     index_elements=conflict_cols,
                     set_=update_cols,
@@ -884,7 +939,7 @@ class MetricsRollupService:
                 # =======================
                 stmt = sqlite_insert(hourly_model).values(**values)
 
-                update_cols = {k: stmt.excluded[k] for k in values if k not in (entity_id_col, "hour_start", "interaction_type")}
+                update_cols = {k: stmt.excluded[k] for k in values if k not in (entity_id_col, "server_id", "hour_start", "interaction_type")}
 
                 stmt = stmt.on_conflict_do_update(
                     index_elements=conflict_cols,
@@ -921,6 +976,7 @@ class MetricsRollupService:
 
                 filters = [
                     entity_id_attr == agg.entity_id,
+                    hourly_model.server_id == agg.server_id,
                     hourly_model.hour_start == hour_start,
                 ]
 
@@ -930,7 +986,7 @@ class MetricsRollupService:
                 existing = db.execute(select(hourly_model).where(and_(*filters))).scalar_one()
 
                 for key, value in values.items():
-                    if key not in (entity_id_col, "hour_start", "interaction_type"):
+                    if key not in (entity_id_col, "server_id", "hour_start", "interaction_type"):
                         setattr(existing, key, value)
 
                 return (0, 1)

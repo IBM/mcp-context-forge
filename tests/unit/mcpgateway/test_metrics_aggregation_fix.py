@@ -50,7 +50,7 @@ def test_metrics_summary_with_only_raw_metrics(test_db, test_tool):
 
     # Get metrics summary
     test_db.refresh(test_tool)
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     assert summary["total_executions"] == 3
     assert summary["successful_executions"] == 2
@@ -83,7 +83,7 @@ def test_metrics_summary_with_only_hourly_metrics(test_db, test_tool):
 
     # Get metrics summary
     test_db.refresh(test_tool)
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     assert summary["total_executions"] == 100
     assert summary["successful_executions"] == 95
@@ -143,7 +143,7 @@ def test_metrics_summary_with_both_raw_and_hourly(test_db, test_tool):
 
     # Get metrics summary
     test_db.refresh(test_tool)
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     # Total counts: 100 (hourly) + 3 (current hour raw) = 103
     # The 2 old raw metrics should NOT be counted (would be double-counting)
@@ -210,7 +210,7 @@ def test_no_double_counting_when_rollup_done_but_cleanup_pending(test_db, test_t
 
     # Get metrics summary
     test_db.refresh(test_tool)
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     # Should be 50 (hourly) + 1 (current hour) = 51
     # NOT 50 + 2 (old raw) + 1 (current raw) = 53
@@ -244,7 +244,7 @@ def test_metrics_summary_with_multiple_hourly_buckets(test_db, test_tool):
 
     # Get metrics summary
     test_db.refresh(test_tool)
-    summary = test_tool.metrics_summary
+    summary = test_tool.metrics_summary()
 
     assert summary["total_executions"] == 30  # 10 * 3
     assert summary["successful_executions"] == 24  # 8 * 3

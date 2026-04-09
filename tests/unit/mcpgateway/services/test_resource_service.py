@@ -487,7 +487,7 @@ class TestResourceListing:
 
         assert resources == ["converted_resource_with_metrics"]
         # Verify convert_resource_to_read was called with include_metrics=True
-        resource_service.convert_resource_to_read.assert_called_once_with(mock_resource, include_metrics=True)
+        resource_service.convert_resource_to_read.assert_called_once_with(mock_resource, include_metrics=True, server_id="server123")
 
     @pytest.mark.asyncio
     async def test_list_resources_cache_hit_returns_cached(self, resource_service, mock_db):
@@ -4652,8 +4652,8 @@ class TestConvertResourceToReadMetrics:
             created_by="user@test.com",
             modified_by="user@test.com",
             _sa_instance_state=MagicMock(),
-            # Mock metrics_summary property (matches new implementation)
-            metrics_summary={
+            # Mock metrics_summary method (matches new implementation)
+            metrics_summary=lambda server_id=None: {
                 "total_executions": 2,
                 "successful_executions": 1,
                 "failed_executions": 1,
@@ -4698,8 +4698,8 @@ class TestConvertResourceToReadMetrics:
             created_by="user@test.com",
             modified_by="user@test.com",
             _sa_instance_state=MagicMock(),
-            # Mock metrics_summary property (matches new implementation)
-            metrics_summary={
+            # Mock metrics_summary method (matches new implementation)
+            metrics_summary=lambda server_id=None: {
                 "total_executions": 0,
                 "successful_executions": 0,
                 "failed_executions": 0,

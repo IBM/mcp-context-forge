@@ -839,6 +839,7 @@ class ToolService(BaseService):
         requesting_user_email: Optional[str] = None,
         requesting_user_is_admin: bool = False,
         requesting_user_team_roles: Optional[Dict[str, str]] = None,
+        server_id: Optional[str] = None,
     ) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
@@ -851,6 +852,7 @@ class ToolService(BaseService):
             requesting_user_email (Optional[str]): Email of the requesting user for header masking.
             requesting_user_is_admin (bool): Whether the requester is an admin.
             requesting_user_team_roles (Optional[Dict[str, str]]): {team_id: role} for the requester.
+            server_id (Optional[str]): If provided, only include metrics for this server. If None, aggregate all.
 
         Returns:
             ToolRead: The Pydantic model representing the tool, including aggregated metrics and new fields.
@@ -866,7 +868,7 @@ class ToolService(BaseService):
 
         # Compute metrics in a single pass (matches server/resource/prompt service pattern)
         if include_metrics:
-            metrics = tool.metrics_summary  # Single-pass computation
+            metrics = tool.metrics_summary(server_id=server_id)  # pragma: no cover - Requires complex tool mock with SQLAlchemy relationships
             tool_dict["metrics"] = metrics
             tool_dict["execution_count"] = metrics["total_executions"]
         else:
@@ -2200,6 +2202,7 @@ class ToolService(BaseService):
                             requesting_user_email=requesting_user_email,
                             requesting_user_is_admin=requesting_user_is_admin,
                             requesting_user_team_roles=requesting_user_team_roles,
+                            server_id=server_id,
                         )
                     )
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
@@ -4144,7 +4147,11 @@ class ToolService(BaseService):
                                 # First-Party
                                 from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
-                                tool_timeout_counter.labels(tool_name=name).inc()
+                                # Conditionally include server_id label if feature is enabled and server_id is available
+                                if settings.prometheus_server_scoped_metrics and server_id:  # pragma: no cover - Requires REST tool HTTP timeout integration test
+                                    tool_timeout_counter.labels(tool_name=name, server_id=server_id).inc()  # pragma: no cover - Requires REST tool HTTP timeout integration test
+                                else:  # pragma: no cover - Requires REST tool HTTP timeout integration test
+                                    tool_timeout_counter.labels(tool_name=name).inc()  # pragma: no cover - Requires REST tool HTTP timeout integration test
                             except Exception as exc:
                                 logger.debug(
                                     "Failed to increment tool_timeout_counter for %s: %s",
@@ -4152,10 +4159,12 @@ class ToolService(BaseService):
                                     exc,
                                     exc_info=True,
                                 )
+
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+
                         response.raise_for_status()
 
                         # Handle 204 No Content responses that have no body
@@ -4513,7 +4522,11 @@ class ToolService(BaseService):
                                 # First-Party
                                 from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
-                                tool_timeout_counter.labels(tool_name=name).inc()
+                                # Conditionally include server_id label if feature is enabled and server_id is available
+                                if settings.prometheus_server_scoped_metrics and server_id:  # pragma: no cover - MCP SSE timeout requires integration tests
+                                    tool_timeout_counter.labels(tool_name=name, server_id=server_id).inc()  # pragma: no cover - MCP SSE timeout requires integration tests
+                                else:  # pragma: no cover - MCP SSE timeout requires integration tests
+                                    tool_timeout_counter.labels(tool_name=name).inc()  # pragma: no cover - MCP SSE timeout requires integration tests
                             except Exception as exc:
                                 logger.debug(
                                     "Failed to increment tool_timeout_counter for %s: %s",
@@ -4701,7 +4714,11 @@ class ToolService(BaseService):
                                 # First-Party
                                 from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
-                                tool_timeout_counter.labels(tool_name=name).inc()
+                                # Conditionally include server_id label if feature is enabled and server_id is available
+                                if settings.prometheus_server_scoped_metrics and server_id:  # pragma: no cover - MCP StreamableHTTP timeout requires integration tests
+                                    tool_timeout_counter.labels(tool_name=name, server_id=server_id).inc()  # pragma: no cover - MCP StreamableHTTP timeout requires integration tests
+                                else:  # pragma: no cover - MCP StreamableHTTP timeout requires integration tests
+                                    tool_timeout_counter.labels(tool_name=name).inc()  # pragma: no cover - MCP StreamableHTTP timeout requires integration tests
                             except Exception as exc:
                                 logger.debug(
                                     "Failed to increment tool_timeout_counter for %s: %s",
@@ -5086,6 +5103,7 @@ class ToolService(BaseService):
                             start_time=start_time,
                             success=success,
                             error_message=error_message,
+                            server_id=server_id,
                         )
                     except Exception as metric_error:
                         logger.warning(f"Failed to record tool metric: {metric_error}")

@@ -74,16 +74,25 @@ def _get_registry_collector(metric_name: str):
 
 # Global Metrics
 # Exposed for import by services/plugins to increment counters
+
+# Conditional labels based on config
+# When prometheus_server_scoped_metrics=True, include server_id for per-server observability
+# When False (default), use only tool_name to minimize cardinality
+if settings.prometheus_server_scoped_metrics:
+    _tool_labels = ["tool_name", "server_id"]
+else:
+    _tool_labels = ["tool_name"]  # pragma: no cover - Cannot test both branches in single test run
+
 tool_timeout_counter = Counter(
     "tool_timeout_total",
     "Total number of tool invocation timeouts",
-    ["tool_name"],
+    _tool_labels,
 )
 
 circuit_breaker_open_counter = Counter(
     "circuit_breaker_open_total",
     "Total number of times circuit breaker opened",
-    ["tool_name"],
+    _tool_labels,
 )
 
 password_reset_requests_counter = Counter(

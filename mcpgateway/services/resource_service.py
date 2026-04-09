@@ -273,7 +273,7 @@ class ResourceService(BaseService):
 
         return top_performers
 
-    def convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False) -> ResourceRead:
+    def convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False, server_id: Optional[str] = None) -> ResourceRead:
         """
         Converts a DbResource instance into a ResourceRead model, optionally including aggregated metrics.
 
@@ -281,6 +281,7 @@ class ResourceService(BaseService):
             resource (DbResource): The ORM instance of the resource.
             include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
+            server_id (Optional[str]): If provided, only include metrics for this server. If None, aggregate all.
 
         Returns:
             ResourceRead: The Pydantic model representing the resource, optionally including aggregated metrics.
@@ -293,12 +294,13 @@ class ResourceService(BaseService):
             >>> # Fake metrics
             >>> m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
             >>> m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
+            >>> metrics_data = {"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
+            ...                 "failure_rate": 0.5, "min_response_time": 0.1, "max_response_time": 0.3,
+            ...                 "avg_response_time": 0.2, "last_execution_time": now}
             >>> r = SimpleNamespace(
             ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
             ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2],
-            ...     metrics_summary={"total_executions": 2, "successful_executions": 1, "failed_executions": 1,
-            ...                      "failure_rate": 0.5, "min_response_time": 0.1, "max_response_time": 0.3,
-            ...                      "avg_response_time": 0.2, "last_execution_time": now}
+            ...     metrics_summary=lambda server_id=None: metrics_data
             ... )
             >>> out = svc.convert_resource_to_read(r, include_metrics=True)
             >>> out.metrics.total_executions
@@ -326,7 +328,7 @@ class ResourceService(BaseService):
         # Compute aggregated metrics from the resource's metrics list (only if requested)
         if include_metrics:
             # Use metrics_summary which combines raw + hourly rollup data (matches tool_service pattern)
-            metrics = resource.metrics_summary
+            metrics = resource.metrics_summary(server_id=server_id)
             resource_dict["metrics"] = {
                 "total_executions": metrics["total_executions"],
                 "successful_executions": metrics["successful_executions"],
@@ -1449,7 +1451,7 @@ class ResourceService(BaseService):
             for t in resources:
                 try:
                     t.team = team_map.get(str(t.team_id)) if t.team_id else None
-                    result.append(self.convert_resource_to_read(t, include_metrics=include_metrics))
+                    result.append(self.convert_resource_to_read(t, include_metrics=include_metrics, server_id=server_id))
                 except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                     logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
                     # Continue with remaining resources instead of failing completely
@@ -2536,6 +2538,7 @@ class ResourceService(BaseService):
                             start_time=start_time,
                             success=success,
                             error_message=error_message,
+                            server_id=server_id,
                         )
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
