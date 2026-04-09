@@ -1920,6 +1920,7 @@ testing:
       replicaCount: 1
     script:
       existingConfigMap: ""
+      file: ""                   # Path to locustfile inside chart (e.g. tests/locustfile_mcp_protocol_ocp.py)
       key: locustfile.py
       inline: |
         from locust import HttpUser, between, task

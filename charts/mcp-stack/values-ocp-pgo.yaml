@@ -410,5 +410,7 @@ testing:
     spawnRate: 30
     runTime: 60s
     expectWorkers: 3
+    script:
+      file: "tests/locustfile_mcp_protocol_ocp.py"
     worker:
       replicaCount: 3

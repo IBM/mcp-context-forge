@@ -164,8 +164,13 @@ metadata:
     app: {{ $fullName }}-locust
     app.kubernetes.io/component: loadtest
 data:
+  {{- if .Values.testing.locust.script.file }}
+  {{ .Values.testing.locust.script.key }}: |
+{{ .Files.Get .Values.testing.locust.script.file | nindent 4 }}
+  {{- else }}
   {{ .Values.testing.locust.script.key }}: |
 {{ .Values.testing.locust.script.inline | nindent 4 }}
+  {{- end }}
 {{- end }}
 
 {{- if .Values.testing.locust.enabled }}
