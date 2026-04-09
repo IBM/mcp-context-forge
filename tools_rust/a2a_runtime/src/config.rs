@@ -85,7 +85,7 @@ pub struct RuntimeConfig {
 
     /// Optional bounded queue depth.  When set, new submissions are
     /// rejected with 503 once the queue reaches this size.
-    #[arg(long, env = "A2A_RUST_MAX_QUEUED")]
+    #[arg(long, env = "A2A_RUST_MAX_QUEUED", default_value = "4096")]
     pub max_queued: Option<usize>,
 
     // --- Circuit breaker -----------------------------------------------
@@ -225,7 +225,7 @@ mod tests {
             auth_secret: None,
             backend_base_url: "http://127.0.0.1:4444".to_string(),
             max_concurrent: 64,
-            max_queued: None,
+            max_queued: Some(4096),
             circuit_failure_threshold: 5,
             circuit_cooldown_secs: 30,
             circuit_max_entries: 10_000,
@@ -286,6 +286,7 @@ mod tests {
         assert_eq!(config.listen_http, "127.0.0.1:8788");
         assert_eq!(config.request_timeout_ms, 30_000);
         assert_eq!(config.max_retries, 3);
+        assert_eq!(config.max_queued, Some(4096));
         assert_eq!(config.circuit_failure_threshold, 5);
         assert!(config.session_enabled);
         assert_eq!(config.event_store_max_events, 1000);

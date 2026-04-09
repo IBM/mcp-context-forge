@@ -187,21 +187,33 @@ impl EventStore {
             }
         };
 
+        if entries.is_empty() {
+            return vec![];
+        }
+
+        let event_ids: Vec<String> = entries.iter().map(|(event_id, _)| event_id.clone()).collect();
+        let payloads: Vec<Option<String>> = match redis::cmd("HMGET")
+            .arg(&messages_key)
+            .arg(&event_ids)
+            .query_async(&mut self.redis.conn())
+            .await
+        {
+            Ok(payloads) => payloads,
+            Err(e) => {
+                warn!(task_id, "failed to fetch replay payloads from Redis: {e}");
+                return vec![];
+            }
+        };
+
         let mut result = Vec::with_capacity(entries.len());
-        for (event_id, score) in entries {
-            let payload: String = self
-                .redis
-                .conn()
-                .hget(&messages_key, &event_id)
-                .await
-                .unwrap_or_default();
+        for ((event_id, score), payload) in entries.into_iter().zip(payloads.into_iter()) {
             result.push(StoredEvent {
                 event_id,
                 sequence: score as i64,
                 // Event type is not stored separately in the Redis ring buffer;
                 // callers should resolve the type from the payload if needed.
                 event_type: "unknown".to_string(),
-                payload,
+                payload: payload.unwrap_or_default(),
             });
         }
         result

@@ -20,6 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, mpsc, oneshot};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
 // ---------------------------------------------------------------------------
@@ -78,25 +79,21 @@ enum QueueMessage {
     },
 }
 
-/// Abstraction over bounded and unbounded senders so that [`init_queue`] can
-/// choose the variant based on `max_queued`.
+/// Abstraction over the queue sender.
 #[derive(Debug)]
 enum QueueSender {
     Bounded(mpsc::Sender<QueueMessage>),
-    Unbounded(mpsc::UnboundedSender<QueueMessage>),
 }
 
 impl QueueSender {
-    /// Non-blocking send.  Returns [`QueueError::Full`] when bounded and at
-    /// capacity, or [`QueueError::Shutdown`] when the receiver has been
-    /// dropped.
+    /// Non-blocking send.  Returns [`QueueError::Full`] when the queue is at
+    /// capacity, or [`QueueError::Shutdown`] when the receiver has been dropped.
     fn try_send(&self, msg: QueueMessage) -> Result<(), QueueError> {
         match self {
             QueueSender::Bounded(tx) => tx.try_send(msg).map_err(|e| match e {
                 mpsc::error::TrySendError::Full(_) => QueueError::Full,
                 mpsc::error::TrySendError::Closed(_) => QueueError::Shutdown,
             }),
-            QueueSender::Unbounded(tx) => tx.send(msg).map_err(|_| QueueError::Shutdown),
         }
     }
 }
@@ -263,41 +260,51 @@ async fn execute_job_batch(jobs: Vec<Job>, semaphore: &Arc<Semaphore>, state: &A
     // flattened index.
     let mut results: HashMap<usize, (Arc<Result<InvokeResult, String>>, Duration)> = HashMap::new();
 
-    for indices in groups.values() {
+    let mut join_set = JoinSet::new();
+    for indices in groups.into_values() {
         let representative_idx = indices[0];
-        let req = &entries[representative_idx].request;
+        let req = entries[representative_idx].request.clone();
         let timeout = jobs[entries[representative_idx].job_idx].timeout;
+        let semaphore = Arc::clone(semaphore);
+        let state = Arc::clone(state);
 
-        // Acquire a semaphore permit to bound concurrency.
-        let _permit = semaphore.acquire().await.expect("semaphore closed");
+        join_set.spawn(async move {
+            // Acquire a semaphore permit to bound concurrency.
+            let _permit = semaphore.acquire_owned().await.expect("semaphore closed");
 
-        let start = Instant::now();
-        let scope_id = req.scope_id.as_deref().unwrap_or("default");
-        let agent_key_fallback = req.endpoint_url.clone();
-        let agent_key = req.agent_name.as_deref().unwrap_or(&agent_key_fallback);
-        let ctx = InvokeContext {
-            circuit: &state.circuit,
-            metrics: &state.metrics,
-            scope_id,
-            agent_key,
-        };
+            let start = Instant::now();
+            let scope_id = req.scope_id.as_deref().unwrap_or("default");
+            let agent_key_fallback = req.endpoint_url.clone();
+            let agent_key = req.agent_name.as_deref().unwrap_or(&agent_key_fallback);
+            let ctx = InvokeContext {
+                circuit: &state.circuit,
+                metrics: &state.metrics,
+                scope_id,
+                agent_key,
+            };
 
-        let invoke_result = invoke::execute_invoke(
-            &state.client,
-            &state.config,
-            &req.endpoint_url,
-            &req.headers,
-            &req.json_body,
-            timeout,
-            Some(&ctx),
-        )
-        .await;
+            let invoke_result = invoke::execute_invoke(
+                &state.client,
+                &state.config,
+                &req.endpoint_url,
+                &req.headers,
+                &req.json_body,
+                timeout,
+                Some(&ctx),
+            )
+            .await;
 
-        let elapsed = start.elapsed();
-        let shared = Arc::new(invoke_result.map_err(|e| e.to_string()));
+            (
+                indices,
+                Arc::new(invoke_result.map_err(|e| e.to_string())),
+                start.elapsed(),
+            )
+        });
+    }
 
-        // Fan out the result to all entries sharing this request_id.
-        for &idx in indices {
+    while let Some(joined) = join_set.join_next().await {
+        let (indices, shared, elapsed) = joined.expect("queue worker task panicked");
+        for idx in indices {
             results.insert(idx, (Arc::clone(&shared), elapsed));
         }
     }
@@ -377,7 +384,7 @@ async fn drain_pending(
 ///   (enforced via a [`Semaphore`]).
 /// * `max_queued` — when `Some`, the internal channel is bounded to this
 ///   capacity; submissions that exceed it fail with [`QueueError::Full`].
-///   When `None`, the channel is unbounded.
+///   When `None`, a default bounded capacity is used.
 /// * `state` — shared handles for the HTTP client, configuration, circuit
 ///   breaker, and metrics collector.
 pub fn init_queue(max_concurrent: usize, max_queued: Option<usize>, state: Arc<WorkerState>) {
@@ -389,31 +396,9 @@ pub fn init_queue(max_concurrent: usize, max_queued: Option<usize>, state: Arc<W
             let (tx, rx) = mpsc::channel(capacity);
             (QueueSender::Bounded(tx), rx)
         } else {
-            // Unbounded: use an UnboundedSender that never applies
-            // back-pressure.  A bridge thread forwards messages into a
-            // regular bounded Receiver so the worker loop operates on a
-            // single concrete type.
-            let (utx, mut urx) = mpsc::unbounded_channel::<QueueMessage>();
             let (btx, brx) = mpsc::channel::<QueueMessage>(4096);
-
-            std::thread::Builder::new()
-                .name("a2a-queue-bridge".into())
-                .spawn(move || {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("failed to build bridge Tokio runtime");
-                    rt.block_on(async move {
-                        while let Some(msg) = urx.recv().await {
-                            if btx.send(msg).await.is_err() {
-                                break;
-                            }
-                        }
-                    });
-                })
-                .expect("failed to spawn queue bridge thread");
-
-            (QueueSender::Unbounded(utx), brx)
+            warn!("A2A queue running without an explicit bound; falling back to default cap of 4096 messages");
+            (QueueSender::Bounded(btx), brx)
         };
 
     SENDER

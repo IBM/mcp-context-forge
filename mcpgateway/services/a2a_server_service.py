@@ -33,6 +33,32 @@ from mcpgateway.db import ServerTaskMapping as DbServerTaskMapping
 logger = logging.getLogger(__name__)
 
 
+def _check_server_access(server: DbServer, user_email: Optional[str], token_teams: Optional[list[str]]) -> bool:
+    """Apply the standard scoped visibility rules to a virtual server."""
+    if server.visibility == "public":
+        return True
+
+    if token_teams is None and user_email is None:
+        return True
+
+    if not user_email:
+        return False
+
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+    if is_public_only_token:
+        return False
+
+    if server.visibility == "private" and server.owner_email and server.owner_email == user_email:
+        return True
+
+    if server.visibility == "team":
+        if token_teams is None:
+            return True
+        return server.team_id in token_teams
+
+    return False
+
+
 class A2AServerService:
     """Service for exposing virtual servers as A2A agents.
 
@@ -47,7 +73,14 @@ class A2AServerService:
         True
     """
 
-    def get_server_agent_card(self, db: Session, server_name: str) -> Optional[Dict[str, Any]]:
+    def get_server_agent_card(
+        self,
+        db: Session,
+        server_name: str,
+        *,
+        user_email: Optional[str] = None,
+        token_teams: Optional[list[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Build an A2A v1 AgentCard for a virtual server.
 
         Looks up the server by name (enabled=True), checks for an enabled
@@ -74,6 +107,8 @@ class A2AServerService:
         server_query = select(DbServer).where(DbServer.name == server_name, DbServer.enabled == True)  # noqa: E712
         server = db.execute(server_query).scalar_one_or_none()
         if not server:
+            return None
+        if not _check_server_access(server, user_email, token_teams):
             return None
 
         interface = self._find_a2a_interface(db, server.id)
@@ -109,7 +144,14 @@ class A2AServerService:
         }
         return card
 
-    def resolve_server_agent(self, db: Session, server_name: str) -> Optional[Dict[str, Any]]:
+    def resolve_server_agent(
+        self,
+        db: Session,
+        server_name: str,
+        *,
+        user_email: Optional[str] = None,
+        token_teams: Optional[list[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Resolve a virtual server's A2A agent endpoint for invocation.
 
         Returns a dict matching the ResolvedAgent format expected by the Rust
@@ -134,6 +176,8 @@ class A2AServerService:
         server_query = select(DbServer).where(DbServer.name == server_name, DbServer.enabled == True)  # noqa: E712
         server = db.execute(server_query).scalar_one_or_none()
         if not server:
+            return None
+        if not _check_server_access(server, user_email, token_teams):
             return None
 
         interface = self._find_a2a_interface(db, server.id)

@@ -8922,6 +8922,18 @@ async def _authorize_internal_a2a_method(
         db.close()
 
 
+def _get_internal_a2a_scope_context(request: Request) -> tuple[Optional[str], Optional[List[str]]]:
+    """Return scoped visibility context for trusted internal A2A requests."""
+    user = _build_internal_mcp_forwarded_user(request)
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+    if is_admin and token_teams is None:
+        return user_email, None
+    if token_teams is None:
+        return user_email, []
+    return user_email, token_teams
+
+
 @utility_router.post("/_internal/a2a/invoke/authz/")
 @utility_router.post("/_internal/a2a/invoke/authz")
 async def handle_internal_a2a_invoke_authz(request: Request):
@@ -8958,16 +8970,21 @@ async def handle_internal_a2a_agent_resolve(request: Request, agent_name: str):
     try:
         # First-Party
         from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
+        service = A2AAgentService()
         agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True).first()  # noqa: E712
         if not agent:
             # First-Party
             from mcpgateway.services.a2a_server_service import A2AServerService  # pylint: disable=import-outside-toplevel
 
             server_service = A2AServerService()
-            server_agent = server_service.resolve_server_agent(db, agent_name)
+            server_agent = server_service.resolve_server_agent(db, agent_name, user_email=user_email, token_teams=token_teams)
             if server_agent:
                 return ORJSONResponse(status_code=200, content=server_agent)
+            return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
+        if not service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
             return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
 
         result = {
@@ -9011,14 +9028,22 @@ async def handle_internal_a2a_agent_card(request: Request, agent_name: str):
         # First-Party
         from mcpgateway.services.a2a_service import A2AAgentService  # pylint: disable=import-outside-toplevel
 
+        user_email, token_teams = _get_internal_a2a_scope_context(request)
         service = A2AAgentService()
         card = service.get_agent_card(db, agent_name)
+        if card is not None:
+            # Re-read the agent for scoped access enforcement before returning its card.
+            from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
+
+            agent = db.query(DbA2AAgent).filter(DbA2AAgent.name == agent_name, DbA2AAgent.enabled == True).first()  # noqa: E712
+            if agent is None or not service._check_agent_access(agent, user_email, token_teams):  # pylint: disable=protected-access
+                card = None
         if card is None:
             # First-Party
             from mcpgateway.services.a2a_server_service import A2AServerService  # pylint: disable=import-outside-toplevel
 
             server_service = A2AServerService()
-            card = server_service.get_server_agent_card(db, agent_name)
+            card = server_service.get_server_agent_card(db, agent_name, user_email=user_email, token_teams=token_teams)
         if card is None:
             return ORJSONResponse(status_code=404, content={"error": f"agent '{agent_name}' not found"})
         return ORJSONResponse(status_code=200, content=card)

@@ -25,11 +25,14 @@ Coverage strategy
 from __future__ import annotations
 
 # Standard
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi.testclient import TestClient
 import pytest
+
+# First-Party
+from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -132,6 +135,28 @@ class TestTasksGetTrusted:
         mock_get_task.return_value = None
         resp = client.post("/_internal/a2a/tasks/get", json={"task_id": "missing"})
         assert resp.status_code == 404
+
+
+class TestInternalA2AAuthzTrusted:
+    """Trusted authz routes should preserve the MCP authz behavior contract."""
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch("mcpgateway.main._authorize_internal_mcp_request", new_callable=AsyncMock)
+    def test_get_authz_returns_204_on_success(self, mock_authorize, _mock_trust, client):
+        resp = client.post("/_internal/a2a/get/authz", json={})
+        assert resp.status_code == 204
+        mock_authorize.assert_awaited_once()
+
+    @patch(_TRUST_PATH, return_value=True)
+    @patch(
+        "mcpgateway.main._authorize_internal_mcp_request",
+        new_callable=AsyncMock,
+        side_effect=JSONRPCError(-32003, "Access denied", {"method": "a2a/get"}),
+    )
+    def test_list_authz_maps_jsonrpc_error_to_403(self, _mock_authorize, _mock_trust, client):
+        resp = client.post("/_internal/a2a/list/authz", json={})
+        assert resp.status_code == 403
+        assert resp.json()["message"] == "Access denied"
 
 
 class TestTasksListTrusted:
@@ -290,8 +315,12 @@ class TestAgentResolveTrusted:
     """agents/{name}/resolve returns 200 when agent found, 404 when not."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch(
+        "mcpgateway.main._build_internal_mcp_forwarded_user",
+        return_value={"email": "user@example.com", "teams": ["team-a"], "is_admin": False},
+    )
     @patch("mcpgateway.db.A2AAgent")
-    def test_agent_not_found_returns_404(self, _mock_db_agent, _mock_trust, client):
+    def test_agent_not_found_returns_404(self, _mock_db_agent, _mock_user, _mock_trust, client):
         """When the DB has no match and server service also finds nothing, expect 404."""
         with patch("mcpgateway.main.SessionLocal") as mock_session_local:
             mock_db = MagicMock()
@@ -304,7 +333,11 @@ class TestAgentResolveTrusted:
         assert resp.status_code == 404
 
     @patch(_TRUST_PATH, return_value=True)
-    def test_agent_found_in_db_returns_200(self, _mock_trust, client):
+    @patch(
+        "mcpgateway.main._build_internal_mcp_forwarded_user",
+        return_value={"email": "user@example.com", "teams": ["team-a"], "is_admin": False},
+    )
+    def test_agent_found_in_db_returns_200(self, _mock_user, _mock_trust, client):
         """When a DB agent is found it is returned as JSON with 200."""
         mock_agent = MagicMock()
         mock_agent.id = "agent-id-1"
@@ -315,6 +348,10 @@ class TestAgentResolveTrusted:
         mock_agent.auth_type = None
         mock_agent.auth_value = None
         mock_agent.auth_query_params = None
+        mock_agent.visibility = "public"
+        mock_agent.owner_email = None
+        mock_agent.team_id = None
+        mock_agent.enabled = True
 
         with patch("mcpgateway.main.SessionLocal") as mock_session_local:
             mock_db = MagicMock()
@@ -328,23 +365,69 @@ class TestAgentResolveTrusted:
         assert data["name"] == "my-agent"
         assert data["agent_type"] == "generic"
 
+    @patch(_TRUST_PATH, return_value=True)
+    @patch(
+        "mcpgateway.main._build_internal_mcp_forwarded_user",
+        return_value={"email": "intruder@example.com", "teams": ["team-b"], "is_admin": False},
+    )
+    def test_private_agent_outside_scope_returns_404(self, _mock_user, _mock_trust, client):
+        mock_agent = MagicMock()
+        mock_agent.id = "agent-id-2"
+        mock_agent.name = "private-agent"
+        mock_agent.endpoint_url = "https://agent.example.com/private"
+        mock_agent.agent_type = "generic"
+        mock_agent.protocol_version = "1.0"
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.visibility = "private"
+        mock_agent.owner_email = "owner@example.com"
+        mock_agent.team_id = "team-a"
+        mock_agent.enabled = True
+
+        with patch("mcpgateway.main.SessionLocal") as mock_session_local:
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+            mock_session_local.return_value = mock_db
+
+            resp = client.post("/_internal/a2a/agents/private-agent/resolve", json={})
+
+        assert resp.status_code == 404
+
 
 class TestAgentCardTrusted:
     """agents/{name}/card returns 200 when agent card found, 404 when not."""
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch(
+        "mcpgateway.main._build_internal_mcp_forwarded_user",
+        return_value={"email": "user@example.com", "teams": ["team-a"], "is_admin": False},
+    )
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card")
     @patch("mcpgateway.services.a2a_server_service.A2AServerService.get_server_agent_card")
-    def test_card_not_found_returns_404(self, mock_server_card, mock_card, _mock_trust, client):
+    def test_card_not_found_returns_404(self, mock_server_card, mock_card, _mock_user, _mock_trust, client):
         mock_card.return_value = None
         mock_server_card.return_value = None
         resp = client.post("/_internal/a2a/agents/unknown-agent/card", json={})
         assert resp.status_code == 404
 
     @patch(_TRUST_PATH, return_value=True)
+    @patch(
+        "mcpgateway.main._build_internal_mcp_forwarded_user",
+        return_value={"email": "user@example.com", "teams": ["team-a"], "is_admin": False},
+    )
     @patch("mcpgateway.services.a2a_service.A2AAgentService.get_agent_card")
-    def test_card_found_returns_200(self, mock_card, _mock_trust, client):
+    @patch("mcpgateway.main.SessionLocal")
+    def test_card_found_returns_200(self, mock_session_local, mock_card, _mock_user, _mock_trust, client):
         mock_card.return_value = {"name": "my-agent", "url": "https://agent.example.com"}
+        mock_agent = MagicMock()
+        mock_agent.visibility = "public"
+        mock_agent.owner_email = None
+        mock_agent.team_id = None
+        mock_agent.enabled = True
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_agent
+        mock_session_local.return_value = mock_db
         resp = client.post("/_internal/a2a/agents/my-agent/card", json={})
         assert resp.status_code == 200
         assert resp.json()["name"] == "my-agent"

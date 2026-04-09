@@ -176,6 +176,58 @@ fn extract_headers(headers: &HeaderMap) -> HashMap<String, String> {
         .collect()
 }
 
+/// Map a public A2A method to the internal authz action used by Python.
+fn authz_action_for_method(method: Option<&str>) -> &'static str {
+    match method {
+        Some(
+            "GetTask"
+            | "tasks/get"
+            | "GetExtendedAgentCard"
+            | "agent/getExtendedCard"
+            | "agent/getAuthenticatedExtendedCard"
+            | "GetTaskPushNotificationConfig"
+            | "tasks/pushNotificationConfig/get",
+        ) => "get",
+        Some(
+            "ListTasks"
+            | "tasks/list"
+            | "ListTaskPushNotificationConfigs"
+            | "tasks/pushNotificationConfig/list",
+        ) => "list",
+        _ => "invoke",
+    }
+}
+
+/// Normalize public A2A task params into the internal Python request shape.
+fn normalize_task_proxy_params(action: &str, body: &Value) -> Value {
+    let mut params = body
+        .get("params")
+        .cloned()
+        .unwrap_or(Value::Object(Default::default()));
+
+    if let Value::Object(ref mut map) = params {
+        match action {
+            "get" | "cancel" => {
+                if !map.contains_key("task_id") {
+                    if let Some(task_id) = map.get("id").cloned() {
+                        map.insert("task_id".to_string(), task_id);
+                    }
+                }
+            }
+            "list" => {
+                if !map.contains_key("state") {
+                    if let Some(state) = map.get("status").cloned() {
+                        map.insert("state".to_string(), state);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    params
+}
+
 /// Resolve an agent by name, using the tiered cache when possible.
 ///
 /// On cache miss the Python `/_internal/a2a/agents/{name}/resolve` endpoint
@@ -183,6 +235,7 @@ fn extract_headers(headers: &HeaderMap) -> HashMap<String, String> {
 async fn resolve_agent(
     state: &AppState,
     agent_name: &str,
+    auth_context: &Value,
 ) -> Result<ResolvedAgent, (StatusCode, String)> {
     // Check tiered cache (L1 → L2).
     if let Some(agent) = state.agent_cache.get(agent_name).await {
@@ -196,7 +249,11 @@ async fn resolve_agent(
         state.config.backend_base_url.trim_end_matches('/'),
         agent_name,
     );
-    let trust_headers = trust::build_trust_headers(auth_secret);
+    let mut trust_headers = trust::build_trust_headers(auth_secret);
+    trust_headers.insert(
+        "x-contextforge-auth-context".to_string(),
+        trust::encode_auth_context(auth_context),
+    );
     let response = state
         .client
         .post(&url)
@@ -257,11 +314,7 @@ async fn proxy_task_method(
     );
     headers.insert("content-type".to_string(), "application/json".to_string());
 
-    // Extract params from the JSON-RPC body to send as the request body.
-    let params = body
-        .get("params")
-        .cloned()
-        .unwrap_or(Value::Object(Default::default()));
+    let params = normalize_task_proxy_params(action, body);
 
     let response = state
         .client
@@ -586,12 +639,13 @@ async fn handle_a2a_invoke(
         };
 
     // --- 2. Authorize ----------------------------------------------------
+    let method = body.get("method").and_then(|m| m.as_str());
     trust::authorize(
         &state.client,
         &state.config.backend_base_url,
         state.config.auth_secret.as_deref().unwrap_or(""),
         &auth_context,
-        "invoke",
+        authz_action_for_method(method),
     )
     .await
     .map_err(|e| match e {
@@ -612,7 +666,7 @@ async fn handle_a2a_invoke(
     // --- 2b. Method-based routing for task operations ---------------------
     // If the JSON-RPC method is a task read operation, proxy to the
     // Python task endpoints instead of invoking the agent directly.
-    if let Some(method) = body.get("method").and_then(|m| m.as_str()) {
+    if let Some(method) = method {
         match method {
             "GetTask" | "tasks/get" => {
                 return proxy_task_method(&state, "get", &body, &auth_context)
@@ -671,7 +725,7 @@ async fn handle_a2a_invoke(
     }
 
     // --- 3. Resolve agent (with cache) -----------------------------------
-    let resolved = resolve_agent(&state, &agent_name)
+    let resolved = resolve_agent(&state, &agent_name, &auth_context)
         .await
         .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
 
@@ -810,7 +864,7 @@ async fn handle_streaming_method(
     }
 
     // --- Resolve agent ---------------------------------------------------
-    let resolved = resolve_agent(state, agent_name)
+    let resolved = resolve_agent(state, agent_name, auth_context)
         .await
         .map_err(|e| (e.0, Json(ErrorResponse { error: e.1 })))?;
 

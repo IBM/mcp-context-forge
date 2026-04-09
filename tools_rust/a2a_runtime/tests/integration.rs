@@ -900,9 +900,9 @@ async fn test_a2a_invoke_get_task_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // invoke/authz → 204
+    // get/authz → 204
     Mock::given(method("POST"))
-        .and(path_regex(".*invoke/authz$"))
+        .and(path_regex(".*get/authz$"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&mock_server)
@@ -941,7 +941,7 @@ async fn test_a2a_invoke_get_task_routes_to_python() {
             "jsonrpc": "2.0",
             "method": "GetTask",
             "id": 1,
-            "params": {"task_id": "task-1"}
+            "params": {"id": "task-1"}
         }),
     )
     .await;
@@ -982,9 +982,9 @@ async fn test_a2a_invoke_list_tasks_routes_to_python() {
         .mount(&mock_server)
         .await;
 
-    // invoke/authz → 204
+    // list/authz → 204
     Mock::given(method("POST"))
-        .and(path_regex(".*invoke/authz$"))
+        .and(path_regex(".*list/authz$"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&mock_server)
@@ -1064,9 +1064,9 @@ async fn test_a2a_invoke_legacy_method_name_routes_correctly() {
         .mount(&mock_server)
         .await;
 
-    // invoke/authz → 204
+    // get/authz → 204
     Mock::given(method("POST"))
-        .and(path_regex(".*invoke/authz$"))
+        .and(path_regex(".*get/authz$"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&mock_server)
@@ -1104,7 +1104,7 @@ async fn test_a2a_invoke_legacy_method_name_routes_correctly() {
             "jsonrpc": "2.0",
             "method": "tasks/get",
             "id": 1,
-            "params": {"task_id": "task-1"}
+            "params": {"id": "task-1"}
         }),
     )
     .await;
@@ -1186,7 +1186,7 @@ async fn test_a2a_invoke_cancel_task_routes_to_python() {
             "jsonrpc": "2.0",
             "method": "CancelTask",
             "id": 3,
-            "params": {"task_id": "task-1"}
+            "params": {"id": "task-1"}
         }),
     )
     .await;
@@ -1267,7 +1267,7 @@ async fn test_a2a_invoke_cancel_task_legacy_name_routes_correctly() {
             "jsonrpc": "2.0",
             "method": "tasks/cancel",
             "id": 4,
-            "params": {"task_id": "task-1"}
+            "params": {"id": "task-1"}
         }),
     )
     .await;
@@ -1401,7 +1401,7 @@ async fn test_a2a_invoke_get_extended_agent_card_routes_to_python() {
 
     // invoke/authz → 204
     Mock::given(method("POST"))
-        .and(path_regex(".*invoke/authz$"))
+        .and(path_regex(".*get/authz$"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&mock_server)
@@ -1489,7 +1489,7 @@ async fn test_a2a_invoke_get_extended_card_spec_name_routes_correctly() {
         .await;
 
     Mock::given(method("POST"))
-        .and(path_regex(".*invoke/authz$"))
+        .and(path_regex(".*get/authz$"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&mock_server)
@@ -1565,7 +1565,7 @@ async fn test_a2a_invoke_get_authenticated_card_not_found_returns_error_envelope
         .await;
 
     Mock::given(method("POST"))
-        .and(path_regex(".*invoke/authz$"))
+        .and(path_regex(".*get/authz$"))
         .respond_with(ResponseTemplate::new(204))
         .expect(1)
         .mount(&mock_server)
