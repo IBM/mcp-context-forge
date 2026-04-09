@@ -332,42 +332,42 @@ significantly lower latency. The RPS difference is within normal run-to-run
 variance and may be influenced by the fresh (empty) database vs the PGO
 deployment which had registered servers and cached data.
 
-### MCP Protocol Benchmark with Plugins: April 8, 2026
+### MCP Protocol Benchmark with Plugins: April 9, 2026
 
 **Plugins in enforce mode:** RateLimiterPlugin (10000/m), OutputLengthGuardPlugin,
 SecretsDetectionPlugin. Other plugins (PIIFilter, RetryWithBackoff,
 EncodedExfilDetector, UnifiedPDP) in permissive.
 
-**Configuration:** 2 gateway pods (3rd pod could not schedule — insufficient CPU
-due to coexisting PGO operator pods consuming cluster resources).
+**Configuration:** 3 gateway pods (8 CPU, Gunicorn 8 workers each)
 
 **Parameters:** 125 users, 30/s spawn rate, 60s, 1 Locust worker
 
 | Endpoint | Requests | Failures | Avg Latency | Med Latency |
 |----------|----------|----------|-------------|-------------|
-| MCP tools/list | 4,367 | 2,980 (68%) | 37ms | 28ms |
-| MCP resources/list | 2,566 | 1,745 (68%) | 36ms | 27ms |
-| MCP initialize [churn] | 2,530 | 0 (0%) | 35ms | 26ms |
-| MCP tools/list [churn] | 2,528 | 0 (0%) | 42ms | 35ms |
-| MCP prompts/list | 2,469 | 1,695 (69%) | 35ms | 28ms |
-| MCP tools/list [rapid] | 1,298 | 834 (64%) | 38ms | 30ms |
-| MCP resources/templates/list | 893 | 599 (67%) | 35ms | 27ms |
-| MCP ping | 525 | 370 (70%) | 33ms | 24ms |
-| MCP tools/list [stress] | 369 | 260 (70%) | 34ms | 25ms |
-| MCP ping [stress] | 127 | 78 (61%) | 45ms | 29ms |
-| MCP initialize | 113 | 25 (22%) | 123ms | 110ms |
-| **TOTAL** | **17,785** | **8,586 (48.3%)** | **38ms** | **29ms** |
+| MCP tools/list | 4,331 | 2,554 (59%) | 41ms | 33ms |
+| MCP prompts/list | 2,544 | 1,486 (58%) | 40ms | 32ms |
+| MCP resources/list | 2,541 | 1,556 (61%) | 37ms | 31ms |
+| MCP initialize [churn] | 2,474 | 0 (0%) | 36ms | 24ms |
+| MCP tools/list [churn] | 2,473 | 0 (0%) | 45ms | 35ms |
+| MCP tools/list [rapid] | 1,269 | 780 (61%) | 37ms | 30ms |
+| MCP resources/templates/list | 879 | 550 (63%) | 40ms | 31ms |
+| MCP ping | 516 | 299 (58%) | 35ms | 27ms |
+| MCP tools/list [stress] | 355 | 204 (57%) | 39ms | 32ms |
+| MCP ping [stress] | 130 | 77 (59%) | 32ms | 26ms |
+| MCP initialize | 113 | 15 (13%) | 120ms | 110ms |
+| **TOTAL** | **17,625** | **7,521 (42.7%)** | **40ms** | **32ms** |
 
-**Aggregate:** 306 RPS, 38ms avg latency, 29ms median
+**Aggregate:** 306 RPS, 40ms avg latency, 32ms median
+
+Fresh-session operations (`[churn]`): **4,947 requests, 0% failures, 36-45ms avg latency.**
 
 **Plugin overhead comparison (standalone stack):**
 
-| Config | Pods | RPS | Avg Latency | Med Latency |
-|--------|------|-----|-------------|-------------|
-| Without plugins | 3 | 317 | 35ms | 28ms |
-| With plugins (enforce) | 2 | 306 | 38ms | 29ms |
+| Config | Pods | RPS | Avg Latency | Med Latency | Churn Failures |
+|--------|------|-----|-------------|-------------|----------------|
+| Without plugins | 3 | 317 | 35ms | 28ms | 0% |
+| With plugins (enforce) | 3 | 306 | 40ms | 32ms | 0% |
 
-Plugins add negligible overhead (~3ms extra latency). The RPS difference is
-primarily due to running on 2 pods instead of 3. Per-pod throughput is
-actually higher with plugins enabled (153 RPS/pod vs 106 RPS/pod), consistent
-with the PGO benchmark observation that plugins do not degrade performance.
+Plugins add ~5ms latency with **0% failures** on fresh-session operations.
+Both configurations deliver comparable throughput, consistent with the PGO
+benchmark observation that plugins do not degrade performance.
